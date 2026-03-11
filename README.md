@@ -68,7 +68,7 @@ multi-user-turn-codebench/
 ├── README.md
 ├── analyze_sessions.py                 # Full analysis pipeline (Gemini 3 Pro)
 ├── session_analysis_results.json       # Analysis output for all 133 sessions
-├── harbor_candidates.md                # Ranked Harbor task candidates with detail cards
+├── session_analysis.md                 # Full analysis report with metric definitions and 133 session cards
 │
 ├── harbor_tasks/                       # Harbor-compatible benchmark tasks
 │   ├── desloppify/
