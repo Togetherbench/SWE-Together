@@ -55,6 +55,7 @@ The benchmark assumes a Platonic ideal solver. Real users are embedded in a corr
 |------|---------------|-------------|------------|
 | `unsloth-dev` | `2c7c75dd` | Add Idefics3 support + fix kwargs-only hook across 2 repos | **1.00** |
 | `desloppify` | `5b7dfc2a` | Parallel review orchestration to improve code quality score | **0.85** (timed out) |
+| `desloppify-go-plugin` | `96345f53` | Upgrade Go plugin from generic to full class-based implementation (PR #128 recovery) | **0.85** |
 | `vllm-pr-review` | `bc295ce4` | PR review, debugging 3 bug categories, and collaboration | **0.64** |
 | `comfyui-fp8-newbie` | `c53e4e72` | Add fp8 quantized Gemma support to NewBie dual CLIP encoder | **1.00** |
 
@@ -78,6 +79,8 @@ multi-user-turn-codebench/
 │   │   ├── environment/Dockerfile      # Docker environment
 │   │   ├── tests/test.sh              # Verification script
 │   │   └── original_session.json       # Source session data
+│   ├── desloppify-go-plugin/
+│   │   └── ...
 │   ├── unsloth-dev/
 │   │   └── ...
 │   └── vllm-pr-review/
