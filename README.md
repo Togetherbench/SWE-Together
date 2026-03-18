@@ -53,13 +53,29 @@ The benchmark assumes a Platonic ideal solver. Real users are embedded in a corr
 
 | Task | Source Session | Description | Opus Score |
 |------|---------------|-------------|------------|
+| `desloppify-review-fixes` | `489211c5` | Fix 3 bugs in review system: ID collision, missing dimensions, reminder integration | **1.00** |
 | `unsloth-dev` | `2c7c75dd` | Add Idefics3 support + fix kwargs-only hook across 2 repos | **1.00** |
 | `desloppify` | `5b7dfc2a` | Parallel review orchestration to improve code quality score | **0.85** (timed out) |
 | `desloppify-go-plugin` | `96345f53` | Upgrade Go plugin from generic to full class-based implementation (PR #128 recovery) | **0.85** |
 | `vllm-pr-review` | `bc295ce4` | PR review, debugging 3 bug categories, and collaboration | **0.64** |
 | `comfyui-fp8-newbie` | `c53e4e72` | Add fp8 quantized Gemma support to NewBie dual CLIP encoder | **1.00** |
 
-Run with: `harbor run -p harbor_tasks/<task> -a claude-code -m claude-opus-4-6 -n 1`
+#### Running tasks with Harbor
+
+Install [Harbor](https://github.com/laude-institute/harbor) and run any task:
+
+```bash
+harbor run -p harbor_tasks/<task> -a claude-code -m claude-opus-4-6 -n 1
+```
+
+**Note:** Use `claude-opus-4-6` (not `anthropic/claude-opus-4-6`) — Harbor's claude-code adapter passes the model name directly to the Claude Code CLI which expects the short form.
+
+Each task includes:
+- `task.toml` — Harbor metadata (difficulty, timeouts, resources)
+- `instruction.md` — Agent-facing task description
+- `environment/Dockerfile` — Reproducible Docker environment with synthesized buggy state
+- `tests/test.sh` — Deterministic verifier outputting a 0.0–1.0 reward score
+- `analysis.md` / `analysis.json` — Conversion analysis and session provenance
 
 ---
 
@@ -81,6 +97,15 @@ multi-user-turn-codebench/
 │   │   └── original_session.json       # Source session data
 │   ├── desloppify-go-plugin/
 │   │   └── ...
+│   ├── desloppify-review-fixes/
+│   │   ├── task.toml
+│   │   ├── instruction.md
+│   │   ├── environment/
+│   │   │   ├── Dockerfile
+│   │   │   └── synthesize_buggy_state.py
+│   │   ├── tests/test.sh
+│   │   ├── analysis.md                 # Deep session analysis + user intent mining
+│   │   └── analysis.json
 │   ├── unsloth-dev/
 │   │   └── ...
 │   └── vllm-pr-review/
