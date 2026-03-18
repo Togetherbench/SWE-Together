@@ -77,6 +77,57 @@ Each task includes:
 - `tests/test.sh` — Deterministic verifier outputting a 0.0–1.0 reward score
 - `analysis.md` / `analysis.json` — Conversion analysis and session provenance
 
+### Running with Simulated User (runner.py)
+
+`src/runner.py` wraps Harbor's `Terminus2` agent with a simulated user (`UserEnabledTerminus2`) that watches the action agent and injects messages based on ground-truth user interactions.
+
+```bash
+# 1. Configure src/config.yaml
+cat src/config.yaml
+#   task: desloppify
+#   model: gemini/gemini-2.5-pro        # action agent
+#   user_model: gemini/gemini-2.5-pro   # user simulator
+#   user_context_chars: 3000
+#   call_user_on_completion: true
+
+# 2. Run with Gemini
+GEMINI_API_KEY=<key> .venv/bin/python src/runner.py --config src/config.yaml
+
+# 3. Run with Anthropic
+ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
+    --config src/config.yaml \
+    --model anthropic/claude-opus-4-6 \
+    --user-model anthropic/claude-haiku-4-5
+
+# 4. Mixed providers (action=Gemini, user=Anthropic)
+GEMINI_API_KEY=<k1> ANTHROPIC_API_KEY=<k2> .venv/bin/python src/runner.py \
+    --config src/config.yaml \
+    --model gemini/gemini-2.5-pro \
+    --user-model anthropic/claude-haiku-4-5
+
+# 5. OpenRouter
+OPENROUTER_API_KEY=<key> .venv/bin/python src/runner.py \
+    --config src/config.yaml \
+    --model openrouter/google/gemini-2.5-flash
+```
+
+Trial output is saved to `trials/<task>__<id>/`:
+```
+trials/desloppify__rDwLgZ3/
+├── config.json                     # Serialized trial config
+├── agent/
+│   ├── episode-N/
+│   │   ├── prompt.txt              # Prompt sent to action agent
+│   │   ├── response.txt            # Action agent response
+│   │   ├── debug.json              # Token/parsing debug info
+│   │   └── user_decision.json      # User agent decision (action, content, cursor, stats)
+│   ├── trajectory.json             # Full trajectory
+│   └── recording.cast              # asciinema terminal recording
+└── verifier/
+    ├── test-stdout.txt             # test.sh stdout
+    └── reward.txt                  # Final score (0.0–1.0)
+```
+
 ---
 
 ## Repository Structure
@@ -87,6 +138,17 @@ multi-user-turn-codebench/
 ├── analyze_sessions.py                 # Full analysis pipeline (Gemini 3 Pro)
 ├── session_analysis_results.json       # Analysis output for all 133 sessions
 ├── session_analysis.md                 # Full analysis report with metric definitions and 133 session cards
+│
+├── src/
+│   ├── runner.py                       # Main runner: launches Harbor trial with simulated user
+│   ├── config.yaml                     # Runner configuration (models, task, settings)
+│   └── user_agent/                     # Simulated user module
+│       ├── __init__.py
+│       ├── user_agent.py               # LLM-powered user simulator (persona, ground-truth, decisions)
+│       └── user_enabled_agent.py       # Terminus2 wrapper that injects user messages each turn
+│
+├── external/
+│   └── harbor/                         # Harbor framework (vendored)
 │
 ├── harbor_tasks/                       # Harbor-compatible benchmark tasks
 │   ├── desloppify/
@@ -110,6 +172,8 @@ multi-user-turn-codebench/
 │   │   └── ...
 │   └── vllm-pr-review/
 │       └── ...
+│
+├── trials/                             # Trial output (gitignored)
 │
 ├── sessions_raw/                       # 133 raw session JSON files (45MB)
 │
