@@ -49,15 +49,16 @@ The benchmark assumes a Platonic ideal solver. Real users are embedded in a corr
 
 ### 3. Harbor Benchmark Tasks
 
-3 sessions converted to [Harbor](https://github.com/laude-institute/harbor) (TerminalBench harness) format with Docker environments, instructions, and test scripts:
+4 sessions converted to [Harbor](https://github.com/laude-institute/harbor) (TerminalBench harness) format with Docker environments, instructions, and test scripts:
 
 | Task | Source Session | Description | Opus Score |
 |------|---------------|-------------|------------|
 | `unsloth-dev` | `2c7c75dd` | Add Idefics3 support + fix kwargs-only hook across 2 repos | **1.00** |
 | `desloppify` | `5b7dfc2a` | Parallel review orchestration to improve code quality score | **0.85** (timed out) |
 | `vllm-pr-review` | `bc295ce4` | PR review, debugging 3 bug categories, and collaboration | **0.64** |
+| `comfyui-fp8-newbie` | `c53e4e72` | Add fp8 quantized Gemma support to NewBie dual CLIP encoder | **1.00** |
 
-Run with: `harbor run -p harbor_tasks/<task> -a claude-code -m anthropic/claude-opus-4-6 -n 1`
+Run with: `harbor run -p harbor_tasks/<task> -a claude-code -m claude-opus-4-6 -n 1`
 
 ---
 
