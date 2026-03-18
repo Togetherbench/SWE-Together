@@ -1,0 +1,30 @@
+# runner.py config
+# Usage: python runner.py --config config.yaml
+
+# Docker image tar directory
+# If task is not specified, runner will execute all docker images found here
+env_path: /Users/yfwu/Projects/multi-user-turn-codebench/harbor_tasks/docker_images
+
+task: desloppify
+
+# Provider/model-name examples:
+#   gemini/gemini-2.5-flash
+#   gemini/gemini-2.5-pro
+#   anthropic/claude-opus-4-6
+#   anthropic/claude-haiku-4-5
+#   openrouter/google/gemini-2.5-flash
+
+# Action agent model
+model: gemini/gemini-2.5-pro
+
+# User simulator model
+user_model: gemini/gemini-2.5-pro
+
+trials_dir: trials
+
+# Simulated user settings
+user_context_chars: 3000
+call_user_on_completion: true
+
+# Docker
+keep_container: false

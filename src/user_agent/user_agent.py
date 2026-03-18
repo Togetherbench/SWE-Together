@@ -316,6 +316,6 @@ class UserAgent:
         if text.strip():
             return UserDecision(
                 action="question", content=text,
-                raw_response="parsed from text", raw_response=text,
+                raw_response=text,
             )
         return UserDecision(action="wait", raw_response="empty")

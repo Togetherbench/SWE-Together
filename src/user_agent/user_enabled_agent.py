@@ -6,6 +6,7 @@ new requirement, etc.). Messages are injected as user turns in the chat,
 so the action agent sees them exactly as it would see real human input.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +103,7 @@ class UserEnabledTerminus2(Terminus2):
     async def _consult_user(
         self, observation: str, analysis: str | None,
         turn: int, completing: bool,
+        logging_dir: Path | None = None,
     ) -> UserDecision:
         decision = await self._sim_user.process(
             task_description=self._task_instruction,
@@ -117,7 +119,34 @@ class UserEnabledTerminus2(Terminus2):
             log.info("User sim intervenes at turn %d: %s", turn, decision.action)
         else:
             log.debug("User sim waits at turn %d", turn)
+
+        self._log_user_decision(logging_dir, turn, decision, completing)
         return decision
+
+    def _log_user_decision(
+        self, logging_dir: Path | None, turn: int,
+        decision: UserDecision, completing: bool,
+    ):
+        """Write user_decision.json into the episode directory."""
+        if logging_dir is None:
+            return
+        episode_dir = logging_dir / f"episode-{turn}"
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "turn": turn,
+            "is_completion_attempt": completing,
+            "action": decision.action,
+            "has_message": decision.has_message,
+            "content": decision.content,
+            "raw_response": decision.raw_response[:500] if decision.raw_response else "",
+            "cursor": self._sim_user._cursor,
+            "ground_truth_remaining": len(self._sim_user._ground_truth) - self._sim_user._cursor,
+            "stats": self._sim_user.get_stats(),
+        }
+        path = episode_dir / "user_decision.json"
+        path.write_text(json.dumps(record, indent=2, ensure_ascii=False))
+        log.debug("Wrote user decision to %s", path)
 
     # ── main loop override ───────────────────────────────────────────
 
@@ -260,6 +289,7 @@ class UserEnabledTerminus2(Terminus2):
                 if self._check_on_completion:
                     dec = await self._consult_user(
                         observation, analysis, turn + 1, completing=True,
+                        logging_dir=logging_dir,
                     )
                     if dec.has_message:
                         self._push_user_turn(chat, dec.format_for_injection())
@@ -273,6 +303,7 @@ class UserEnabledTerminus2(Terminus2):
             # ── normal turn: consult simulated user ──
             dec = await self._consult_user(
                 observation, analysis, turn + 1, completing=False,
+                logging_dir=logging_dir,
             )
             if dec.has_message:
                 msg = dec.format_for_injection()
