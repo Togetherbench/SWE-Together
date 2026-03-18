@@ -53,7 +53,6 @@ class UserEnabledTerminus2(Terminus2):
         user_api_base: str | None = None,
         user_api_key: str | None = None,
         user_temperature: float = 0.5,
-        user_interval: int = 1,
         user_context_chars: int = 2000,
         original_user_messages: list[str] | None = None,
         user_persona: UserPersona | None = None,
@@ -76,13 +75,11 @@ class UserEnabledTerminus2(Terminus2):
         )
 
         # Config
-        self._user_interval = max(1, user_interval)
         self._user_context_chars = max(500, user_context_chars)
         self._call_user_on_completion = call_user_on_completion
 
         # State (reset per run)
         self._original_instruction: str = ""
-        self._last_user_episode: int = -999
 
     # ------------------------------------------------------------------
     # Trajectory context for simulated user
@@ -184,7 +181,6 @@ class UserEnabledTerminus2(Terminus2):
             raise RuntimeError("Session is not set.")
 
         self._original_instruction = original_instruction or initial_prompt
-        self._last_user_episode = -999
 
         # Inform the action agent that a user may send messages
         _USER_NOTICE = (
@@ -287,8 +283,6 @@ class UserEnabledTerminus2(Terminus2):
             self._context.n_cache_tokens = chat.total_cache_tokens
             self._context.cost_usd = chat.total_cost if chat.total_cost > 0 else None
 
-            self._record_asciinema_marker(f"Episode {episode}: {len(commands)} commands")
-
             # Handle parsing errors
             if feedback and "ERROR:" in feedback:
                 prompt = (
@@ -347,21 +341,18 @@ class UserEnabledTerminus2(Terminus2):
                 prompt = observation
                 continue
 
-            # === SIMULATED USER: call every N steps ===
-            steps_since = episode - self._last_user_episode
-            if steps_since >= self._user_interval:
-                self._last_user_episode = episode
-                decision = await self._call_user_agent(
-                    observation=observation,
-                    analysis=analysis,
-                    step_count=episode + 1,
-                    is_completion_attempt=False,
-                )
-                if decision.has_message:
-                    user_msg = decision.format_for_injection()
-                    self._inject_user_message(chat, user_msg)
-                    prompt = user_msg
-                    continue
+            # === SIMULATED USER: called every turn ===
+            decision = await self._call_user_agent(
+                observation=observation,
+                analysis=analysis,
+                step_count=episode + 1,
+                is_completion_attempt=False,
+            )
+            if decision.has_message:
+                user_msg = decision.format_for_injection()
+                self._inject_user_message(chat, user_msg)
+                prompt = user_msg
+                continue
 
             prompt = observation
 
