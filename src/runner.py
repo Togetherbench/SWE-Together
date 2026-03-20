@@ -4,7 +4,7 @@ Supports Gemini, OpenRouter, and Anthropic for both action agent and user agent.
 
 Usage:
     # Gemini
-    GEMINI_API_KEY=<key> python runner.py --model gemini/gemini-2.5-flash
+    GEMINI_API_KEY=<key> python runner.py --model gemini/gemini-3.1-pro-preview
 
     # Anthropic
     ANTHROPIC_API_KEY=<key> python runner.py --model anthropic/claude-opus-4-6
@@ -14,7 +14,7 @@ Usage:
 
     # Mixed: action=Gemini, user=Anthropic
     GEMINI_API_KEY=<k1> ANTHROPIC_API_KEY=<k2> python runner.py \\
-        --model gemini/gemini-2.5-flash --user-model anthropic/claude-haiku-4-5
+        --model gemini/gemini-3.1-pro-preview --user-model anthropic/claude-haiku-4-5
 """
 
 import argparse
@@ -29,10 +29,11 @@ from pathlib import Path
 import yaml
 
 # ── repo paths ────────────────────────────────────────────────────────────────
-REPO_ROOT = Path(__file__).parent
-HARBOR_SRC = REPO_ROOT / "external" / "harbor"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HARBOR_ROOT = REPO_ROOT / "external" / "harbor"
+HARBOR_SRC = HARBOR_ROOT / "src"
 
-sys.path.insert(0, str(HARBOR_SRC / "src"))
+sys.path.insert(0, str(HARBOR_SRC))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from harbor.models.trial.config import (
@@ -63,7 +64,7 @@ def resolve_model(model_arg: str) -> tuple[str, str, str]:
     """Return (litellm_model, api_key, env_var_name) for a model spec.
 
     model_arg may be:
-      - "gemini/gemini-2.5-flash"      → provider prefix explicit
+      - "gemini/gemini-3.1-pro-preview"      → provider prefix explicit
       - "gemini-2.5-flash"             → inferred from available keys
       - "anthropic/claude-opus-4-6"
       - "openrouter/google/gemini-..."
@@ -131,6 +132,41 @@ def load_analysis(task_dir: Path) -> dict:
     return {}
 
 
+def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
+    """Load the recorded user messages from whichever artifact has them."""
+    candidates = analysis.get("user_messages")
+    if isinstance(candidates, list):
+        return [
+            msg for msg in candidates
+            if isinstance(msg, str) and not msg.startswith("[Request interrupted")
+        ]
+
+    session_path = task_dir / "original_session.json"
+    if not session_path.exists():
+        return []
+
+    session = json.loads(session_path.read_text())
+    return [
+        msg.get("content", "")
+        for msg in session.get("messages", [])
+        if msg.get("role") == "user"
+        and isinstance(msg.get("content"), str)
+        and not msg["content"].startswith("[Request interrupted")
+    ]
+
+
+def resolve_task_dir(task_name: str) -> Path | None:
+    """Support both current and legacy harbor task layouts."""
+    candidates = [
+        REPO_ROOT / "harbor_tasks" / task_name,
+        REPO_ROOT / "harbor_tasks" / "raw" / task_name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
@@ -145,10 +181,10 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     log.info("Action agent : %s", action_model)
     log.info("User agent   : %s", user_model)
 
-    task_dir = REPO_ROOT / "harbor_tasks" / "raw" / task_name
+    task_dir = resolve_task_dir(task_name)
 
-    if not task_dir.exists():
-        log.error("Task directory not found: %s", task_dir)
+    if task_dir is None:
+        log.error("Task directory not found: %s", task_name)
         return
 
     if tar_path is None:
@@ -162,10 +198,7 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     # Load ground-truth user messages + persona from analysis.json
     analysis = load_analysis(task_dir)
-    user_messages: list[str] = [
-        m for m in analysis.get("user_messages", [])
-        if not m.startswith("[Request interrupted")
-    ]
+    user_messages = load_user_messages(task_dir, analysis)
     persona: UserPersona = build_persona_from_analysis(analysis)
     log.info("Ground-truth user messages: %d", len(user_messages))
 
@@ -250,9 +283,9 @@ def main():
     parser.add_argument("--config",     default=None,
                         help="Path to YAML config file (e.g. config.yaml)")
     parser.add_argument("--task",       default=None,
-                        help="Task name under harbor_tasks/raw/")
+                        help="Task name under harbor_tasks/ or harbor_tasks/raw/")
     parser.add_argument("--model",      default=None,
-                        help="Action agent model, e.g. gemini/gemini-2.5-flash")
+                        help="Action agent model, e.g. gemini/gemini-3.1-pro-preview")
     parser.add_argument("--user-model", default=None,
                         help="User agent model (defaults to --model)")
     parser.add_argument("--trials-dir", default=None,
@@ -271,8 +304,8 @@ def main():
     class Args:
         task                  = cli.task       or cfg.get("task")  # None = run all from env_path
         env_path              = cfg.get("env_path", str(REPO_ROOT / "harbor_tasks" / "docker_images"))
-        model                 = cli.model      or cfg.get("model",      "gemini/gemini-2.5-flash")
-        user_model            = cli.user_model or cfg.get("user_model") or cfg.get("model") or "gemini/gemini-2.5-flash"
+        model                 = cli.model      or cfg.get("model",      "gemini/gemini-3.1-pro-preview")
+        user_model            = cli.user_model or cfg.get("user_model") or cfg.get("model") or "gemini/gemini-3.1-pro-preview"
         trials_dir            = cli.trials_dir or cfg.get("trials_dir", "trials")
         keep                  = cli.keep       or cfg.get("keep_container", False)
         user_context_chars    = cfg.get("user_context_chars",    3000)

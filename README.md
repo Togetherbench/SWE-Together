@@ -82,34 +82,60 @@ Each task includes:
 `src/runner.py` wraps Harbor's `Terminus2` agent with a simulated user (`UserEnabledTerminus2`) that watches the action agent and injects messages based on ground-truth user interactions.
 
 ```bash
-# 1. Configure src/config.yaml
+# 1. One-time setup
+uv sync
+
+# 2. Configure src/config.yaml
 cat src/config.yaml
-#   task: desloppify
-#   model: gemini/gemini-2.5-pro        # action agent
-#   user_model: gemini/gemini-2.5-pro   # user simulator
+#   task: desloppify-review-fixes
+#   model: gemini/gemini-3.1-pro-preview        # action agent
+#   user_model: gemini/gemini-3.1-pro-preview   # user simulator
 #   user_context_chars: 3000
 #   call_user_on_completion: true
 
-# 2. Run with Gemini
-GEMINI_API_KEY=<key> .venv/bin/python src/runner.py --config src/config.yaml
+# 3. Run with Gemini
+GEMINI_API_KEY=<key> uv run python src/runner.py --config src/config.yaml
 
-# 3. Run with Anthropic
-ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
+# 4. Run with Anthropic
+ANTHROPIC_API_KEY=<key> uv run python src/runner.py \
     --config src/config.yaml \
     --model anthropic/claude-opus-4-6 \
     --user-model anthropic/claude-haiku-4-5
 
-# 4. Mixed providers (action=Gemini, user=Anthropic)
-GEMINI_API_KEY=<k1> ANTHROPIC_API_KEY=<k2> .venv/bin/python src/runner.py \
+# 5. Mixed providers (action=Gemini, user=Anthropic)
+GEMINI_API_KEY=<k1> ANTHROPIC_API_KEY=<k2> uv run python src/runner.py \
     --config src/config.yaml \
-    --model gemini/gemini-2.5-pro \
+    --model gemini/gemini-3.1-pro-preview \
     --user-model anthropic/claude-haiku-4-5
 
-# 5. OpenRouter
-OPENROUTER_API_KEY=<key> .venv/bin/python src/runner.py \
+# 6. OpenRouter
+OPENROUTER_API_KEY=<key> uv run python src/runner.py \
     --config src/config.yaml \
     --model openrouter/google/gemini-2.5-flash
 ```
+
+### Viewing Traces
+
+Harbor includes a web UI for browsing agent trajectories and user decisions:
+
+```bash
+# Start the viewer (opens at http://127.0.0.1:8080)
+harbor view trials/
+
+# Custom port
+harbor view trials/ --port 9000
+```
+
+Requires `harbor` to be installed globally (`uv tool install harbor`). The viewer ships with pre-built static files.
+
+You can also export traces to Hugging Face Datasets format:
+
+```bash
+harbor traces export --path trials/
+harbor traces export --path trials/ --sharegpt   # ShareGPT format
+```
+
+### Trial Output
 
 Trial output is saved to `trials/<task>__<id>/`:
 ```

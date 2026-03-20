@@ -3,22 +3,22 @@
 
 # Docker image tar directory
 # If task is not specified, runner will execute all docker images found here
-env_path: /Users/yfwu/Projects/multi-user-turn-codebench/harbor_tasks/docker_images
+env_path: harbor_tasks/docker_images
 
-task: desloppify
+task: desloppify-review-fixes
 
 # Provider/model-name examples:
+#   gemini/gemini-3.1-pro-preview
 #   gemini/gemini-2.5-flash
-#   gemini/gemini-2.5-pro
 #   anthropic/claude-opus-4-6
 #   anthropic/claude-haiku-4-5
 #   openrouter/google/gemini-2.5-flash
 
 # Action agent model
-model: gemini/gemini-2.5-pro
+model: gemini/gemini-3.1-pro-preview
 
 # User simulator model
-user_model: gemini/gemini-2.5-pro
+user_model: gemini/gemini-3.1-pro-preview
 
 trials_dir: trials
 
