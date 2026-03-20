@@ -1,0 +1,17 @@
+[project]
+name = "multi-user-turn-codebench"
+version = "0.1.0"
+description = "Multi-turn coding benchmark tooling and runner."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "aiohttp>=3.13.3",
+    "litellm>=1.82.4",
+    "pyyaml>=6.0.3",
+    "harbor",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+harbor = { path = "external/harbor", editable = true }
