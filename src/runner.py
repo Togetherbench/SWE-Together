@@ -228,10 +228,12 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     print("\n" + "=" * 60)
     print(f"  task   : {task_name}")
-    print(f"  reward : {result.reward}")
-    print(f"  success: {result.success}")
-    if not result.success:
-        print(f"  error  : {result.exception_type}: {result.exception_message}")
+    rewards = result.verifier_result.rewards if result.verifier_result else None
+    reward = rewards.get("reward") if rewards else None
+    print(f"  reward : {reward}")
+    print(f"  success: {result.exception_info is None}")
+    if result.exception_info:
+        print(f"  error  : {result.exception_info.exception_type}: {result.exception_info.exception_message}")
     print("=" * 60)
 
 
