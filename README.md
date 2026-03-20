@@ -162,8 +162,6 @@ trials/desloppify__rDwLgZ3/
 multi-user-turn-codebench/
 ├── README.md
 ├── analyze_sessions.py                 # Full analysis pipeline (Gemini 3 Pro)
-├── session_analysis_results.json       # Analysis output for all 133 sessions
-├── session_analysis.md                 # Full analysis report with metric definitions and 133 session cards
 │
 ├── src/
 │   ├── runner.py                       # Main runner: launches Harbor trial with simulated user
@@ -204,6 +202,8 @@ multi-user-turn-codebench/
 ├── sessions_raw/                       # 133 raw session JSON files (45MB)
 │
 └── session_collection/
+    ├── session_analysis.md             # Full analysis report (133 session cards)
+    ├── session_analysis_results.json   # Analysis output for all 133 sessions
     ├── sessions_with_popular_repos.json # Session metadata index
     ├── friction_analysis.md            # Friction signal methodology & findings
     ├── github_stars_cache.json         # Cached star counts
