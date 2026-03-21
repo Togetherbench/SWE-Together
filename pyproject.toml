@@ -9,6 +9,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "harbor",
     "python-dotenv>=1.2.2",
+    "boto3>=1.42.73",
 ]
 
 [tool.uv]

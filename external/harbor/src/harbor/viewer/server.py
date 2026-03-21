@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any, TypedDict
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -1049,6 +1049,22 @@ def create_app(jobs_dir: Path, static_dir: Path | None = None) -> FastAPI:
                 return enriched
 
         return trajectory
+
+    @app.post("/api/upload-trials")
+    async def upload_trials(file: UploadFile = File(...)) -> dict[str, str]:
+        """Accept a tar.gz of trials and extract to jobs_dir."""
+        import tarfile
+        import io
+
+        content = await file.read()
+        buf = io.BytesIO(content)
+        try:
+            with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+                tar.extractall(path=jobs_dir, filter="data")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to extract: {e}")
+
+        return {"status": "ok", "size_bytes": len(content)}
 
     @app.get("/api/jobs/{job_name}/trials/{trial_name}/verifier-output")
     def get_verifier_output(job_name: str, trial_name: str) -> dict[str, str | None]:
