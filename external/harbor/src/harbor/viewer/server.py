@@ -211,8 +211,14 @@ def create_app(jobs_dir: Path, static_dir: Path | None = None) -> FastAPI:
         summaries = []
 
         for name in job_names:
-            result = scanner.get_job_result(name)
-            config = scanner.get_job_config(name)
+            try:
+                result = scanner.get_job_result(name)
+            except Exception:
+                result = None
+            try:
+                config = scanner.get_job_config(name)
+            except Exception:
+                config = None
 
             # Extract unique agents, providers, models, datasets, and environment type from config
             agents: list[str] = []
