@@ -48,6 +48,7 @@ class UserEnabledTerminus2(Terminus2):
         user_context_chars: int = 2000,
         original_user_messages: list[str] | None = None,
         user_persona: UserPersona | None = None,
+        session_analysis: str = "",
         call_user_on_completion: bool = True,
         **kwargs,
     ):
@@ -62,6 +63,7 @@ class UserEnabledTerminus2(Terminus2):
             ),
             original_user_messages=original_user_messages,
             persona=user_persona,
+            session_analysis=session_analysis,
         )
         self._ctx_budget = max(500, user_context_chars)
         self._check_on_completion = call_user_on_completion

@@ -68,6 +68,119 @@ class TaskGroupStats(TypedDict):
 MAX_FILE_SIZE = 1024 * 1024
 
 
+def _build_trajectory_from_episodes(
+    agent_dir: Path, base_trajectory: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reconstruct ATIF trajectory from Terminus2 episode files.
+
+    Scans agent_dir/episode-N/ directories for prompt.txt, response.txt,
+    and user_decision.json, converting them into ATIF-compatible steps.
+    Returns enriched trajectory dict, or None if no episodes found.
+    """
+    episode_dirs = sorted(
+        [d for d in agent_dir.iterdir() if d.is_dir() and d.name.startswith("episode-")],
+        key=lambda d: int(d.name.split("-")[1]),
+    )
+    if not episode_dirs:
+        return None
+
+    steps: list[dict[str, Any]] = []
+    step_id = 1
+
+    for ep_dir in episode_dirs:
+        prompt_path = ep_dir / "prompt.txt"
+        response_path = ep_dir / "response.txt"
+        decision_path = ep_dir / "user_decision.json"
+
+        timestamp = None
+        if decision_path.exists():
+            try:
+                decision = json.loads(decision_path.read_text())
+                timestamp = decision.get("timestamp")
+            except (json.JSONDecodeError, OSError):
+                decision = {}
+        else:
+            decision = {}
+
+        # Prompt step (observation/terminal output the agent received)
+        if prompt_path.exists():
+            prompt_text = prompt_path.read_text()
+            # Truncate very long prompts for display
+            if len(prompt_text) > 10000:
+                prompt_text = prompt_text[:10000] + "\n... (truncated)"
+            steps.append({
+                "step_id": step_id,
+                "timestamp": timestamp,
+                "source": "user",
+                "message": prompt_text,
+            })
+            step_id += 1
+
+        # Agent response step
+        if response_path.exists():
+            response_text = response_path.read_text()
+            analysis = None
+            tool_calls = None
+
+            # Try to parse structured response (Terminus2 JSON format)
+            try:
+                # Strip markdown code fences if present
+                cleaned = response_text.strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+                    if cleaned.endswith("```"):
+                        cleaned = cleaned[:-3]
+                parsed = json.loads(cleaned)
+                if isinstance(parsed, dict):
+                    analysis = parsed.get("analysis", "")
+                    plan = parsed.get("plan", "")
+                    commands = parsed.get("commands", [])
+                    if plan and analysis:
+                        analysis = f"{analysis}\n\nPlan: {plan}"
+                    elif plan:
+                        analysis = plan
+                    if commands:
+                        tool_calls = [
+                            {
+                                "tool_call_id": f"ep{ep_dir.name.split('-')[1]}_cmd{i}",
+                                "function_name": "bash_command",
+                                "arguments": json.dumps(cmd),
+                            }
+                            for i, cmd in enumerate(commands)
+                        ]
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            step: dict[str, Any] = {
+                "step_id": step_id,
+                "timestamp": timestamp,
+                "source": "agent",
+                "message": response_text if not analysis else "",
+                "reasoning_content": analysis,
+            }
+            if tool_calls:
+                step["tool_calls"] = tool_calls
+            steps.append(step)
+            step_id += 1
+
+        # User simulator intervention step
+        if decision.get("has_message") and decision.get("content"):
+            steps.append({
+                "step_id": step_id,
+                "timestamp": timestamp,
+                "source": "user",
+                "message": f"[Simulated User — {decision.get('action', 'message')}] {decision['content']}",
+            })
+            step_id += 1
+
+    if not steps:
+        return None
+
+    enriched = dict(base_trajectory)
+    enriched["steps"] = steps
+    return enriched
+
+
 def create_app(jobs_dir: Path, static_dir: Path | None = None) -> FastAPI:
     """Create the FastAPI application with routes configured for the given jobs directory.
 
@@ -902,7 +1015,12 @@ def create_app(jobs_dir: Path, static_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/jobs/{job_name}/trials/{trial_name}/trajectory")
     def get_trajectory(job_name: str, trial_name: str) -> dict[str, Any] | None:
-        """Get trajectory.json content for a trial."""
+        """Get trajectory.json content for a trial.
+
+        If the trajectory has ≤1 step (common with Terminus2), reconstruct
+        a richer trajectory from per-episode files (prompt.txt, response.txt,
+        user_decision.json).
+        """
         trial_dir = jobs_dir / job_name / trial_name
         if not trial_dir.exists():
             raise HTTPException(
@@ -915,11 +1033,22 @@ def create_app(jobs_dir: Path, static_dir: Path | None = None) -> FastAPI:
             return None
 
         try:
-            return json.loads(trajectory_path.read_text())
+            trajectory = json.loads(trajectory_path.read_text())
         except json.JSONDecodeError:
             raise HTTPException(
                 status_code=500, detail="Failed to parse trajectory.json"
             )
+
+        # Enrich sparse trajectories from episode files
+        steps = trajectory.get("steps", [])
+        if len(steps) <= 1:
+            enriched = _build_trajectory_from_episodes(
+                trial_dir / "agent", trajectory
+            )
+            if enriched:
+                return enriched
+
+        return trajectory
 
     @app.get("/api/jobs/{job_name}/trials/{trial_name}/verifier-output")
     def get_verifier_output(job_name: str, trial_name: str) -> dict[str, str | None]:

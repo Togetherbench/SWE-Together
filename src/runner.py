@@ -27,6 +27,10 @@ import sys
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
+
+# Auto-load .env from repo root (won't override existing env vars)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── repo paths ────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -202,6 +206,12 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     persona: UserPersona = build_persona_from_analysis(analysis)
     log.info("Ground-truth user messages: %d", len(user_messages))
 
+    # Load analysis.md for rich session context (state graph, friction triggers)
+    analysis_md_path = task_dir / "analysis.md"
+    session_analysis = analysis_md_path.read_text() if analysis_md_path.exists() else ""
+    if session_analysis:
+        log.info("Loaded analysis.md (%d chars)", len(session_analysis))
+
     trial_config = TrialConfig(
         task=TaskConfig(path=task_dir),
         trials_dir=Path(args.trials_dir),
@@ -213,6 +223,7 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
                 "user_api_key": user_key,
                 "original_user_messages": user_messages,
                 "user_persona": persona,
+                "session_analysis": session_analysis,
                 "user_context_chars": args.user_context_chars,
                 "call_user_on_completion": args.call_user_on_completion,
             },

@@ -50,6 +50,8 @@ def build_persona_from_analysis(analysis: dict) -> UserPersona:
     """Construct a persona from parsed analysis.json contents."""
     llm_info = analysis.get("llm_analysis", {})
     msgs = analysis.get("user_messages", [])
+    if not isinstance(msgs, list):
+        msgs = []
     friction = llm_info.get("key_friction_points", [])
 
     avg_len = sum(len(m) for m in msgs) / max(len(msgs), 1)
@@ -147,21 +149,37 @@ _SYSTEM_PROMPT = """\
 You are role-playing as a human user collaborating with an AI coding agent.
 
 You have:
-1. **Your persona** (above) — who you are, how you talk, what sets you off.
-2. **The task** — what you originally wanted done.
-3. **Ground-truth messages** — the real user's interatctions from the recorded session.
+1. **Your persona** — who you are, how you talk, what sets you off.
+2. **Session analysis** — a detailed breakdown of the original session showing
+   when you spoke, why, and what triggered each intervention.
+3. **Ground-truth messages** — the real user's messages from the recorded session.
 4. **The agent's live trajectory** — what it's been doing right now.
 
 ## When to act
 
-Your ground-truth messages show when and why you actually spoke up. Use them
-as your primary guide for timing and content. Most turns you say nothing.
+You MUST actively intervene when:
+- The agent contradicts your premise or misunderstands the task
+- The agent spends too long exploring/planning without writing code
+- The agent asks you for information it could find itself
+- The agent is about to go down the wrong path
+- You have ground-truth messages remaining that match the current situation
+- The agent tries to finish but hasn't addressed all requirements
+
+Study the session analysis carefully — it shows EXACTLY when the real user
+stepped in and why. Reproduce those intervention patterns. You should send
+at least one message every 5-8 turns if the agent hasn't completed the task.
+
+Do NOT just wait silently. Real users are impatient and opinionated.
 
 ## How to write
 
-- Match the persona's tone, vocabulary, and typo habits.
-- Be direct — real users don't write paragraphs.
-- Reference context naturally: "wait, why did you..." not "I observe that..."
+- Be terse. 1-2 sentences max. Real users don't write paragraphs.
+- Use casual language: "wait", "no", "hmm", "can you also..."
+- Make typos occasionally. Don't be polished.
+- Never describe your own reasoning or plans — you're a user, not an agent.
+- Reference what you see: "wait, why did you..." not "I observe that..."
+- The `content` parameter must be plain text only — exactly what you'd type in a chat.
+  NEVER put JSON, code fences, or tool schemas inside content.
 """
 
 
@@ -174,13 +192,17 @@ class UserAgent:
     UserDecision: wait (do nothing) or one of the message actions.
     """
 
-    def __init__(self, llm, original_user_messages=None, persona=None):
+    def __init__(self, llm, original_user_messages=None, persona=None, session_analysis=""):
         self._llm = llm
         self._ground_truth = original_user_messages or []
         self._persona = persona or UserPersona()
         self._cursor = 0  # index into _ground_truth
 
-        self._sys = self._persona.render() + "\n\n" + _SYSTEM_PROMPT
+        parts = [self._persona.render()]
+        if session_analysis:
+            parts.append(f"\n## Session Analysis\n{session_analysis}")
+        parts.append(f"\n{_SYSTEM_PROMPT}")
+        self._sys = "\n".join(parts)
 
         # counters
         self.total_calls = 0
@@ -274,7 +296,9 @@ class UserAgent:
             f"{len(self._ground_truth) - self._cursor} ground-truth remaining"
         )
         sections.append(
-            "\nPick ONE tool. `wait` unless you'd genuinely step in here."
+            "\nPick ONE tool. Check the session analysis — would the real user "
+            "have spoken up by now? If you have ground-truth messages left and "
+            "the situation matches, send one."
         )
         return "\n".join(sections)
 

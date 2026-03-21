@@ -8,6 +8,7 @@ dependencies = [
     "litellm>=1.82.4",
     "pyyaml>=6.0.3",
     "harbor",
+    "python-dotenv>=1.2.2",
 ]
 
 [tool.uv]

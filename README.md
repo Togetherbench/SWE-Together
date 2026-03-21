@@ -116,17 +116,23 @@ OPENROUTER_API_KEY=<key> uv run python src/runner.py \
 
 ### Viewing Traces
 
-Harbor includes a web UI for browsing agent trajectories and user decisions:
+We patch Harbor's viewer to reconstruct full trajectories from Terminus2's per-episode files (`prompt.txt`, `response.txt`, `user_decision.json`). This shows agent reasoning, bash commands, terminal output, and user simulator interventions in the Trajectory tab.
 
 ```bash
-# Start the viewer (opens at http://127.0.0.1:8080)
-harbor view trials/
-
-# Custom port
-harbor view trials/ --port 9000
+# Start the patched viewer (must use local venv, not global harbor CLI)
+.venv/bin/python -c "
+import uvicorn
+from harbor.viewer import create_app
+from pathlib import Path
+app = create_app(
+    jobs_dir=Path('.'),
+    static_dir=Path('external/harbor/src/harbor/viewer/static'),
+)
+uvicorn.run(app, host='127.0.0.1', port=8080)
+"
 ```
 
-Requires `harbor` to be installed globally (`uv tool install harbor`). The viewer ships with pre-built static files.
+Open http://127.0.0.1:8080 → **trials** → pick a trial → **Trajectory** tab.
 
 You can also export traces to Hugging Face Datasets format:
 
