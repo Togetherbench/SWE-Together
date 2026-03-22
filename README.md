@@ -134,6 +134,8 @@ uvicorn.run(app, host='127.0.0.1', port=8080)
 
 Open http://127.0.0.1:8080 → **trials** → pick a trial → **Trajectory** tab.
 
+**Hosted viewer** (no local setup needed): https://joyful-peace-production.up.railway.app/jobs/trials
+
 You can also export traces to Hugging Face Datasets format:
 
 ```bash
@@ -159,6 +161,31 @@ trials/desloppify__rDwLgZ3/
     ├── test-stdout.txt             # test.sh stdout
     └── reward.txt                  # Final score (0.0–1.0)
 ```
+
+---
+
+## User Simulator Findings
+
+The simulated user is driven by an LLM that reads `analysis.md` (session analysis with calibration data and enriched user turns) and decides when to intervene. Key design decisions:
+
+- **instruction.md = first user turn, verbatim** — the agent starts with exactly what the real user typed
+- **analysis.md = simulator prompt** — describes user behavior (not character), with exact message counts and silence gaps
+- **Silence is the default** — real users give instructions once then wait 10-100+ turns
+
+### User simulator calibration results (Opus 4.6)
+
+| Task | Sim msgs | Real msgs | Ratio | Voice quality |
+|------|----------|-----------|-------|---------------|
+| desloppify-review-fixes | 6 | 5 | 1.2x | Near-perfect match |
+| comfyui-fp8-newbie | 6 | 2 | 3x | Good, on-topic |
+| desloppify-go-plugin | 16 | 2 | 8x | Natural but over-chatty |
+
+Before calibration, the simulator sent 39-55 messages per session (11-27x the real user). The fix involved:
+1. **Bug fix**: Harbor's LiteLLM wrapper was dropping `tool_calls`, causing analyst-voice output
+2. **analysis.md calibration**: Added message counts, silence gaps, and enriched user turns with context
+3. **Prompt tuning**: "Default to no-op, say it once, never repeat"
+
+See [PR #11](https://github.com/findalexli/multi-user-turn-codebench/pull/11) for before/after traces.
 
 ---
 
