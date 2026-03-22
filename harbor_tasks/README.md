@@ -14,6 +14,9 @@ Benchmark tasks derived from real multi-turn coding sessions. Each task has a Do
 | `desloppify-zone-classification` | `8706443a` | peteromallet/desloppify | 14 | Completed | hard | Implement complete zone classification system (6 components) |
 | `unsloth-idefics3-fix` | `a6fe6467` | unslothai/unsloth | 23 | Incomplete | hard | Add Idefics3 VLM support — hit unsloth_zoo hook compatibility bug |
 | `desloppify-treesitter-plugins` | `7402f7a5` | peteromallet/desloppify | 11 | Partial | hard | Make generic language plugins first-class citizens + tree-sitter integration |
+| `vibecomfy-mcp-server` | `97c34bb6` | peteromallet/VibeComfy | 50 | Completed | hard | Integrate MCP server for ComfyUI node discovery |
+| `unsloth-zoo-vllm-fix` | `bc295ce4` | unslothai/unsloth-zoo | 39 | Completed | medium | Fix UnboundLocalError in vllm_utils for LFM2/Mamba hybrid models |
+| `mlx-lm-mambacache` | `dae75777` | ml-explore/mlx-lm | 15 | Completed | hard | Add MambaCache batching support for batch_generate |
 
 ### Status definitions
 
@@ -29,16 +32,45 @@ Benchmark tasks derived from real multi-turn coding sessions. Each task has a Do
 | `desloppify-review-fixes` | done | done | done | done | done |
 | `desloppify-go-plugin` | done | done | done | done | done |
 | `comfyui-fp8-newbie` | done | done | done | done | done |
-| `desloppify-zone-classification` | done | done | todo | todo | todo |
-| `unsloth-idefics3-fix` | done | done | todo | todo | todo |
-| `desloppify-treesitter-plugins` | done | done | todo | todo | todo |
+| `desloppify-zone-classification` | done | done | PR #14 | PR #14 | PR #14 |
+| `unsloth-idefics3-fix` | done | done | PR #13 | PR #13 | PR #13 |
+| `desloppify-treesitter-plugins` | done | done | PR #12 | PR #12 | PR #12 |
+| `vibecomfy-mcp-server` | done | done | PR #15 | PR #15 | PR #15 |
+| `unsloth-zoo-vllm-fix` | done | done | PR #16 | PR #16 | PR #16 |
+| `mlx-lm-mambacache` | done | done | PR #17 | PR #17 | PR #17 |
+
+### E2E Results (Opus 4.6, minimal instruction)
+
+| Task | Reward | Sim msgs | Real msgs |
+|------|--------|----------|-----------|
+| desloppify-review-fixes | **1.00** | 6 | 5 |
+| desloppify-go-plugin | **1.00** | 16 | 2 |
+| comfyui-fp8-newbie | **1.00** | 6 | 2 |
+| desloppify-treesitter-plugins | **0.75** | 5 | 11 |
+| desloppify-zone-classification | **0.55** | 5 | 14 |
+| unsloth-idefics3-fix | 0.00 | 3 | 23 |
+| vibecomfy-mcp-server | 0.30 | 26 | 50 |
+| unsloth-zoo-vllm-fix | **1.00** | 15 | 39 |
+| mlx-lm-mambacache | **1.00** | 4 | 15 |
+
+### Dataset exhaustion
+
+All 133 sessions from the DataClaw corpus have been evaluated. The 9 tasks above represent the complete viable yield:
+- 23 desloppify sessions → 5 tasks (capped for diversity)
+- 25 private-project sessions → 0 tasks (repos not public)
+- 25 sessions with <3 user messages → 0 tasks
+- 16 sessions with no code modifications → 0 tasks
+- Remaining → rejected for GPU requirements, local forks, or rebase tasks
 
 ### Rejected candidates
 
 | Session | Repo | Msgs | Reason |
 |---------|------|------|--------|
-| `a48813b3` | radix-ui/primitives | 25 | Main repo (banodoco/Reigh) is private; needs physical iPad testing |
-| `fd44efbf` | mattdesl/gifenc | 22 | Main repo (banodoco/Reigh) is private; gifenc is just a dependency |
+| `a48813b3` | radix-ui/primitives | 25 | Main repo (banodoco/Reigh) is private |
+| `fd44efbf` | mattdesl/gifenc | 22 | Main repo (banodoco/Reigh) is private |
+| `ses_37751` | woct0rdho/triton-windows | 10 | Rebase conflict resolution — not reproducible in Docker |
+| `0c813ccf` | thu-ml/SageAttention | 10 | Rebase task — not reproducible |
+| 3 desloppify sessions | peteromallet/desloppify | 13-18 | Diversity cap (5 already) |
 
 ## How to run
 
