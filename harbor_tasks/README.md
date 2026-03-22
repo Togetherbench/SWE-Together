@@ -78,15 +78,39 @@ All 133 sessions from the DataClaw corpus have been evaluated. The 9 tasks above
 # Single-turn (agent only)
 harbor run -p harbor_tasks/<task> -a claude-code -m claude-opus-4-6 -n 1
 
-# Multi-turn (with simulated user)
+# Multi-turn (with simulated user) — run + auto-publish traces to Railway
+python scripts/run_and_publish.py --task <task>
+
+# Run with specific models
+python scripts/run_and_publish.py --task <task> \
+    --model anthropic/claude-opus-4-6 --user-model anthropic/claude-opus-4-6
+
+# Just publish existing traces (skip trial)
+python scripts/run_and_publish.py --task <task> --publish-only
+
+# Low-level: run trial only (no auto-publish)
 .venv/bin/python src/runner.py --config src/config.yaml --task <task>
 ```
 
+`run_and_publish.py` runs the full pipeline: trial → convert original session → sanitize API keys → upload to Railway S3 → print viewer links. Requires `BUCKET_*` env vars in `.env`.
+
+## Reusable commands
+
+| Command | Description |
+|---------|-------------|
+| `/screen-session <id>` | Evaluate if a DataClaw session can become a task |
+| `/extract-analysis-md` | Create analysis.md (simulator prompt) from session |
+| `/write-tests` | Write gaming-resistant test.sh (3-tier scoring) |
+| `/audit-tests <task>` | Review test reliability (5-question framework) |
+| `/create-task-pr` | Standard PR format with trace links |
+
 ## How to add a new task
 
-1. Find a session in `session_collection/session_analysis.md` with harbor score >= 0.5 and 5+ user messages
-2. Run `/extract-analysis-md` prompt or manually create analysis.md following `.claude/prompts/extract-analysis-md.md`
+1. Screen a session: `/screen-session <session-id>` (checks public repo, CPU-reproducible, 3+ msgs)
+2. Create analysis.md: `/extract-analysis-md` (behavioral playbook, not character sketch)
 3. Create task directory under `harbor_tasks/` with analysis.md, instruction.md, original_session.json
-4. Build Dockerfile, synthesize buggy state, write test.sh
-5. Validate: Docker builds, buggy baseline scores > 0, agent run scores > baseline
-6. Update this README
+4. Build Dockerfile, synthesize buggy state
+5. Write tests: `/write-tests <task>` (≥60% behavioral, ≤40% structural)
+6. Audit tests: `/audit-tests <task>` (target gaming score ≤0.30)
+7. Run e2e: `python scripts/run_and_publish.py --task <task>`
+8. Update this README
