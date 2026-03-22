@@ -103,18 +103,30 @@ def _build_trajectory_from_episodes(
             decision = {}
 
         # Prompt step (observation/terminal output the agent received)
+        # Skip if it echoes the previous episode's user sim message
         if prompt_path.exists():
             prompt_text = prompt_path.read_text()
-            # Truncate very long prompts for display
-            if len(prompt_text) > 10000:
-                prompt_text = prompt_text[:10000] + "\n... (truncated)"
-            steps.append({
-                "step_id": step_id,
-                "timestamp": timestamp,
-                "source": "user",
-                "message": prompt_text,
-            })
-            step_id += 1
+            is_echo = False
+            prev_ep = int(ep_dir.name.split("-")[1]) - 1
+            prev_dec_path = ep_dir.parent / f"episode-{prev_ep}" / "user_decision.json"
+            if prev_dec_path.exists():
+                try:
+                    prev_dec = json.loads(prev_dec_path.read_text())
+                    if prev_dec.get("has_message") and prev_dec.get("content"):
+                        if prompt_text.strip().startswith(prev_dec["content"].strip()[:80]):
+                            is_echo = True
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if not is_echo:
+                if len(prompt_text) > 10000:
+                    prompt_text = prompt_text[:10000] + "\n... (truncated)"
+                steps.append({
+                    "step_id": step_id,
+                    "timestamp": timestamp,
+                    "source": "tool_output",
+                    "message": prompt_text,
+                })
+                step_id += 1
 
         # Agent response step
         if response_path.exists():
@@ -912,7 +924,10 @@ def create_app(jobs_dir: Path, static_dir: Path | None = None) -> FastAPI:
         # Build list of trial summaries with filtering
         all_summaries = []
         for name in trial_names:
-            result = scanner.get_trial_result(job_name, name)
+            try:
+                result = scanner.get_trial_result(job_name, name)
+            except Exception:
+                continue
             if not result:
                 continue
 

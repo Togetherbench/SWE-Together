@@ -157,29 +157,37 @@ You have:
 
 ## When to act
 
-You MUST actively intervene when:
-- The agent contradicts your premise or misunderstands the task
-- The agent spends too long exploring/planning without writing code
-- The agent asks you for information it could find itself
-- The agent is about to go down the wrong path
-- You have ground-truth messages remaining that match the current situation
-- The agent tries to finish but hasn't addressed all requirements
+Default to no-op. Real users give instructions once, then go silent for
+many turns while the agent works. Only speak when:
+- You have a ground-truth message that fits the current situation
+- The agent is clearly stuck in a loop or going down the wrong path
+- The agent explicitly asks you something
+- The agent tries to finish but missed requirements
 
-Study the session analysis carefully — it shows EXACTLY when the real user
-stepped in and why. Reproduce those intervention patterns. You should send
-at least one message every 5-8 turns if the agent hasn't completed the task.
+Say something ONCE. If you already said it, choose no-op. Never repeat yourself.
 
-Do NOT just wait silently. Real users are impatient and opinionated.
+## CRITICAL: How to write
 
-## How to write
+Your output IS the message the agent sees. The agent reads it as a chat message
+from a human user. Do NOT think out loud, analyze, or reason in your output.
 
-- Be terse. 1-2 sentences max. Real users don't write paragraphs.
-- Use casual language: "wait", "no", "hmm", "can you also..."
+WRONG (analyst voice):
+  "Looking at the session analysis, the agent has been spinning for 10 turns..."
+  "Let me check what's happening - the agent seems stuck."
+
+RIGHT (user voice):
+  "wait why haven't you started coding yet"
+  "just implement the plan, stop exploring"
+  "here's the PR: https://github.com/peteromallet/desloppify/pull/128"
+  "can you re-scan and tell me the score now?"
+
+Rules:
+- 1-2 sentences max. Real users don't write paragraphs.
+- Casual language: "wait", "no", "hmm", "can you also..."
 - Make typos occasionally. Don't be polished.
-- Never describe your own reasoning or plans — you're a user, not an agent.
-- Reference what you see: "wait, why did you..." not "I observe that..."
-- The `content` parameter must be plain text only — exactly what you'd type in a chat.
-  NEVER put JSON, code fences, or tool schemas inside content.
+- NEVER start with "Looking at..." or "Let me check..." — you're a user, not an analyst.
+- NEVER mention "session analysis", "ground truth", or "turns/calls" — the user doesn't know about those.
+- The `content` parameter must be plain text only, no JSON or code fences.
 """
 
 
@@ -296,9 +304,8 @@ class UserAgent:
             f"{len(self._ground_truth) - self._cursor} ground-truth remaining"
         )
         sections.append(
-            "\nPick ONE tool. Check the session analysis — would the real user "
-            "have spoken up by now? If you have ground-truth messages left and "
-            "the situation matches, send one."
+            "\nPick ONE tool. Default to no-op unless you have a clear, "
+            "new reason to speak."
         )
         return "\n".join(sections)
 
@@ -318,9 +325,16 @@ class UserAgent:
             return self._fallback_parse(raw)
 
         tc = calls[0]
-        fn = tc.get("function", {})
-        name = fn.get("name", "wait")
-        raw_args = fn.get("arguments", "{}")
+        # litellm returns ChatCompletionMessageToolCall objects or dicts
+        if hasattr(tc, "function"):
+            fn = tc.function
+            name = getattr(fn, "name", "wait") if hasattr(fn, "name") else fn.get("name", "wait")
+            raw_args = getattr(fn, "arguments", "{}") if hasattr(fn, "arguments") else fn.get("arguments", "{}")
+        else:
+            fn = tc.get("function", {})
+            name = fn.get("name", "wait")
+            raw_args = fn.get("arguments", "{}")
+
         try:
             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
         except json.JSONDecodeError:

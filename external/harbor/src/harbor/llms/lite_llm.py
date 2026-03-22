@@ -414,6 +414,7 @@ class LiteLLM(BaseLLM):
         message = choice["message"]
         content = message.get("content") or ""
         reasoning_content = message.get("reasoning_content")
+        tool_calls = message.get("tool_calls")
 
         # Sometimes the LLM returns a response with a finish reason of "length"
         # This typically means we hit the max_tokens limit, not the context window
@@ -431,6 +432,7 @@ class LiteLLM(BaseLLM):
             reasoning_content=reasoning_content,
             model_name=response.get("model"),
             usage=usage_info,
+            tool_calls=tool_calls,
             prompt_token_ids=prompt_token_ids,
             completion_token_ids=completion_token_ids,
             logprobs=logprobs,
