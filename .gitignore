@@ -5,3 +5,7 @@ jobs/
 .env
 trials/
 __pycache__/
+session_collection/sessions_raw/
+session_collection/hf_traces/
+session_collection/new_dataclaw/all_sessions.json
+session_collection/new_dataclaw/all_screened.json
