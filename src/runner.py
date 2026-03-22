@@ -247,6 +247,43 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         print(f"  error  : {result.exception_info.exception_type}: {result.exception_info.exception_message}")
     print("=" * 60)
 
+    # Auto-upload traces to Railway S3 if credentials available
+    _auto_upload_traces()
+
+
+def _auto_upload_traces():
+    """Sanitize and upload traces to Railway S3 if bucket credentials are set."""
+    bucket = os.environ.get("BUCKET_NAME", "")
+    endpoint = os.environ.get("BUCKET_ENDPOINT", "")
+    access_key = os.environ.get("BUCKET_ACCESS_KEY", "")
+    secret_key = os.environ.get("BUCKET_SECRET_KEY", "")
+
+    if not all([bucket, endpoint, access_key, secret_key]):
+        log.info("Skipping auto-upload: BUCKET_* env vars not set")
+        return
+
+    scripts_dir = REPO_ROOT / "scripts"
+    sanitize_script = scripts_dir / "sanitize_traces.py"
+    upload_script = scripts_dir / "upload_traces.py"
+
+    if not sanitize_script.exists() or not upload_script.exists():
+        log.info("Skipping auto-upload: sanitize/upload scripts not found")
+        return
+
+    log.info("Auto-uploading traces to Railway S3...")
+    try:
+        subprocess.run(
+            [sys.executable, str(sanitize_script)],
+            cwd=str(REPO_ROOT), timeout=60, check=False,
+        )
+        subprocess.run(
+            [sys.executable, str(upload_script)],
+            cwd=str(REPO_ROOT), timeout=300, check=False,
+        )
+        log.info("Traces uploaded successfully")
+    except Exception as e:
+        log.warning("Auto-upload failed (non-fatal): %s", e)
+
 
 def discover_tasks_from_env_path(env_path: str) -> list[tuple[str, Path]]:
     """Discover all tasks from docker tar files in env_path.
