@@ -149,13 +149,25 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
     if not session_path.exists():
         return []
 
+    # Prefixes that mark Claude Code system/tooling messages, not genuine user turns
+    _SYSTEM_PREFIXES = (
+        "[Request interrupted",
+        "<local-command-caveat>",
+        "<command-name>",
+        "<command-message>",
+        "<command-args>",
+        "<local-command-stdout>",
+        "<task-",
+        "Base directory",
+    )
+
     session = json.loads(session_path.read_text())
     return [
         msg.get("content", "")
         for msg in session.get("messages", [])
         if msg.get("role") == "user"
         and isinstance(msg.get("content"), str)
-        and not msg["content"].startswith("[Request interrupted")
+        and not msg["content"].startswith(_SYSTEM_PREFIXES)
     ]
 
 
