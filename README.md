@@ -59,6 +59,7 @@ The benchmark assumes a Platonic ideal solver. Real users are embedded in a corr
 | `desloppify-go-plugin` | `96345f53` | Upgrade Go plugin from generic to full class-based implementation (PR #128 recovery) | **0.85** |
 | `vllm-pr-review` | `bc295ce4` | PR review, debugging 3 bug categories, and collaboration | **0.64** |
 | `comfyui-fp8-newbie` | `c53e4e72` | Add fp8 quantized Gemma support to NewBie dual CLIP encoder | **1.00** |
+| `desloppify-add-019c66` | `019c6645` | Write ADDING_NEW_LANGUAGE.md + unify scoring model (28 user msgs) | **0.30** (timed out) |
 
 #### Running tasks with Harbor
 
@@ -179,6 +180,7 @@ The simulated user is driven by an LLM that reads `analysis.md` (session analysi
 | desloppify-review-fixes | 6 | 5 | 1.2x | Near-perfect match |
 | comfyui-fp8-newbie | 6 | 2 | 3x | Good, on-topic |
 | desloppify-go-plugin | 16 | 2 | 8x | Natural but over-chatty |
+| desloppify-add-019c66 | 5 | 28 | 0.18x | Faithful early msgs, timed out before scoring phase |
 
 Before calibration, the simulator sent 39-55 messages per session (11-27x the real user). The fix involved:
 1. **Bug fix**: Harbor's LiteLLM wrapper was dropping `tool_calls`, causing analyst-voice output
