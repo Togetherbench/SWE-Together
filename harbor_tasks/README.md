@@ -2,7 +2,7 @@
 
 Benchmark tasks derived from real multi-turn coding sessions. Each task has a Docker environment, instructions, and automated verification.
 
-**Live trace viewer**: https://joyful-peace-production.up.railway.app/jobs/trials
+**Live trace viewer**: https://together.lishengzhi.com/jobs/trials
 
 ## Task Registry
 

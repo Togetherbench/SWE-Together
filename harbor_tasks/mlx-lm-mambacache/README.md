@@ -40,5 +40,5 @@ Not yet hardened -- reward of 1.00 with low sim/real ratio (0.27x) suggests the 
 
 ## Traces
 
-- [Simulated run (Opus)](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/mlx-lm-mambacache/trials/mlx-lm-mambacache__x8b7NPg)
-- [Original session](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/original-session/original-session/original/claude-opus-4-5-20251101/mlx-lm-mambacache/trials/mlx-lm-mambacache__original)
+- [Simulated run (Opus)](https://together.lishengzhi.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/mlx-lm-mambacache/trials/mlx-lm-mambacache__x8b7NPg)
+- [Original session](https://together.lishengzhi.com/jobs/trials/tasks/original-session/original-session/original/claude-opus-4-5-20251101/mlx-lm-mambacache/trials/mlx-lm-mambacache__original)

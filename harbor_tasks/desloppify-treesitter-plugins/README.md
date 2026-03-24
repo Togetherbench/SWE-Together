@@ -43,5 +43,5 @@ Partial credit at 0.75 -- agent completed the generic plugin registration but mi
 
 ## Traces
 
-- [Simulated run (Opus)](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/desloppify-treesitter-plugins/trials/desloppify-treesitter-plugins__XxABMYf)
-- [Original session](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/original-session/original-session/original/claude-opus-4-6/desloppify-treesitter-plugins/trials/desloppify-treesitter-plugins__original)
+- [Simulated run (Opus)](https://together.lishengzhi.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/desloppify-treesitter-plugins/trials/desloppify-treesitter-plugins__XxABMYf)
+- [Original session](https://together.lishengzhi.com/jobs/trials/tasks/original-session/original-session/original/claude-opus-4-6/desloppify-treesitter-plugins/trials/desloppify-treesitter-plugins__original)

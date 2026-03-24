@@ -44,5 +44,5 @@ Reward of 0.00 -- agent failed to implement the dequantization functions correct
 
 ## Traces
 
-- [Simulated run (Opus)](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/qwen3-moe-gguf-dequant/trials/qwen3-moe-gguf-dequant__jcig6VG)
+- [Simulated run (Opus)](https://together.lishengzhi.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/qwen3-moe-gguf-dequant/trials/qwen3-moe-gguf-dequant__jcig6VG)
 - Original session: not uploaded (original model was gemini-3-pro-preview)

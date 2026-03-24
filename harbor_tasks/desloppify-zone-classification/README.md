@@ -42,5 +42,5 @@ Partial credit at 0.55 -- agent implemented some zone classification components 
 
 ## Traces
 
-- [Simulated run (Opus)](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/desloppify-zone-classification/trials/desloppify-zone-classification__oGMz23K)
-- [Original session](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/original-session/original-session/original/claude-opus-4-6/desloppify-zone-classification/trials/desloppify-zone-classification__original)
+- [Simulated run (Opus)](https://together.lishengzhi.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/desloppify-zone-classification/trials/desloppify-zone-classification__oGMz23K)
+- [Original session](https://together.lishengzhi.com/jobs/trials/tasks/original-session/original-session/original/claude-opus-4-6/desloppify-zone-classification/trials/desloppify-zone-classification__original)
