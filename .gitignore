@@ -9,3 +9,7 @@ session_collection/sessions_raw/
 session_collection/hf_traces/
 session_collection/new_dataclaw/all_sessions.json
 session_collection/new_dataclaw/all_screened.json
+session_collection/pipeline_logs/*.json
+!session_collection/pipeline_logs/all_prs.json
+session_collection/eval_logs/
+session_collection/update_logs/
