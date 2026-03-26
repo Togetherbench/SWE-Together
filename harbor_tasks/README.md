@@ -2,7 +2,7 @@
 
 Benchmark tasks derived from real multi-turn coding sessions. Each task has a Docker environment, instructions, and automated verification.
 
-**Live trace viewer**: https://together.lishengzhi.com/jobs/trials
+**Live trace viewer**: https://traces.togetherbench.com/jobs/trials
 
 ## Task Registry
 

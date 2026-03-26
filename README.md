@@ -135,7 +135,7 @@ uvicorn.run(app, host='127.0.0.1', port=8080)
 
 Open http://127.0.0.1:8080 → **trials** → pick a trial → **Trajectory** tab.
 
-**Hosted viewer** (no local setup needed): https://together.lishengzhi.com/jobs/trials
+**Hosted viewer** (no local setup needed): https://traces.togetherbench.com/jobs/trials
 
 You can also export traces to Hugging Face Datasets format:
 
