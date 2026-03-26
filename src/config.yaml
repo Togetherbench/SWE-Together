@@ -5,7 +5,7 @@
 # If task is not specified, runner will execute all docker images found here
 env_path: harbor_tasks/docker_images
 
-task: desloppify-review-fixes
+task: dataclaw-add-8d7f4a
 
 # Provider/model-name examples:
 #   gemini/gemini-3.1-pro-preview
