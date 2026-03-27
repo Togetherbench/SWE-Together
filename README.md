@@ -49,7 +49,7 @@ The benchmark assumes a Platonic ideal solver. Real users are embedded in a corr
 
 ### 3. Harbor Benchmark Tasks
 
-4 sessions converted to [Harbor](https://github.com/laude-institute/harbor) (TerminalBench harness) format with Docker environments, instructions, and test scripts:
+5 sessions converted to [Harbor](https://github.com/laude-institute/harbor) (TerminalBench harness) format with Docker environments, instructions, and test scripts:
 
 | Task | Source Session | Description | Opus Score |
 |------|---------------|-------------|------------|
@@ -57,6 +57,7 @@ The benchmark assumes a Platonic ideal solver. Real users are embedded in a corr
 | `desloppify` | `5b7dfc2a` | Parallel review orchestration to improve code quality score | **0.85** (timed out) |
 | `vllm-pr-review` | `bc295ce4` | PR review, debugging 3 bug categories, and collaboration | **0.64** |
 | `comfyui-fp8-newbie` | `c53e4e72` | Add fp8 quantized Gemma support to NewBie dual CLIP encoder | **1.00** |
+| `banodoco-add-4e0336` | `4e03369c` | Integrate banodoco-wrapped as /1m page + homepage milestone popup (9 sim msgs) | **0.85** |
 
 #### Running tasks with Harbor
 
