@@ -1,0 +1,1 @@
+I would like to investigate whether we can finetune granite docling vlm model with Unsloth, and if not then we should research, investigate and lay out plan to implement this. This should cover all the offering of Unsloth as much as possible (like SFT, DPO, GRPO, etc.)
