@@ -5,6 +5,36 @@ from typing import Any, Dict, List, Tuple
 from litellm import Message
 
 
+def _sanitize_empty_text_blocks(messages: List[Dict[str, Any] | Message]) -> List[Dict[str, Any] | Message]:
+    """Remove empty text content blocks from messages (Anthropic rejects them)."""
+    for msg in messages:
+        if isinstance(msg, dict):
+            content = msg.get("content")
+            if isinstance(content, list):
+                msg["content"] = [
+                    item for item in content
+                    if not (isinstance(item, dict) and item.get("type") == "text"
+                            and not item.get("text", "").strip())
+                ]
+                # If content list is now empty, add a placeholder
+                if not msg["content"]:
+                    msg["content"] = [{"type": "text", "text": " "}]
+            elif isinstance(content, str) and not content.strip():
+                msg["content"] = " "
+        elif hasattr(msg, "content"):
+            if isinstance(msg.content, list):
+                msg.content = [  # type: ignore
+                    item for item in msg.content
+                    if not (isinstance(item, dict) and item.get("type") == "text"
+                            and not item.get("text", "").strip())
+                ]
+                if not msg.content:
+                    msg.content = [{"type": "text", "text": " "}]  # type: ignore
+            elif isinstance(msg.content, str) and not msg.content.strip():
+                msg.content = " "  # type: ignore
+    return messages
+
+
 def add_anthropic_caching(
     messages: List[Dict[str, Any] | Message], model_name: str
 ) -> List[Dict[str, Any] | Message]:
@@ -25,6 +55,9 @@ def add_anthropic_caching(
     # Create a deep copy to avoid modifying the original messages
     cached_messages = copy.deepcopy(messages)
 
+    # Sanitize empty text blocks before adding caching
+    cached_messages = _sanitize_empty_text_blocks(cached_messages)
+
     # Add cache_control to the most recent 3 messages
     for n in range(len(cached_messages)):
         if n >= len(cached_messages) - 3:
@@ -34,30 +67,36 @@ def add_anthropic_caching(
             if isinstance(msg, dict):
                 # Ensure content is in the expected format
                 if isinstance(msg.get("content"), str):
-                    msg["content"] = [
-                        {
-                            "type": "text",
-                            "text": msg["content"],
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ]
+                    if msg["content"].strip():
+                        msg["content"] = [
+                            {
+                                "type": "text",
+                                "text": msg["content"],
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ]
                 elif isinstance(msg.get("content"), list):
-                    # Add cache_control to each content item
+                    # Add cache_control to each content item (skip empty text blocks)
                     for content_item in msg["content"]:
                         if isinstance(content_item, dict) and "type" in content_item:
+                            if content_item.get("type") == "text" and not content_item.get("text", "").strip():
+                                continue
                             content_item["cache_control"] = {"type": "ephemeral"}
             elif hasattr(msg, "content"):
                 if isinstance(msg.content, str):
-                    msg.content = [  # type: ignore
-                        {
-                            "type": "text",
-                            "text": msg.content,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ]
+                    if msg.content.strip():
+                        msg.content = [  # type: ignore
+                            {
+                                "type": "text",
+                                "text": msg.content,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ]
                 elif isinstance(msg.content, list):
                     for content_item in msg.content:
                         if isinstance(content_item, dict) and "type" in content_item:
+                            if content_item.get("type") == "text" and not content_item.get("text", "").strip():
+                                continue
                             content_item["cache_control"] = {"type": "ephemeral"}
 
     return cached_messages

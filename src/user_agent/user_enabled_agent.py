@@ -15,7 +15,7 @@ from typing import Any
 from harbor.agents.terminus_2.terminus_2 import Terminus2, Command
 from harbor.llms.lite_llm import LiteLLM
 
-from .user_agent import UserAgent, UserDecision, UserPersona
+from .user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
 
@@ -47,8 +47,8 @@ class UserEnabledTerminus2(Terminus2):
         user_temperature: float = 0.5,
         user_context_chars: int = 2000,
         original_user_messages: list[str] | None = None,
-        user_persona: UserPersona | None = None,
         session_analysis: str = "",
+        max_messages: int | None = None,
         call_user_on_completion: bool = True,
         **kwargs,
     ):
@@ -62,8 +62,8 @@ class UserEnabledTerminus2(Terminus2):
                 temperature=user_temperature,
             ),
             original_user_messages=original_user_messages,
-            persona=user_persona,
             session_analysis=session_analysis,
+            max_messages=max_messages,
         )
         self._ctx_budget = max(500, user_context_chars)
         self._check_on_completion = call_user_on_completion

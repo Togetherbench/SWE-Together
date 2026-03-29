@@ -1,4 +1,4 @@
-# Task: triton-fix-ses_39
+# Task: triton-msvc-c4267-warnings
 
 | Field | Value |
 |-------|-------|
@@ -14,8 +14,9 @@
 - Total real user messages: 3 in 16 total turns. Silence is the default.
 - Longest silence: 9 agent message blocks (after the initial error paste)
 - Turn 1: User pastes large MSVC build failure for WarpSpecializeUtility.cpp (C4267 narrowing error)
-- Turn 2 (after 9 agent turns): Asks "What's the signature of op->getResult ?" — informational follow-up, no code change
-- Turn 3 (after 1 agent turn): Provides hint "You may check C:\llvm-project\" for local LLVM headers — informational, no code change
+- Turn 1b (conditional): Vague redirect "are you sure you got all the narrowing sites?" if agent declares done with only one fix
+- Turn 2 (post-fix): Asks "What's the signature of op->getResult?" — only after BOTH bugs fixed
+- Turn 3 (post-fix): Shortcut "don't waste time searching for headers" — only if agent searches for LLVM headers
 
 ## Task Description
 
@@ -26,26 +27,29 @@ Fix two `size_t` → `unsigned` narrowing conversion errors (MSVC C4267, treated
 
 The fix adds explicit `static_cast<unsigned>` (or equivalent) at both sites.
 
-## E2E Eval Results
-
-| Run | Model | Reward | Sim msgs | Notes |
-|-----|-------|--------|----------|-------|
-| triton-fix-ses_39__Suw2ABW | claude-sonnet-4-6 | 1.00 | 2/25 turns | Both fixes applied; sim vague redirect + header shortcut; no answer leakage |
-| triton-fix-ses_39__B8riAmr | claude-sonnet-4-6 | 1.00 | 3/16 turns | Pre-user_simulation_prompt.md fix: sim leaked line numbers in redirect |
-| triton-fix-ses_39__rTiswjc | claude-sonnet-4-6 | 1.00 | 3/40 turns | Initial run: sim grounded in agent behavior |
-
 ## E2E Results
 
 | Metric | Value |
 |--------|-------|
-| Reward | **1.00** |
-| Sim user msgs | 2 |
+| Reward | **0.60** |
+| Sim user msgs | 1 |
 | Real user msgs | 3 |
 | Executor model | claude-sonnet-4-6 |
 | User sim model | claude-opus-4-6 |
 
+## E2E Eval History
+
+| Run | Reward | Sim msgs | Notes |
+|-----|--------|----------|-------|
+| n6c5Npg (latest) | 0.60 | 1/19 turns | Fixed sim prompt + tests: agent found Fix 1, missed Fix 2; sim sent 1 vague redirect, no leakage |
+| qsN4VBx | 0.60 | 1/15 turns | Same result, confirms consistency |
+| m93cZ4b | 1.00 | 3/24 turns | Pre-fix: sim leaked "line 246 - op->getResult(i)" at turn 16 |
+
+### Changes made during E2E evaluation
+- **Tests hardened**: tightened Gold fallback checks to prevent deletion gaming (0.20 → 0.20 for deletion, was 1.00); added call-site cast acceptance for Gold 1
+- **Sim anti-leakage**: added NO ESCALATION rule (Turn 1c), forbidden specifics list, Turn 2/3 can't be repurposed as redirects
+
 ## Traces
 
-- [Simulated run (latest)](https://traces.togetherbench.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/triton-fix-ses_39/trials/triton-fix-ses_39__Suw2ABW)
-- [Simulated run (pre-fix)](https://traces.togetherbench.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/triton-fix-ses_39/trials/triton-fix-ses_39__B8riAmr)
-- [Original session](https://traces.togetherbench.com/jobs/trials/tasks/original-session/original-session/original/original/triton-fix-ses_39/trials/triton-fix-ses_39__original)
+- [Simulated run (latest)](https://traces.togetherbench.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/triton-msvc-c4267-warnings/trials/triton-msvc-c4267-warnings__n6c5Npg)
+- [Original session](https://traces.togetherbench.com/jobs/trials/tasks/original-session/gemini-cli/google/gemini-3-pro-preview/triton-msvc-c4267-warnings/trials/triton-msvc-c4267-warnings__original)

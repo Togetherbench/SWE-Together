@@ -49,21 +49,30 @@ Additional cleanup: remove dead props from `Timeline.tsx` that were never passed
 
 | Trial | Agent | User Sim | Reward | Sim Msgs | Notes |
 |-------|-------|----------|--------|----------|-------|
-| `M8t7eQV` | claude-sonnet-4-6 | claude-opus-4-6 | **0.50** | 4 | Core refactor complete (tests 1-4, 8). Agent checked for unused code in ShotImagesEditor but didn't look at Timeline.tsx for dead props. Sim sent 4 msgs (target 4), stayed in scope. |
+| `fVUVm78` | claude-sonnet-4-6 | claude-opus-4-6 | **0.60** | 2 | Core refactor complete (tests 1-4, 8, 9a). Agent didn't discover dead props independently after user's vague probe. Sim sent 2 prescribed msgs (Turn 2 + Turn 4), no answer giveaway. |
 
 ## Traces
 
-- [Simulated run (Sonnet, M8t7eQV)](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/reigh-refactor-4857fd/trials/reigh-refactor-4857fd__M8t7eQV)
-- [Original session](https://joyful-peace-production.up.railway.app/jobs/trials/tasks/original-session/original-session/original/original/reigh-refactor-4857fd/trials/reigh-refactor-4857fd__original)
+- [Simulated run (Sonnet, fVUVm78)](https://traces.togetherbench.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-opus-4-6/reigh-timeline-mode-cleanup/trials/reigh-timeline-mode-cleanup__fVUVm78)
+- [Original session](https://traces.togetherbench.com/jobs/trials/tasks/original-session/claude-code/anthropic/claude-opus-4-6/reigh-timeline-mode-cleanup/trials/reigh-timeline-mode-cleanup__original)
 
 ## Verification
 
-Tests check (8 checks, 12 total points, PASS/TOTAL ratio):
+Tests (9 checks, 20 total points, with TSC gate):
+
+**Structural (7 pts, 35%):**
 1. `TimelineModeContent.tsx` deleted (1 pt)
 2. Barrel file cleaned (1 pt)
 3. `ShotImagesEditor.tsx` renders `<Timeline>` directly — comment-stripped (1 pt)
 4. Unpositioned generations div inlined into `ShotImagesEditor.tsx` — comment-stripped (1 pt)
-5. `hookData`/`propHookData` removed from `Timeline.tsx` (2 pts — cleanup)
-6. `enhancedPrompts`/`EMPTY_ENHANCED_PROMPTS` removed from `Timeline.tsx` (2 pts — cleanup)
-7. `enhancedPromptFromProps` removed from `TimelineContainer.tsx` — comment-stripped (2 pts — cleanup)
-8. TypeScript compilation passes (`npx tsc --noEmit`) (2 pts — behavioral gate)
+5. `hookData`/`propHookData` removed from `Timeline.tsx` (1 pt)
+6. `enhancedPrompts`/`EMPTY_ENHANCED_PROMPTS` removed from `Timeline.tsx` (1 pt)
+7. `enhancedPromptFromProps` removed from `TimelineContainer.tsx` — comment-stripped (1 pt)
+
+**Behavioral (13 pts, 65%):**
+8. No dangling `TimelineModeContent` imports + `Timeline` properly imported (3 pts)
+9a. TypeScript compilation passes AND core refactoring done (5 pts)
+9b. TypeScript compilation passes AND dead prop cleanup done (5 pts)
+
+**TSC gate:** if `tsc --noEmit` fails, reward capped at 0.25.
+**Max stub score:** 0.25 (gated). **Base state score:** 0.0.

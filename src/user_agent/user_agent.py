@@ -1,12 +1,12 @@
 """LLM-powered user simulator for multi-turn coding evaluations.
 
-Given a task's ground-truth user interaction (from analysis.json), this module
-role-plays as that user: watching the action agent work and deciding when to
-send messages — questions, corrections, or new requirements.
+Role-plays as the original user: watching the action agent work and deciding
+when to send messages — questions, corrections, or new requirements.
 
-The simulator uses tool-calling to produce structured decisions, keeping the
-interface clean for the harness that injects messages into the chat.
+Uses conversation history (accumulated across turns) so the LLM can see what
+it already said. Uses tool-calling for structured decisions.
 """
+from __future__ import annotations
 
 import json
 import logging
@@ -19,15 +19,15 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class UserPersona:
-    """Behavioral profile extracted from the original session's analysis.json.
+    """Behavioral profile for the simulated user.
 
-    Controls how the LLM role-plays: tone, verbosity, characteristic phrases,
-    and known friction points that trigger intervention.
+    Controls how the LLM role-plays: tone, verbosity, and known friction
+    points that trigger intervention. Does NOT include example_phrases
+    (those leaked ground-truth messages and caused repetition).
     """
 
     tone: str = "informal"
     verbosity: str = "terse"
-    example_phrases: list[str] = field(default_factory=list)
     known_triggers: list[str] = field(default_factory=list)
 
     def render(self) -> str:
@@ -37,32 +37,10 @@ class UserPersona:
             f"Tone: {self.tone}. Verbosity: {self.verbosity}.",
             "You frequently make typos and use informal spelling like a human.",
         ]
-        if self.example_phrases:
-            parts.append("\nPhrases you actually said:")
-            parts.extend(f'  - "{p}"' for p in self.example_phrases)
         if self.known_triggers:
             parts.append("\nThings that make you step in:")
             parts.extend(f"  - {t}" for t in self.known_triggers)
         return "\n".join(parts)
-
-
-def build_persona_from_analysis(analysis: dict) -> UserPersona:
-    """Construct a persona from parsed analysis.json contents."""
-    llm_info = analysis.get("llm_analysis", {})
-    msgs = analysis.get("user_messages", [])
-    if not isinstance(msgs, list):
-        msgs = []
-    friction = llm_info.get("key_friction_points", [])
-
-    avg_len = sum(len(m) for m in msgs) / max(len(msgs), 1)
-    verbosity = "terse" if avg_len < 60 else ("medium" if avg_len < 200 else "verbose")
-
-    return UserPersona(
-        tone="informal",
-        verbosity=verbosity,
-        example_phrases=[m for m in msgs if len(m) > 5],
-        known_triggers=friction,
-    )
 
 
 # ── Tool schema ──────────────────────────────────────────────────────────
@@ -135,9 +113,18 @@ class UserDecision:
     content: str = ""
     raw_response: str = ""
 
+    _NO_OP_MARKERS = {
+        "[silent — no-op]", "[no-op]", "[silent]", "no-op", "silent",
+        "(i stayed silent and let the agent keep working.)",
+        "i stayed silent and let the agent keep working.",
+    }
+
     @property
     def has_message(self) -> bool:
-        return self.action != "no-op" and bool(self.content)
+        stripped = self.content.strip() if self.content else ""
+        return (self.action != "no-op"
+                and bool(stripped)
+                and stripped.lower() not in self._NO_OP_MARKERS)
 
     def format_for_injection(self) -> str:
         return self.content
@@ -150,44 +137,35 @@ You are role-playing as a human user collaborating with an AI coding agent.
 
 You have:
 1. **Your persona** — who you are, how you talk, what sets you off.
-2. **Session analysis** — a detailed breakdown of the original session showing
-   when you spoke, why, and what triggered each intervention.
-3. **Ground-truth messages** — the real user's messages from the recorded session.
-4. **The agent's live trajectory** — what it's been doing right now.
+2. **Session analysis** — when you spoke in the original session, why, and what
+   triggered each intervention.
+3. **Conversation history** — you can see everything you and the agent have said
+   so far. Use this to avoid repeating yourself.
 
 ## When to act
 
 Default to no-op. Real users give instructions once, then go silent for
 many turns while the agent works. Only speak when:
-- You have a ground-truth message that fits the current situation
+- The session analysis describes a trigger that matches the current situation
 - The agent is clearly stuck in a loop or going down the wrong path
 - The agent explicitly asks you something
 - The agent tries to finish but missed requirements
 
-Say something ONCE. If you already said it, choose no-op. Never repeat yourself.
+NEVER repeat something you already said — check the conversation history.
+If you've run out of things to say, choose no-op for every remaining turn.
 
-## CRITICAL: How to write
+## How to write
 
-Your output IS the message the agent sees. The agent reads it as a chat message
-from a human user. Do NOT think out loud, analyze, or reason in your output.
+Your output IS the message the agent sees. Do NOT think out loud or analyze.
 
-WRONG (analyst voice):
-  "Looking at the session analysis, the agent has been spinning for 10 turns..."
-  "Let me check what's happening - the agent seems stuck."
-
-RIGHT (user voice):
-  "wait why haven't you started coding yet"
-  "just implement the plan, stop exploring"
-  "here's the PR: https://github.com/peteromallet/desloppify/pull/128"
-  "can you re-scan and tell me the score now?"
+WRONG: "Looking at the session analysis, the agent has been spinning..."
+RIGHT: "wait why haven't you started coding yet"
 
 Rules:
-- 1-2 sentences max. Real users don't write paragraphs.
-- Casual language: "wait", "no", "hmm", "can you also..."
+- 1-2 sentences max. Casual language: "wait", "no", "hmm", "can you also..."
 - Make typos occasionally. Don't be polished.
-- NEVER start with "Looking at..." or "Let me check..." — you're a user, not an analyst.
-- NEVER mention "session analysis", "ground truth", or "turns/calls" — the user doesn't know about those.
-- The `content` parameter must be plain text only, no JSON or code fences.
+- NEVER mention "session analysis", "ground truth", or "turns/calls".
+- The `content` parameter must be plain text only.
 """
 
 
@@ -196,21 +174,28 @@ Rules:
 class UserAgent:
     """Simulated user that watches an action agent and decides when to talk.
 
-    Backed by an LLM with tool-calling. Each call produces exactly one
-    UserDecision: wait (do nothing) or one of the message actions.
+    Maintains conversation history across turns (like tau-bench) so the LLM
+    can see what it already said. Each call produces exactly one UserDecision.
     """
 
-    def __init__(self, llm, original_user_messages=None, persona=None, session_analysis=""):
+    VERSION = "0.3.1"  # see CHANGELOG.md
+
+    def __init__(self, llm, original_user_messages=None, persona=None,
+                 session_analysis="", max_messages=None):
         self._llm = llm
         self._ground_truth = original_user_messages or []
         self._persona = persona or UserPersona()
         self._cursor = 0  # index into _ground_truth
+        self.max_messages = max_messages  # hard cap (None = no cap)
 
         parts = [self._persona.render()]
         if session_analysis:
             parts.append(f"\n## Session Analysis\n{session_analysis}")
         parts.append(f"\n{_SYSTEM_PROMPT}")
         self._sys = "\n".join(parts)
+
+        # Conversation history — accumulated across turns (tau-bench pattern)
+        self._messages: list[dict[str, str]] = []
 
         # counters
         self.total_calls = 0
@@ -232,27 +217,51 @@ class UserAgent:
     ) -> UserDecision:
         self.total_calls += 1
 
-        prompt = self._compose_prompt(
+        # Hard cap — never trust the LLM to count
+        if self.max_messages and self.message_count >= self.max_messages:
+            decision = UserDecision(action="no-op", raw_response="hard_cap_reached")
+            self.wait_count += 1
+            self._counts["no-op"] = self._counts.get("no-op", 0) + 1
+            return decision
+
+        # Build turn summary — passed as prompt (not pre-appended) so
+        # LiteLLM doesn't create an empty trailing user message that
+        # triggers Anthropic's "cache_control on empty text" error.
+        turn_content = self._build_turn_summary(
             task_description, recent_trajectory, latest_observation,
             latest_analysis, step_count, is_completion_attempt,
-            total_steps_so_far,
         )
+
+        # Prepend system message in-band (as a "system" role message) so
+        # litellm/Anthropic handlers extract it properly.  Passing system= as
+        # a kwarg gets silently dropped by drop_params when it's not in the
+        # provider's supported params list.
+        history_with_sys = [{"role": "system", "content": self._sys}] + self._messages
 
         try:
             resp = await self._llm.call(
-                prompt=prompt, system=self._sys, tools=TOOL_DEFS,
+                prompt=turn_content,
+                message_history=history_with_sys,
+                tools=TOOL_DEFS,
             )
             decision = self._extract_decision(resp)
         except Exception as exc:
             log.warning("UserAgent call failed: %s", exc)
             decision = UserDecision(action="no-op", raw_response=f"error: {exc}")
 
-        self._counts[decision.action] = self._counts.get(decision.action, 0) + 1
-        if decision.action == "no-op":
-            self.wait_count += 1
-        elif decision.has_message:
+        # Append this turn's user message + sim response to history for continuity
+        self._messages.append({"role": "user", "content": turn_content})
+        if decision.has_message:
+            self._messages.append({"role": "assistant", "content": decision.content})
             self.message_count += 1
+        else:
+            # Record no-op so the LLM sees it stayed silent.
+            # Use natural language (not a bracketed marker) to avoid the LLM
+            # copying the marker verbatim as message content.
+            self._messages.append({"role": "assistant", "content": "(I stayed silent and let the agent keep working.)"})
+            self.wait_count += 1
 
+        self._counts[decision.action] = self._counts.get(decision.action, 0) + 1
         return decision
 
     def advance_original_index(self, n: int = 1):
@@ -260,61 +269,42 @@ class UserAgent:
 
     def get_stats(self) -> dict:
         return {
+            "version": self.VERSION,
             "total_calls": self.total_calls,
             "wait_count": self.wait_count,
             "message_count": self.message_count,
             "action_breakdown": dict(self._counts),
             "ground_truth_total": len(self._ground_truth),
             "ground_truth_consumed": self._cursor,
+            "max_messages": self.max_messages,
         }
 
     # ── prompt building ──
 
-    def _compose_prompt(
+    def _build_turn_summary(
         self, task, trajectory, observation, analysis,
-        step, is_completion, total_steps,
+        step, is_completion,
     ) -> str:
-        sections = [f"## Task\n{task[:400]}"]
-        sections.append(f"\n## Turn {step} (total: {total_steps})")
+        sections = [f"## Turn {step}"]
 
         if is_completion:
-            sections.append(
-                "\n** The agent wants to finish. Check whether all your "
-                "original requirements have been addressed."
-            )
+            sections.append("** The agent is signaling completion.")
 
-        sections.append(f"\n## What the agent has been doing\n{trajectory}")
-        sections.append(f"\n## Latest output\n{observation}")
+        if self.total_calls == 1:
+            # First call — include task description for context
+            sections.append(f"\n## Task\n{task[:400]}")
+
+        sections.append(f"\n## Agent activity\n{trajectory}")
+        sections.append(f"\n## Terminal output\n{observation}")
 
         if analysis:
             sections.append(f"\n## Agent's thinking\n{analysis[:300]}")
 
-        upcoming = self._peek_ground_truth(5)
-        if upcoming:
-            sections.append(
-                "\n## Reference: what you actually said (ground truth)\n"
-                "Adapt these to the current situation — don't copy verbatim."
-            )
-            for idx, msg in upcoming:
-                sections.append(f"  [{idx + 1}] {msg}")
-
-        sections.append(
-            f"\n## Stats: {self.total_calls} calls, "
-            f"{self.message_count} messages sent, "
-            f"{len(self._ground_truth) - self._cursor} ground-truth remaining"
-        )
         sections.append(
             "\nPick ONE tool. Default to no-op unless you have a clear, "
             "new reason to speak."
         )
         return "\n".join(sections)
-
-    def _peek_ground_truth(self, n: int) -> list[tuple[int, str]]:
-        end = min(self._cursor + n, len(self._ground_truth))
-        return [
-            (i, self._ground_truth[i][:500])
-            for i in range(self._cursor, end)
-        ]
 
     # ── response parsing ──
 
@@ -340,20 +330,26 @@ class UserAgent:
         except json.JSONDecodeError:
             args = {}
 
+        content = args.get("content", "")
+
+        # Guard: LLM sometimes calls a message tool (question/redirect) but
+        # puts a no-op marker as the content — catch and convert to no-op.
+        _NOOP_MARKERS = ("silent", "no-op", "no op", "stayed silent", "let the agent")
+        if name != "no-op" and content and any(m in content.lower() for m in _NOOP_MARKERS):
+            log.info("UserAgent: converting %s(%r) to no-op (content looks like no-op)", name, content[:60])
+            return UserDecision(action="no-op", raw_response=f"noop_guard:{content}")
+
         return UserDecision(
             action=name,
-            content=args.get("content", ""),
+            content=content,
             raw_response=raw,
         )
 
     @staticmethod
     def _fallback_parse(text: str) -> UserDecision:
-        low = text.lower()
-        if any(kw in low for kw in ("wait", "continue", "let it")):
-            return UserDecision(action="wait", raw_response="fallback")
-        if text.strip():
-            return UserDecision(
-                action="question", content=text,
-                raw_response=text,
-            )
-        return UserDecision(action="wait", raw_response="empty")
+        # No tool call was returned — the LLM responded with plain text.
+        # ALWAYS treat this as no-op. The sim should only send messages
+        # via proper tool calls (question/redirect/new_requirement), never
+        # raw text. Sending raw text as a message caused the "[silent — no-op]"
+        # leak where internal markers were injected into the agent's chat.
+        return UserDecision(action="no-op", raw_response=f"fallback_noop:{text[:200]}")

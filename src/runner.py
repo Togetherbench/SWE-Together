@@ -48,7 +48,7 @@ from harbor.models.trial.config import (
 )
 from harbor.trial.trial import Trial
 
-from user_agent.user_agent import UserPersona, build_persona_from_analysis
+from user_agent.user_agent import UserPersona
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("runner")
@@ -171,6 +171,26 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
     ]
 
 
+def _extract_max_messages(session_analysis: str, gt_count: int) -> int | None:
+    """Extract max message cap from user_simulation_prompt.md or default from GT count."""
+    import re
+    # Match various patterns: "Target: ~N messages", "at most N messages",
+    # "NEVER send more than N messages", "max N messages", "N messages total"
+    patterns = [
+        r'(?:target|at most|max)[^0-9]*(\d+)\s*(?:messages|follow-up)',
+        r'(?:never|do not) send more than\s*(\d+)\s*messages',
+        r'(\d+)\s*messages?\s*(?:total|max)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, session_analysis, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+    # Default: GT count + 5 buffer, but cap at 15 to prevent runaway
+    if gt_count > 1:
+        return min(gt_count + 5, 15)
+    return None
+
+
 def resolve_task_dir(task_name: str) -> Path | None:
     """Support both current and legacy harbor task layouts."""
     candidates = [
@@ -212,17 +232,19 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     else:
         log.warning("Tar not found at %s — assuming image already loaded.", tar_path)
 
-    # Load ground-truth user messages + persona from analysis.json
+    # Load ground-truth user messages from analysis.json or original_session.json
     analysis = load_analysis(task_dir)
     user_messages = load_user_messages(task_dir, analysis)
-    persona: UserPersona = build_persona_from_analysis(analysis)
     log.info("Ground-truth user messages: %d", len(user_messages))
 
-    # Load analysis.md for rich session context (state graph, friction triggers)
-    analysis_md_path = task_dir / "analysis.md"
-    session_analysis = analysis_md_path.read_text() if analysis_md_path.exists() else ""
+    # Load user_simulation_prompt.md for rich session context
+    sim_prompt_path = task_dir / "user_simulation_prompt.md"
+    session_analysis = sim_prompt_path.read_text() if sim_prompt_path.exists() else ""
     if session_analysis:
-        log.info("Loaded analysis.md (%d chars)", len(session_analysis))
+        log.info("Loaded user_simulation_prompt.md (%d chars)", len(session_analysis))
+
+    # Extract max_messages from prompt if specified (e.g., "Target for simulation: ~4 messages")
+    max_messages = _extract_max_messages(session_analysis, len(user_messages))
 
     trial_config = TrialConfig(
         task=TaskConfig(path=task_dir),
@@ -234,8 +256,8 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
                 "user_model_name": user_model,
                 "user_api_key": user_key,
                 "original_user_messages": user_messages,
-                "user_persona": persona,
                 "session_analysis": session_analysis,
+                "max_messages": max_messages,
                 "user_context_chars": args.user_context_chars,
                 "call_user_on_completion": args.call_user_on_completion,
             },
@@ -259,8 +281,54 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         print(f"  error  : {result.exception_info.exception_type}: {result.exception_info.exception_message}")
     print("=" * 60)
 
+    # Copy user_simulation_prompt.md into trial dirs so it gets uploaded with traces
+    _copy_sim_prompts_to_trials(task_dir, Path(args.trials_dir))
+
+    # Pre-build enriched trajectory.json from episode files (avoids viewer reconstruction)
+    _build_trajectories(task_dir, Path(args.trials_dir))
+
     # Auto-upload traces to Railway S3 if credentials available
     _auto_upload_traces()
+
+
+def _copy_sim_prompts_to_trials(task_dir: Path, trials_dir: Path):
+    """Copy user_simulation_prompt.md into each trial directory for the task.
+
+    The viewer expects this file alongside the trajectory — bake it in so
+    we never have to remember to upload it separately.
+    """
+    import shutil
+    src = task_dir / "user_simulation_prompt.md"
+    if not src.exists():
+        return
+    task_name = task_dir.name
+    for trial in trials_dir.iterdir():
+        if trial.is_dir() and trial.name.startswith(task_name):
+            dst = trial / "user_simulation_prompt.md"
+            if not dst.exists():
+                shutil.copy2(src, dst)
+                log.info("Copied user_simulation_prompt.md → %s", dst)
+
+
+def _build_trajectories(task_dir: Path, trials_dir: Path):
+    """Pre-build enriched trajectory.json from episode files.
+
+    Converts per-episode files into a single ATIF-compatible trajectory.json
+    so the viewer serves it directly instead of reconstructing on every request.
+    """
+    build_script = REPO_ROOT / "scripts" / "build_trajectory.py"
+    if not build_script.exists():
+        return
+    task_name = task_dir.name
+    for trial in trials_dir.iterdir():
+        if trial.is_dir() and trial.name.startswith(task_name):
+            agent_dir = trial / "agent"
+            episodes = [d for d in agent_dir.iterdir() if d.is_dir() and d.name.startswith("episode-")] if agent_dir.exists() else []
+            if episodes:
+                subprocess.run(
+                    [sys.executable, str(build_script), str(trial)],
+                    cwd=str(REPO_ROOT), timeout=60, check=False,
+                )
 
 
 def _auto_upload_traces():

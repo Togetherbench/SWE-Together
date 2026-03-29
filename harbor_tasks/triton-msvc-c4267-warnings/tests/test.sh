@@ -56,27 +56,34 @@ fi
 #   (unsigned)(idx) / (unsigned int)(idx) -- C-style cast
 #   truncated/narrowed some other way that avoids C4267
 #
-# We check two things:
-#   (a) The original bug pattern `idx = idx]` is gone (or modified)
-#   (b) Some explicit narrowing cast for idx appears in the walk lambda context
-#
 # All checks use STRIPPED (comment-free) to block comment injection.
 # --------------------------------------------------------------------------
 FIX1=0
 
-# Positive check: any explicit cast of idx near the walk lambda
+# Positive check A: explicit cast of idx in the walk lambda capture
 if grep -qP 'walk\s*\(\s*\[.*idx\s*=\s*(static_cast\s*<\s*unsigned|static_cast\s*<\s*unsigned\s+int|\(unsigned\)|\(unsigned\s+int\))' "$STRIPPED" 2>/dev/null; then
     FIX1=1
 fi
 
-# Also accept: the loop variable itself is re-typed so no cast needed
-# e.g. for (auto [idx, partition] : ...) changed to unsigned idx explicitly
+# Positive check B: explicit cast of idx at the call sites inside the lambda
+# (e.g., lowerBarrier(op, numWarps, static_cast<unsigned>(idx), ...))
+# The original file has no static_cast<unsigned>(idx) — finding one means the agent added a fix.
 if [ $FIX1 -eq 0 ]; then
-    # Check that the bare `idx = idx]` pattern (bug) no longer exists
-    # AND the walk lambda still has a capture list (code wasn't just deleted)
+    if grep -qP '(static_cast\s*<\s*unsigned(\s+int)?\s*>\s*\(\s*idx\s*\)|\(unsigned(\s+int)?\)\s*\(?\s*idx\s*\)?)' "$STRIPPED" 2>/dev/null; then
+        # Also require the walk lambda still exists (code wasn't just deleted)
+        if grep -qP 'partition->walk\s*\(\s*\[' "$STRIPPED" 2>/dev/null; then
+            FIX1=1
+        fi
+    fi
+fi
+
+# Fallback: bug pattern gone AND specific partition->walk with idx in capture survives
+# Note: there's a second partition->walk at line 383 WITHOUT idx. We require idx
+# to appear on the same line as partition->walk to target the correct lambda.
+if [ $FIX1 -eq 0 ]; then
     if ! grep -qP '\[\s*&\s*,\s*idx\s*=\s*idx\s*\]' "$STRIPPED" 2>/dev/null; then
-        # Bug pattern is gone; require walk lambda with capture list still present
-        if grep -qP '->walk\s*\(\s*\[' "$STRIPPED" 2>/dev/null; then
+        # Bug pattern is gone; require partition->walk with idx in its capture/args
+        if grep -qP 'partition->walk\s*\(\s*\[.*idx' "$STRIPPED" 2>/dev/null; then
             FIX1=1
         fi
     fi
@@ -107,11 +114,41 @@ if grep -qP 'getResult\s*\(\s*(static_cast\s*<\s*unsigned(\s+int)?\s*>|\(unsigne
     FIX2=1
 fi
 
-# Also accept: bare `getResult(i)` is gone and getResult still called with an argument
+# Fallback: bare `getResult(i)` is gone BUT the replaceAllUsesWith logic survives.
+# The original line is: op->getResult(i).replaceAllUsesWith(cast.getResult(0));
+# Simple deletion of this line breaks the code AND removes replaceAllUsesWith from this context.
+# We require: (a) getResult(i) gone, (b) enumerate loop exists,
+# (c) getResult + replaceAllUsesWith appear together (same line or within 2 lines)
 if [ $FIX2 -eq 0 ]; then
     if ! grep -qP '\bgetResult\s*\(\s*i\s*\)' "$STRIPPED" 2>/dev/null; then
-        # Require getResult called with parenthesized argument (not just in a comment)
-        if grep -qP 'getResult\s*\([^)]+\)' "$STRIPPED" 2>/dev/null; then
+        FALLBACK2=$(python3 << PYEOF
+import re
+
+try:
+    with open("$STRIPPED") as f:
+        content = f.read()
+except:
+    print(0)
+    exit(0)
+
+lines = content.split('\n')
+
+has_enumerate = any('enumerate(newOp->getResults' in l for l in lines)
+
+has_replace_context = False
+for i, line in enumerate(lines):
+    if 'replaceAllUsesWith' in line:
+        window = '\n'.join(lines[max(0, i-2):i+3])
+        # Require op->getResult (not just cast.getResult or bare getResult)
+        # This distinguishes the bug site (line ~246) from line ~226
+        if 'op->getResult' in window:
+            has_replace_context = True
+            break
+
+print(1 if has_enumerate and has_replace_context else 0)
+PYEOF
+        )
+        if [ "$FALLBACK2" = "1" ]; then
             FIX2=1
         fi
     fi

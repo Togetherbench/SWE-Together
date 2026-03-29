@@ -10,7 +10,9 @@
 
 ### Anti-leakage rules
 
-- **NEVER give away line numbers, exact function names, or specific fix details in redirects.** If the agent is going wrong, nudge vaguely ("are you sure you got all the narrowing sites?"), never specifically ("fix getResult(i) at line 249").
+- **NEVER give away line numbers, exact function names, or specific fix details in redirects.** Forbidden specifics include: `getResult`, `line 246`, `line 249`, `enumerate`, `replaceAllUsesWith`, `op->getResult(i)`, or any code snippets. If the agent is going wrong, nudge vaguely ("are you sure you got all the narrowing sites?"), never specifically.
+- **NEVER repurpose informational turns (Turn 2, Turn 3) as redirects.** Turn 2 and Turn 3 are post-fix questions that only make sense after BOTH bugs are fixed. Do not adapt their content into hints about unfixed bugs.
+- **NO ESCALATION**: You get exactly ONE vague redirect (Turn 1b) if the agent misses a bug. If the vague redirect doesn't work and the agent declares complete again, **stay silent**. The benchmark measures agent capability — giving progressively more specific hints defeats the purpose.
 - The user in this session was terse (1-sentence messages) and patient (waited through 9 silent turns). Mirror this communication style.
 - In the real session, the agent found and fixed both bugs autonomously. The user only spoke after both fixes were done. If the agent is still actively working and making progress, stay silent.
 
@@ -51,7 +53,18 @@
 
 ---
 
-### Turn 2 (after 9 agent message blocks)
+### Turn 1c (NO ESCALATION — if Turn 1b didn't work)
+**Classification**: Silence (mandatory)
+
+**Context**: After the vague redirect in Turn 1b, the agent may investigate but still conclude the fix is complete without finding the second bug. This is a valid benchmark outcome — the agent missed it.
+
+**Sim trigger**: If the agent declares `task_complete: true` AGAIN after Turn 1b was sent, **stay silent**. Do NOT send a more specific hint. Do NOT mention `getResult`, line numbers, `enumerate`, or any code details. The agent's inability to find the second bug is the benchmark signal we're measuring.
+
+**What to do**: Send `no-op`. Skip remaining turns (Turn 2, Turn 3) entirely since they depend on both bugs being fixed.
+
+---
+
+### Turn 2 (post-fix informational question — NOT a redirect)
 **Gap**: 172s (~2.9 min) after last assistant message — **PROACTIVE** (user stepped away while agent worked, came back with a question)
 
 **Context**: The agent made two edits and declared the fix complete. The agent's explanation mentioned `lowerBarrier` and `lowerCallOp`. The user had a clarifying question about the MLIR API.
@@ -60,10 +73,12 @@
 
 **Why**: User wanted to understand the `getResult` return type/signature, possibly to verify the cast was appropriate or out of curiosity about the MLIR API.
 
-**Sim trigger**: ONLY ask about `op->getResult` signature if the agent has already fixed BOTH narrowing sites AND mentioned `getResult` or `static_cast` in its explanation. Skip entirely if:
-- The agent is still working
-- The agent has not yet touched the getResult call site
-- The agent hasn't declared the fix complete
+**Sim trigger**: ONLY ask this if ALL of these conditions are met:
+1. The agent has fixed BOTH narrowing sites (lambda capture AND getResult call)
+2. The agent has mentioned `getResult` or `static_cast` in its explanation
+3. The agent has declared the fix complete
+
+**CRITICAL**: This is an informational question, NOT a redirect. Do NOT send this turn if the agent has only fixed one bug — it would function as a hint about the unfixed second bug, violating the anti-leakage rules. If the agent has not fixed both bugs, skip this turn entirely and send `no-op`.
 
 ---
 
@@ -115,14 +130,14 @@
 |-------|--------|------|-------------|
 | File exists, non-empty, >100 lines | 0.10 | Structural (Bronze) | Low — blocks stub/comment injection |
 | `lowerKernelBarriers` still present (comment-stripped) | 0.10 | Structural (Bronze) | Low — just keep the function name |
-| Fix 1: lambda capture cast present, OR bug pattern gone + walk lambda with capture list present (comment-stripped) | 0.40 | Structural (Bronze+) | Medium — fallback awards 0.40 if bug line deleted but walk lambda kept |
-| Fix 2: getResult cast present, OR bare `getResult(i)` gone + `getResult(arg)` still called (comment-stripped) | 0.40 | Structural (Bronze+) | Medium — fallback awards 0.40 if bug line deleted but getResult calls kept |
+| Fix 1: lambda capture cast present, OR bug pattern gone + `partition->walk` lambda still present (comment-stripped) | 0.40 | Structural (Bronze+) | Low — fallback requires the specific `partition->walk` lambda (not any of the 6+ other walk calls) |
+| Fix 2: getResult cast present, OR bare `getResult(i)` gone + enumerate loop context survives (comment-stripped) | 0.40 | Structural (Bronze+) | Low — fallback requires `llvm::enumerate(newOp->getResults` + getResult call both present |
 
-**Max stub score**: **0.20** — the unmodified buggy file scores 0.20 (file >100 lines + `lowerKernelBarriers` present). Comment injection is blocked: all Gold checks grep a comment-stripped copy of the file (`sed 's|//.*||'`). A pure `def f(): pass` stub scores **0.00**.
+**Max stub score**: **0.20** — the unmodified buggy file scores 0.20 (file >100 lines + `lowerKernelBarriers` present). Comment injection is blocked: all Gold checks grep a comment-stripped copy of the file (`sed 's|//.*||'`). A pure `def f(): pass` stub scores **0.00**. Simple deletion of buggy lines scores **0.20** (fallbacks require specific surrounding context: `partition->walk` with `idx` in capture, `op->getResult` near `replaceAllUsesWith` within enumerate loop).
 
 **Behavioral/structural ratio**: All checks are structural (grep/regex on comment-stripped source). Behavioral testing is infeasible — this is a C++ MSVC-specific bug; the Docker container has GCC on Linux, and full LLVM compilation is too heavy. Ratio: 0% behavioral. Below the 60% target, but justified by the C++ compilation constraint.
 
-**Notes**: The fallback paths in Gold 1 and Gold 2 accept any approach that removes the narrowing conversion, not just `static_cast`. This is correct verifier philosophy per CLAUDE.md. The tightened fallbacks require code-like patterns (`->walk([`, `getResult(arg)`) in non-comment code, which blocks comment injection.
+**Notes**: The fallback paths in Gold 1 and Gold 2 accept any approach that removes the narrowing conversion, not just `static_cast`. This is correct verifier philosophy per CLAUDE.md. The tightened fallbacks require context-specific patterns (`partition->walk([`, `llvm::enumerate(newOp->getResults`) in non-comment code, which blocks both comment injection and simple deletion gaming.
 
 ---
 
