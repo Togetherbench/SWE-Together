@@ -151,8 +151,13 @@ Each task under `harbor_tasks/<name>/` contains:
 
 The user simulator (`src/user_agent/`) is an LLM that role-plays as the original human user. It watches the agent's terminal output and decides when to intervene.
 
-### Architecture (v0.3.1)
+### Architecture (v0.4.0)
 
+- **Multi-agent support** — `--agent-type` selects the coding agent backend:
+  - `terminus` (default) — in-process LLM agent; user sim injects messages directly into chat history
+  - `claude-code` — Claude Code CLI; multi-turn via `claude --resume <session_id>`
+  - `codex` — Codex CLI; multi-turn via sequential re-runs with accumulated context
+  - Other Harbor-installed agents (`aider`, `swe-agent`, etc.) — single-shot, no user sim
 - **Conversation history** — accumulated across turns (tau-bench pattern). The LLM sees what it already said.
 - **Hard message cap** — extracted from the task prompt or defaulted to GT count + 5. Enforced programmatically, never relying on LLM self-regulation.
 - **Tool-calling for structured output** — the sim picks one of: `no-op`, `question`, `redirect`, `new_requirement`, `check_external`.
@@ -165,6 +170,7 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 | v0.2 | Stateless — each LLM call independent | 16.7% | 37.5% |
 | v0.3.0 | Conversation history + hard cap | 1.2% | 72.7% |
 | v0.3.1 | Fixed fallback_parse leak | **0%** | **72.7%** |
+| v0.4.0 | Multi-agent support (Claude Code, Codex) | — | — |
 
 See `src/user_agent/CHANGELOG.md` for full details.
 
