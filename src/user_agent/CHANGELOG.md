@@ -3,6 +3,51 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.4.0 — 2026-03-29
+
+**Feature: multi-turn user simulation for Claude Code and Codex**
+
+Added `--agent-type` CLI option to `runner.py` to select the coding agent
+backend. All three supported agent types get full user simulation:
+
+- **`terminus`** (default) — `UserEnabledTerminus2`. In-process LLM agent;
+  user sim injects messages directly into the chat history mid-loop.
+- **`claude-code`** — `UserEnabledClaudeCode`. Runs Claude Code CLI, then
+  uses `claude --resume <session_id>` to continue the conversation with
+  simulated user messages. Real conversation continuity across turns.
+- **`codex`** — `UserEnabledCodex`. Runs `codex exec`, then re-runs with
+  accumulated conversation history prepended to the instruction (no native
+  resume in Codex CLI).
+
+**Shared user sim parameters** (all three agents):
+
+| Parameter | Default | Source |
+|-----------|---------|--------|
+| `user_model_name` | `anthropic/claude-opus-4-6` | `--user-model` CLI / `user_model` in config.yaml |
+| `user_temperature` | `0.5` | Hardcoded |
+| `user_context_chars` | `3000` | `user_context_chars` in config.yaml |
+| `max_messages` | GT count + 5 (cap 15) | Extracted from `user_simulation_prompt.md` or defaulted |
+| `call_user_on_completion` | `true` | `call_user_on_completion` in config.yaml |
+
+**Agent-specific parameters:**
+
+| Parameter | terminus | claude-code | codex |
+|-----------|----------|-------------|-------|
+| Max agent turns | `1000000` (Terminus2 default) | `15` (`_MAX_RESUME_TURNS`) | `15` (`_MAX_RESUME_TURNS`) |
+| Multi-turn mechanism | In-process chat injection | `claude --resume <session_id>` | Re-run `codex exec` with accumulated context |
+| API key env var | Via LiteLLM (any provider) | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` |
+| OpenRouter compatible | Yes (`openrouter/` prefix) | No (Anthropic API format) | Possibly (`OPENAI_BASE_URL`) |
+
+Other Harbor-installed agents (`aider`, `swe-agent`, etc.) fall back to
+single-shot mode without user simulation.
+
+New files:
+- `src/user_agent/user_enabled_claude_code.py`
+- `src/user_agent/user_enabled_codex.py`
+
+Also added `openai` to the provider map for Codex/OpenAI models, and
+`agent_type` is configurable via `config.yaml`.
+
 ## v0.3.1 — 2026-03-27
 
 **Fix: fallback_parse always returns no-op**

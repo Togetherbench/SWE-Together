@@ -53,6 +53,23 @@ from user_agent.user_agent import UserPersona
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("runner")
 
+# ── agent type registry ───────────────────────────────────────────────────────
+# Agent types with user simulation support (custom wrappers in src/user_agent/)
+_USER_SIM_AGENT_TYPES = {
+    "terminus":    "user_agent.user_enabled_agent:UserEnabledTerminus2",
+    "claude-code": "user_agent.user_enabled_claude_code:UserEnabledClaudeCode",
+    "codex":       "user_agent.user_enabled_codex:UserEnabledCodex",
+}
+
+# Agent types without user simulation (Harbor's installed CLI agents, single-shot)
+_PASSTHROUGH_AGENT_TYPES = {
+    "aider", "cline-cli", "cursor-cli", "gemini-cli", "goose",
+    "swe-agent", "mini-swe-agent", "opencode", "openhands",
+    "openhands-sdk", "kimi-cli", "qwen-coder",
+}
+
+VALID_AGENT_TYPES = set(_USER_SIM_AGENT_TYPES) | _PASSTHROUGH_AGENT_TYPES
+
 
 # ── provider resolution ───────────────────────────────────────────────────────
 
@@ -61,6 +78,7 @@ _PROVIDER_MAP = {
     "gemini":      ("GEMINI_API_KEY",      "GEMINI_API_KEY"),
     "anthropic":   ("ANTHROPIC_API_KEY",   "ANTHROPIC_API_KEY"),
     "openrouter":  ("OPENROUTER_API_KEY",  "OPENROUTER_API_KEY"),
+    "openai":      ("OPENAI_API_KEY",      "OPENAI_API_KEY"),
 }
 
 
@@ -246,23 +264,37 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     # Extract max_messages from prompt if specified (e.g., "Target for simulation: ~4 messages")
     max_messages = _extract_max_messages(session_analysis, len(user_messages))
 
+    # Build AgentConfig based on agent type
+    agent_type = args.agent_type
+    user_sim_kwargs = {
+        "user_model_name": user_model,
+        "user_api_key": user_key,
+        "original_user_messages": user_messages,
+        "session_analysis": session_analysis,
+        "max_messages": max_messages,
+        "user_context_chars": args.user_context_chars,
+        "call_user_on_completion": args.call_user_on_completion,
+    }
+
+    if agent_type in _USER_SIM_AGENT_TYPES:
+        agent_config = AgentConfig(
+            import_path=_USER_SIM_AGENT_TYPES[agent_type],
+            model_name=action_model,
+            kwargs=user_sim_kwargs,
+            env={action_env_var: action_key},
+        )
+    else:
+        log.info("Using installed agent type: %s (user simulation not supported)", agent_type)
+        agent_config = AgentConfig(
+            name=agent_type,
+            model_name=action_model,
+            env={action_env_var: action_key},
+        )
+
     trial_config = TrialConfig(
         task=TaskConfig(path=task_dir),
         trials_dir=Path(args.trials_dir),
-        agent=AgentConfig(
-            import_path="user_agent.user_enabled_agent:UserEnabledTerminus2",
-            model_name=action_model,
-            kwargs={
-                "user_model_name": user_model,
-                "user_api_key": user_key,
-                "original_user_messages": user_messages,
-                "session_analysis": session_analysis,
-                "max_messages": max_messages,
-                "user_context_chars": args.user_context_chars,
-                "call_user_on_completion": args.call_user_on_completion,
-            },
-            env={action_env_var: action_key},
-        ),
+        agent=agent_config,
         environment=EnvironmentConfig(
             delete=not args.keep,
         ),
@@ -418,6 +450,13 @@ def main():
                         help="Action agent model, e.g. gemini/gemini-3.1-pro-preview")
     parser.add_argument("--user-model", default=None,
                         help="User agent model (defaults to --model)")
+    parser.add_argument("--agent-type", default=None,
+                        choices=sorted(VALID_AGENT_TYPES),
+                        help="Coding agent type (default: terminus). "
+                             "'terminus' uses UserEnabledTerminus2 with in-process user sim. "
+                             "'claude-code' uses Claude Code CLI with user sim via --resume. "
+                             "'codex' uses Codex CLI with user sim via sequential re-runs. "
+                             "Others use Harbor's installed CLI agents (no user sim).")
     parser.add_argument("--trials-dir", default=None,
                         help="Directory for trial results")
     parser.add_argument("--keep",       action="store_true", default=None,
@@ -436,6 +475,7 @@ def main():
         env_path              = cfg.get("env_path", str(REPO_ROOT / "harbor_tasks" / "docker_images"))
         model                 = cli.model      or cfg.get("model",      "gemini/gemini-3.1-pro-preview")
         user_model            = cli.user_model or cfg.get("user_model") or cfg.get("model") or "gemini/gemini-3.1-pro-preview"
+        agent_type            = cli.agent_type or cfg.get("agent_type", "terminus")
         trials_dir            = cli.trials_dir or cfg.get("trials_dir", "trials")
         keep                  = cli.keep       or cfg.get("keep_container", False)
         user_context_chars    = cfg.get("user_context_chars",    3000)

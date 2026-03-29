@@ -82,6 +82,20 @@ OPENROUTER_API_KEY=<key> ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py 
     --task sageattention-headdim-256 \
     --model openrouter/moonshotai/kimi-k2.5 \
     --user-model anthropic/claude-opus-4-6
+
+# Using Claude Code as the coding agent (with user sim via --resume)
+ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
+    --task sageattention-headdim-256 \
+    --model anthropic/claude-sonnet-4-6 \
+    --user-model anthropic/claude-opus-4-6 \
+    --agent-type claude-code
+
+# Using Codex as the coding agent (with user sim via sequential re-runs)
+OPENAI_API_KEY=<key> ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
+    --task sageattention-headdim-256 \
+    --model openai/o3 \
+    --user-model anthropic/claude-opus-4-6 \
+    --agent-type codex
 ```
 
 ### Running the full test suite
