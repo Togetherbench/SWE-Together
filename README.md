@@ -47,44 +47,62 @@ Kimi has 2.6x more agent timeouts (OpenRouter latency). Timed-out tasks still re
 
 ## Quick Start
 
+### Setup
+
+```bash
+# Clone at a specific release version
+git clone https://github.com/findalexli/multi-user-turn-codebench.git
+cd multi-user-turn-codebench
+git checkout v0.1.0   # Pin to a release — results are only comparable within the same version
+
+# Install dependencies
+uv sync
+```
+
+### Running against a pinned version
+
+Results are only meaningful when compared against the same benchmark version. Always pin to a release tag:
+
+```bash
+# Check which version you're on
+cat registry.json | python3 -c "import json,sys; d=json.load(sys.stdin)['datasets'][0]; print(f\"{d['name']}@{d['version']} ({d['task_count']} tasks, sim v{d['user_sim_version']})\")"
+# → togetherbench@0.1.0 (45 tasks, sim v0.3.1)
+```
+
 ### Running a single task
 
 ```bash
-# Install Harbor (the evaluation harness)
-pip install harbor-bench
-
-# Run with Claude Sonnet
 ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
     --task sageattention-headdim-256 \
     --model anthropic/claude-sonnet-4-6 \
     --user-model anthropic/claude-opus-4-6
 
-# Run with Kimi via OpenRouter
+# Or with Kimi via OpenRouter
 OPENROUTER_API_KEY=<key> ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
     --task sageattention-headdim-256 \
     --model openrouter/moonshotai/kimi-k2.5 \
     --user-model anthropic/claude-opus-4-6
 ```
 
-### Running all 45 tasks
+### Running the full test suite
 
 ```bash
-# Sonnet 4.6 — 6 parallel workers, manages Docker resources
+# Run all 45 tasks with 6 parallel workers
 .venv/bin/python session_collection/run_full_eval.py \
     --model anthropic/claude-sonnet-4-6 \
     --user-model anthropic/claude-opus-4-6 \
-    --tag sonnet46 --workers 6
+    --tag my-eval --workers 6
 
-# Kimi K2.5
+# Retry any failed tasks (Docker issues, timeouts)
 .venv/bin/python session_collection/run_full_eval.py \
-    --model openrouter/moonshotai/kimi-k2.5 \
-    --user-model anthropic/claude-opus-4-6 \
-    --tag kimi25 --workers 6
+    --model anthropic/claude-sonnet-4-6 --tag my-eval --retry-failed
 
-# Retry failed tasks
+# Skip tasks that already have results
 .venv/bin/python session_collection/run_full_eval.py \
-    --model anthropic/claude-sonnet-4-6 --tag sonnet46 --retry-failed
+    --model anthropic/claude-sonnet-4-6 --tag my-eval --skip-existing
 ```
+
+Results are written to `session_collection/pipeline_logs/eval-{tag}-summary.json` with per-task rewards.
 
 ### Viewing traces
 
