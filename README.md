@@ -100,23 +100,20 @@ OPENAI_API_KEY=<key> ANTHROPIC_API_KEY=<key> .venv/bin/python src/runner.py \
 
 ### Running the full test suite
 
+Run all tasks by iterating over `harbor_tasks/`:
+
 ```bash
-# Run all 45 tasks with 6 parallel workers
-.venv/bin/python session_collection/run_full_eval.py \
-    --model anthropic/claude-sonnet-4-6 \
-    --user-model anthropic/claude-opus-4-6 \
-    --tag my-eval --workers 6
-
-# Retry any failed tasks (Docker issues, timeouts)
-.venv/bin/python session_collection/run_full_eval.py \
-    --model anthropic/claude-sonnet-4-6 --tag my-eval --retry-failed
-
-# Skip tasks that already have results
-.venv/bin/python session_collection/run_full_eval.py \
-    --model anthropic/claude-sonnet-4-6 --tag my-eval --skip-existing
+for task in harbor_tasks/*/; do
+    task_name=$(basename "$task")
+    .venv/bin/python src/runner.py \
+        --task "$task_name" \
+        --model anthropic/claude-sonnet-4-6 \
+        --user-model anthropic/claude-opus-4-6 &
+done
+wait
 ```
 
-Results are written to `session_collection/pipeline_logs/eval-{tag}-summary.json` with per-task rewards.
+Results are written to `trials/<task>__<id>/verifier/reward.txt`.
 
 ### Viewing traces
 
@@ -174,10 +171,6 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 
 See `src/user_agent/CHANGELOG.md` for full details.
 
-### Design Report
-
-`session_collection/USER_SIMULATOR_DESIGN_REPORT.md` contains a detailed comparison with [tau-bench](https://github.com/sierra-research/tau-bench) and [tau2-bench](https://github.com/sierra-research/tau2-bench), including concrete code-level analysis and upgrade recommendations.
-
 ---
 
 ## Trial Output
@@ -213,7 +206,7 @@ trials/<task>__<id>/
 317 trial directories → traces.togetherbench.com
 ```
 
-See `session_collection/PLAN.md` for the full pipeline documentation.
+The data pipeline is documented in the sections above.
 
 ---
 

@@ -48,8 +48,6 @@ from harbor.models.trial.config import (
 )
 from harbor.trial.trial import Trial
 
-from user_agent.user_agent import UserPersona
-
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("runner")
 
