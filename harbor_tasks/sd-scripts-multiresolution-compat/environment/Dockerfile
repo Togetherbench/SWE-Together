@@ -55,7 +55,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     "sentencepiece==0.2.1" \
     "Pillow" \
     "tqdm" \
-    "numpy"
+    "numpy" \
+    "pytest" \
+    "pytest-timeout"
 
 # bitsandbytes may not fully work on CPU but is importable
 RUN pip3 install --no-cache-dir --break-system-packages bitsandbytes || true

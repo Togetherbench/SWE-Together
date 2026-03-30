@@ -54,6 +54,9 @@ RUN pip install --no-cache-dir \
     tokenizers>=0.13.3 \
     sentencepiece
 
+# Install pytest for pass-to-pass upstream test verification
+RUN pip install --no-cache-dir pytest pytest-timeout
+
 # Patch model_management.py to default to CPU mode (no CUDA in this environment).
 # ComfyUI normally detects GPU at startup; since we use CPU-only PyTorch, we force
 # cpu_state = CPUState.CPU so imports work without a GPU present.

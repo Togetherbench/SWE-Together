@@ -9,21 +9,24 @@
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
 # Scoring weights:
-#   Test 1:  0.04  jina_clip_2.py exists and parses as valid Python (structural)
-#   Test 2:  0.06  Required classes defined: tokenizer, model, wrapper (structural)
-#   Test 3:  0.08  Tokenizer is subclass of SDTokenizer + real __init__ (behavioral import + anti-stub)
-#   Test 4:  0.10  JinaClip2TextModel extends SDClipModel + real __init__ (behavioral import + anti-stub)
-#   Test 5:  0.10  JinaClip2TextModelWrapper instantiable on CPU (behavioral)
-#   Test 6:  0.07  Non-stub implementation: model body has real architecture (structural anti-stub)
-#   Test 7:  0.08  Mean pooling over attention mask: mask+pooling+output (behavioral import + AST)
-#   Test 8:  0.08  Rotary embeddings (RoPE): requires inv_freq/cos_sin patterns (behavioral import + AST)
-#   Test 9:  0.10  End-to-end: encode_token_weights works with dummy tokens (behavioral)
-#   Test 10: 0.10  Output embedding dimension is 1024 (behavioral)
-#   Test 11: 0.10  Multi-layer transformer: ≥20 encoder layers (behavioral)
-#   Test 12: 0.09  Mean pooling correctness: masked tokens excluded from output (behavioral)
+#   Test 1:  0.02  jina_clip_2.py exists and parses as valid Python (structural)
+#   Test 2:  0.03  Anti-stub: ≥5 classes, ≥150 lines, ≥3 forward() with ≥4 stmts (structural)
+#   Test 3:  0.04  Tokenizer is subclass of SDTokenizer + Jina config (behavioral + AST anti-stub)
+#   Test 4:  0.04  TextModel extends SDClipModel + real __init__ (behavioral + AST anti-stub)
+#   Test 5:  0.10  Wrapper class instantiable on CPU (behavioral)
+#   Test 6:  0.03  Non-stub: ≥5 classes, ≥150 code lines, ≥3 real forward() (structural anti-stub)
+#   Test 7:  0.16  End-to-end: encode_token_weights works (F2P behavioral)
+#   Test 8:  0.12  Output embedding dimension is 1024 (F2P behavioral)
+#   Test 9:  0.12  Multi-layer transformer: ≥20 layers with real sub-modules (F2P behavioral)
+#   Test 10: 0.10  Mean pooling correctness: different sequences → different pooled outputs (F2P behavioral)
+#   Test 11: 0.10  Model parameter count ≥ 10M (F2P behavioral)
+#   Test 12: 0.05  RoPE: rotary buffers/modules present, no large learned position embeddings (behavioral)
+#   Test 13: 0.03  Tokenizer config: SentencePiece reference + embedding_size 1024 (behavioral inspect)
+#   Test 14: 0.06  Pass-to-pass: upstream ComfyUI unit tests (P2P)
 #
-# Structural total: 0.17 (17%)
-# Behavioral total: 0.83 (83%)
+# Structural total: 0.05 (5%) — Tests 1, 2
+# Behavioral total: 0.89 (89%) — Tests 3-13
+# P2P total: 0.06 (6%) — Test 14
 #
 set +e
 
@@ -38,9 +41,9 @@ add_reward() {
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 1 (0.05): jina_clip_2.py exists and is valid Python
+# TEST 1 (0.02): jina_clip_2.py exists and is valid Python
 # ═══════════════════════════════════════════════════════════════════
-echo "=== Test 1/12: jina_clip_2.py exists and parses ==="
+echo "=== Test 1/14: jina_clip_2.py exists and parses ==="
 T1=$(python3 << 'PYEOF'
 import sys, ast, os
 
@@ -64,14 +67,14 @@ except SyntaxError as e:
 PYEOF
 )
 echo "  Result: $T1"
-if [ "$T1" = "PASS" ]; then add_reward 0.04; fi
+if [ "$T1" = "PASS" ]; then add_reward 0.02; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 2 (0.10): Required top-level names present (structural)
-#   Must define: a Tokenizer class, a TextModel class, a wrapper/entry class
+# TEST 2 (0.03): Required top-level names present (structural)
+#   Must define: a Tokenizer class, a Model/CLIP class, ≥3 classes total
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 2/12: Required classes defined ==="
+echo "=== Test 2/14: Required classes defined ==="
 T2=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -89,18 +92,15 @@ for node in ast.iter_child_nodes(tree):
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         top_names.add(node.name)
 
-# Must have some form of tokenizer
 has_tokenizer = any(
     "Tokenizer" in n or "tokenizer" in n.lower()
     for n in top_names
 )
-# Must have some form of text/clip model
 has_model = any(
     ("Model" in n or "CLIP" in n or "Clip" in n)
     and ("Jina" in n or "jina" in n or "XLM" in n or "xlm" in n or "Roberta" in n or "Text" in n)
     for n in top_names
 )
-# Must have some wrapper or at least 3 classes total
 num_classes = sum(
     1 for node in ast.iter_child_nodes(tree)
     if isinstance(node, ast.ClassDef)
@@ -119,15 +119,15 @@ else:
 PYEOF
 )
 echo "  Result: $T2"
-if [ "$T2" = "PASS" ]; then add_reward 0.06; fi
+if [ "$T2" = "PASS" ]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 3 (0.08): Tokenizer is subclass of SDTokenizer (behavioral import)
+# TEST 3 (0.04): Tokenizer inherits SDTokenizer (behavioral import)
 #   Import the module and verify tokenizer class hierarchy via issubclass.
-#   Then AST-verify Jina-specific tokenizer config (pad_with_end, special tokens).
+#   AST anti-stub: __init__ passes Jina-specific config kwargs to super().
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 3/12: Tokenizer inherits SDTokenizer (behavioral import) ==="
+echo "=== Test 3/14: Tokenizer inherits SDTokenizer ==="
 T3=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
@@ -136,7 +136,6 @@ try:
     import comfy.text_encoders.jina_clip_2 as jina_mod
     from comfy.sd1_clip import SDTokenizer
 
-    # Find tokenizer subclass via runtime introspection
     tok_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
@@ -149,7 +148,7 @@ try:
         print(f"FAIL:no_SDTokenizer_subclass:found={tok_names[:5]}")
         sys.exit(0)
 
-    # Verify via AST that tokenizer __init__ has Jina-specific config
+    # AST anti-stub: verify __init__ has Jina-specific config (keyword args to super)
     import ast
     path = "/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
     with open(path) as f:
@@ -172,7 +171,6 @@ try:
     if has_jina_config:
         print(f"PASS:{tok_cls.__name__}:with_jina_config")
     elif init_kwargs >= 2:
-        # Subclass with real __init__ config (not a stub)
         print(f"PASS:{tok_cls.__name__}:subclass_with_init:kwargs={init_kwargs}")
     else:
         print(f"FAIL:stub_tokenizer:init_kwargs={init_kwargs}")
@@ -183,14 +181,14 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T3"
-if [[ "$T3" == PASS* ]]; then add_reward 0.08; fi
+if [[ "$T3" == PASS* ]]; then add_reward 0.04; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 4 (0.10): JinaClip2TextModel (or equivalent) extends SDClipModel (behavioral)
-#   Actually import the module and verify the class hierarchy
+# TEST 4 (0.04): TextModel extends SDClipModel (behavioral import)
+#   Import and verify class hierarchy + non-stub __init__
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 4/12: Text model extends SDClipModel (behavioral import) ==="
+echo "=== Test 4/14: Text model extends SDClipModel ==="
 T4=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
@@ -199,42 +197,31 @@ try:
     import comfy.text_encoders.jina_clip_2 as jina_mod
     from comfy import sd1_clip
 
-    # Find the "TextModel" or "ClipModel" class (not the wrapper)
     text_model_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
         if not isinstance(obj, type):
             continue
-        if name.endswith("Model") and ("Jina" in name or "jina" in name or "XLM" in name):
-            # Check if it extends SDClipModel
-            if issubclass(obj, sd1_clip.SDClipModel):
-                text_model_cls = obj
-                break
-
-    if text_model_cls is None:
-        # Try broader search: any class that extends SDClipModel
-        for name in dir(jina_mod):
-            obj = getattr(jina_mod, name)
-            if isinstance(obj, type) and issubclass(obj, sd1_clip.SDClipModel) and obj is not sd1_clip.SDClipModel:
-                text_model_cls = obj
-                break
+        if issubclass(obj, sd1_clip.SDClipModel) and obj is not sd1_clip.SDClipModel:
+            text_model_cls = obj
+            break
 
     if text_model_cls is None:
         classes = [name for name in dir(jina_mod) if isinstance(getattr(jina_mod, name), type)]
         print(f"FAIL:no_SDClipModel_subclass:classes={classes[:10]}")
         sys.exit(0)
 
-    # Stub rejection: verify __init__ has real content (keyword args to super)
-    import ast as _ast4
-    with open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py") as _f4:
-        _tree4 = _ast4.parse(_f4.read())
+    # AST anti-stub: verify __init__ has real content (keyword args to super)
+    import ast
+    with open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py") as f:
+        _tree = ast.parse(f.read())
     _init_kwargs = 0
-    for _node in _ast4.iter_child_nodes(_tree4):
-        if isinstance(_node, _ast4.ClassDef) and _node.name == text_model_cls.__name__:
+    for _node in ast.iter_child_nodes(_tree):
+        if isinstance(_node, ast.ClassDef) and _node.name == text_model_cls.__name__:
             for _child in _node.body:
-                if isinstance(_child, _ast4.FunctionDef) and _child.name == "__init__":
-                    for _n in _ast4.walk(_child):
-                        if isinstance(_n, _ast4.keyword):
+                if isinstance(_child, ast.FunctionDef) and _child.name == "__init__":
+                    for _n in ast.walk(_child):
+                        if isinstance(_n, ast.keyword):
                             _init_kwargs += 1
     if _init_kwargs >= 2:
         print(f"PASS:{text_model_cls.__name__}:init_kwargs={_init_kwargs}")
@@ -247,14 +234,15 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T4"
-if [[ "$T4" == PASS* ]]; then add_reward 0.10; fi
+if [[ "$T4" == PASS* ]]; then add_reward 0.04; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 5 (0.10): Wrapper class is instantiable on CPU (behavioral)
-#   SD1ClipModel wrapper must be instantiable with device="cpu"
+# TEST 5 (0.10): Wrapper class instantiable on CPU (behavioral)
+#   SD1ClipModel wrapper must instantiate, be a proper nn.Module,
+#   and expose encode_token_weights.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 5/12: Wrapper class instantiable on CPU ==="
+echo "=== Test 5/14: Wrapper class instantiable on CPU ==="
 T5=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
@@ -264,7 +252,6 @@ try:
     from comfy import sd1_clip
     import torch
 
-    # Find an SD1ClipModel subclass (the wrapper)
     wrapper_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
@@ -275,7 +262,7 @@ try:
             break
 
     if wrapper_cls is None:
-        # Try any class that could be a wrapper/entry point
+        # Fallback: any class with Wrapper or Jina+Model in name
         for name in dir(jina_mod):
             obj = getattr(jina_mod, name)
             if not isinstance(obj, type):
@@ -288,15 +275,19 @@ try:
         print("FAIL:no_wrapper_class")
         sys.exit(0)
 
-    # Try to instantiate on CPU
     instance = wrapper_cls(device="cpu", dtype=None, model_options={})
 
-    # Must be a torch.nn.Module
     if not isinstance(instance, torch.nn.Module):
         print(f"FAIL:not_nn_module:{type(instance).__name__}")
         sys.exit(0)
 
-    # Must have encode_token_weights method
+    # Verify properly initialized nn.Module (catches skip-super stubs)
+    try:
+        list(instance.named_modules())
+    except Exception:
+        print("FAIL:not_properly_initialized")
+        sys.exit(0)
+
     if not hasattr(instance, "encode_token_weights"):
         print(f"FAIL:no_encode_token_weights:{wrapper_cls.__name__}")
         sys.exit(0)
@@ -310,12 +301,12 @@ echo "  Result: $T5"
 if [[ "$T5" == PASS* ]]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 6 (0.07): Non-stub: model has real architecture body (structural anti-stub)
-#   The underlying model must have real forward pass logic,
-#   not just stubs. Check for multiple classes and forward methods.
+# TEST 6 (0.03): Non-stub: real model architecture (structural anti-stub)
+#   Requires ≥5 classes, ≥150 code lines, ≥3 forward methods
+#   with ≥4 meaningful statements each.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 6/12: Non-stub: real model architecture (anti-stub) ==="
+echo "=== Test 6/14: Non-stub: real model architecture ==="
 T6=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -328,223 +319,52 @@ except Exception as e:
     print(f"FAIL:{e}")
     sys.exit(0)
 
-# Count total classes
 num_classes = sum(1 for node in ast.iter_child_nodes(tree) if isinstance(node, ast.ClassDef))
 
-# A real implementation has at least 5 classes (embeddings, attention, MLP, encoder, model + wrappers)
-# A stub would have 2-3 classes at most
-if num_classes < 4:
-    print(f"FAIL:too_few_classes:{num_classes}_expected_4+")
+if num_classes < 5:
+    print(f"FAIL:too_few_classes:{num_classes}_expected_5+")
     sys.exit(0)
 
-# Count total lines of code (excluding blanks and comments)
 code_lines = sum(
     1 for line in source.splitlines()
     if line.strip() and not line.strip().startswith("#")
 )
 
-if code_lines < 80:
-    print(f"FAIL:too_few_code_lines:{code_lines}_expected_80+")
+if code_lines < 150:
+    print(f"FAIL:too_few_code_lines:{code_lines}_expected_150+")
     sys.exit(0)
 
-# Check for forward methods that have real content (>3 statements)
+# Count forward methods with real content (≥4 meaningful statements)
 real_forward_count = 0
 for cls in ast.walk(tree):
     if isinstance(cls, ast.ClassDef):
         for method in cls.body:
             if isinstance(method, ast.FunctionDef) and method.name == "forward":
-                # Count meaningful statements in forward
                 stmt_count = sum(1 for _ in ast.walk(method)
                                  if isinstance(_, (ast.Assign, ast.Return, ast.If,
                                                    ast.For, ast.Call, ast.AugAssign)))
                 if stmt_count >= 4:
                     real_forward_count += 1
 
-if real_forward_count >= 2:
+if real_forward_count >= 3:
     print(f"PASS:classes={num_classes},code_lines={code_lines},real_forwards={real_forward_count}")
-elif num_classes >= 6 and code_lines >= 150:
+elif num_classes >= 7 and code_lines >= 250:
     print(f"PASS:classes={num_classes},code_lines={code_lines}")
 else:
-    print(f"FAIL:insufficient_implementation:classes={num_classes},lines={code_lines},forwards={real_forward_count}")
+    print(f"FAIL:classes={num_classes},lines={code_lines},forwards={real_forward_count}")
 PYEOF
 )
 echo "  Result: $T6"
-if [[ "$T6" == PASS* ]]; then add_reward 0.07; fi
+if [[ "$T6" == PASS* ]]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 7 (0.08): Mean pooling over attention mask (behavioral import + AST)
-#   Import the module and verify via inspect that a model class accepts
-#   attention_mask. Then use AST to confirm .mean() call exists in code
-#   (not in comments — AST is inherently comment-resistant).
+# TEST 7 (0.16): End-to-end: encode_token_weights (F2P behavioral)
+#   Instantiate wrapper, call encode_token_weights with dummy tokens,
+#   verify output is a tensor with valid shape.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 7/12: Mean pooling over attention mask ==="
+echo "=== Test 7/14: End-to-end encode_token_weights ==="
 T7=$(python3 << 'PYEOF'
-import sys
-sys.path.insert(0, "/workspace/ComfyUI")
-
-try:
-    import comfy.text_encoders.jina_clip_2 as jina_mod
-    import inspect, ast
-
-    # Behavioral: find class with forward() that takes attention_mask
-    found_mask_param = False
-    for name in dir(jina_mod):
-        obj = getattr(jina_mod, name)
-        if not isinstance(obj, type):
-            continue
-        forward = getattr(obj, 'forward', None)
-        if forward is None:
-            continue
-        try:
-            sig = inspect.signature(forward)
-            if 'attention_mask' in sig.parameters or 'mask' in sig.parameters:
-                found_mask_param = True
-                break
-        except (ValueError, TypeError):
-            continue
-
-    # AST: verify .mean() call exists in actual code (not comments)
-    path = "/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
-    with open(path) as f:
-        tree = ast.parse(f.read())
-
-    has_mean_call = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Attribute) and func.attr == "mean":
-                has_mean_call = True
-                break
-
-    # AST: check for division with sum (weighted mean pattern)
-    has_weighted_div = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-            dump = ast.dump(node)
-            if "sum" in dump.lower():
-                has_weighted_div = True
-                break
-
-    # AST: pooled output assignment (variable name, not string in comment)
-    has_pooled_assign = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and "pooled" in target.id.lower():
-                    has_pooled_assign = True
-                elif isinstance(target, ast.Attribute) and "pooled" in target.attr.lower():
-                    has_pooled_assign = True
-        if has_pooled_assign:
-            break
-
-    signals = sum([found_mask_param, has_mean_call, has_weighted_div, has_pooled_assign])
-    if found_mask_param and (has_mean_call or has_weighted_div) and has_pooled_assign:
-        print(f"PASS:signals={signals}")
-    elif signals >= 3 and found_mask_param:
-        print(f"PASS:signals={signals}")
-    else:
-        print(f"FAIL:mask_param={found_mask_param},mean_call={has_mean_call},weighted_div={has_weighted_div},pooled={has_pooled_assign}")
-except ImportError as e:
-    print(f"FAIL:import:{e}")
-except Exception as e:
-    print(f"ERROR:{e}")
-PYEOF
-)
-echo "  Result: $T7"
-if [[ "$T7" == PASS* ]]; then add_reward 0.08; fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 8 (0.08): Rotary embeddings (RoPE) implemented (behavioral import + AST)
-#   Import module and verify RoPE classes/functions exist at runtime.
-#   Then AST-check for inv_freq, cos/sin patterns (comment-resistant).
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 8/12: Rotary embeddings (RoPE) implemented ==="
-T8=$(python3 << 'PYEOF'
-import sys
-sys.path.insert(0, "/workspace/ComfyUI")
-
-try:
-    import comfy.text_encoders.jina_clip_2 as jina_mod
-    import ast
-
-    # Behavioral: check for rotary/rope class in imported module
-    has_rotary_class = False
-    for name in dir(jina_mod):
-        obj = getattr(jina_mod, name)
-        if isinstance(obj, type) and ("rotary" in name.lower() or "rope" in name.lower()):
-            has_rotary_class = True
-            break
-
-    # Behavioral: check for rotate_half or similar function (not class)
-    has_rotate_func = False
-    for name in dir(jina_mod):
-        if "rotate" in name.lower():
-            obj = getattr(jina_mod, name, None)
-            if callable(obj) and not isinstance(obj, type):
-                has_rotate_func = True
-                break
-
-    # AST: check for self.inv_freq or register_buffer("inv_freq", ...)
-    path = "/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
-    with open(path) as f:
-        tree = ast.parse(f.read())
-
-    has_inv_freq = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr == "inv_freq":
-            has_inv_freq = True
-            break
-    if not has_inv_freq:
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Attribute) and func.attr == "register_buffer":
-                    if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "inv_freq":
-                        has_inv_freq = True
-                        break
-
-    # AST: cos + sin calls (both must be present for RoPE application)
-    cos_found = sin_found = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            attr = None
-            if isinstance(func, ast.Attribute):
-                attr = func.attr
-            elif isinstance(func, ast.Name):
-                attr = func.id
-            if attr == "cos":
-                cos_found = True
-            elif attr == "sin":
-                sin_found = True
-    has_cos_sin = cos_found and sin_found
-
-    signals = sum([has_rotary_class, has_rotate_func, has_inv_freq, has_cos_sin])
-    if signals >= 3 and (has_inv_freq or has_cos_sin):
-        print(f"PASS:signals={signals}")
-    elif has_inv_freq and has_cos_sin:
-        print(f"PASS:signals={signals}")
-    else:
-        print(f"FAIL:rotary_class={has_rotary_class},rotate_func={has_rotate_func},inv_freq={has_inv_freq},cos_sin={has_cos_sin}")
-except ImportError as e:
-    print(f"FAIL:import:{e}")
-except Exception as e:
-    print(f"ERROR:{e}")
-PYEOF
-)
-echo "  Result: $T8"
-if [[ "$T8" == PASS* ]]; then add_reward 0.08; fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 9 (0.10): End-to-end: encode_token_weights with dummy tokens (behavioral)
-#   Instantiate the wrapper, call encode_token_weights with dummy input,
-#   verify output has the right shape/structure.
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 9/12: End-to-end encode_token_weights (behavioral) ==="
-T9=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
 
@@ -553,7 +373,6 @@ try:
     import comfy.text_encoders.jina_clip_2 as jina_mod
     from comfy import sd1_clip
 
-    # Find wrapper class (SD1ClipModel subclass)
     wrapper_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
@@ -567,26 +386,20 @@ try:
 
     instance = wrapper_cls(device="cpu", dtype=None, model_options={})
 
-    # Build dummy tokenized input
-    # SD1ClipModel wrapper uses clip_name as the key in token_weight_pairs dict
+    # Determine the clip_name key used in token_weight_pairs dict
     name_key = getattr(instance, "clip_name", None)
     if name_key is None:
-        # Fall back: inspect the clip sub-model
         clip_sub = getattr(instance, "clip", None)
         name_key = getattr(clip_sub, "clip_name", "jina_clip_2") if clip_sub else "jina_clip_2"
 
-    # Create dummy token weights: batch=1, seq_len=5
-    # Format: [(token_id, weight), ...]
+    # Create dummy token weights: [(token_id, weight), ...]
     dummy_tokens = [[(1, 1.0), (42, 1.0), (100, 1.0), (200, 1.0), (2, 1.0)]]
 
     first_error = None
-    last_error = "unknown"
-    # Try the found key and common fallbacks
     for key in [name_key, "jina_clip_2", "clip"]:
         try:
             result = instance.encode_token_weights({key: dummy_tokens})
             if result is not None:
-                # Result should be (cond, pooled) tuple or similar
                 if isinstance(result, (tuple, list)) and len(result) >= 2:
                     cond = result[0]
                     if isinstance(cond, torch.Tensor) and cond.ndim >= 2:
@@ -596,31 +409,27 @@ try:
                     print(f"PASS:tensor_output_shape={tuple(result.shape)}")
                     sys.exit(0)
         except Exception as e:
-            err = str(e)[:120]
             if first_error is None:
-                first_error = err
-            last_error = err
+                first_error = str(e)[:120]
             continue
 
-    # Report the first meaningful error (most informative)
-    print(f"FAIL:encode_failed:first_error={first_error or last_error}")
+    print(f"FAIL:encode_failed:{first_error}")
 except ImportError as e:
     print(f"FAIL:import:{e}")
 except Exception as e:
     print(f"ERROR:{e}")
 PYEOF
 )
-echo "  Result: $T9"
-if [[ "$T9" == PASS* ]]; then add_reward 0.10; fi
+echo "  Result: $T7"
+if [[ "$T7" == PASS* ]]; then add_reward 0.16; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 10 (0.10): Output embedding dimension is 1024 (behavioral)
-#   Instantiate the wrapper, run a forward pass, verify output dim=1024.
-#   Jina CLIP v2 uses hidden_size=1024 — a wrong dimension means wrong config.
+# TEST 8 (0.12): Output embedding dimension is 1024 (F2P behavioral)
+#   Jina CLIP v2 uses hidden_size=1024. Wrong dimension = wrong config.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 10/12: Output embedding dimension is 1024 ==="
-T10=$(python3 << 'PYEOF'
+echo "=== Test 8/14: Output embedding dimension is 1024 ==="
+T8=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
 
@@ -629,7 +438,6 @@ try:
     import comfy.text_encoders.jina_clip_2 as jina_mod
     from comfy import sd1_clip
 
-    # Find wrapper class
     wrapper_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
@@ -643,7 +451,6 @@ try:
 
     instance = wrapper_cls(device="cpu", dtype=None, model_options={})
 
-    # Get the clip_name key
     name_key = getattr(instance, "clip_name", None)
     if name_key is None:
         clip_sub = getattr(instance, "clip", None)
@@ -687,18 +494,17 @@ except Exception as e:
     print(f"ERROR:{e}")
 PYEOF
 )
-echo "  Result: $T10"
-if [[ "$T10" == PASS* ]]; then add_reward 0.10; fi
+echo "  Result: $T8"
+if [[ "$T8" == PASS* ]]; then add_reward 0.12; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 11 (0.10): Multi-layer transformer: ≥20 encoder layers (behavioral)
-#   Jina CLIP v2 uses 24 transformer layers. Verify the model has a
-#   deep encoder, not a shallow placeholder. Count nn.Module children
-#   that look like transformer layers at runtime.
+# TEST 9 (0.12): Multi-layer transformer: ≥20 layers with real sub-modules
+#   Jina CLIP v2 has 24 transformer layers. Each layer must contain
+#   real attention/FFN sub-modules (Linear layers), not empty shells.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 11/12: Multi-layer transformer (≥20 encoder layers) ==="
-T11=$(python3 << 'PYEOF'
+echo "=== Test 9/14: Multi-layer transformer (≥20 layers with sub-modules) ==="
+T9=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
 
@@ -707,7 +513,6 @@ try:
     import comfy.text_encoders.jina_clip_2 as jina_mod
     from comfy import sd1_clip
 
-    # Find wrapper class
     wrapper_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
@@ -721,40 +526,55 @@ try:
 
     instance = wrapper_cls(device="cpu", dtype=None, model_options={})
 
-    # Walk through all modules to find lists of transformer layers
-    # Look for ModuleList with ≥20 children, or count repeated layer patterns
+    # Find the deepest ModuleList (transformer layers)
     max_layer_count = 0
-
+    layer_list = None
     for mod_name, mod in instance.named_modules():
         if isinstance(mod, torch.nn.ModuleList):
             count = len(mod)
             if count > max_layer_count:
                 max_layer_count = count
+                layer_list = mod
 
-    if max_layer_count >= 20:
-        print(f"PASS:layer_count={max_layer_count}")
-    elif max_layer_count >= 12:
-        print(f"FAIL:too_few_layers={max_layer_count}_expected_20+_got_medium")
-    else:
+    if max_layer_count < 20:
         print(f"FAIL:too_few_layers={max_layer_count}_expected_20+")
+        sys.exit(0)
+
+    # Verify layers have real sub-modules (attention + FFN, not empty shells)
+    real_layers = 0
+    for layer in layer_list:
+        sub_modules = list(layer.named_modules())
+        # A real transformer layer has ≥5 sub-modules
+        # (attention, FFN, layer norms, projections)
+        if len(sub_modules) >= 5:
+            has_linear = any(
+                isinstance(m, torch.nn.Linear)
+                for _, m in sub_modules
+            )
+            if has_linear:
+                real_layers += 1
+
+    if real_layers >= 20:
+        print(f"PASS:layers={max_layer_count},real_layers={real_layers}")
+    else:
+        print(f"FAIL:real_layers={real_layers}_of_{max_layer_count}_expected_20+")
 except ImportError as e:
     print(f"FAIL:import:{e}")
 except Exception as e:
     print(f"ERROR:{e}")
 PYEOF
 )
-echo "  Result: $T11"
-if [[ "$T11" == PASS* ]]; then add_reward 0.10; fi
+echo "  Result: $T9"
+if [[ "$T9" == PASS* ]]; then add_reward 0.12; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 12 (0.09): Mean pooling correctness: masked tokens excluded (behavioral)
-#   Create a wrapper, run two inputs with different attention masks,
-#   and verify that the outputs differ (proving the mask is applied).
-#   If masking doesn't work, both outputs would be identical.
+# TEST 10 (0.10): Mean pooling correctness (F2P behavioral)
+#   Two different token sequences must produce different outputs,
+#   proving the attention mask is applied during pooling.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 12/12: Mean pooling correctness (masked tokens excluded) ==="
-T12=$(python3 << 'PYEOF'
+echo "=== Test 10/14: Mean pooling correctness ==="
+T10=$(python3 << 'PYEOF'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
 
@@ -763,7 +583,6 @@ try:
     import comfy.text_encoders.jina_clip_2 as jina_mod
     from comfy import sd1_clip
 
-    # Find wrapper class
     wrapper_cls = None
     for name in dir(jina_mod):
         obj = getattr(jina_mod, name)
@@ -782,7 +601,7 @@ try:
         clip_sub = getattr(instance, "clip", None)
         name_key = getattr(clip_sub, "clip_name", "jina_clip_2") if clip_sub else "jina_clip_2"
 
-    # Two different token sequences (different lengths = different attention masks)
+    # Two different token sequences (different lengths = different masks)
     tokens_short = [[(1, 1.0), (2, 1.0)]]
     tokens_long = [[(1, 1.0), (42, 1.0), (100, 1.0), (200, 1.0), (300, 1.0), (400, 1.0), (2, 1.0)]]
 
@@ -810,7 +629,6 @@ try:
             p = result[1]
             if isinstance(p, torch.Tensor):
                 return p
-            # Some implementations return a dict
             if isinstance(p, dict):
                 for v in p.values():
                     if isinstance(v, torch.Tensor):
@@ -821,22 +639,144 @@ try:
     pooled_long = get_pooled(result_long)
 
     if pooled_short is not None and pooled_long is not None:
-        # Pooled outputs should differ for different inputs
         if not torch.allclose(pooled_short, pooled_long, atol=1e-4):
             print(f"PASS:pooled_outputs_differ:shapes={tuple(pooled_short.shape)},{tuple(pooled_long.shape)}")
         else:
-            print(f"FAIL:pooled_outputs_identical:masking_not_working")
+            print("FAIL:pooled_outputs_identical")
     else:
-        # Fall back to checking the cond (first) output shapes differ
+        # Fall back to checking the cond (first) output
         cond_short = result_short[0] if isinstance(result_short, (tuple, list)) else result_short
         cond_long = result_long[0] if isinstance(result_long, (tuple, list)) else result_long
         if isinstance(cond_short, torch.Tensor) and isinstance(cond_long, torch.Tensor):
             if cond_short.shape != cond_long.shape or not torch.allclose(cond_short, cond_long, atol=1e-4):
                 print(f"PASS:outputs_differ:shapes={tuple(cond_short.shape)},{tuple(cond_long.shape)}")
             else:
-                print(f"FAIL:outputs_identical:masking_not_working")
+                print("FAIL:outputs_identical")
         else:
-            print(f"FAIL:cannot_compare_outputs")
+            print("FAIL:cannot_compare_outputs")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
+except Exception as e:
+    print(f"ERROR:{e}")
+PYEOF
+)
+echo "  Result: $T10"
+if [[ "$T10" == PASS* ]]; then add_reward 0.10; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 11 (0.10): Model parameter count ≥ 10M (F2P behavioral)
+#   A real XLM-RoBERTa with 24 layers / 1024 hidden has ~300M+ params.
+#   This catches fake architectures with stub layers (e.g. Linear(10,10)).
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 11/14: Model parameter count ≥ 10M ==="
+T11=$(python3 << 'PYEOF'
+import sys
+sys.path.insert(0, "/workspace/ComfyUI")
+
+try:
+    import torch
+    import comfy.text_encoders.jina_clip_2 as jina_mod
+    from comfy import sd1_clip
+
+    wrapper_cls = None
+    for name in dir(jina_mod):
+        obj = getattr(jina_mod, name)
+        if isinstance(obj, type) and issubclass(obj, sd1_clip.SD1ClipModel) and obj is not sd1_clip.SD1ClipModel:
+            wrapper_cls = obj
+            break
+
+    if wrapper_cls is None:
+        print("FAIL:no_wrapper_cls")
+        sys.exit(0)
+
+    instance = wrapper_cls(device="cpu", dtype=None, model_options={})
+
+    total_params = sum(p.numel() for p in instance.parameters())
+
+    if total_params >= 10_000_000:
+        print(f"PASS:total_params={total_params:,}")
+    else:
+        print(f"FAIL:too_few_params={total_params:,}_expected_10M+")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
+except Exception as e:
+    print(f"ERROR:{e}")
+PYEOF
+)
+echo "  Result: $T11"
+if [[ "$T11" == PASS* ]]; then add_reward 0.10; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 12 (0.05): RoPE detection (behavioral — model buffer inspection)
+#   Jina CLIP v2 uses rotary position embeddings, NOT learned position
+#   embeddings. Verify by inspecting the instantiated model's buffers
+#   and modules — no AST needed.
+#
+#   Signals checked (need ≥2 of 4):
+#     1. Named buffers contain "inv_freq" (standard RoPE buffer)
+#     2. Named modules contain "rotary" or "rope" (rotary embedding module)
+#     3. No large learned position Embedding (>1000 entries) exists
+#     4. Module-level names reference rotary/rope classes or functions
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 12/14: RoPE detection (behavioral) ==="
+T12=$(python3 << 'PYEOF'
+import sys
+sys.path.insert(0, "/workspace/ComfyUI")
+
+try:
+    import torch
+    import comfy.text_encoders.jina_clip_2 as jina_mod
+    from comfy import sd1_clip
+
+    wrapper_cls = None
+    for name in dir(jina_mod):
+        obj = getattr(jina_mod, name)
+        if isinstance(obj, type) and issubclass(obj, sd1_clip.SD1ClipModel) and obj is not sd1_clip.SD1ClipModel:
+            wrapper_cls = obj
+            break
+
+    if wrapper_cls is None:
+        print("FAIL:no_wrapper_cls")
+        sys.exit(0)
+
+    instance = wrapper_cls(device="cpu", dtype=None, model_options={})
+
+    # Signal 1: named buffers contain inv_freq (standard RoPE buffer)
+    has_inv_freq = any(
+        "inv_freq" in bname
+        for bname, _ in instance.named_buffers()
+    )
+
+    # Signal 2: named modules contain rotary/rope
+    has_rotary_module = any(
+        "rotary" in mname.lower() or "rope" in mname.lower()
+        for mname, _ in instance.named_modules()
+    )
+
+    # Signal 3: no large learned position Embedding (>1000 entries)
+    # Models with RoPE don't have a position_embeddings table
+    has_large_pos_embed = False
+    for mname, mod in instance.named_modules():
+        if isinstance(mod, torch.nn.Embedding) and "position" in mname.lower():
+            if mod.num_embeddings > 1000:
+                has_large_pos_embed = True
+                break
+
+    # Signal 4: module-level names reference rotary/rope
+    has_rotary_name = any(
+        ("rotary" in n.lower() or "rope" in n.lower())
+        and (isinstance(getattr(jina_mod, n, None), type) or callable(getattr(jina_mod, n, None)))
+        for n in dir(jina_mod)
+    )
+
+    signals = sum([has_inv_freq, has_rotary_module, not has_large_pos_embed, has_rotary_name])
+
+    if signals >= 2:
+        print(f"PASS:signals={signals}:inv_freq={has_inv_freq},rotary_mod={has_rotary_module},no_pos_embed={not has_large_pos_embed},rotary_name={has_rotary_name}")
+    else:
+        print(f"FAIL:signals={signals}:inv_freq={has_inv_freq},rotary_mod={has_rotary_module},no_pos_embed={not has_large_pos_embed},rotary_name={has_rotary_name}")
 except ImportError as e:
     print(f"FAIL:import:{e}")
 except Exception as e:
@@ -844,7 +784,140 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T12"
-if [[ "$T12" == PASS* ]]; then add_reward 0.09; fi
+if [[ "$T12" == PASS* ]]; then add_reward 0.05; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 13 (0.03): Tokenizer config (behavioral inspect)
+#   Verify the tokenizer is configured for Jina CLIP v2:
+#     - References SentencePiece (not BPE/WordPiece)
+#     - embedding_size = 1024
+#     - max_length ≥ 512
+#
+#   NOTE: The tokenizer cannot be instantiated because the
+#   SentencePiece model file is not in the Docker image. We use
+#   inspect.getsource() on the tokenizer class as the next best
+#   behavioral-adjacent check.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 13/14: Tokenizer config ==="
+T13=$(python3 << 'PYEOF'
+import sys
+sys.path.insert(0, "/workspace/ComfyUI")
+
+try:
+    import inspect
+    import comfy.text_encoders.jina_clip_2 as jina_mod
+    from comfy.sd1_clip import SDTokenizer
+
+    tok_cls = None
+    for name in dir(jina_mod):
+        obj = getattr(jina_mod, name)
+        if isinstance(obj, type) and issubclass(obj, SDTokenizer) and obj is not SDTokenizer:
+            tok_cls = obj
+            break
+
+    if tok_cls is None:
+        print("FAIL:no_tokenizer_class")
+        sys.exit(0)
+
+    # Get the tokenizer source via inspect (behavioral-adjacent)
+    try:
+        source = inspect.getsource(tok_cls)
+    except (OSError, TypeError):
+        print("FAIL:cannot_inspect_source")
+        sys.exit(0)
+
+    # Check 1: References SentencePiece tokenizer
+    has_spiece = (
+        "SPiece" in source or
+        "sentencepiece" in source.lower() or
+        "spiece" in source.lower() or
+        "SentencePiece" in source
+    )
+
+    # Check 2: embedding_size = 1024
+    has_emb_1024 = "1024" in source
+
+    # Check 3: max_length ≥ 512 (Jina v2 uses 8192)
+    has_large_maxlen = any(
+        str(n) in source
+        for n in [8192, 4096, 2048, 1024, 512]
+    )
+
+    signals = sum([has_spiece, has_emb_1024, has_large_maxlen])
+
+    if signals >= 2:
+        print(f"PASS:spiece={has_spiece},emb1024={has_emb_1024},maxlen={has_large_maxlen}")
+    else:
+        print(f"FAIL:spiece={has_spiece},emb1024={has_emb_1024},maxlen={has_large_maxlen}")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
+except Exception as e:
+    print(f"ERROR:{e}")
+PYEOF
+)
+echo "  Result: $T13"
+if [[ "$T13" == PASS* ]]; then add_reward 0.03; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 14 (0.06): Pass-to-pass: upstream ComfyUI unit tests (P2P)
+#   Ensure the new implementation doesn't break existing functionality.
+#   Discovers and runs CPU-safe upstream tests.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 14/14: Pass-to-pass: upstream unit tests ==="
+T14="SKIP"
+# Ensure pytest is available
+python3 -m pytest --version >/dev/null 2>&1 || pip install --no-cache-dir pytest pytest-timeout >/dev/null 2>&1
+
+# Discover CPU-safe upstream test files
+P2P_PASSED=0
+P2P_TOTAL=0
+
+for test_file in \
+    /workspace/ComfyUI/tests/test_asset_seeder.py \
+    /workspace/ComfyUI/tests/test_caching.py \
+    /workspace/ComfyUI/tests/test_json_util.py \
+    /workspace/ComfyUI/tests/test_utils.py \
+    /workspace/ComfyUI/tests/test_model_merging.py; do
+    if [ -f "$test_file" ]; then
+        P2P_TOTAL=$((P2P_TOTAL + 1))
+        T14_OUTPUT=$(cd /workspace/ComfyUI && python3 -m pytest "$test_file" -x --timeout=30 -q 2>&1)
+        T14_EXIT=$?
+        if [ $T14_EXIT -eq 0 ] || [ $T14_EXIT -eq 5 ]; then
+            P2P_PASSED=$((P2P_PASSED + 1))
+        fi
+    fi
+done
+
+if [ $P2P_TOTAL -eq 0 ]; then
+    # No upstream test files at this commit — award for not breaking imports
+    # Verify that the core comfy module still imports correctly
+    T14_IMPORT=$(python3 -c "
+import sys
+sys.path.insert(0, '/workspace/ComfyUI')
+try:
+    import comfy.sd1_clip
+    import comfy.model_management
+    print('PASS')
+except Exception as e:
+    print(f'FAIL:{e}')
+" 2>&1)
+    if [[ "$T14_IMPORT" == PASS* ]]; then
+        T14="PASS:core_imports_ok"
+    else
+        T14="FAIL:$T14_IMPORT"
+    fi
+elif [ $P2P_PASSED -eq $P2P_TOTAL ]; then
+    T14="PASS:${P2P_PASSED}/${P2P_TOTAL}_upstream_tests"
+elif [ $P2P_PASSED -gt 0 ]; then
+    T14="PASS:${P2P_PASSED}/${P2P_TOTAL}_upstream_tests"
+else
+    T14="FAIL:0/${P2P_TOTAL}_upstream_tests"
+fi
+
+echo "  Result: $T14"
+if [[ "$T14" == PASS* ]]; then add_reward 0.06; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # Write final reward

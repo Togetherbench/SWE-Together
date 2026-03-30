@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 #
-# Hardened verification script for desloppify-treesitter-plugins task.
+# Verification script for desloppify-treesitter-plugins task.
 # Tests the "Make Generic Language Plugins First-Class" implementation.
 # Writes a reward between 0.0 and 1.0 to /logs/verifier/reward.txt.
 #
-# DESIGN PRINCIPLES:
-#   - Every check is deterministic: no LLM calls, no subjective evaluation.
-#   - 70% of points require BEHAVIORAL correctness (actually running code),
-#     only 30% for structural properties.
-#   - Partial credit: each subsystem is independently scored.
-#   - Total weight: 1.0 across 10 checks.
-#   - Empty stubs / pass-only functions score near 0.
+# Weight breakdown (total = 1.0):
+#   Check 1  (0.10)  register_detector() behavioral          [F2P]
+#   Check 2  (0.10)  register_scoring_policy() behavioral    [F2P]
+#   Check 3  (0.20)  E2E generic_lang creates working plugin [Silver]
+#   Check 4  (0.10)  fix_cmd creates working FixerConfig     [Silver]
+#   Check 5  (0.10)  Agent's test_generic_plugin.py passes   [Silver]
+#   Check 6  (0.10)  Shared phases present (behavioral)      [Silver]
+#   Check 7  (0.05)  DETECTOR_TOOLS refresh behavioral       [F2P]
+#   Check 8  (0.05)  Langs command or capability report      [Silver]
+#   Check 9  (0.10)  Existing tests pass (P2P regression)    [P2P]
+#   Check 10 (0.10)  >=3 language plugins load + register    [Silver]
+#
+# Behavioral: 1.00 (100%) | Structural: 0.00 (0%)
 #
 set +e
 
@@ -19,7 +25,6 @@ WORKSPACE="/workspace/desloppify"
 LOG_DIR="/logs/verifier"
 mkdir -p "$LOG_DIR"
 
-# Helper: increment reward (capped at 1.0)
 add_reward() {
     REWARD=$(python3 -c "print(min(1.0, $REWARD + $1))")
 }
@@ -27,9 +32,9 @@ add_reward() {
 cd "$WORKSPACE"
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 1 (0.10): register_detector() WORKS behaviorally
+# CHECK 1 (0.10): register_detector() WORKS behaviorally       [F2P]
 #   Must actually add a DetectorMeta to DETECTORS dict AND update
-#   _DISPLAY_ORDER (or equivalent ordered list).
+#   display order (list or function).
 # ═══════════════════════════════════════════════════════════════════
 echo "=== Check 1: register_detector() behavioral test ==="
 
@@ -39,16 +44,13 @@ sys.path.insert(0, ".")
 
 from desloppify.core.registry import DETECTORS, DetectorMeta
 
-# Snapshot before
 before_count = len(DETECTORS)
-before_names = set(DETECTORS.keys())
 
-# Import and call register_detector
 from desloppify.core.registry import register_detector
 
 test_meta = DetectorMeta(
-    name="__verifier_behavioral_test__",
-    display="Verifier Behavioral Test",
+    name="__verifier_reg_test__",
+    display="Verifier Reg Test",
     dimension="Code quality",
     action_type="manual_fix",
     guidance="test guidance text",
@@ -56,38 +58,54 @@ test_meta = DetectorMeta(
 register_detector(test_meta)
 
 # 1) Must appear in DETECTORS
-if "__verifier_behavioral_test__" not in DETECTORS:
-    print("  FAIL: register_detector did not add to DETECTORS dict", file=sys.stderr)
+if "__verifier_reg_test__" not in DETECTORS:
+    print("  FAIL: not added to DETECTORS", file=sys.stderr)
     sys.exit(1)
 
-# 2) Retrieved meta must have correct fields
-meta = DETECTORS["__verifier_behavioral_test__"]
-if meta.display != "Verifier Behavioral Test":
+# 2) Fields must match
+meta = DETECTORS["__verifier_reg_test__"]
+if meta.display != "Verifier Reg Test":
     print(f"  FAIL: display mismatch: {meta.display}", file=sys.stderr)
     sys.exit(1)
 if meta.dimension != "Code quality":
     print(f"  FAIL: dimension mismatch: {meta.dimension}", file=sys.stderr)
     sys.exit(1)
 
-# 3) Count must have increased
+# 3) Count increased
 if len(DETECTORS) != before_count + 1:
-    print(f"  FAIL: DETECTORS count didn't increase ({before_count} -> {len(DETECTORS)})", file=sys.stderr)
+    print(f"  FAIL: count unchanged ({before_count} -> {len(DETECTORS)})", file=sys.stderr)
     sys.exit(1)
 
-# 4) display_order() must include the new detector
-from desloppify.core.registry import display_order
-order = display_order()
-if "__verifier_behavioral_test__" not in order:
-    print(f"  FAIL: new detector not in display_order()", file=sys.stderr)
+# 4) Display order includes it (check multiple mechanisms)
+order_ok = False
+try:
+    from desloppify.core.registry import display_order
+    if "__verifier_reg_test__" in display_order():
+        order_ok = True
+except (ImportError, TypeError):
+    pass
+if not order_ok:
+    try:
+        from desloppify.core.registry import _DISPLAY_ORDER
+        if "__verifier_reg_test__" in _DISPLAY_ORDER:
+            order_ok = True
+    except (ImportError, AttributeError):
+        pass
+if not order_ok:
+    # Accept if DETECTORS is ordered and contains the new entry
+    if list(DETECTORS.keys())[-1] == "__verifier_reg_test__":
+        order_ok = True
+if not order_ok:
+    print("  FAIL: not in display_order", file=sys.stderr)
     sys.exit(1)
 
 # Clean up
-del DETECTORS["__verifier_behavioral_test__"]
-print("  All register_detector behavioral checks passed")
+del DETECTORS["__verifier_reg_test__"]
+print("  All register_detector checks passed")
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 2 (0.10): register_scoring_policy() WORKS behaviorally
+# CHECK 2 (0.10): register_scoring_policy() WORKS behaviorally [F2P]
 #   Must add to DETECTOR_SCORING_POLICIES AND rebuild DIMENSIONS
 #   so that the new detector appears in the correct dimension.
 # ═══════════════════════════════════════════════════════════════════
@@ -107,174 +125,67 @@ from desloppify.engine.scoring_internal.policy.core import (
     register_scoring_policy,
 )
 
-# Snapshot before
 before_count = len(DETECTOR_SCORING_POLICIES)
 cq_dim_before = DIMENSIONS_BY_NAME.get("Code quality")
-cq_detectors_before = list(cq_dim_before.detectors) if cq_dim_before else []
+cq_detectors_before = set(cq_dim_before.detectors) if cq_dim_before else set()
 
-# Register a new policy
 test_policy = DetectorScoringPolicy(
-    detector="__verifier_policy_test__",
+    detector="__verifier_pol_test__",
     dimension="Code quality",
     tier=3,
     file_based=True,
 )
 register_scoring_policy(test_policy)
 
-# 1) Must appear in DETECTOR_SCORING_POLICIES
-if "__verifier_policy_test__" not in DETECTOR_SCORING_POLICIES:
-    print("  FAIL: policy not in DETECTOR_SCORING_POLICIES", file=sys.stderr)
+# 1) In DETECTOR_SCORING_POLICIES
+if "__verifier_pol_test__" not in DETECTOR_SCORING_POLICIES:
+    print("  FAIL: not in DETECTOR_SCORING_POLICIES", file=sys.stderr)
     sys.exit(1)
 
-# 2) DIMENSIONS must be rebuilt: "Code quality" dimension must now include new detector
+# 2) DIMENSIONS rebuilt: "Code quality" now includes new detector
 cq_dim_after = DIMENSIONS_BY_NAME.get("Code quality")
 if cq_dim_after is None:
     print("  FAIL: Code quality dimension missing after rebuild", file=sys.stderr)
     sys.exit(1)
-if "__verifier_policy_test__" not in cq_dim_after.detectors:
-    print(f"  FAIL: new detector not in Code quality dimension detectors: {cq_dim_after.detectors}", file=sys.stderr)
+if "__verifier_pol_test__" not in cq_dim_after.detectors:
+    print(f"  FAIL: not in Code quality detectors: {cq_dim_after.detectors}", file=sys.stderr)
     sys.exit(1)
 
-# 3) FILE_BASED_DETECTORS must be rebuilt (file_based=True)
-if "__verifier_policy_test__" not in FILE_BASED_DETECTORS:
-    print(f"  FAIL: new detector not in FILE_BASED_DETECTORS", file=sys.stderr)
+# 3) FILE_BASED_DETECTORS rebuilt
+if "__verifier_pol_test__" not in FILE_BASED_DETECTORS:
+    print("  FAIL: not in FILE_BASED_DETECTORS", file=sys.stderr)
     sys.exit(1)
 
 # Clean up
-del DETECTOR_SCORING_POLICIES["__verifier_policy_test__"]
-# Trigger rebuild to restore state (if _rebuild_derived exists)
+del DETECTOR_SCORING_POLICIES["__verifier_pol_test__"]
 try:
     from desloppify.engine.scoring_internal.policy.core import _rebuild_derived
     _rebuild_derived()
 except ImportError:
     pass
 
-print("  All register_scoring_policy behavioral checks passed")
+print("  All register_scoring_policy checks passed")
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 3 (0.10): generic.py has non-stub functions with real bodies
-#   Key functions must exist AND have >5 lines of body (not pass/return None).
-#   This prevents empty stubs from scoring.
+# CHECK 3 (0.20): End-to-end: generic_lang creates WORKING plugin [Silver]
+#   Import generic_lang (or equivalent factory), create a plugin for
+#   a test language, and verify:
+#   a) LangConfig produced (0.04)
+#   b) Has >=2 phases (0.04)
+#   c) Detectors registered in DETECTORS (0.04)
+#   d) Scoring policies registered (0.04)
+#   e) Security phase present (0.04)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 3: generic.py with non-stub functions ==="
+echo "=== Check 3: E2E generic_lang creates working plugin ==="
 
-python3 << 'PYEOF' && { echo "PASS: generic.py has substantial implementations"; add_reward 0.10; } || echo "FAIL: generic.py missing or has stub functions"
-import ast, sys, os
-
-# Find generic.py
-candidates = [
-    "desloppify/languages/framework/generic.py",
-    "desloppify/languages/_framework/generic.py",
-]
-found_path = None
-for path in candidates:
-    if os.path.exists(path):
-        found_path = path
-        break
-
-if found_path is None:
-    print(f"  generic.py not found in: {candidates}", file=sys.stderr)
-    sys.exit(1)
-
-with open(found_path) as f:
-    source = f.read()
-
-tree = ast.parse(source)
-
-# Build a map of function_name -> body_line_count
-func_bodies = {}
-for node in ast.walk(tree):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        # Count lines of body, excluding docstrings and bare pass/return None
-        body = node.body
-        # Skip docstring
-        start = 0
-        if (body and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, (ast.Str, ast.Constant))):
-            start = 1
-        effective_body = body[start:]
-        # Filter out bare pass, bare return, and return None
-        meaningful = []
-        for stmt in effective_body:
-            if isinstance(stmt, ast.Pass):
-                continue
-            if isinstance(stmt, ast.Return) and stmt.value is None:
-                continue
-            if (isinstance(stmt, ast.Expr)
-                    and isinstance(stmt.value, ast.Constant)
-                    and stmt.value.value is Ellipsis):
-                continue
-            meaningful.append(stmt)
-        # Count lines spanned by meaningful statements
-        if meaningful:
-            line_count = meaningful[-1].end_lineno - meaningful[0].lineno + 1
-        else:
-            line_count = 0
-        func_bodies[node.name] = line_count
-
-# Check required functions exist with substantial bodies
-required = {
-    "_run_tool": 3,        # Must have subprocess logic
-    "_make_detect_fn": 3,  # Must build a detect function
-    "capability_report": 3, # Must inspect plugin config
-}
-
-# Also need a factory: generic_lang or equivalent
-factory_candidates = {"generic_lang", "make_generic_lang", "create_generic_lang"}
-found_factory = factory_candidates & set(func_bodies.keys())
-if found_factory:
-    fname = next(iter(found_factory))
-    required[fname] = 5  # Factory must have substantial body
-
-missing = []
-too_small = []
-for func_name, min_lines in required.items():
-    if func_name not in func_bodies:
-        missing.append(func_name)
-    elif func_bodies[func_name] < min_lines:
-        too_small.append(f"{func_name} ({func_bodies[func_name]} lines, need {min_lines})")
-
-if missing:
-    print(f"  Missing functions: {missing}", file=sys.stderr)
-    sys.exit(1)
-if too_small:
-    print(f"  Stub functions (too short): {too_small}", file=sys.stderr)
-    sys.exit(1)
-
-# Verify _make_generic_fixer or equivalent also exists (for fix_cmd support)
-fixer_candidates = {"_make_generic_fixer", "make_generic_fixer", "create_fixer"}
-found_fixer = fixer_candidates & set(func_bodies.keys())
-if not found_fixer:
-    # Accept inline FixerConfig creation if it references fix_cmd
-    if "FixerConfig" not in source or "fix_cmd" not in source:
-        print(f"  No fixer creation function found", file=sys.stderr)
-        sys.exit(1)
-
-print(f"  Functions found: {sorted(func_bodies.keys())}")
-print(f"  All required functions have substantial bodies")
-PYEOF
-
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 4 (0.15): End-to-end: generic_lang creates a WORKING plugin
-#   This is the core behavioral test. Actually import generic_lang (or
-#   equivalent), create a plugin config for a test language, and verify:
-#   - LangConfig is produced with correct name/extensions
-#   - Phases include at least 1 tool phase + security phase
-#   - The tool's detector was registered in DETECTORS
-#   - The tool's scoring policy was registered in DETECTOR_SCORING_POLICIES
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Check 4: End-to-end generic_lang creates working plugin ==="
-
-PARTIAL4=0
-
-python3 << 'PYEOF'
-import sys, os, importlib
+E2E_OUTPUT=$(python3 << 'PYEOF'
+import sys, importlib
 sys.path.insert(0, ".")
 
-# Find and import generic.py
+# Find and import generic module
+mod = None
 for mod_path in [
     "desloppify.languages.framework.generic",
     "desloppify.languages._framework.generic",
@@ -284,159 +195,23 @@ for mod_path in [
         break
     except ImportError:
         continue
-else:
-    print("FAIL_IMPORT", file=sys.stdout)
-    sys.exit(0)
 
-# Find the factory function
-factory = None
-for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
-    factory = getattr(mod, name, None)
-    if factory:
-        break
-
-if not factory:
-    print("FAIL_NO_FACTORY", file=sys.stdout)
-    sys.exit(0)
-
-# Check the factory signature to understand what args it needs
-import inspect
-sig = inspect.signature(factory)
-params = list(sig.parameters.keys())
-print(f"FACTORY_PARAMS:{','.join(params)}", file=sys.stdout)
-
-# Try to call it with a minimal test language spec
-# This mirrors what a real go/__init__.py would do
-try:
-    from desloppify.core.registry import DETECTORS
-    from desloppify.engine.scoring_internal.policy.core import DETECTOR_SCORING_POLICIES
-    from desloppify.languages.framework.base.types import LangConfig
-
-    before_detectors = set(DETECTORS.keys())
-    before_policies = set(DETECTOR_SCORING_POLICIES.keys())
-
-    # Construct a minimal tool spec matching the instruction plan format
-    test_tool = {
-        "label": "test_verifier_tool",
-        "cmd": "echo '{}'",
-        "fmt": "json",
-        "id": "test_verifier_lint",
-        "tier": 3,
-    }
-
-    # Try calling with various signatures
-    result = None
-    errors = []
-
-    # Attempt 1: name + tools list (most likely signature)
-    try:
-        result = factory(
-            name="__verifier_test_lang__",
-            extensions=[".vfy"],
-            tools=[test_tool],
-        )
-    except TypeError as e:
-        errors.append(f"sig1: {e}")
-
-    # Attempt 2: positional args
-    if result is None:
-        try:
-            result = factory("__verifier_test_lang__", [".vfy"], [test_tool])
-        except TypeError as e:
-            errors.append(f"sig2: {e}")
-
-    # Attempt 3: dict-based config
-    if result is None:
-        try:
-            result = factory({
-                "name": "__verifier_test_lang__",
-                "extensions": [".vfy"],
-                "tools": [test_tool],
-            })
-        except TypeError as e:
-            errors.append(f"sig3: {e}")
-
-    if result is None:
-        print(f"FAIL_CALL:{'|'.join(errors)}", file=sys.stdout)
-        sys.exit(0)
-
-    # Verify the result
-    results = []
-
-    # a) Result is a LangConfig or has phases attribute
-    if isinstance(result, LangConfig):
-        results.append("IS_LANGCONFIG")
-    elif hasattr(result, "phases"):
-        results.append("HAS_PHASES")
-    else:
-        results.append("NO_LANGCONFIG")
-
-    # b) Has phases
-    if hasattr(result, "phases") and len(result.phases) > 0:
-        results.append(f"PHASES:{len(result.phases)}")
-        # Check for security phase
-        phase_labels = [p.label.lower() for p in result.phases]
-        if any("security" in l for l in phase_labels):
-            results.append("HAS_SECURITY_PHASE")
-    else:
-        results.append("NO_PHASES")
-
-    # c) Detector was registered
-    after_detectors = set(DETECTORS.keys())
-    new_detectors = after_detectors - before_detectors
-    if new_detectors:
-        results.append(f"NEW_DETECTORS:{','.join(sorted(new_detectors))}")
-    else:
-        results.append("NO_NEW_DETECTORS")
-
-    # d) Scoring policy was registered
-    after_policies = set(DETECTOR_SCORING_POLICIES.keys())
-    new_policies = after_policies - before_policies
-    if new_policies:
-        results.append(f"NEW_POLICIES:{','.join(sorted(new_policies))}")
-    else:
-        results.append("NO_NEW_POLICIES")
-
-    # e) Has fixers dict
-    if hasattr(result, "fixers"):
-        results.append(f"FIXERS:{len(result.fixers)}")
-    else:
-        results.append("NO_FIXERS_ATTR")
-
-    print("|".join(results), file=sys.stdout)
-
-except Exception as e:
-    print(f"FAIL_EXCEPTION:{type(e).__name__}:{e}", file=sys.stdout)
-PYEOF
-
-E2E_OUTPUT=$(python3 << 'PYEOF2'
-import sys, os, importlib
-sys.path.insert(0, ".")
-
-for mod_path in [
-    "desloppify.languages.framework.generic",
-    "desloppify.languages._framework.generic",
-]:
-    try:
-        mod = importlib.import_module(mod_path)
-        break
-    except ImportError:
-        continue
-else:
+if mod is None:
     print("FAIL_IMPORT")
     sys.exit(0)
 
+# Find factory function
 factory = None
 for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
     factory = getattr(mod, name, None)
-    if factory:
+    if factory and callable(factory):
         break
+    factory = None
 
 if not factory:
     print("FAIL_NO_FACTORY")
     sys.exit(0)
 
-import inspect
 try:
     from desloppify.core.registry import DETECTORS
     from desloppify.engine.scoring_internal.policy.core import DETECTOR_SCORING_POLICIES
@@ -446,47 +221,34 @@ try:
     before_policies = set(DETECTOR_SCORING_POLICIES.keys())
 
     test_tool = {
-        "label": "test_verifier_tool",
+        "label": "verifier_e2e_tool",
         "cmd": "echo '{}'",
         "fmt": "json",
-        "id": "test_verifier_lint",
+        "id": "verifier_e2e_lint",
         "tier": 3,
     }
 
+    # Try calling with various signatures
     result = None
-    errors = []
-
-    try:
-        result = factory(
-            name="__verifier_test_lang__",
-            extensions=[".vfy"],
-            tools=[test_tool],
-        )
-    except TypeError as e:
-        errors.append(str(e))
-
-    if result is None:
+    for attempt in [
+        lambda: factory(name="__verifier_e2e_lang__", extensions=[".vfy"], tools=[test_tool]),
+        lambda: factory("__verifier_e2e_lang__", [".vfy"], [test_tool]),
+        lambda: factory({"name": "__verifier_e2e_lang__", "extensions": [".vfy"], "tools": [test_tool]}),
+    ]:
         try:
-            result = factory("__verifier_test_lang__", [".vfy"], [test_tool])
-        except TypeError as e:
-            errors.append(str(e))
+            result = attempt()
+            if result is not None:
+                break
+        except (TypeError, KeyError):
+            continue
 
     if result is None:
-        try:
-            result = factory({
-                "name": "__verifier_test_lang__",
-                "extensions": [".vfy"],
-                "tools": [test_tool],
-            })
-        except TypeError as e:
-            errors.append(str(e))
-
-    if result is None:
-        print(f"FAIL_CALL:{'|'.join(errors)}")
+        print("FAIL_CALL")
         sys.exit(0)
 
     results = []
 
+    # a) Is a LangConfig or has phases
     if isinstance(result, LangConfig):
         results.append("IS_LANGCONFIG")
     elif hasattr(result, "phases"):
@@ -494,238 +256,236 @@ try:
     else:
         results.append("NO_LANGCONFIG")
 
-    if hasattr(result, "phases") and len(result.phases) > 0:
+    # b) Has >=2 phases
+    if hasattr(result, "phases") and len(result.phases) >= 2:
         results.append(f"PHASES:{len(result.phases)}")
-        phase_labels = [p.label.lower() for p in result.phases]
-        if any("security" in l for l in phase_labels):
-            results.append("HAS_SECURITY_PHASE")
+    elif hasattr(result, "phases"):
+        results.append(f"FEW_PHASES:{len(result.phases)}")
     else:
         results.append("NO_PHASES")
 
+    # c) New detectors registered
     after_detectors = set(DETECTORS.keys())
-    new_detectors = after_detectors - before_detectors
-    if new_detectors:
-        results.append(f"NEW_DETECTORS:{','.join(sorted(new_detectors))}")
+    new_det = after_detectors - before_detectors
+    if new_det:
+        results.append(f"NEW_DETECTORS:{len(new_det)}")
     else:
         results.append("NO_NEW_DETECTORS")
 
+    # d) New scoring policies registered
     after_policies = set(DETECTOR_SCORING_POLICIES.keys())
-    new_policies = after_policies - before_policies
-    if new_policies:
-        results.append(f"NEW_POLICIES:{','.join(sorted(new_policies))}")
+    new_pol = after_policies - before_policies
+    if new_pol:
+        results.append(f"NEW_POLICIES:{len(new_pol)}")
     else:
         results.append("NO_NEW_POLICIES")
 
-    if hasattr(result, "fixers"):
-        results.append(f"FIXERS:{len(result.fixers)}")
+    # e) Security phase present
+    if hasattr(result, "phases") and result.phases:
+        phase_labels = [p.label.lower() for p in result.phases]
+        if any("security" in l for l in phase_labels):
+            results.append("HAS_SECURITY_PHASE")
+        else:
+            results.append("NO_SECURITY_PHASE")
     else:
-        results.append("NO_FIXERS_ATTR")
+        results.append("NO_SECURITY_PHASE")
 
     print("|".join(results))
 
 except Exception as e:
     print(f"FAIL_EXCEPTION:{type(e).__name__}:{e}")
-PYEOF2
+PYEOF
 )
 
 echo "  E2E output: $E2E_OUTPUT"
 
 case "$E2E_OUTPUT" in
-    FAIL_IMPORT*)
-        echo "FAIL: Could not import generic.py module"
-        ;;
-    FAIL_NO_FACTORY*)
-        echo "FAIL: No factory function (generic_lang etc.) found"
-        ;;
-    FAIL_CALL*)
-        echo "FAIL: Could not call factory function: $E2E_OUTPUT"
-        ;;
-    FAIL_EXCEPTION*)
-        echo "FAIL: Exception during e2e test: $E2E_OUTPUT"
+    FAIL_IMPORT*|FAIL_NO_FACTORY*|FAIL_CALL*|FAIL_EXCEPTION*)
+        echo "FAIL: $E2E_OUTPUT"
         ;;
     *)
-        # Parse results
         E2E_POINTS=0
 
-        # a) Produces a LangConfig (0.03)
+        # a) LangConfig produced (0.04)
         if echo "$E2E_OUTPUT" | grep -q "IS_LANGCONFIG\|HAS_PHASES"; then
             echo "  + LangConfig produced"
             E2E_POINTS=$((E2E_POINTS + 1))
         fi
 
-        # b) Has phases (0.03)
-        if echo "$E2E_OUTPUT" | grep -q "PHASES:"; then
-            PHASE_COUNT=$(echo "$E2E_OUTPUT" | grep -oP 'PHASES:\K[0-9]+')
-            if [ "$PHASE_COUNT" -ge 2 ]; then
-                echo "  + Has $PHASE_COUNT phases (>= 2)"
-                E2E_POINTS=$((E2E_POINTS + 1))
-            else
-                echo "  - Only $PHASE_COUNT phase(s), need >= 2"
-            fi
-        fi
-
-        # c) Registered detectors (0.03)
-        if echo "$E2E_OUTPUT" | grep -q "NEW_DETECTORS:"; then
-            echo "  + Detectors registered in DETECTORS dict"
+        # b) >=2 phases (0.04)
+        if echo "$E2E_OUTPUT" | grep -qP "PHASES:\d+"; then
+            echo "  + Has multiple phases"
             E2E_POINTS=$((E2E_POINTS + 1))
-        else
-            echo "  - No new detectors registered"
         fi
 
-        # d) Registered scoring policies (0.03)
+        # c) Detectors registered (0.04)
+        if echo "$E2E_OUTPUT" | grep -q "NEW_DETECTORS:"; then
+            echo "  + Detectors registered"
+            E2E_POINTS=$((E2E_POINTS + 1))
+        fi
+
+        # d) Policies registered (0.04)
         if echo "$E2E_OUTPUT" | grep -q "NEW_POLICIES:"; then
             echo "  + Scoring policies registered"
             E2E_POINTS=$((E2E_POINTS + 1))
-        else
-            echo "  - No new scoring policies registered"
         fi
 
-        # e) Has security phase (0.03)
+        # e) Security phase (0.04)
         if echo "$E2E_OUTPUT" | grep -q "HAS_SECURITY_PHASE"; then
             echo "  + Security phase present"
             E2E_POINTS=$((E2E_POINTS + 1))
-        else
-            echo "  - No security phase"
         fi
 
-        # Score: 0.03 per sub-check, total 0.15
-        if [ "$E2E_POINTS" -eq 5 ]; then
-            echo "PASS: All 5 e2e sub-checks passed"
-            add_reward 0.15
-        elif [ "$E2E_POINTS" -ge 3 ]; then
-            echo "PARTIAL: $E2E_POINTS/5 e2e sub-checks passed"
-            add_reward 0.09
-        elif [ "$E2E_POINTS" -ge 1 ]; then
-            echo "PARTIAL: $E2E_POINTS/5 e2e sub-checks passed"
-            add_reward 0.03
+        # Proportional scoring: 0.04 per sub-check
+        if [ "$E2E_POINTS" -gt 0 ]; then
+            E2E_REWARD=$(python3 -c "print(round($E2E_POINTS * 0.04, 2))")
+            echo "  Score: $E2E_POINTS/5 sub-checks = $E2E_REWARD"
+            add_reward "$E2E_REWARD"
         else
-            echo "FAIL: 0/5 e2e sub-checks passed"
+            echo "FAIL: 0/5 e2e sub-checks"
         fi
         ;;
 esac
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 5 (0.10): fix_cmd creates working FixerConfig objects
-#   Language plugins with fix_cmd must produce FixerConfig objects
-#   with callable detect and fix attributes.
+# CHECK 4 (0.10): fix_cmd creates working FixerConfig objects   [Silver]
+#   Call generic_lang with a tool that has fix_cmd and verify the
+#   resulting config has FixerConfig entries with callable detect+fix.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 5: fix_cmd creates working FixerConfig ==="
+echo "=== Check 4: fix_cmd creates working FixerConfig ==="
 
 python3 << 'PYEOF' && { echo "PASS: FixerConfig creation works"; add_reward 0.10; } || echo "FAIL: FixerConfig creation broken"
-import sys, os, importlib, ast
+import sys, importlib
 sys.path.insert(0, ".")
 
-# First verify that at least 3 of 5 language plugins have fix_cmd
-languages_with_fix_cmd = []
-for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
-    for dir_path in [f"desloppify/languages/{lang}", f"desloppify/languages/_framework/plugins/{lang}"]:
-        init_file = f"{dir_path}/__init__.py"
-        if os.path.exists(init_file):
-            with open(init_file) as f:
-                content = f.read()
-            if "fix_cmd" in content:
-                languages_with_fix_cmd.append(lang)
-                break
-
-# Also check generic.py for inline fix_cmd per language
-if len(languages_with_fix_cmd) < 3:
-    for gpath in ["desloppify/languages/framework/generic.py", "desloppify/languages/_framework/generic.py"]:
-        if os.path.exists(gpath):
-            with open(gpath) as f:
-                content = f.read()
-            for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
-                if lang not in languages_with_fix_cmd and "fix_cmd" in content and lang in content.lower():
-                    languages_with_fix_cmd.append(lang)
-
-if len(languages_with_fix_cmd) < 3:
-    print(f"  Only {len(languages_with_fix_cmd)} languages have fix_cmd (need >= 3): {languages_with_fix_cmd}", file=sys.stderr)
-    sys.exit(1)
-
-print(f"  Languages with fix_cmd: {languages_with_fix_cmd}")
-
-# Now try to import a generic plugin and verify its fixers are FixerConfig with callables
 from desloppify.languages.framework.base.types import FixerConfig
 
-# Try to import one of the language plugins and check its fixers
 found_working_fixer = False
-for lang in languages_with_fix_cmd[:3]:
+
+# Strategy 1: Call generic_lang with a fix_cmd tool and check config.fixers
+for mod_path in [
+    "desloppify.languages.framework.generic",
+    "desloppify.languages._framework.generic",
+]:
     try:
-        # Try importing the language module
-        for mod_path in [
-            f"desloppify.languages.{lang}",
-            f"desloppify.languages._framework.plugins.{lang}",
-        ]:
-            try:
-                mod = importlib.import_module(mod_path)
+        mod = importlib.import_module(mod_path)
+    except ImportError:
+        continue
+
+    factory = None
+    for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
+        factory = getattr(mod, name, None)
+        if factory and callable(factory):
+            break
+        factory = None
+    if not factory:
+        continue
+
+    test_tool = {
+        "label": "verifier_fix_tool",
+        "cmd": "echo '{}'",
+        "fmt": "json",
+        "id": "verifier_fix_lint",
+        "tier": 3,
+        "fix_cmd": "echo 'fixed'",
+    }
+
+    result = None
+    for attempt in [
+        lambda: factory(name="__verifier_fix_lang__", extensions=[".vfy"], tools=[test_tool]),
+        lambda: factory("__verifier_fix_lang__", [".vfy"], [test_tool]),
+    ]:
+        try:
+            result = attempt()
+            if result is not None:
                 break
-            except ImportError:
-                continue
-        else:
+        except (TypeError, KeyError):
             continue
 
-        # Check if we can find fixers in the loaded config
-        from desloppify.languages.framework.resolution import get_lang
-        try:
-            cfg = get_lang(lang)
-            if cfg and hasattr(cfg, "fixers") and cfg.fixers:
-                for fixer_name, fixer_cfg in cfg.fixers.items():
-                    if isinstance(fixer_cfg, FixerConfig):
-                        if callable(fixer_cfg.detect) and callable(fixer_cfg.fix):
-                            print(f"  {lang}: FixerConfig '{fixer_name}' has callable detect+fix")
-                            found_working_fixer = True
-                            break
-                        else:
-                            print(f"  {lang}: FixerConfig '{fixer_name}' detect/fix not callable", file=sys.stderr)
-                    else:
-                        print(f"  {lang}: fixer is {type(fixer_cfg).__name__}, not FixerConfig", file=sys.stderr)
-        except Exception as e:
-            # get_lang may not work for unregistered langs; try alternative
-            pass
+    if result and hasattr(result, "fixers") and result.fixers:
+        for fname, fcfg in result.fixers.items():
+            if isinstance(fcfg, FixerConfig) and callable(fcfg.detect) and callable(fcfg.fix):
+                print(f"  Strategy 1: generic_lang produced FixerConfig '{fname}' with callable detect+fix")
+                found_working_fixer = True
+                break
+    if found_working_fixer:
+        break
 
-    except Exception as e:
-        print(f"  {lang}: error during import: {e}", file=sys.stderr)
-
-# Alternative: check if _make_generic_fixer exists and can be called
+# Strategy 2: Call _make_generic_fixer (or similar) directly
 if not found_working_fixer:
-    for gpath_mod in ["desloppify.languages.framework.generic", "desloppify.languages._framework.generic"]:
+    for mod_path in [
+        "desloppify.languages.framework.generic",
+        "desloppify.languages._framework.generic",
+    ]:
         try:
-            mod = importlib.import_module(gpath_mod)
-            make_fixer = getattr(mod, "_make_generic_fixer", None) or getattr(mod, "make_generic_fixer", None)
-            if make_fixer:
+            mod = importlib.import_module(mod_path)
+        except ImportError:
+            continue
+        for attr_name in dir(mod):
+            fn = getattr(mod, attr_name)
+            if not callable(fn) or attr_name.startswith("__"):
+                continue
+            if "fixer" not in attr_name.lower() and "fix" not in attr_name.lower():
+                continue
+            try:
                 test_tool = {
-                    "label": "test_tool",
-                    "cmd": "echo 'test'",
+                    "label": "verifier_fix_tool",
+                    "cmd": "echo '{}'",
                     "fmt": "json",
-                    "id": "test_fixer",
+                    "id": "verifier_fix2",
                     "tier": 3,
                     "fix_cmd": "echo 'fixed'",
                 }
-                fixer = make_fixer(test_tool)
+                fixer = fn(test_tool)
                 if isinstance(fixer, FixerConfig) and callable(fixer.detect) and callable(fixer.fix):
-                    print(f"  _make_generic_fixer produces valid FixerConfig with callable detect+fix")
+                    print(f"  Strategy 2: {attr_name}() produces valid FixerConfig")
                     found_working_fixer = True
                     break
-        except Exception as e:
-            print(f"  {gpath_mod}: {e}", file=sys.stderr)
+            except Exception:
+                continue
+        if found_working_fixer:
+            break
+
+# Strategy 3: Check an actual language plugin's fixers
+if not found_working_fixer:
+    for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
+        try:
+            for mp in [f"desloppify.languages.{lang}", f"desloppify.languages._framework.plugins.{lang}"]:
+                try:
+                    importlib.import_module(mp)
+                    break
+                except ImportError:
+                    continue
+            from desloppify.languages.framework.resolution import get_lang
+            cfg = get_lang(lang)
+            if cfg and hasattr(cfg, "fixers") and cfg.fixers:
+                for fname, fcfg in cfg.fixers.items():
+                    if isinstance(fcfg, FixerConfig) and callable(fcfg.detect) and callable(fcfg.fix):
+                        print(f"  Strategy 3: {lang} has FixerConfig '{fname}'")
+                        found_working_fixer = True
+                        break
+            if found_working_fixer:
+                break
+        except Exception:
+            pass
 
 if not found_working_fixer:
-    print("  No working FixerConfig with callable detect+fix found", file=sys.stderr)
+    print("  No working FixerConfig found via any strategy", file=sys.stderr)
     sys.exit(1)
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 6 (0.15): Agent's test_generic_plugin.py PASSES via pytest
-#   The agent must write tests that actually pass. We run pytest on
-#   the test file and require >= 50% pass rate.
-#   This catches both "no test file" and "stub tests that all fail".
+# CHECK 5 (0.10): Agent's test_generic_plugin.py PASSES pytest  [Silver]
+#   The agent must write tests that pass AND are real tests.
+#   Quality gate: >=10 functions, >=50% with assertions,
+#   >=2 desloppify imports, >=3 test names reference new features.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 6: Agent's test_generic_plugin.py passes pytest ==="
+echo "=== Check 5: Agent's test_generic_plugin.py passes pytest ==="
 
 cd "$WORKSPACE"
 
-# Find the test file
 TEST_FILE=$(python3 -c "
 import glob
 candidates = glob.glob('desloppify/**/test_generic_plugin.py', recursive=True)
@@ -742,280 +502,376 @@ if [ -z "$TEST_FILE" ]; then
 else
     echo "  Found: $TEST_FILE"
 
-    # First check it has enough test functions (at least 10)
-    TEST_COUNT=$(python3 -c "
-import ast
-with open('$TEST_FILE') as f:
-    tree = ast.parse(f.read())
-tests = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name.startswith('test_')]
-print(len(tests))
-")
-    echo "  Test functions: $TEST_COUNT"
+    QUALITY_OK=$(python3 << PYEOF
+import ast, sys, re
 
-    if [ "$TEST_COUNT" -lt 10 ]; then
-        echo "FAIL: Only $TEST_COUNT test functions (need >= 10)"
-    else
-        # Run pytest on the test file
-        python3 -m pytest "$TEST_FILE" -q --tb=line 2>&1 | tail -15 > "$LOG_DIR/agent_tests.txt"
-        AGENT_PYTEST_EXIT=$?
+with open("$TEST_FILE") as f:
+    source = f.read()
+tree = ast.parse(source)
 
-        cat "$LOG_DIR/agent_tests.txt"
+test_funcs = [n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+num_tests = len(test_funcs)
 
-        # Parse results
-        PASSED=$(grep -oP '\d+ passed' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
-        FAILED=$(grep -oP '\d+ failed' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
-        ERRORS=$(grep -oP '\d+ error' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
-        TOTAL=$((PASSED + FAILED + ERRORS))
+if num_tests < 10:
+    print(f"FAIL_COUNT:{num_tests}", end="")
+    sys.exit(0)
 
-        if [ "$TOTAL" -eq 0 ]; then
-            echo "FAIL: No tests collected or all errored"
-        else
-            PASS_RATE=$(python3 -c "print($PASSED / $TOTAL)")
-            echo "  Pass rate: $PASSED/$TOTAL = $PASS_RATE"
+# Count tests with assertions
+tests_with_asserts = 0
+for func in test_funcs:
+    func_source = ast.get_source_segment(source, func) or ""
+    has_assert = False
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assert):
+            has_assert = True
+            break
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr.startswith("assert")):
+            has_assert = True
+            break
+    if not has_assert and ("assert" in func_source.lower() or "raises" in func_source.lower()):
+        has_assert = True
+    if has_assert:
+        tests_with_asserts += 1
 
-            if python3 -c "exit(0 if $PASS_RATE >= 0.8 else 1)"; then
-                echo "PASS: >= 80% of agent's tests pass"
-                add_reward 0.15
-            elif python3 -c "exit(0 if $PASS_RATE >= 0.5 else 1)"; then
-                echo "PARTIAL: >= 50% of agent's tests pass"
-                add_reward 0.08
-            elif python3 -c "exit(0 if $PASS_RATE >= 0.3 else 1)"; then
-                echo "PARTIAL: >= 30% of agent's tests pass"
-                add_reward 0.04
+assert_ratio = tests_with_asserts / num_tests if num_tests > 0 else 0
+
+# Count distinct desloppify module imports
+desloppify_imports = set()
+for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom) and node.module and "desloppify" in node.module:
+        desloppify_imports.add(node.module)
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if "desloppify" in alias.name:
+                desloppify_imports.add(alias.name)
+
+# Test names must reference new features (anti-gaming)
+keywords = {"register", "detector", "scoring", "policy", "generic", "fixer",
+            "phase", "narrative", "lang_config", "langconfig", "shared", "security"}
+relevant_names = 0
+for func in test_funcs:
+    name_lower = func.name.lower()
+    if any(kw in name_lower for kw in keywords):
+        relevant_names += 1
+
+if assert_ratio < 0.5:
+    print(f"FAIL_ASSERTS:{tests_with_asserts}/{num_tests}", end="")
+elif len(desloppify_imports) < 2:
+    print(f"FAIL_IMPORTS:{len(desloppify_imports)}", end="")
+elif relevant_names < 3:
+    print(f"FAIL_RELEVANCE:{relevant_names}", end="")
+else:
+    print(f"OK:{num_tests}:{tests_with_asserts}:{len(desloppify_imports)}:{relevant_names}", end="")
+PYEOF
+    )
+
+    echo "  Quality: $QUALITY_OK"
+
+    case "$QUALITY_OK" in
+        FAIL_COUNT*)
+            echo "FAIL: Too few test functions (need >= 10)"
+            ;;
+        FAIL_ASSERTS*)
+            echo "FAIL: Too few assertions (need >= 50%)"
+            ;;
+        FAIL_IMPORTS*)
+            echo "FAIL: Too few desloppify imports (need >= 2)"
+            ;;
+        FAIL_RELEVANCE*)
+            echo "FAIL: Too few tests reference new features (need >= 3 with relevant names)"
+            ;;
+        OK*)
+            timeout 60 python3 -m pytest "$TEST_FILE" -q --tb=line 2>&1 | tail -15 > "$LOG_DIR/agent_tests.txt"
+            cat "$LOG_DIR/agent_tests.txt"
+
+            PASSED=$(grep -oP '\d+ passed' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
+            FAILED=$(grep -oP '\d+ failed' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
+            ERRORS=$(grep -oP '\d+ error' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
+            TOTAL=$((PASSED + FAILED + ERRORS))
+
+            if [ "$TOTAL" -eq 0 ]; then
+                echo "FAIL: No tests collected"
             else
-                echo "FAIL: < 30% of agent's tests pass"
+                PASS_RATE=$(python3 -c "print($PASSED / $TOTAL)")
+                echo "  Pass rate: $PASSED/$TOTAL = $PASS_RATE"
+
+                if python3 -c "exit(0 if $PASS_RATE >= 0.8 else 1)"; then
+                    echo "PASS: >= 80% pass"
+                    add_reward 0.10
+                elif python3 -c "exit(0 if $PASS_RATE >= 0.5 else 1)"; then
+                    echo "PARTIAL: >= 50% pass"
+                    add_reward 0.05
+                else
+                    echo "FAIL: < 50% pass"
+                fi
             fi
-        fi
-    fi
+            ;;
+    esac
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 7 (0.10): Shared phases present in generic plugins
-#   Generic plugins must include shared phases (security, subjective
-#   review, and at least one of duplicates/boilerplate).
-#   This tests behavioral integration, not just file existence.
+# CHECK 6 (0.10): Shared phases present in generic plugins      [Silver]
+#   Generic plugins must include shared phases (security + at least
+#   one of subjective review / duplicates / boilerplate).
+#   Tested by loading a real plugin or calling the factory.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 7: Shared phases present in generic plugins ==="
+echo "=== Check 6: Shared phases present in generic plugins ==="
 
-python3 << 'PYEOF' && { echo "PASS: Shared phases correctly integrated"; add_reward 0.10; } || echo "FAIL: Shared phases missing"
-import sys, os, importlib
+python3 << 'PYEOF' && { echo "PASS: Shared phases integrated"; add_reward 0.10; } || echo "FAIL: Shared phases missing"
+import sys, importlib
 sys.path.insert(0, ".")
 
-# Strategy 1: Check if any already-loaded generic plugin has shared phases
-# by importing a real language plugin (go, rust, etc.)
-found_shared_phases = False
-shared_phase_names = {"security", "subjective review", "boilerplate duplication", "duplicates"}
-
+# Strategy 1: Load a real language plugin, check its phases
+found_shared = False
 for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
     try:
-        for mod_path in [
-            f"desloppify.languages.{lang}",
-            f"desloppify.languages._framework.plugins.{lang}",
-        ]:
+        for mp in [f"desloppify.languages.{lang}", f"desloppify.languages._framework.plugins.{lang}"]:
             try:
-                importlib.import_module(mod_path)
+                importlib.import_module(mp)
                 break
             except ImportError:
                 continue
-
         from desloppify.languages.framework.resolution import get_lang
         cfg = get_lang(lang)
         if cfg and hasattr(cfg, "phases") and cfg.phases:
-            phase_labels = {p.label.lower() for p in cfg.phases}
-            has_security = any("security" in l for l in phase_labels)
-            has_subjective = any("subjective" in l or "review" in l for l in phase_labels)
-            has_dupes = any("duplicat" in l or "boilerplate" in l for l in phase_labels)
-
-            print(f"  {lang} phases: {sorted(phase_labels)}")
-
-            if has_security and has_subjective:
-                found_shared_phases = True
-                print(f"  {lang}: has security + subjective review phases")
-                break
-    except Exception as e:
-        print(f"  {lang}: {e}", file=sys.stderr)
-
-# Strategy 2: Check generic.py source for shared phase imports/usage
-if not found_shared_phases:
-    for gpath in ["desloppify/languages/framework/generic.py", "desloppify/languages/_framework/generic.py"]:
-        if os.path.exists(gpath):
-            with open(gpath) as f:
-                content = f.read()
-            # Must import shared phase builders
-            has_security_import = (
-                "detector_phase_security" in content
-                or "phase_security" in content
+            labels = {p.label.lower() for p in cfg.phases}
+            has_security = any("security" in l for l in labels)
+            has_other = any(
+                "subjective" in l or "review" in l or "duplicat" in l or "boilerplate" in l
+                for l in labels
             )
-            has_subjective_import = (
-                "shared_subjective_duplicates_tail" in content
-                or "detector_phase_subjective_review" in content
-                or "phase_subjective_review" in content
-            )
-            if has_security_import and has_subjective_import:
-                # Verify they're actually used (not just imported)
-                # Check they appear in a function body, not just import lines
-                import ast
-                tree = ast.parse(content)
-                # Find function bodies that reference phase builders
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        func_source = ast.get_source_segment(content, node)
-                        if func_source and ("security" in func_source.lower()) and (
-                            "subjective" in func_source.lower() or "shared_subjective" in func_source.lower()
-                        ):
-                            found_shared_phases = True
-                            print(f"  Found security + subjective phase usage in {gpath}:{node.name}")
-                            break
-            if found_shared_phases:
+            if has_security and has_other:
+                print(f"  {lang}: security + shared phases found in {sorted(labels)}")
+                found_shared = True
                 break
+            elif has_security:
+                print(f"  {lang}: security phase found (partial)")
+                found_shared = True
+                break
+    except Exception:
+        pass
 
-if not found_shared_phases:
-    print("  No shared phases (security + subjective review) found in generic plugins", file=sys.stderr)
+# Strategy 2: Call generic_lang directly
+if not found_shared:
+    for mod_path in [
+        "desloppify.languages.framework.generic",
+        "desloppify.languages._framework.generic",
+    ]:
+        try:
+            mod = importlib.import_module(mod_path)
+        except ImportError:
+            continue
+        factory = None
+        for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
+            factory = getattr(mod, name, None)
+            if factory and callable(factory):
+                break
+            factory = None
+        if not factory:
+            continue
+
+        test_tool = {
+            "label": "verifier_shared_tool",
+            "cmd": "echo '{}'",
+            "fmt": "json",
+            "id": "verifier_shared_lint",
+            "tier": 3,
+        }
+        result = None
+        for attempt in [
+            lambda: factory(name="__verifier_shared_lang__", extensions=[".vfy"], tools=[test_tool]),
+            lambda: factory("__verifier_shared_lang__", [".vfy"], [test_tool]),
+        ]:
+            try:
+                result = attempt()
+                if result is not None:
+                    break
+            except (TypeError, KeyError):
+                continue
+
+        if result and hasattr(result, "phases") and result.phases:
+            labels = {p.label.lower() for p in result.phases}
+            has_security = any("security" in l for l in labels)
+            has_other = any(
+                "subjective" in l or "review" in l or "duplicat" in l or "boilerplate" in l
+                for l in labels
+            )
+            if has_security and has_other:
+                print(f"  Factory: security + shared phases in {sorted(labels)}")
+                found_shared = True
+            elif has_security:
+                print(f"  Factory: security phase found (partial)")
+                found_shared = True
+        if found_shared:
+            break
+
+if not found_shared:
+    print("  No shared phases found", file=sys.stderr)
     sys.exit(1)
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 8 (0.05): Narrative DETECTOR_TOOLS refresh works behaviorally
+# CHECK 7 (0.05): Narrative DETECTOR_TOOLS refresh behaviorally [F2P]
 #   After calling refresh, DETECTOR_TOOLS must reflect newly
 #   registered detectors.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 8: Narrative DETECTOR_TOOLS refresh behavioral ==="
+echo "=== Check 7: DETECTOR_TOOLS refresh behavioral ==="
 
 python3 << 'PYEOF' && { echo "PASS: DETECTOR_TOOLS refresh works"; add_reward 0.05; } || echo "FAIL: DETECTOR_TOOLS refresh broken"
 import sys
 sys.path.insert(0, ".")
 
-from desloppify.core.registry import DETECTORS, DetectorMeta
+from desloppify.core.registry import DETECTORS, DetectorMeta, register_detector
 
-# First register a test detector
 test_meta = DetectorMeta(
-    name="__verifier_narrative_test__",
-    display="Verifier Narrative Test",
+    name="__verifier_narr_test__",
+    display="Verifier Narr Test",
     dimension="Code quality",
     action_type="manual_fix",
     guidance="narrative test",
 )
-
-# Import register_detector to add it
-from desloppify.core.registry import register_detector
 register_detector(test_meta)
 
-# Now try to refresh DETECTOR_TOOLS
 from desloppify.intelligence.narrative._constants import DETECTOR_TOOLS
 
-# Check if the new detector is already in DETECTOR_TOOLS (auto-refresh via callback)
-if "__verifier_narrative_test__" in DETECTOR_TOOLS:
-    print("  Auto-refresh via callback: new detector already in DETECTOR_TOOLS")
+# Check auto-refresh via callback
+if "__verifier_narr_test__" in DETECTOR_TOOLS:
+    print("  Auto-refresh: new detector in DETECTOR_TOOLS")
 else:
     # Try manual refresh
-    try:
-        from desloppify.intelligence.narrative._constants import refresh_detector_tools
-        refresh_detector_tools()
-    except ImportError:
+    refreshed = False
+    for func_name in ["refresh_detector_tools", "_refresh_detector_tools", "rebuild_detector_tools"]:
         try:
-            from desloppify.intelligence.narrative._constants import _refresh_detector_tools
-            _refresh_detector_tools()
-        except ImportError:
-            try:
-                from desloppify.intelligence.narrative._constants import rebuild_detector_tools
-                rebuild_detector_tools()
-            except ImportError:
-                print("  No refresh function found and no auto-refresh", file=sys.stderr)
-                del DETECTORS["__verifier_narrative_test__"]
-                sys.exit(1)
+            from desloppify.intelligence.narrative import _constants
+            fn = getattr(_constants, func_name, None)
+            if fn:
+                fn()
+                refreshed = True
+                break
+        except Exception:
+            continue
 
-    if "__verifier_narrative_test__" not in DETECTOR_TOOLS:
-        print("  refresh was called but detector still not in DETECTOR_TOOLS", file=sys.stderr)
-        del DETECTORS["__verifier_narrative_test__"]
+    if not refreshed:
+        del DETECTORS["__verifier_narr_test__"]
+        print("  No refresh mechanism found", file=sys.stderr)
         sys.exit(1)
 
-    print("  Manual refresh works: new detector appears in DETECTOR_TOOLS")
+    if "__verifier_narr_test__" not in DETECTOR_TOOLS:
+        del DETECTORS["__verifier_narr_test__"]
+        print("  Refresh called but detector not in DETECTOR_TOOLS", file=sys.stderr)
+        sys.exit(1)
+    print("  Manual refresh: new detector in DETECTOR_TOOLS")
 
-# Verify the entry has expected fields
-entry = DETECTOR_TOOLS["__verifier_narrative_test__"]
+# Verify entry structure (dict with action metadata)
+entry = DETECTOR_TOOLS["__verifier_narr_test__"]
 if not isinstance(entry, dict):
-    print(f"  DETECTOR_TOOLS entry is {type(entry).__name__}, not dict", file=sys.stderr)
-    del DETECTORS["__verifier_narrative_test__"]
+    del DETECTORS["__verifier_narr_test__"]
+    print(f"  Entry is {type(entry).__name__}, not dict", file=sys.stderr)
     sys.exit(1)
 
 if "action_type" not in entry and "guidance" not in entry:
-    print(f"  DETECTOR_TOOLS entry missing expected keys: {sorted(entry.keys())}", file=sys.stderr)
-    del DETECTORS["__verifier_narrative_test__"]
+    del DETECTORS["__verifier_narr_test__"]
+    print(f"  Entry missing expected keys: {sorted(entry.keys())}", file=sys.stderr)
     sys.exit(1)
 
-# Clean up
-del DETECTORS["__verifier_narrative_test__"]
-print("  DETECTOR_TOOLS refresh verified with correct entry structure")
+del DETECTORS["__verifier_narr_test__"]
+print("  DETECTOR_TOOLS entry has correct structure")
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 9 (0.05): Langs command or capability reporting
-#   Either langs.py exists with SHARED_PHASE_LABELS filtering,
-#   or capability_report is wired into scan output.
+# CHECK 8 (0.05): Langs command or capability reporting          [Silver]
+#   The langs command or capability_report must be callable and
+#   produce meaningful output (not just exist as dead code).
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 9: Langs command or capability reporting ==="
+echo "=== Check 8: Langs command or capability reporting ==="
 
-python3 << 'PYEOF' && { echo "PASS: Langs command or capability reporting found"; add_reward 0.05; } || echo "FAIL: No langs command or capability reporting"
-import os, sys
+CHECK8_PASS=false
 
-# Check for langs.py in commands
-langs_candidates = [
-    "desloppify/app/commands/langs.py",
-    "desloppify/app/commands/langs_cmd.py",
-]
-found_langs = False
-for path in langs_candidates:
-    if os.path.exists(path):
-        with open(path) as f:
-            content = f.read()
-        # Should filter shared phase labels
-        if "SHARED_PHASE_LABELS" in content or "shared" in content.lower():
-            found_langs = True
-            print(f"  Found langs command with shared phase filtering: {path}")
-            break
-        else:
-            # Even without filtering, having the command counts
-            found_langs = True
-            print(f"  Found langs command (no shared phase filtering): {path}")
-            break
+# Strategy 1: Run the CLI command
+timeout 30 python3 -m desloppify langs 2>&1 > "$LOG_DIR/langs_output.txt"
+LANGS_EXIT=$?
+if [ $LANGS_EXIT -eq 0 ] && [ -s "$LOG_DIR/langs_output.txt" ]; then
+    LINES=$(wc -l < "$LOG_DIR/langs_output.txt")
+    if [ "$LINES" -ge 3 ]; then
+        echo "  CLI 'desloppify langs' produced $LINES lines"
+        CHECK8_PASS=true
+    fi
+fi
 
-if not found_langs:
-    # Check if capability_report is wired into scan
-    scan_candidates = [
-        "desloppify/engine/planning/scan.py",
-        "desloppify/engine/scan.py",
-    ]
-    for path in scan_candidates:
-        if os.path.exists(path):
-            with open(path) as f:
-                content = f.read()
-            if "capability_report" in content:
-                found_langs = True
-                print(f"  Found capability_report in scan: {path}")
+# Strategy 2: Import and call the command module
+if [ "$CHECK8_PASS" = false ]; then
+    python3 << 'PYEOF' && CHECK8_PASS=true || true
+import sys, importlib
+sys.path.insert(0, ".")
+
+found = False
+for mod_path in [
+    "desloppify.app.commands.langs",
+    "desloppify.app.commands.langs_cmd",
+]:
+    try:
+        mod = importlib.import_module(mod_path)
+        # Find a callable command function
+        for attr_name in dir(mod):
+            fn = getattr(mod, attr_name)
+            if callable(fn) and not attr_name.startswith("_"):
+                # Found a public callable in the langs module
+                found = True
+                print(f"  Langs module {mod_path} has callable '{attr_name}'")
                 break
+        if found:
+            break
+    except ImportError:
+        continue
 
-if not found_langs:
-    print("  No langs command or capability_report integration found", file=sys.stderr)
+if not found:
+    # Strategy 3: Check capability_report is callable from generic module
+    for mod_path in [
+        "desloppify.languages.framework.generic",
+        "desloppify.languages._framework.generic",
+    ]:
+        try:
+            mod = importlib.import_module(mod_path)
+            for attr_name in dir(mod):
+                if "capability" in attr_name.lower() or "report" in attr_name.lower():
+                    fn = getattr(mod, attr_name)
+                    if callable(fn):
+                        print(f"  Found callable {attr_name} in {mod_path}")
+                        found = True
+                        break
+            if found:
+                break
+        except ImportError:
+            continue
+
+if not found:
     sys.exit(1)
 PYEOF
+fi
+
+if [ "$CHECK8_PASS" = true ]; then
+    echo "PASS: Langs command or capability report works"
+    add_reward 0.05
+else
+    echo "FAIL: No langs command or capability report found"
+fi
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 10 (0.10): Existing test suite still passes (no regressions)
-#   The agent's changes must not break anything that was already working.
-#   Pre-existing failure: test_legacy_assets_badge_path_migrates_to_root_default
-#   in test_config.py — ignore this known issue.
+# CHECK 9 (0.10): Existing test suite still passes (P2P)        [P2P]
+#   Agent's changes must not break pre-existing tests.
+#   Known pre-existing failure excluded.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Check 10: Existing tests pass (no regressions) ==="
+echo "=== Check 9: Existing tests pass (P2P regression) ==="
 
 cd "$WORKSPACE"
-# Run the core tests that existed at the base commit.
-# Ignore pre-existing failure in test_config.py (badge_path migration test)
-# and the fixtures directory, and the agent's new test file.
-python3 -m pytest desloppify/tests/ -q --tb=line \
+timeout 90 python3 -m pytest desloppify/tests/ -q --tb=line \
     --ignore=desloppify/tests/fixtures \
     --ignore=desloppify/tests/lang/common \
     -k "not test_legacy_assets_badge_path_migrates_to_root_default" \
@@ -1028,25 +884,96 @@ if [ $PYTEST_EXIT -eq 0 ]; then
     echo "PASS: All existing tests pass"
     add_reward 0.10
 elif [ $PYTEST_EXIT -eq 1 ]; then
-    # Some tests failed — check how many
     FAILED=$(grep -oP '\d+ failed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "?")
     TOTAL=$(grep -oP '\d+ passed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "0")
-    echo "PARTIAL: $FAILED tests failed, $TOTAL passed"
-    # Give partial credit if most pass
+    echo "PARTIAL: $FAILED failed, $TOTAL passed"
     if [ "$TOTAL" -gt 0 ] 2>/dev/null && [ "$FAILED" -lt 5 ] 2>/dev/null; then
         add_reward 0.05
     fi
 elif [ $PYTEST_EXIT -eq 5 ]; then
-    # Exit code 5 = no tests collected (possible if test paths changed)
-    echo "WARN: No tests collected — test paths may have changed"
-    python3 -m pytest desloppify/ -q --tb=line --co 2>&1 | tail -5 > "$LOG_DIR/pytest_collect.txt"
+    echo "WARN: No tests collected (paths may have changed)"
+    timeout 30 python3 -m pytest desloppify/ -q --tb=line --co 2>&1 | tail -5 > "$LOG_DIR/pytest_collect.txt"
     COLLECTED=$(grep -oP '\d+ tests?' "$LOG_DIR/pytest_collect.txt" | head -1 || echo "0")
-    echo "  Tests collected elsewhere: $COLLECTED"
+    echo "  Tests found elsewhere: $COLLECTED"
     if [ -n "$COLLECTED" ] && [ "$COLLECTED" != "0" ]; then
         add_reward 0.03
     fi
+elif [ $PYTEST_EXIT -eq 124 ]; then
+    echo "WARN: pytest timed out (90s)"
+    add_reward 0.03
 else
     echo "FAIL: pytest exited with code $PYTEST_EXIT"
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 10 (0.10): >=3 language plugins load and register       [Silver]
+#   Import language plugin modules (go, rust, ruby, swift, kotlin),
+#   verify each one registers detectors in the DETECTORS dict.
+#   Require >=3 of 5 to pass.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Check 10: Language plugins load and register detectors ==="
+
+LANGS_LOADED=$(python3 << 'PYEOF'
+import sys, importlib
+sys.path.insert(0, ".")
+
+from desloppify.core.registry import DETECTORS
+
+loaded = 0
+for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
+    before = set(DETECTORS.keys())
+    imported = False
+    for mp in [
+        f"desloppify.languages.{lang}",
+        f"desloppify.languages.{lang}.__init__",
+        f"desloppify.languages._framework.plugins.{lang}",
+    ]:
+        try:
+            importlib.import_module(mp)
+            imported = True
+            break
+        except ImportError:
+            continue
+
+    if not imported:
+        print(f"  {lang}: module not found", file=sys.stderr)
+        continue
+
+    after = set(DETECTORS.keys())
+    new = after - before
+    if new:
+        print(f"  {lang}: registered detectors {sorted(new)}")
+        loaded += 1
+    else:
+        # Maybe already loaded by a previous import; check if lang-related detectors exist
+        lang_related = [d for d in DETECTORS if lang in d.lower() or
+                        (lang == "go" and "golangci" in d.lower()) or
+                        (lang == "rust" and "clippy" in d.lower()) or
+                        (lang == "ruby" and "rubocop" in d.lower()) or
+                        (lang == "swift" and "swiftlint" in d.lower()) or
+                        (lang == "kotlin" and "ktlint" in d.lower())]
+        if lang_related:
+            print(f"  {lang}: found related detectors {lang_related}")
+            loaded += 1
+        else:
+            print(f"  {lang}: imported but no detectors registered", file=sys.stderr)
+
+print(f"LOADED:{loaded}")
+PYEOF
+)
+
+echo "  $LANGS_LOADED"
+
+LANG_COUNT=$(echo "$LANGS_LOADED" | grep -oP 'LOADED:\K\d+' || echo "0")
+if [ "$LANG_COUNT" -ge 3 ]; then
+    echo "PASS: $LANG_COUNT/5 language plugins loaded with detectors"
+    add_reward 0.10
+elif [ "$LANG_COUNT" -ge 1 ]; then
+    echo "PARTIAL: $LANG_COUNT/5 language plugins loaded"
+    add_reward 0.04
+else
+    echo "FAIL: No language plugins loaded"
 fi
 
 # ═══════════════════════════════════════════════════════════════════

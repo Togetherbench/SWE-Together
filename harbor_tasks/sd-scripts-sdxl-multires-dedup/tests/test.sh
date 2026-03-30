@@ -11,26 +11,27 @@
 #   2. library/config_util.py:
 #      - skip_duplicate_bucketed_images in DATASET_ASCENDABLE_SCHEMA
 #      - skip_duplicate_bucketed_images in BaseDatasetParams
-#      - deduplication logic present after make_buckets loop
+#      - deduplication logic present (may be in config_util.py or train_util.py)
 #   3. library/train_util.py:
 #      - skip_duplicate_bucketed_images param in dataset constructors
 #      - unwrap_model_for_sampling helper defined with _orig_mod fallback
 #   4. library/sdxl_original_unet.py:
 #      - isinstance check uses _orig_mod unwrapping for compiled layers
 #
-# Scoring (>=60% behavioral, <=40% structural):
-#   Test 1:  0.10  BEHAVIORAL  strategy_sd.py multi_resolution=True in is_disk_cached_latents_expected (import+monkeypatch+call)
-#   Test 2:  0.10  BEHAVIORAL  strategy_sd.py load_latents_from_disk is overridden (import+inspect)
-#   Test 3:  0.10  BEHAVIORAL  strategy_sd.py cache_batch_latents passes multi_resolution=True (import+inspect)
-#   Test 4:  0.10  STRUCTURAL  config_util.py skip_duplicate_bucketed_images in DATASET_ASCENDABLE_SCHEMA + BaseDatasetParams (AST tightened)
-#   Test 5:  0.10  STRUCTURAL  config_util.py deduplication logic with min complexity (AST tightened)
-#   Test 6:  0.15  BEHAVIORAL  config_util.py BaseDatasetParams has skip_duplicate_bucketed_images field (import+inspect)
-#   Test 7:  0.15  BEHAVIORAL  train_util.py dataset class accepts skip_duplicate_bucketed_images (import+inspect)
-#   Test 8:  0.10  STRUCTURAL  train_util.py unwrap_model_for_sampling with _orig_mod + keep_torch_compile (AST tightened)
-#   Test 9:  0.10  STRUCTURAL  sdxl_original_unet.py isinstance check uses _orig_mod unwrapping (AST)
+# Scoring (90% behavioral, 10% structural):
+#   Test  1:  0.15  BEHAVIORAL F2P  strategy_sd.py multi_resolution=True in is_disk_cached_latents_expected
+#   Test  2:  0.10  BEHAVIORAL      strategy_sd.py load_latents_from_disk override (non-stub)
+#   Test  3:  0.15  BEHAVIORAL F2P  strategy_sd.py cache_batch_latents passes multi_resolution=True
+#   Test  4:  0.10  BEHAVIORAL      config_util.py skip_duplicate_bucketed_images in schema (runtime import)
+#   Test  5:  0.05  STRUCTURAL      dedup logic in config_util.py or train_util.py (AST)
+#   Test  6:  0.15  BEHAVIORAL F2P  config_util.py BaseDatasetParams skip_duplicate_bucketed_images field
+#   Test  7:  0.10  BEHAVIORAL F2P  train_util.py dataset class accepts skip_duplicate_bucketed_images
+#   Test  8:  0.10  BEHAVIORAL      train_util.py unwrap_model_for_sampling handles KeyError (mock call)
+#   Test  9:  0.05  STRUCTURAL      sdxl_original_unet.py _orig_mod handling near isinstance (AST)
+#   Test 10:  0.05  BEHAVIORAL P2P  upstream test suite (tests/library/)
 #
-# Behavioral total: Tests 1+2+3+6+7 = 0.10+0.10+0.10+0.15+0.15 = 0.60 (60%)
-# Structural total: Tests 4+5+8+9 = 0.10+0.10+0.10+0.10 = 0.40 (40%)
+# Behavioral total: Tests 1+2+3+4+6+7+8+10 = 0.15+0.10+0.15+0.10+0.15+0.10+0.10+0.05 = 0.90 (90%)
+# Structural total: Tests 5+9 = 0.05+0.05 = 0.10 (10%)
 #
 set +e
 
@@ -39,27 +40,22 @@ mkdir -p "$(dirname "$REWARD_FILE")"
 
 REWARD=0.0
 
-STRATEGY_SD="/workspace/sd-scripts/library/strategy_sd.py"
-CONFIG_UTIL="/workspace/sd-scripts/library/config_util.py"
-TRAIN_UTIL="/workspace/sd-scripts/library/train_util.py"
-SDXL_UNET="/workspace/sd-scripts/library/sdxl_original_unet.py"
-
 add_reward() {
     REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 2)))")
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 1 (0.10): BEHAVIORAL — strategy_sd.py is_disk_cached_latents_expected
-#   Silver tier: import module, monkeypatch base method, call, verify multi_resolution=True
+# TEST 1 (0.15): BEHAVIORAL F2P — strategy_sd.py is_disk_cached_latents_expected
+#   Silver tier: monkeypatch base method, call, verify multi_resolution=True
+#   Core bug: multi-resolution caching not delegated properly
 # ═══════════════════════════════════════════════════════════════════
-echo "=== Test 1/9: [BEHAVIORAL] strategy_sd.py is_disk_cached_latents_expected uses multi_resolution=True ==="
+echo "=== Test 1/10: [BEHAVIORAL F2P] strategy_sd.py is_disk_cached_latents_expected multi_resolution=True ==="
 T1=$(python3 << 'PYEOF'
 import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
 
 try:
-    # Monkeypatch base class to capture kwargs before importing child
     import library.strategy_base as sb
     captured_kwargs = {}
     orig_method = sb.LatentsCachingStrategy._default_is_disk_cached_latents_expected
@@ -73,15 +69,13 @@ try:
     from library.strategy_sd import SdSdxlLatentsCachingStrategy
     import inspect
     sig = inspect.signature(SdSdxlLatentsCachingStrategy.__init__)
-    nparams = len(sig.parameters) - 1  # exclude self
-    args = [True, 1, False, False, False][:nparams]  # sd, cache_to_disk, batch_size, skip_disk_cache_validity_check, ...
+    nparams = len(sig.parameters) - 1
+    args = [True, 1, False, False, False][:nparams]
     strategy = SdSdxlLatentsCachingStrategy(*args)
 
-    # Call with test inputs — the method should delegate to _default with multi_resolution=True
     try:
         result = strategy.is_disk_cached_latents_expected((512, 512), "/tmp/test.npz", False, False)
     except Exception:
-        # Method may raise due to missing files, but kwargs should still be captured
         pass
 
     if captured_kwargs.get("multi_resolution") is True:
@@ -95,14 +89,15 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T1"
-if [ "$T1" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T1" = "PASS" ]; then add_reward 0.15; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 2 (0.10): BEHAVIORAL — strategy_sd.py load_latents_from_disk
-#   Silver tier: import, verify method is overridden (not inherited), non-trivial body
+# TEST 2 (0.10): BEHAVIORAL — strategy_sd.py load_latents_from_disk override
+#   Silver tier: import, verify method is overridden (not inherited),
+#   non-trivial body (>=8 non-blank, non-comment lines). No AST.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 2/9: [BEHAVIORAL] strategy_sd.py load_latents_from_disk override ==="
+echo "=== Test 2/10: [BEHAVIORAL] strategy_sd.py load_latents_from_disk override ==="
 T2=$(python3 << 'PYEOF'
 import sys, os, inspect
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -112,7 +107,6 @@ try:
     from library.strategy_base import LatentsCachingStrategy
     from library.strategy_sd import SdSdxlLatentsCachingStrategy
 
-    # Check that load_latents_from_disk exists
     if not hasattr(SdSdxlLatentsCachingStrategy, "load_latents_from_disk"):
         print("FAIL:method_not_found")
         sys.exit(0)
@@ -120,32 +114,20 @@ try:
     base_method = getattr(LatentsCachingStrategy, "load_latents_from_disk", None)
     child_method = SdSdxlLatentsCachingStrategy.load_latents_from_disk
 
-    # Verify the method is overridden (not inherited from base)
+    # Verify method is overridden (not inherited from base)
     if base_method is not None and child_method is base_method:
         print("FAIL:not_overridden")
         sys.exit(0)
 
-    # Verify non-trivial body (at least 5 non-empty, non-comment lines)
+    # Verify non-trivial body (>=8 non-empty, non-comment, non-docstring lines)
     src = inspect.getsource(child_method)
     lines = [l.strip() for l in src.split('\n')
-             if l.strip() and not l.strip().startswith('#') and not l.strip().startswith('"""')]
-    if len(lines) < 5:
-        print("FAIL:stub_body_too_short")
-        sys.exit(0)
-
-    # Verify it has fallback logic (try/except or if/hasattr or super call)
-    import ast, textwrap
-    tree = ast.parse(textwrap.dedent(src))
-    has_fallback = False
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Try, ast.If)):
-            has_fallback = True
-        if isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Attribute) and "load_latents" in func.attr:
-                has_fallback = True
-    if not has_fallback:
-        print("FAIL:no_fallback_logic")
+             if l.strip()
+             and not l.strip().startswith('#')
+             and not l.strip().startswith('"""')
+             and not l.strip().startswith("'''")]
+    if len(lines) < 8:
+        print("FAIL:stub_too_short:" + str(len(lines)))
         sys.exit(0)
 
     print("PASS")
@@ -159,11 +141,12 @@ echo "  Result: $T2"
 if [ "$T2" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 3 (0.10): BEHAVIORAL — strategy_sd.py cache_batch_latents
-#   Silver tier: import, monkeypatch base method, verify multi_resolution=True is passed
+# TEST 3 (0.15): BEHAVIORAL F2P — strategy_sd.py cache_batch_latents
+#   Silver tier: monkeypatch base method, call, verify multi_resolution=True
+#   Core bug: cache_batch_latents doesn't pass multi_resolution=True
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 3/9: [BEHAVIORAL] strategy_sd.py cache_batch_latents uses multi_resolution=True ==="
+echo "=== Test 3/10: [BEHAVIORAL F2P] strategy_sd.py cache_batch_latents multi_resolution=True ==="
 T3=$(python3 << 'PYEOF'
 import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -175,24 +158,20 @@ try:
 
     def mock_cache(self, *args, **kwargs):
         captured_kwargs.update(kwargs)
-        return None  # Skip actual caching
+        return None
 
     sb.LatentsCachingStrategy._default_cache_batch_latents = mock_cache
 
     from library.strategy_sd import SdSdxlLatentsCachingStrategy
     import inspect
     sig = inspect.signature(SdSdxlLatentsCachingStrategy.__init__)
-    nparams = len(sig.parameters) - 1  # exclude self
+    nparams = len(sig.parameters) - 1
     args = [True, 1, False, False, False][:nparams]
     strategy = SdSdxlLatentsCachingStrategy(*args)
 
-    # Call cache_batch_latents with minimal mock args
-    # Signature: cache_batch_latents(self, encode_by_vae, vae_device, vae_dtype,
-    #            image_infos, flip_aug, alpha_mask, random_crop)
     try:
         strategy.cache_batch_latents(None, None, None, [], False, False, False)
     except TypeError:
-        # Try alternate arg counts if signature differs
         try:
             strategy.cache_batch_latents(None, None, None, [], False, False)
         except Exception:
@@ -211,161 +190,138 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T3"
-if [ "$T3" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T3" = "PASS" ]; then add_reward 0.15; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 4 (0.10): STRUCTURAL — config_util.py skip_duplicate_bucketed_images
-#   Bronze tier: AST check with tightened constraints — must be in a variable
-#   assigned to a name containing "SCHEMA" or "ASCENDABLE", and in a class
-#   containing "DatasetParams" or "Dataset" in name
+# TEST 4 (0.10): BEHAVIORAL — config_util.py skip_duplicate_bucketed_images in schema
+#   Silver tier: runtime import of config_util, search module-level dicts
+#   for the "skip_duplicate_bucketed_images" key. No AST.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 4/9: [STRUCTURAL] config_util.py skip_duplicate_bucketed_images in schema and dataclass ==="
+echo "=== Test 4/10: [BEHAVIORAL] config_util.py skip_duplicate_bucketed_images in schema ==="
 T4=$(python3 << 'PYEOF'
-import sys, ast
-
-with open("/workspace/sd-scripts/library/config_util.py") as f:
-    source = f.read()
+import sys, os
+sys.path.insert(0, "/workspace/sd-scripts")
+os.chdir("/workspace/sd-scripts")
 
 try:
-    tree = ast.parse(source)
-except SyntaxError as e:
-    print(f"FAIL:syntax:{e}")
-    sys.exit(0)
+    import library.config_util as cu
 
-in_schema = False
-in_dataclass = False
+    # Primary check: look for DATASET_ASCENDABLE_SCHEMA or similar named dicts
+    found = False
+    checked = []
+    for name in dir(cu):
+        upper = name.upper()
+        if "ASCENDABLE" in upper or ("SCHEMA" in upper and "DATASET" in upper):
+            val = getattr(cu, name)
+            checked.append(name)
+            if isinstance(val, dict) and "skip_duplicate_bucketed_images" in val:
+                found = True
+                break
+            elif isinstance(val, (list, set, tuple)):
+                if "skip_duplicate_bucketed_images" in val:
+                    found = True
+                    break
 
-for node in ast.walk(tree):
-    # Check dict literal assigned to a variable with SCHEMA/ASCENDABLE in name
-    if isinstance(node, ast.Assign):
-        target_names = []
-        for t in node.targets:
-            if isinstance(t, ast.Name):
-                target_names.append(t.id)
-        is_schema_var = any("SCHEMA" in n or "ASCENDABLE" in n for n in target_names)
-        if is_schema_var and isinstance(node.value, ast.Dict):
-            for key in node.value.keys:
-                if isinstance(key, ast.Constant) and key.value == "skip_duplicate_bucketed_images":
-                    in_schema = True
+    if not found:
+        # Fallback: check all module-level dicts containing "SCHEMA" or
+        # beginning with DATASET in their name
+        for name in dir(cu):
+            if not name.startswith("_"):
+                val = getattr(cu, name, None)
+                if isinstance(val, dict) and "skip_duplicate_bucketed_images" in val:
+                    checked.append(name)
+                    found = True
+                    break
 
-    # Check class body — only classes with "Dataset" or "Params" in name
-    if isinstance(node, ast.ClassDef):
-        is_dataset_class = "Dataset" in node.name or "Params" in node.name
-        if is_dataset_class:
-            for stmt in ast.walk(node):
-                if isinstance(stmt, ast.AnnAssign):
-                    if isinstance(stmt.target, ast.Name) and stmt.target.id == "skip_duplicate_bucketed_images":
-                        in_dataclass = True
-                elif isinstance(stmt, ast.Assign):
-                    for target in stmt.targets:
-                        if isinstance(target, ast.Name) and target.id == "skip_duplicate_bucketed_images":
-                            in_dataclass = True
-
-if in_schema and in_dataclass:
-    print("PASS")
-elif in_schema:
-    print("FAIL:in_schema_but_not_dataclass")
-elif in_dataclass:
-    print("FAIL:in_dataclass_but_not_schema")
-else:
-    print("FAIL:not_found_in_schema_or_dataset_class")
+    if found:
+        print("PASS")
+    else:
+        print("FAIL:not_found_in_schema_dicts,checked=" + ",".join(checked))
+except ImportError as e:
+    print(f"FAIL:import_error:{e}")
+except Exception as e:
+    print(f"FAIL:exception:{e}")
 PYEOF
 )
 echo "  Result: $T4"
 if [ "$T4" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 5 (0.10): STRUCTURAL — config_util.py deduplication logic
-#   Bronze tier: AST check with stub rejection — requires all three of:
+# TEST 5 (0.05): STRUCTURAL — deduplication logic
+#   Bronze tier: AST check — requires ALL THREE within the same function:
 #   (1) skip_duplicate_bucketed_images conditional check
 #   (2) tracking data structure with >=2 operations (add/update + membership test)
-#   (3) removal from image_data specifically (not just any .pop())
-#   All three must appear within the same function body.
+#   (3) removal from data (pop/del/comprehension)
+#   Checks BOTH config_util.py and train_util.py (agent may place logic in either).
+#   AST justified: prepare_dataset() requires full dataset infra to call.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 5/9: [STRUCTURAL] config_util.py deduplication logic ==="
+echo "=== Test 5/10: [STRUCTURAL] deduplication logic (config_util.py or train_util.py) ==="
 T5=$(python3 << 'PYEOF'
 import sys, ast
 
-with open("/workspace/sd-scripts/library/config_util.py") as f:
-    source = f.read()
-
-tree = ast.parse(source)
-
-# Find functions/methods that contain ALL of: skip_duplicate reference, tracking, removal
-found_complete_dedup = False
-
 def check_function_for_dedup(func_node):
-    """Check if a function body contains complete dedup logic."""
     has_skip_check = False
-    has_tracking_ops = 0  # Count: need add/update AND membership test (in/not in)
-    has_image_data_removal = False
-    has_make_buckets_ref = False
+    has_tracking_ops = 0
+    has_removal = False
 
     for node in ast.walk(func_node):
-        # skip_duplicate_bucketed_images reference
         if isinstance(node, ast.Attribute) and node.attr == "skip_duplicate_bucketed_images":
             has_skip_check = True
-
-        # Tracking set operations: .add(), .update(), set membership
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr in ("add", "update", "append"):
                 has_tracking_ops += 1
-            # make_buckets reference
-            if isinstance(func, ast.Attribute) and func.attr == "make_buckets":
-                has_make_buckets_ref = True
-
-        # Membership test: `x in seen_set` or `x not in seen_set`
         if isinstance(node, ast.Compare):
             for op in node.ops:
                 if isinstance(op, (ast.In, ast.NotIn)):
                     has_tracking_ops += 1
-
-        # Removal from image_data (not just any pop)
+        # Removal via pop/remove/discard
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr in ("pop", "remove", "discard"):
-                if isinstance(func.value, ast.Attribute) and func.value.attr == "image_data":
-                    has_image_data_removal = True
+                has_removal = True
+        # Removal via del x[key]
         if isinstance(node, ast.Delete):
             for target in node.targets:
                 if isinstance(target, ast.Subscript):
-                    if isinstance(target.value, ast.Attribute) and target.value.attr == "image_data":
-                        has_image_data_removal = True
-        # Dict comprehension filtering image_data
-        if isinstance(node, ast.Assign):
-            if isinstance(node.value, ast.DictComp):
-                for target in node.targets:
-                    if isinstance(target, ast.Attribute) and target.attr == "image_data":
-                        has_image_data_removal = True
+                    has_removal = True
+        # Removal via dict/list/set comprehension reassignment
+        if isinstance(node, ast.Assign) and isinstance(node.value, (ast.DictComp, ast.ListComp, ast.SetComp)):
+            has_removal = True
 
-    return (has_skip_check and has_tracking_ops >= 2 and has_image_data_removal)
+    return has_skip_check and has_tracking_ops >= 2 and has_removal
 
-# Search all functions in the module
-for node in ast.walk(tree):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        if check_function_for_dedup(node):
-            found_complete_dedup = True
-            break
+def check_file(filepath):
+    try:
+        with open(filepath) as f:
+            tree = ast.parse(f.read())
+    except (FileNotFoundError, SyntaxError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if check_function_for_dedup(node):
+                return True
+    return False
 
-if found_complete_dedup:
+if check_file("/workspace/sd-scripts/library/config_util.py") or \
+   check_file("/workspace/sd-scripts/library/train_util.py"):
     print("PASS")
 else:
     print("FAIL:incomplete_dedup_logic")
 PYEOF
 )
 echo "  Result: $T5"
-if [ "$T5" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T5" = "PASS" ]; then add_reward 0.05; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 6 (0.15): BEHAVIORAL — config_util.py BaseDatasetParams
+# TEST 6 (0.15): BEHAVIORAL F2P — config_util.py BaseDatasetParams
 #   Silver tier: import config_util, verify BaseDatasetParams dataclass has
-#   skip_duplicate_bucketed_images field with correct type
+#   skip_duplicate_bucketed_images field with a default value
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 6/9: [BEHAVIORAL] config_util.py BaseDatasetParams has skip_duplicate_bucketed_images ==="
+echo "=== Test 6/10: [BEHAVIORAL F2P] BaseDatasetParams has skip_duplicate_bucketed_images ==="
 T6=$(python3 << 'PYEOF'
 import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -375,30 +331,22 @@ try:
     from library.config_util import BaseDatasetParams
     import dataclasses
 
-    # Verify it's a dataclass
     if not dataclasses.is_dataclass(BaseDatasetParams):
-        # Fallback: check if it has the attribute defined at class level
+        # Fallback: check if it has the attribute at class level
         if hasattr(BaseDatasetParams, "skip_duplicate_bucketed_images"):
             print("PASS")
         else:
             print("FAIL:not_dataclass_and_no_attr")
         sys.exit(0)
 
-    # Check that skip_duplicate_bucketed_images is a dataclass field
     field_names = {f.name for f in dataclasses.fields(BaseDatasetParams)}
     if "skip_duplicate_bucketed_images" not in field_names:
         print("FAIL:field_not_in_dataclass")
         sys.exit(0)
 
-    # Verify the field has a boolean default (not required)
     for f in dataclasses.fields(BaseDatasetParams):
         if f.name == "skip_duplicate_bucketed_images":
-            if f.default is not dataclasses.MISSING:
-                if isinstance(f.default, bool):
-                    print("PASS")
-                else:
-                    print("PASS")  # Accept non-bool defaults too (e.g., None)
-            elif f.default_factory is not dataclasses.MISSING:
+            if f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING:
                 print("PASS")
             else:
                 print("FAIL:field_has_no_default")
@@ -415,12 +363,12 @@ echo "  Result: $T6"
 if [ "$T6" = "PASS" ]; then add_reward 0.15; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 7 (0.15): BEHAVIORAL — train_util.py dataset class constructor
+# TEST 7 (0.10): BEHAVIORAL F2P — train_util.py dataset class constructor
 #   Silver tier: import train_util, find a dataset class whose __init__
 #   accepts skip_duplicate_bucketed_images, verify it stores as self.attr
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 7/9: [BEHAVIORAL] train_util.py dataset class accepts skip_duplicate_bucketed_images ==="
+echo "=== Test 7/10: [BEHAVIORAL F2P] train_util.py dataset class accepts skip_duplicate_bucketed_images ==="
 T7=$(python3 << 'PYEOF'
 import sys, os, inspect
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -439,7 +387,6 @@ try:
             if "skip_duplicate_bucketed_images" in sig.parameters:
                 found_param = True
                 found_class = name
-                # Verify it stores as self.skip_duplicate_bucketed_images
                 src = inspect.getsource(cls.__init__)
                 if "self.skip_duplicate_bucketed_images" in src:
                     found_attr = True
@@ -450,7 +397,7 @@ try:
     if found_param and found_attr:
         print("PASS")
     elif found_param:
-        print("FAIL:param_found_in_" + str(found_class) + "_but_not_stored_as_self_attr")
+        print("FAIL:param_in_" + str(found_class) + "_but_not_stored_as_self_attr")
     else:
         print("FAIL:no_dataset_class_has_skip_duplicate_param")
 except ImportError as e:
@@ -460,76 +407,134 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T7"
-if [ "$T7" = "PASS" ]; then add_reward 0.15; fi
+if [ "$T7" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 8 (0.10): STRUCTURAL — train_util.py unwrap_model_for_sampling
-#   Bronze tier: AST with tightened stub rejection — requires:
-#   (1) function named unwrap_model_for_sampling
-#   (2) try/except block
-#   (3) _orig_mod string reference
-#   (4) reference to keep_torch_compile (the retry arg)
-#   (5) call to unwrap_model (the actual accelerate call)
+# TEST 8 (0.10): BEHAVIORAL — train_util.py unwrap_model_for_sampling
+#   Silver tier: import function, call with mock accelerator to verify:
+#   (a) it delegates to accelerator.unwrap_model in the normal case
+#   (b) it catches KeyError and falls back when _orig_mod issue occurs
+#   Anti-stub: tracking accelerator detects functions that don't delegate.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 8/9: [STRUCTURAL] train_util.py unwrap_model_for_sampling with _orig_mod fallback ==="
+echo "=== Test 8/10: [BEHAVIORAL] unwrap_model_for_sampling handles KeyError ==="
 T8=$(python3 << 'PYEOF'
-import sys, ast
+import sys, os, inspect
+sys.path.insert(0, "/workspace/sd-scripts")
+os.chdir("/workspace/sd-scripts")
 
-with open("/workspace/sd-scripts/library/train_util.py") as f:
-    source = f.read()
+try:
+    import library.train_util as tu
 
-tree = ast.parse(source)
+    func = getattr(tu, "unwrap_model_for_sampling", None)
+    if func is None:
+        print("FAIL:function_not_found")
+        sys.exit(0)
 
-found_func = False
-has_try_except = False
-has_orig_mod = False
-has_keep_torch_compile = False
-has_unwrap_call = False
+    if not callable(func):
+        print("FAIL:not_callable")
+        sys.exit(0)
 
-for node in ast.walk(tree):
-    if isinstance(node, ast.FunctionDef) and node.name == "unwrap_model_for_sampling":
-        found_func = True
-        for child in ast.walk(node):
-            if isinstance(child, ast.Try):
-                has_try_except = True
-            # _orig_mod reference (string or attribute)
-            if isinstance(child, ast.Attribute) and child.attr == "_orig_mod":
-                has_orig_mod = True
-            if isinstance(child, ast.Constant) and child.value == "_orig_mod":
-                has_orig_mod = True
-            # keep_torch_compile keyword in a call
-            if isinstance(child, ast.keyword) and child.arg == "keep_torch_compile":
-                has_keep_torch_compile = True
-            # Call to unwrap_model
-            if isinstance(child, ast.Call):
-                func = child.func
-                if isinstance(func, ast.Attribute) and func.attr == "unwrap_model":
-                    has_unwrap_call = True
+    sig = inspect.signature(func)
+    if len(sig.parameters) < 1:
+        print("FAIL:no_parameters")
+        sys.exit(0)
 
-checks = [has_try_except, has_orig_mod, has_keep_torch_compile, has_unwrap_call]
-if found_func and all(checks):
-    print("PASS")
-elif not found_func:
-    print("FAIL:unwrap_model_for_sampling_not_found")
-else:
-    missing = []
-    if not has_try_except: missing.append("try_except")
-    if not has_orig_mod: missing.append("orig_mod_ref")
-    if not has_keep_torch_compile: missing.append("keep_torch_compile")
-    if not has_unwrap_call: missing.append("unwrap_model_call")
-    print(f"FAIL:missing={missing}")
+    # --- Normal path: verify it actually calls accelerator.unwrap_model ---
+    class TrackingAccelerator:
+        def __init__(self):
+            self.called = False
+        def unwrap_model(self, m, **kw):
+            self.called = True
+            return m
+
+    class SimpleModel:
+        pass
+
+    track_acc = TrackingAccelerator()
+    simple = SimpleModel()
+
+    normal_result = None
+    normal_ok = False
+    for args in [(track_acc, simple), (simple, track_acc), (track_acc, simple, False)]:
+        try:
+            normal_result = func(*args)
+            normal_ok = True
+            break
+        except TypeError:
+            continue
+        except Exception:
+            normal_ok = True
+            break
+
+    if not normal_ok:
+        print("FAIL:could_not_call_normal_path")
+        sys.exit(0)
+
+    if not track_acc.called:
+        print("FAIL:doesnt_call_unwrap_model")
+        sys.exit(0)
+
+    # Verify it returns the unwrapped result (not ignoring the return value)
+    if normal_result is not simple:
+        print("FAIL:doesnt_return_unwrapped_model")
+        sys.exit(0)
+
+    # --- Error path: verify KeyError from _orig_mod is caught ---
+    class FailAccelerator:
+        def unwrap_model(self, m, **kw):
+            raise KeyError("_orig_mod")
+
+    class CompiledModel:
+        class _Inner:
+            pass
+        _orig_mod = _Inner()
+
+    fail_acc = FailAccelerator()
+    compiled = CompiledModel()
+
+    error_result = None
+    error_ok = False
+    for args in [(fail_acc, compiled), (compiled, fail_acc), (fail_acc, compiled, False)]:
+        try:
+            error_result = func(*args)
+            error_ok = True
+            break
+        except TypeError:
+            continue
+        except KeyError:
+            print("FAIL:keyerror_not_caught")
+            sys.exit(0)
+        except Exception:
+            error_ok = True
+            break
+
+    if not error_ok:
+        print("FAIL:could_not_call_error_path")
+        sys.exit(0)
+
+    if error_result is not None:
+        print("PASS")
+    else:
+        print("FAIL:returned_none_on_error_path")
+except ImportError as e:
+    print(f"FAIL:import_error:{e}")
+except Exception as e:
+    print(f"FAIL:exception:{e}")
 PYEOF
 )
 echo "  Result: $T8"
 if [ "$T8" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 9 (0.10): STRUCTURAL — sdxl_original_unet.py isinstance check
-#   uses _orig_mod unwrapping for compiled layer type detection
+# TEST 9 (0.05): STRUCTURAL — sdxl_original_unet.py isinstance _orig_mod
+#   Bronze tier: AST — checks that _orig_mod handling (hasattr, getattr,
+#   or direct attribute access) exists in a function that also contains
+#   isinstance type checks. Accepts multiple valid patterns.
+#   AST justified: call_module() requires full UNet layer infrastructure.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 9/9: [STRUCTURAL] sdxl_original_unet.py isinstance check uses _orig_mod unwrapping ==="
+echo "=== Test 9/10: [STRUCTURAL] sdxl_original_unet.py isinstance + _orig_mod ==="
 T9=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -538,50 +543,56 @@ with open("/workspace/sd-scripts/library/sdxl_original_unet.py") as f:
 
 tree = ast.parse(source)
 
-# Look for pattern: hasattr(layer, "_orig_mod") used near isinstance check for ResnetBlock2D
-has_orig_mod_check = False
-has_isinstance_guarded = False
-
+found_guarded = False
 for node in ast.walk(tree):
-    # Look for: layer_for_type_check = layer._orig_mod if hasattr(layer, "_orig_mod") else layer
-    # or equivalent: if hasattr(x, "_orig_mod"): x = x._orig_mod
-    if isinstance(node, ast.IfExp):
-        # ternary: value if test else orelse
-        test = node.test
-        if isinstance(test, ast.Call):
-            if isinstance(test.func, ast.Name) and test.func.id == "hasattr":
-                if len(test.args) >= 2:
-                    arg2 = test.args[1]
-                    if isinstance(arg2, ast.Constant) and arg2.value == "_orig_mod":
-                        has_orig_mod_check = True
-    # Also accept: if hasattr(..., "_orig_mod") as a statement (not ternary)
-    if isinstance(node, ast.If):
-        test = node.test
-        if isinstance(test, ast.Call):
-            if isinstance(test.func, ast.Name) and test.func.id == "hasattr":
-                if len(test.args) >= 2:
-                    arg2 = test.args[1]
-                    if isinstance(arg2, ast.Constant) and arg2.value == "_orig_mod":
-                        has_orig_mod_check = True
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        has_isinstance = False
+        has_orig_mod = False
 
-    # Check if isinstance now uses a variable (not the raw 'layer' or 'module') for the guarded check
-    if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id == "isinstance":
-            if len(node.args) >= 1:
-                arg0 = node.args[0]
-                if isinstance(arg0, ast.Name) and arg0.id not in ("layer", "module"):
-                    has_isinstance_guarded = True
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name) and child.func.id == "isinstance":
+                    has_isinstance = True
+            if isinstance(child, ast.Attribute) and child.attr == "_orig_mod":
+                has_orig_mod = True
+            if isinstance(child, ast.Constant) and child.value == "_orig_mod":
+                has_orig_mod = True
 
-if has_orig_mod_check and has_isinstance_guarded:
+        if has_isinstance and has_orig_mod:
+            found_guarded = True
+            break
+
+if found_guarded:
     print("PASS")
-elif has_orig_mod_check:
-    print("FAIL:orig_mod_check_exists_but_isinstance_not_guarded")
 else:
-    print("FAIL:no_orig_mod_check_in_unet")
+    print("FAIL:no_orig_mod_handling_near_isinstance")
 PYEOF
 )
 echo "  Result: $T9"
-if [ "$T9" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T9" = "PASS" ]; then add_reward 0.05; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 10 (0.05): BEHAVIORAL P2P — upstream test suite
+#   Run CPU-safe upstream tests from tests/library/ to verify no
+#   regressions introduced by the agent's changes.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 10/10: [BEHAVIORAL P2P] upstream test suite (tests/library/) ==="
+cd /workspace/sd-scripts
+if [ -d "tests/library" ] && ls tests/library/test_*.py 1>/dev/null 2>&1; then
+    P2P_RESULT=$(python3 -m pytest tests/library/ --timeout=60 -q 2>&1)
+    P2P_EXIT=$?
+    echo "  pytest exit code: $P2P_EXIT"
+    echo "$P2P_RESULT" | tail -5
+    if [ $P2P_EXIT -eq 0 ]; then
+        add_reward 0.05
+        echo "  Result: PASS"
+    else
+        echo "  Result: FAIL:upstream_tests_failed"
+    fi
+else
+    echo "  Result: SKIP:no_upstream_tests_found"
+fi
 
 # ═══════════════════════════════════════════════════════════════════
 # FINAL SCORE

@@ -2,667 +2,494 @@
 #
 # Verification tests for ComfyUI NewBie architecture refactoring.
 #
-# The task: refactor comfy/ldm/newbie/model.py to follow ComfyUI conventions:
-# - Use operations.Linear / operations.RMSNorm (not fallback ops)
-# - Remove _pop_unexpected_kwargs and _fallback_operations anti-patterns
-# - Return -img (not img) from _forward — matches Lumina convention
-# - Use t = 1.0 - timesteps (not t = timesteps) — matches Lumina convention
-# - Remove nn.init calls from __init__ (not done in ComfyUI)
-# - Remove unnecessary try...except for dtype casting in _forward
-# - Remove unnecessary apply_model override in NewBieImage
+# Scoring: 85% behavioral (F2P/P2P/Silver), 15% structural (absence/AST)
 #
-# Scoring: 60% behavioral (Silver), 40% structural/absence (Bronze)
-#   T1-T8: 0.05 each = 0.40 (structural/absence/AST+stub-rejection)
-#   T9:    0.60 compound behavioral (Silver: import+instantiate+call+verify)
+#   Structural (0.15):
+#     T1 (0.03): Valid Python + class definition
+#     T2 (0.04): No _pop_unexpected_kwargs AND no _fallback_operations
+#     T3 (0.04): No nn.init in __init__ AND no try/except in _forward
+#     T4 (0.04): model_base.py: no apply_model override + no CONDCrossAttn
 #
-#   Test 1:  0.05  newbie/model.py parses as valid Python (structural)
-#   Test 2:  0.05  NewBieNextDiT inherits NextDiT (structural)
-#   Test 3:  0.05  No _pop_unexpected_kwargs (absence)
-#   Test 4:  0.05  No _fallback_operations (absence)
-#   Test 5:  0.05  _forward returns -img + stub rejection >= 8 calls (Bronze+)
-#   Test 6:  0.05  _forward uses t = 1.0 - timesteps + stub rejection (Bronze+)
-#   Test 7:  0.05  No nn.init calls in __init__ (absence)
-#   Test 8:  0.05  No try...except in _forward (absence)
-#   Test 9:  0.60  Behavioral compound: import, instantiate, verify ops,
-#                  check model_base.py, call _forward (Silver)
+#   Pass-to-Pass (0.10):
+#     P2P (0.10): Base NextDiT still instantiates + produces valid output on CPU
 #
-# Max stub score: 0.25 (bare stub) to 0.30 (stub with trivial _forward)
-# Total: 1.00  (behavioral = 0.60, structural/absence = 0.40)
+#   Behavioral (0.75) compound with gate:
+#     Gate: _forward overridden in class + >=8 Call nodes (anti-stub)
+#     Part A (0.10): Import + instantiate on CPU + extra params vs base NextDiT
+#     Part B (0.25): F2P: return -img verified via unpatchify monkey-patch
+#     Part C (0.15): F2P: t = 1.0 - timesteps verified via t_embedder pre-hook
+#     Part D (0.10): _forward returns tensor, correct shape, not trivially ±x
+#     Part E (0.15): clip_text_pooled influences _forward output
+#
+# Max stub score: 0.25 (structural 0.15 + P2P 0.10; gate blocks Parts A-E)
+# P2P: NextDiT base regression (agent might break lumina/model.py while refactoring)
 #
 set +e
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
-
 REWARD=0.0
-
-MODEL_PY="/workspace/ComfyUI/comfy/ldm/newbie/model.py"
-MODEL_BASE_PY="/workspace/ComfyUI/comfy/model_base.py"
 
 add_reward() {
     REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 2)))")
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 1 (0.05): newbie/model.py parses as valid Python with a class def
+# T1 (0.03): Valid Python with at least one class
 # ═══════════════════════════════════════════════════════════════════
-echo "=== Test 1/9: newbie/model.py is valid Python with class ==="
+echo "=== T1: Valid Python + class ==="
 T1=$(python3 << 'PYEOF'
 import sys, ast
-
 try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
+    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
+        tree = ast.parse(f.read())
 except FileNotFoundError:
-    print("FAIL:file_not_found")
-    sys.exit(0)
-
-try:
-    tree = ast.parse(source)
+    print("FAIL:not_found"); sys.exit(0)
 except SyntaxError as e:
-    print(f"FAIL:syntax:{e}")
-    sys.exit(0)
-
-# Must define at least one class
-classes = [n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
-if classes:
+    print(f"FAIL:syntax:{e}"); sys.exit(0)
+if any(isinstance(n, ast.ClassDef) for n in ast.walk(tree)):
     print("PASS")
 else:
-    print("FAIL:no_classes")
+    print("FAIL:no_class")
 PYEOF
 )
-echo "  Result: $T1"
-if [ "$T1" = "PASS" ]; then add_reward 0.05; fi
+echo "  $T1"
+[ "$T1" = "PASS" ] && add_reward 0.03
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 2 (0.05): Main class inherits from NextDiT (not NextDiTBase)
+# T2 (0.04): No _pop_unexpected_kwargs AND no _fallback_operations
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 2/9: Class inherits from NextDiT (not NextDiTBase) ==="
+echo "=== T2: No anti-pattern helpers ==="
 T2=$(python3 << 'PYEOF'
 import sys, ast
-
 try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
+    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
+        tree = ast.parse(f.read())
+except Exception:
+    print("FAIL:parse"); sys.exit(0)
 
-# Look for class that inherits from NextDiT (not NextDiTBase or an alias)
+bad = {"_pop_unexpected_kwargs", "_fallback_operations"}
 for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef):
-        for base in node.bases:
-            # NextDiT directly (not NextDiTBase)
-            if isinstance(base, ast.Name) and base.id == "NextDiT":
-                print("PASS")
-                sys.exit(0)
-            if isinstance(base, ast.Attribute) and base.attr == "NextDiT":
-                print("PASS")
-                sys.exit(0)
-
-# Check if NextDiTBase alias is used (means not refactored)
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef):
-        for base in node.bases:
-            if isinstance(base, ast.Name) and "NextDiTBase" in base.id:
-                print("FAIL:still_using_NextDiTBase_alias")
-                sys.exit(0)
-
-print("FAIL:no_nextdit_subclass")
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in bad:
+        print(f"FAIL:{node.name}_defined"); sys.exit(0)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in bad:
+        print(f"FAIL:{node.func.id}_called"); sys.exit(0)
+print("PASS")
 PYEOF
 )
-echo "  Result: $T2"
-if [ "$T2" = "PASS" ]; then add_reward 0.05; fi
+echo "  $T2"
+[ "$T2" = "PASS" ] && add_reward 0.04
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 3 (0.05): No _pop_unexpected_kwargs function (anti-pattern removed)
+# T3 (0.04): No nn.init in __init__ AND no try/except in _forward
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 3/9: No _pop_unexpected_kwargs function ==="
+echo "=== T3: No nn.init + no try/except ==="
 T3=$(python3 << 'PYEOF'
 import sys, ast
-
 try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
+    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
+        tree = ast.parse(f.read())
+except Exception:
+    print("FAIL:parse"); sys.exit(0)
 
-for node in ast.walk(tree):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        if node.name == "_pop_unexpected_kwargs":
-            print("FAIL:function_still_exists")
-            sys.exit(0)
-
-# Also check for calls to this function
-for node in ast.walk(tree):
-    if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id == "_pop_unexpected_kwargs":
-            print("FAIL:function_still_called")
-            sys.exit(0)
-
+for cls in ast.walk(tree):
+    if not isinstance(cls, ast.ClassDef):
+        continue
+    for method in cls.body:
+        if not isinstance(method, ast.FunctionDef):
+            continue
+        if method.name == "__init__":
+            for n in ast.walk(method):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                    v = n.func.value
+                    if (isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name)
+                            and v.value.id == "nn" and v.attr == "init"):
+                        print(f"FAIL:nn_init_{n.func.attr}")
+                        sys.exit(0)
+        if method.name == "_forward":
+            for n in ast.walk(method):
+                if isinstance(n, ast.Try):
+                    print("FAIL:try_except_in_forward")
+                    sys.exit(0)
 print("PASS")
 PYEOF
 )
-echo "  Result: $T3"
-if [ "$T3" = "PASS" ]; then add_reward 0.05; fi
+echo "  $T3"
+[ "$T3" = "PASS" ] && add_reward 0.04
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 4 (0.05): No _fallback_operations function (anti-pattern removed)
+# T4 (0.04): model_base.py — no apply_model + no CONDCrossAttn in NewBieImage
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 4/9: No _fallback_operations function ==="
+echo "=== T4: model_base.py fixes ==="
 T4=$(python3 << 'PYEOF'
 import sys, ast
-
 try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
+    with open("/workspace/ComfyUI/comfy/model_base.py") as f:
+        tree = ast.parse(f.read())
+except Exception:
+    print("FAIL:parse"); sys.exit(0)
 
-for node in ast.walk(tree):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        if node.name == "_fallback_operations":
-            print("FAIL:function_still_exists")
-            sys.exit(0)
+found = False
+for cls in ast.walk(tree):
+    if not isinstance(cls, ast.ClassDef) or cls.name != "NewBieImage":
+        continue
+    found = True
+    for item in cls.body:
+        if isinstance(item, ast.FunctionDef):
+            if item.name == "apply_model":
+                print("FAIL:apply_model_present"); sys.exit(0)
+            if item.name == "extra_conds":
+                for n in ast.walk(item):
+                    if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                            and n.func.attr == "CONDCrossAttn"):
+                        print("FAIL:CONDCrossAttn"); sys.exit(0)
 
-# Also check for calls to this function
-for node in ast.walk(tree):
-    if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id == "_fallback_operations":
-            print("FAIL:function_still_called")
-            sys.exit(0)
-
+if not found:
+    print("FAIL:NewBieImage_missing"); sys.exit(0)
 print("PASS")
 PYEOF
 )
-echo "  Result: $T4"
-if [ "$T4" = "PASS" ]; then add_reward 0.05; fi
+echo "  $T4"
+[ "$T4" = "PASS" ] && add_reward 0.04
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 5 (0.05): _forward returns -img (not img) + stub rejection
-#   Bronze+ tier: AST pattern check + minimum 8 Call nodes to reject stubs
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 5/9: _forward returns -img + non-trivial body ==="
-T5=$(python3 << 'PYEOF'
-import sys, ast
-
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
-
-# Find _forward method in any class
-for class_node in ast.walk(tree):
-    if not isinstance(class_node, ast.ClassDef):
-        continue
-    for node in class_node.body:
-        if not (isinstance(node, ast.FunctionDef) and node.name == "_forward"):
-            continue
-
-        # Stub rejection: _forward must have >= 8 Call nodes (real impls have dozens)
-        call_count = sum(1 for n in ast.walk(node) if isinstance(n, ast.Call))
-        if call_count < 8:
-            print(f"FAIL:stub_detected:only_{call_count}_calls_need_8")
-            sys.exit(0)
-
-        # Check all return statements
-        returns = [n for n in ast.walk(node) if isinstance(n, ast.Return)]
-        if not returns:
-            print("FAIL:no_return_in_forward")
-            sys.exit(0)
-
-        for ret in returns:
-            val = ret.value
-            # Accept: return -img (UnaryOp with USub and Name "img")
-            if isinstance(val, ast.UnaryOp) and isinstance(val.op, ast.USub):
-                if isinstance(val.operand, ast.Name) and val.operand.id == "img":
-                    print("PASS")
-                    sys.exit(0)
-                # Also accept: return -img[something] (subscript)
-                if isinstance(val.operand, ast.Subscript):
-                    print("PASS")
-                    sys.exit(0)
-
-        # Check if there's a bare 'return img' without negation
-        has_bare_return_img = False
-        for ret in returns:
-            val = ret.value
-            if isinstance(val, ast.Name) and val.id == "img":
-                has_bare_return_img = True
-            elif isinstance(val, ast.Subscript):
-                if not isinstance(val, ast.UnaryOp):
-                    if isinstance(val.value, ast.Name) and val.value.id == "img":
-                        has_bare_return_img = True
-
-        if has_bare_return_img:
-            print("FAIL:returns_positive_img")
-        else:
-            print("FAIL:no_matching_return_pattern")
-        sys.exit(0)
-
-print("FAIL:no_forward_method")
-PYEOF
-)
-echo "  Result: $T5"
-if [ "$T5" = "PASS" ]; then add_reward 0.05; fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 6 (0.05): _forward uses t = 1.0 - timesteps (not t = timesteps)
-#   Bronze+ tier: AST pattern check + minimum 8 Call nodes to reject stubs
+# P2P (0.10): Base NextDiT still functional after agent changes
+#   Catches regressions if agent accidentally breaks lumina/model.py
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 6/9: _forward uses t = 1.0 - timesteps + non-trivial body ==="
-T6=$(python3 << 'PYEOF'
-import sys, ast
-
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
-
-def is_subtraction_of_timesteps(node):
-    """Check if node is (1.0 - timesteps) or (1 - timesteps)."""
-    if not isinstance(node, ast.BinOp):
-        return False
-    if not isinstance(node.op, ast.Sub):
-        return False
-    # Left side must be 1.0 or 1
-    left = node.left
-    if not (isinstance(left, ast.Constant) and left.value in (1, 1.0)):
-        return False
-    # Right side must reference 'timesteps'
-    right = node.right
-    if isinstance(right, ast.Name) and right.id == "timesteps":
-        return True
-    return False
-
-# Find _forward method
-for class_node in ast.walk(tree):
-    if not isinstance(class_node, ast.ClassDef):
-        continue
-    for node in class_node.body:
-        if not (isinstance(node, ast.FunctionDef) and node.name == "_forward"):
-            continue
-
-        # Stub rejection: _forward must have >= 8 Call nodes
-        call_count = sum(1 for n in ast.walk(node) if isinstance(n, ast.Call))
-        if call_count < 8:
-            print(f"FAIL:stub_detected:only_{call_count}_calls_need_8")
-            sys.exit(0)
-
-        # Walk all assignments in _forward
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Assign):
-                # Check if any target is 't' and value is (1.0 - timesteps)
-                for target in stmt.targets:
-                    if isinstance(target, ast.Name) and target.id == "t":
-                        if is_subtraction_of_timesteps(stmt.value):
-                            print("PASS")
-                            sys.exit(0)
-            elif isinstance(stmt, ast.AnnAssign):
-                if isinstance(stmt.target, ast.Name) and stmt.target.id == "t":
-                    if is_subtraction_of_timesteps(stmt.value):
-                        print("PASS")
-                        sys.exit(0)
-
-        # Check for bare t = timesteps (the bug)
-        has_bare_t_assign = False
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    if isinstance(target, ast.Name) and target.id == "t":
-                        val = stmt.value
-                        if isinstance(val, ast.Name) and val.id == "timesteps":
-                            has_bare_t_assign = True
-
-        if has_bare_t_assign:
-            print("FAIL:t_equals_timesteps_not_1_minus")
-        else:
-            print("FAIL:no_t_assignment_found")
-        sys.exit(0)
-
-print("FAIL:no_forward_method")
-PYEOF
-)
-echo "  Result: $T6"
-if [ "$T6" = "PASS" ]; then add_reward 0.05; fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 7 (0.05): No nn.init calls in __init__ (not the ComfyUI way)
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 7/9: No nn.init calls in __init__ ==="
-T7=$(python3 << 'PYEOF'
-import sys, ast
-
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
-
-# Find any __init__ method in any class
-for class_node in ast.walk(tree):
-    if not isinstance(class_node, ast.ClassDef):
-        continue
-    for node in class_node.body:
-        if not (isinstance(node, ast.FunctionDef) and node.name == "__init__"):
-            continue
-
-        # Look for nn.init.* calls
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Call):
-                func = stmt.func
-                # nn.init.normal_, nn.init.zeros_, etc.
-                if isinstance(func, ast.Attribute):
-                    if isinstance(func.value, ast.Attribute):
-                        if (isinstance(func.value.value, ast.Name) and
-                                func.value.value.id == "nn" and
-                                func.value.attr == "init"):
-                            print(f"FAIL:nn_init_{func.attr}_call_found")
-                            sys.exit(0)
-                    # Also catch init.zeros_ etc.
-                    if func.attr in ("normal_", "zeros_", "ones_", "uniform_",
-                                     "xavier_uniform_", "kaiming_normal_",
-                                     "constant_", "eye_"):
-                        print(f"FAIL:init_{func.attr}_found")
-                        sys.exit(0)
-
-print("PASS")
-PYEOF
-)
-echo "  Result: $T7"
-if [ "$T7" = "PASS" ]; then add_reward 0.05; fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 8 (0.05): No try...except in _forward for dtype casting
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 8/9: No try...except in _forward for dtype ==="
-T8=$(python3 << 'PYEOF'
-import sys, ast
-
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        source = f.read()
-    tree = ast.parse(source)
-except Exception as e:
-    print(f"FAIL:parse:{e}")
-    sys.exit(0)
-
-# Find _forward method in any class — must exist AND have no try...except
-found_forward = False
-for class_node in ast.walk(tree):
-    if not isinstance(class_node, ast.ClassDef):
-        continue
-    for node in class_node.body:
-        if not (isinstance(node, ast.FunctionDef) and node.name == "_forward"):
-            continue
-        found_forward = True
-
-        # Check for Try nodes in _forward
-        for stmt in ast.walk(node):
-            if isinstance(stmt, ast.Try):
-                for handler in stmt.handlers:
-                    exc_type = handler.type
-                    if exc_type is not None:
-                        if isinstance(exc_type, ast.Name) and exc_type.id == "StopIteration":
-                            print("FAIL:try_except_StopIteration_in_forward")
-                            sys.exit(0)
-                # Any try in _forward is suspicious for this task
-                print("FAIL:try_except_in_forward")
-                sys.exit(0)
-        # Found _forward with no try/except
-        print("PASS")
-        sys.exit(0)
-
-if not found_forward:
-    print("FAIL:no_forward_method")
-else:
-    print("PASS")
-PYEOF
-)
-echo "  Result: $T8"
-if [ "$T8" = "PASS" ]; then add_reward 0.05; fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 9 (0.60): Compound behavioral test — Silver tier
-#   Imports the module, instantiates the model, verifies operations,
-#   checks model_base.py, and calls _forward with dummy inputs.
-#   Each sub-part awards partial credit independently.
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 9/9: Compound behavioral verification (0.60) ==="
-T9=$(python3 << 'PYEOF'
-import sys, ast, inspect
+echo "=== P2P: Base NextDiT regression ==="
+P2P=$(python3 << 'PYEOF'
+import sys
 sys.path.insert(0, "/workspace/ComfyUI")
+
+try:
+    import comfy.cli_args
+    comfy.cli_args.args.cpu = True
+except Exception:
+    pass
+
+import torch
+import comfy.ops
+
+ops = comfy.ops.disable_weight_init
+base = None
+base_args = dict(
+    patch_size=2, in_channels=16, dim=256, n_layers=2,
+    n_heads=4, n_kv_heads=2, axes_dims=[32, 32], axes_lens=[32, 32],
+)
+
+# Try both calling conventions (operation_settings dict vs separate kwargs)
+for kw in [
+    {**base_args, "operation_settings": {"operations": ops, "device": "cpu", "dtype": None}},
+    {**base_args, "device": "cpu", "dtype": None, "operations": ops},
+]:
+    try:
+        import comfy.ldm.lumina.model as lumina_mod
+        base = lumina_mod.NextDiT(**kw)
+        break
+    except Exception:
+        base = None
+
+if base is None:
+    print("FAIL:instantiation")
+    sys.exit(0)
+
+# Init weights deterministically
+torch.manual_seed(99)
+with torch.no_grad():
+    for p in base.parameters():
+        p.normal_(std=0.02)
+base.eval()
+
+# Run forward pass — must produce valid tensor of correct shape
+x = torch.randn(1, 16, 4, 4)
+ts = torch.tensor([0.5])
+ctx = torch.randn(1, 8, 256)
+
+try:
+    with torch.no_grad():
+        out = base._forward(x, ts, ctx, 8, transformer_options={})
+    if not isinstance(out, torch.Tensor):
+        print(f"FAIL:not_tensor:{type(out).__name__}")
+    elif out.shape != x.shape:
+        print(f"FAIL:shape:{list(out.shape)}")
+    elif out.abs().max().item() < 1e-8:
+        print("FAIL:all_zeros")
+    else:
+        print("PASS")
+except Exception as e:
+    print(f"FAIL:forward:{e}")
+PYEOF
+)
+echo "  $P2P"
+[ "$P2P" = "PASS" ] && add_reward 0.10
+
+# ═══════════════════════════════════════════════════════════════════
+# BEHAVIORAL COMPOUND (0.75): Parts A-E with anti-stub gate
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Behavioral compound (0.75) ==="
+BSCORE=$(python3 << 'PYEOF'
+import sys, os, ast, inspect
+sys.path.insert(0, "/workspace/ComfyUI")
+
+# CPU-safe import
+try:
+    import comfy.cli_args
+    comfy.cli_args.args.cpu = True
+except Exception:
+    pass
 
 score = 0.0
 
-# ---- Part A (0.05): Import module and find NextDiT subclass with own _forward ----
-print("  Part A: Import + find subclass with own _forward...")
+# ──────────────────────────────────────────────
+# GATE: import, find NextDiT subclass, verify _forward is overridden + non-trivial
+# ──────────────────────────────────────────────
+print("  Gate: import + validate...")
 try:
     import comfy.ldm.newbie.model as newbie_mod
     import comfy.ldm.lumina.model as lumina_mod
     NextDiT = lumina_mod.NextDiT
 except Exception as e:
-    print(f"  Part A: FAIL (import: {e})")
-    print(f"SCORE:{score:.2f}")
-    sys.exit(0)
+    print(f"  Gate FAIL (import: {e})")
+    print(f"SCORE:{score:.2f}"); sys.exit(0)
 
-newbie_class = None
+newbie_cls = None
 for name, obj in inspect.getmembers(newbie_mod, inspect.isclass):
     if issubclass(obj, NextDiT) and obj is not NextDiT:
-        newbie_class = obj
+        newbie_cls = obj
         break
 
-if newbie_class is None:
-    print("  Part A: FAIL (no NextDiT subclass found)")
-    print(f"SCORE:{score:.2f}")
-    sys.exit(0)
+if newbie_cls is None:
+    print("  Gate FAIL (no NextDiT subclass)")
+    print(f"SCORE:{score:.2f}"); sys.exit(0)
 
-# Must define its own _forward (not just inherit from NextDiT)
-if '_forward' not in newbie_class.__dict__:
-    print("  Part A: FAIL (_forward not overridden — bare subclass detected)")
-    print(f"SCORE:{score:.2f}")
-    sys.exit(0)
+if "_forward" not in newbie_cls.__dict__:
+    print("  Gate FAIL (_forward not overridden — bare subclass)")
+    print(f"SCORE:{score:.2f}"); sys.exit(0)
 
-# Stub rejection: _forward must be non-trivial (>= 8 Call nodes, matching T5/T6)
+# Anti-stub: _forward needs >= 8 Call nodes (real impls have dozens)
 try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py", "r") as f:
-        _src = f.read()
-    _tree = ast.parse(_src)
-    _fwd_calls = 0
-    for _cn in ast.walk(_tree):
-        if isinstance(_cn, ast.ClassDef):
-            for _item in _cn.body:
-                if isinstance(_item, ast.FunctionDef) and _item.name == "_forward":
-                    _fwd_calls = sum(1 for _n in ast.walk(_item) if isinstance(_n, ast.Call))
-    if _fwd_calls < 8:
-        print(f"  Part A: FAIL (_forward too trivial: {_fwd_calls} calls, need >= 8)")
-        print(f"SCORE:{score:.2f}")
-        sys.exit(0)
+    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
+        _tree = ast.parse(f.read())
+    for _c in ast.walk(_tree):
+        if isinstance(_c, ast.ClassDef):
+            for _m in _c.body:
+                if isinstance(_m, ast.FunctionDef) and _m.name == "_forward":
+                    ncalls = sum(1 for n in ast.walk(_m) if isinstance(n, ast.Call))
+                    if ncalls < 8:
+                        print(f"  Gate FAIL (_forward has {ncalls} calls, need >= 8)")
+                        print(f"SCORE:{score:.2f}"); sys.exit(0)
 except Exception:
-    pass  # If AST check fails, skip stub rejection (runtime checks below will catch)
+    pass
 
-score += 0.05
-print(f"  Part A: PASS (found {newbie_class.__name__} with non-trivial _forward)")
+print(f"  Gate PASS ({newbie_cls.__name__})")
 
-# ---- Part B (0.10): Instantiate on CPU ----
-print("  Part B: Instantiate on CPU...")
+# ──────────────────────────────────────────────
+# Part A (0.10): Instantiate on CPU + extra params beyond base NextDiT
+# ──────────────────────────────────────────────
+print("  Part A: instantiate...")
+import torch
+import torch.nn as nn
 import comfy.ops
+
 ops = comfy.ops.disable_weight_init
-
 model = None
+
+common_args = dict(
+    patch_size=2, in_channels=16, dim=256, n_layers=2,
+    n_heads=4, n_kv_heads=2, axes_dims=[32, 32], axes_lens=[32, 32],
+    clip_text_dim=256, clip_img_dim=256,
+)
+
+# Try both calling conventions (operation_settings dict vs separate kwargs)
+for kw in [
+    {**common_args, "operation_settings": {"operations": ops, "device": "cpu", "dtype": None}},
+    {**common_args, "device": "cpu", "dtype": None, "operations": ops},
+]:
+    try:
+        model = newbie_cls(**kw)
+        break
+    except Exception:
+        model = None
+
+if model is None or not isinstance(model, nn.Module):
+    print("  Part A: FAIL (instantiation)")
+    print(f"SCORE:{score:.2f}"); sys.exit(0)
+
+# Verify model adds params beyond bare NextDiT (rejects empty subclasses)
 try:
-    # axes_dims must sum to dim//n_heads: 256//4=64, so [32,32]
-    model = newbie_class(
-        patch_size=2,
-        in_channels=16,
-        dim=256,
-        n_layers=2,
-        n_heads=4,
-        n_kv_heads=2,
-        axes_dims=[32, 32],
-        axes_lens=[32, 32],
-        clip_text_dim=256,
-        clip_img_dim=256,
-        device="cpu",
-        dtype=None,
-        operations=ops,
-    )
-    import torch.nn as nn
-    if not isinstance(model, nn.Module):
-        print(f"  Part B: FAIL (not nn.Module: {type(model).__name__})")
-        print(f"SCORE:{score:.2f}")
-        sys.exit(0)
-    score += 0.10
-    print(f"  Part B: PASS (instantiated on CPU)")
-except Exception as e:
-    print(f"  Part B: FAIL (instantiation: {e})")
-    print(f"SCORE:{score:.2f}")
-    sys.exit(0)
+    base_args = {k: v for k, v in common_args.items() if k not in ("clip_text_dim", "clip_img_dim")}
+    base = None
+    for kw in [
+        {**base_args, "operation_settings": {"operations": ops, "device": "cpu", "dtype": None}},
+        {**base_args, "device": "cpu", "dtype": None, "operations": ops},
+    ]:
+        try:
+            base = NextDiT(**kw)
+            break
+        except Exception:
+            base = None
 
-# ---- Part C (0.10): Model has substantial parameters (not a stub) ----
-print("  Part C: Check parameter count and Linear submodules...")
-param_count = sum(p.numel() for p in model.parameters())
-has_linear = any(isinstance(m, nn.Linear) for m in model.modules() if m is not model)
+    if base is not None:
+        extra = set(dict(model.named_parameters())) - set(dict(base.named_parameters()))
+        if len(extra) < 4:
+            print(f"  Part A: FAIL ({len(extra)} extra params, need >= 4)")
+            print(f"SCORE:{score:.2f}"); sys.exit(0)
+        del base
+except Exception:
+    pass  # skip comparison if base instantiation fails
 
-if param_count > 10000 and has_linear:
-    score += 0.10
-    print(f"  Part C: PASS ({param_count} params, has Linear layers)")
-elif param_count <= 10000:
-    print(f"  Part C: FAIL (only {param_count} params — likely stub)")
-else:
-    print(f"  Part C: FAIL (no Linear submodules found)")
+# Initialize weights for deterministic testing (disable_weight_init skips init)
+torch.manual_seed(12345)
+with torch.no_grad():
+    for p in model.parameters():
+        p.normal_(std=0.02)
 
-# ---- Part D (0.10): NewBieImage in model_base.py has no apply_model override ----
-print("  Part D: Check NewBieImage has no apply_model...")
+score += 0.10
+print("  Part A: PASS")
+model.eval()
+
+# Shared test inputs
+x = torch.randn(1, 16, 4, 4)
+ts = torch.tensor([0.3])
+ctx = torch.randn(1, 8, 256)
+
+# ──────────────────────────────────────────────
+# Part B (0.25): F2P — return -img via unpatchify monkey-patch
+#   Fixed: result = -unpatchified[:,:,:h,:w] → result + captured ≈ 0
+#   Buggy: result = +unpatchified[:,:,:h,:w] → result + captured ≈ 2·captured
+# ──────────────────────────────────────────────
+print("  Part B: F2P return -img...")
+orig_unpatchify = model.unpatchify
 try:
-    with open("/workspace/ComfyUI/comfy/model_base.py", "r") as f:
-        mb_source = f.read()
-    mb_tree = ast.parse(mb_source)
+    captured_up = {}
 
-    found_newbie_image = False
-    has_apply_model = False
-    for node in ast.walk(mb_tree):
-        if isinstance(node, ast.ClassDef) and node.name == "NewBieImage":
-            found_newbie_image = True
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == "apply_model":
-                    has_apply_model = True
+    def _hook_up(*args, **kwargs):
+        r = orig_unpatchify(*args, **kwargs)
+        captured_up["v"] = r.clone().detach()
+        return r
 
-    if found_newbie_image and not has_apply_model:
-        score += 0.10
-        print(f"  Part D: PASS (NewBieImage has no apply_model)")
-    elif not found_newbie_image:
-        print(f"  Part D: FAIL (NewBieImage class not found)")
+    model.unpatchify = _hook_up
+    with torch.no_grad():
+        result_b = model._forward(x, ts, ctx, 8, transformer_options={})
+
+    if "v" not in captured_up:
+        print("  Part B: FAIL (unpatchify never called)")
     else:
-        print(f"  Part D: FAIL (apply_model still present)")
+        h, w = x.shape[2], x.shape[3]
+        up_sliced = captured_up["v"][:, :, :h, :w]
+        residual = (result_b + up_sliced).abs().max().item()
+        if residual < 0.01:
+            score += 0.25
+            print(f"  Part B: PASS (residual={residual:.6f})")
+        else:
+            print(f"  Part B: FAIL (residual={residual:.4f}, want ~0)")
+except Exception as e:
+    print(f"  Part B: FAIL ({e})")
+finally:
+    model.unpatchify = orig_unpatchify
+
+# ──────────────────────────────────────────────
+# Part C (0.15): F2P — t = 1.0 - timesteps via t_embedder pre-hook
+#   Fixed: t_embedder receives 1.0 - 0.3 = 0.7
+#   Buggy: t_embedder receives 0.3
+# ──────────────────────────────────────────────
+print("  Part C: F2P t = 1.0 - timesteps...")
+captured_t = {}
+
+def _t_pre_hook(module, args):
+    if args:
+        captured_t["v"] = args[0].clone().detach()
+
+handle_t = model.t_embedder.register_forward_pre_hook(_t_pre_hook)
+try:
+    with torch.no_grad():
+        model._forward(x, torch.tensor([0.3]), ctx, 8, transformer_options={})
+
+    if "v" not in captured_t:
+        print("  Part C: FAIL (t_embedder never called)")
+    else:
+        got = captured_t["v"].float().item()
+        want = 0.7  # 1.0 - 0.3
+        if abs(got - want) < 0.01:
+            score += 0.15
+            print(f"  Part C: PASS (t_embedder input={got:.3f}, want={want:.3f})")
+        else:
+            print(f"  Part C: FAIL (t_embedder input={got:.3f}, want={want:.3f})")
+except Exception as e:
+    print(f"  Part C: FAIL ({e})")
+finally:
+    handle_t.remove()
+
+# ──────────────────────────────────────────────
+# Part D (0.10): _forward returns tensor with correct shape, not trivially ±x
+# ──────────────────────────────────────────────
+print("  Part D: output quality...")
+try:
+    with torch.no_grad():
+        out_d = model._forward(x, ts, ctx, 8, transformer_options={})
+
+    if not isinstance(out_d, torch.Tensor):
+        print(f"  Part D: FAIL (not tensor: {type(out_d).__name__})")
+    elif out_d.shape != x.shape:
+        print(f"  Part D: FAIL (shape {list(out_d.shape)} != {list(x.shape)})")
+    elif out_d.abs().max().item() < 1e-6:
+        print("  Part D: FAIL (all zeros)")
+    else:
+        cos = torch.nn.functional.cosine_similarity(
+            out_d.flatten().float(), x.flatten().float(), dim=0
+        ).abs().item()
+        if cos > 0.99:
+            print(f"  Part D: FAIL (trivially ±x, cos_sim={cos:.4f})")
+        else:
+            score += 0.10
+            print(f"  Part D: PASS (shape OK, cos_sim={cos:.4f})")
 except Exception as e:
     print(f"  Part D: FAIL ({e})")
 
-# ---- Part E (0.10): Model uses operations-based Linear (not raw nn.Linear) ----
-print("  Part E: Check operations.Linear usage...")
-has_ops_linear = False
-has_raw_nn_linear = False
-for mod_name, mod in model.named_modules():
-    if mod is model:
-        continue
-    if isinstance(mod, nn.Linear):
-        # comfy.ops.disable_weight_init.Linear is a subclass of nn.Linear
-        # but type(mod) is NOT nn.Linear itself
-        if type(mod) is nn.Linear:
-            has_raw_nn_linear = True
-        else:
-            has_ops_linear = True
-
-if has_ops_linear and not has_raw_nn_linear:
-    score += 0.10
-    print(f"  Part E: PASS (uses operations.Linear, not raw nn.Linear)")
-elif has_raw_nn_linear:
-    print(f"  Part E: FAIL (uses raw nn.Linear instead of operations.Linear)")
-elif not has_ops_linear:
-    print(f"  Part E: FAIL (no Linear modules found)")
-else:
-    print(f"  Part E: FAIL (mix of raw and ops Linear)")
-
-# ---- Part F (0.15): Call _forward with dummy inputs and get tensor output ----
-print("  Part F: Call _forward with dummy inputs...")
-import torch
-
+# ──────────────────────────────────────────────
+# Part E (0.15): clip_text_pooled influences _forward output
+#   Rejects bare NextDiT inheritance (Lumina base doesn't process clip)
+# ──────────────────────────────────────────────
+print("  Part E: clip influence...")
 try:
-    sig = inspect.signature(model._forward)
-    params = dict(sig.parameters)
-
-    batch = 1
-    dim = 256
-    # Build kwargs for _forward based on parameter names
-    kwargs = {}
-    for pname, param in params.items():
-        if pname == 'self':
-            continue
-        if pname in ('x', 'img'):
-            kwargs[pname] = torch.randn(batch, 16, 4, 4)
-        elif pname == 'timesteps':
-            kwargs[pname] = torch.tensor([0.5])
-        elif pname in ('context', 'y'):
-            kwargs[pname] = torch.randn(batch, 8, dim)
-        elif pname in ('clip_text_embed',):
-            kwargs[pname] = torch.randn(batch, dim)
-        elif pname in ('clip_img_embed',):
-            kwargs[pname] = torch.randn(batch, dim)
-        elif pname in ('adaln_input',):
-            kwargs[pname] = torch.randn(batch, dim)
-        elif param.default != inspect.Parameter.empty:
-            continue  # use default value
-        elif param.kind == inspect.Parameter.VAR_KEYWORD:
-            continue  # **kwargs
-        elif param.kind == inspect.Parameter.VAR_POSITIONAL:
-            continue  # *args
-        else:
-            kwargs[pname] = None
+    clip_val = torch.ones(1, 256) * 0.5
 
     with torch.no_grad():
-        result = model._forward(**kwargs)
+        # Pass clip through both kwargs and transformer_options (covers multiple impls)
+        out_clip = model._forward(
+            x, ts, ctx, 8,
+            clip_text_pooled=clip_val,
+            transformer_options={
+                "clip_text_pooled": clip_val,
+                "extra_cond": {"clip_text_pooled": clip_val},
+            },
+        )
+        out_noclip = model._forward(
+            x, ts, ctx, 8,
+            transformer_options={},
+        )
 
-    if isinstance(result, torch.Tensor):
+    diff = (out_clip - out_noclip).abs().max().item()
+    if diff > 1e-6:
         score += 0.15
-        print(f"  Part F: PASS (_forward returned tensor shape {list(result.shape)})")
+        print(f"  Part E: PASS (clip influence diff={diff:.6f})")
     else:
-        print(f"  Part F: FAIL (returned {type(result).__name__}, not tensor)")
+        print(f"  Part E: FAIL (no influence, diff={diff:.8f})")
 except Exception as e:
-    print(f"  Part F: FAIL (_forward call: {e})")
+    print(f"  Part E: FAIL ({e})")
 
 print(f"SCORE:{score:.2f}")
 PYEOF
 )
-echo "  Result: $T9"
-# Extract score from SCORE:X.XX format (last SCORE line)
-T9_SCORE=$(echo "$T9" | grep -oP 'SCORE:\K[0-9.]+' | tail -1)
-if [ -n "$T9_SCORE" ] && [ "$T9_SCORE" != "0.00" ]; then
-    add_reward "$T9_SCORE"
-fi
+echo "$BSCORE"
+BVAL=$(echo "$BSCORE" | grep -oP 'SCORE:\K[0-9.]+' | tail -1)
+[ -n "$BVAL" ] && [ "$BVAL" != "0.00" ] && add_reward "$BVAL"
 
-# ═══════════════════════════════════════════════════════════════════
-# Write final reward
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "======================================="

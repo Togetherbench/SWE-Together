@@ -49,6 +49,9 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     opencv-python-headless \
     2>/dev/null || true
 
+# Test runner for P2P upstream tests
+RUN pip3 install --break-system-packages --no-cache-dir pytest pytest-timeout
+
 # Apply synthesis: add the min_orig_resolution feature with DUPLICATE balancing loops
 # (the "buggy state" the agent must refactor)
 COPY synthesize_buggy_state.py /workspace/synthesize_buggy_state.py

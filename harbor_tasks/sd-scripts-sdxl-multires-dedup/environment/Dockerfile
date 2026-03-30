@@ -64,6 +64,9 @@ RUN pip install --no-cache-dir \
 # Install sd-scripts as editable package (for kohya_ss library imports)
 RUN cd /workspace/sd-scripts && pip install --no-cache-dir --no-deps -e .
 
+# Install test dependencies for pass-to-pass verification
+RUN pip install --no-cache-dir pytest pytest-timeout
+
 # Set PYTHONPATH so library modules are importable
 ENV PYTHONPATH="/workspace/sd-scripts:$PYTHONPATH"
 

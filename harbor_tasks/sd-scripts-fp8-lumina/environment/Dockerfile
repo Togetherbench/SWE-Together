@@ -50,7 +50,9 @@ RUN pip install --no-cache-dir \
     numpy \
     toml==0.10.2 \
     huggingface-hub==0.26.5 \
-    tokenizers
+    tokenizers \
+    pytest \
+    pytest-timeout
 
 # Set PYTHONPATH so sd-scripts modules are importable
 ENV PYTHONPATH="/workspace/sd-scripts:$PYTHONPATH"

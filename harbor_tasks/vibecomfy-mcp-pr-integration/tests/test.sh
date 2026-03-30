@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 #
-# Verification script for vibecomfy-debug-97c34b task.
-# Tests that the agent integrated the MCP server with existing analysis tools,
-# created shared search module, added new MCP tools, reorganized skills,
-# created .mcp.json config, and wrote tests.
+# Verification script for vibecomfy-mcp-pr-integration task.
 #
-# Design: 61% behavioral (import+call+verify), 39% structural.
-# Comment-only lines stripped before regex to block comment injection gaming.
-# Stub-rejection gates: expand_query must return >=2 differentiated terms,
-#   trace_node must return >=2-entry results varying by node, tests must call
-#   project functions in body, knowledge.py import must succeed, skills need keywords.
+# Tests: shared search module, MCP analysis tool wiring, skill reorganization,
+# .mcp.json config, test suite creation, prescriptive descriptions, requirements.txt.
+#
+# Scoring: 78% behavioral, 22% structural. Total = 1.0.
+# P2P: analysis functions (find_upstream/find_downstream) at base commit (Check 9).
+# No upstream test suite at base commit.
+#
+# Anti-gaming:
+#   - TASK_ALIASES requires >=10 entries with ComfyUI domain terms
+#   - MCP tools must CALL analysis functions (regex for call expressions, not names)
+#   - Test suite needs asserts + function calls (not just variable assignments)
+#   - Skills counted by distinct definitions (not all .md files recursively)
+#   - Analysis functions called with real workflow fixture
 #
 # Writes a reward between 0.0 and 1.0 to /logs/verifier/reward.txt.
 #
@@ -20,7 +25,6 @@ WORKSPACE="/workspace/VibeComfy"
 LOG_DIR="/logs/verifier"
 mkdir -p "$LOG_DIR"
 
-# Helper: increment reward by a fractional amount
 add_reward() {
     REWARD=$(python3 -c "print(min(1.0, $REWARD + $1))")
 }
@@ -28,29 +32,29 @@ add_reward() {
 cd "$WORKSPACE"
 
 # ---------------------------------------------------------------------------
-# Check 1 (0.12): Shared search module — BEHAVIORAL
-#   expand_query must be importable AND return expanded terms when called
-#   TASK_ALIASES must be a dict with at least 3 entries
+# Check 1 (0.10): Shared search module — BEHAVIORAL
+#   TASK_ALIASES must be a dict with >=10 entries (original has 30), at least
+#   5 with list values of >=2 items. >=3 keys must be ComfyUI domain terms
+#   (anti-gaming). expand_query must be callable, return >=2 terms, differentiate
+#   across keys, and handle non-alias input without crashing.
 # ---------------------------------------------------------------------------
-echo "=== Check 1: Shared search module (behavioral) ==="
-python3 << 'PYEOF' && { echo "PASS: Shared search module works"; add_reward 0.12; } || echo "FAIL: Shared search module broken"
-import sys, os, importlib
+echo "=== Check 1: Shared search module (0.10, behavioral) ==="
+python3 << 'PYEOF' && { echo "PASS: Shared search module"; add_reward 0.10; } || echo "FAIL: Shared search module"
+import sys, ast, importlib, glob, importlib.util, textwrap, inspect
 sys.path.insert(0, ".")
 
-# Find the module containing expand_query and TASK_ALIASES
-found_module = None
-for mod_path in ["cli_tools.search", "cli_tools.registry.search"]:
+# Find shared search module (flexible path)
+found = None
+for mod_path in ["cli_tools.search", "cli_tools.registry.search", "cli_tools.utils.search",
+                 "cli_tools.shared", "cli_tools.registry.shared"]:
     try:
         m = importlib.import_module(mod_path)
         if hasattr(m, 'TASK_ALIASES') and hasattr(m, 'expand_query'):
-            found_module = m
-            break
+            found = m; break
     except Exception:
         pass
 
-if not found_module:
-    # Fallback: search all cli_tools modules
-    import glob, importlib.util
+if not found:
     for pyfile in glob.glob("cli_tools/**/*.py", recursive=True):
         mod_name = pyfile.replace("/", ".").replace(".py", "")
         try:
@@ -58,414 +62,328 @@ if not found_module:
             m = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(m)
             if hasattr(m, 'TASK_ALIASES') and hasattr(m, 'expand_query'):
-                found_module = m
-                break
+                found = m; break
         except Exception:
             pass
 
-if not found_module:
-    print("  No importable module with TASK_ALIASES + expand_query", file=sys.stderr)
+if not found:
+    print("  No module with TASK_ALIASES + expand_query found", file=sys.stderr); sys.exit(1)
+
+aliases = found.TASK_ALIASES
+if not isinstance(aliases, dict) or len(aliases) < 10:
+    print(f"  TASK_ALIASES needs >=10 entries, got {len(aliases) if isinstance(aliases, dict) else 0}", file=sys.stderr)
     sys.exit(1)
 
-# TASK_ALIASES must be a non-trivial dict (>=3 entries mapping tasks to search terms)
-aliases = found_module.TASK_ALIASES
-if not isinstance(aliases, dict) or len(aliases) < 3:
-    print(f"  TASK_ALIASES has only {len(aliases) if isinstance(aliases, dict) else 0} entries (need 3+)", file=sys.stderr)
-    sys.exit(1)
+# At least 5 entries must have list values with >=2 items
+list_vals = [v for v in aliases.values() if isinstance(v, (list, tuple)) and len(v) >= 2]
+if len(list_vals) < 5:
+    print(f"  Only {len(list_vals)} entries have >=2 items (need 5+)", file=sys.stderr); sys.exit(1)
 
-# expand_query must be callable and return something for a known alias key
+# Anti-gaming: >=3 keys must be recognized ComfyUI domain terms
+domain = {"upscale", "controlnet", "lora", "flux", "inpaint", "depth", "pose",
+          "video", "audio", "face", "segmentation", "style", "sdxl", "sd15",
+          "animatediff", "wan", "latent", "vae", "clip", "dither", "glitch",
+          "deforum", "klein", "t2v", "i2v", "v2v", "fft", "reactive", "ltx",
+          "interpolation", "sampling", "denoise", "conditioning", "beat"}
+matched = sum(1 for k in aliases if any(d in k.lower() for d in domain))
+if matched < 3:
+    print(f"  Only {matched} domain-term keys (need >=3, anti-gaming)", file=sys.stderr); sys.exit(1)
+
+# Anti-stub: expand_query body >=3 non-trivial stmts
 try:
-    first_key = list(aliases.keys())[0]
-    result = found_module.expand_query(first_key)
-    if result is None or (isinstance(result, (list, str)) and len(result) == 0):
-        print(f"  expand_query('{first_key}') returned empty", file=sys.stderr)
-        sys.exit(1)
-except Exception as e:
-    print(f"  expand_query() raised: {e}", file=sys.stderr)
-    sys.exit(1)
+    src = inspect.getsource(found.expand_query)
+    tree = ast.parse(textwrap.dedent(src))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            body = [s for s in node.body
+                    if not isinstance(s, ast.Pass)
+                    and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+            if len(body) < 3:
+                print(f"  expand_query stub ({len(body)} stmts, need >=3)", file=sys.stderr); sys.exit(1)
+            break
+except Exception:
+    pass
 
-# Anti-stub: expand_query must return >=2 terms (not just echo the key)
-r_len = len(result) if isinstance(result, (list, tuple)) else len(str(result).split())
+# Behavioral: call expand_query with first alias key
+k1 = list(aliases.keys())[0]
+r1 = found.expand_query(k1)
+if r1 is None or (isinstance(r1, (list, str)) and len(r1) == 0):
+    print("  expand_query returned empty", file=sys.stderr); sys.exit(1)
+r_len = len(r1) if isinstance(r1, (list, tuple)) else len(str(r1).split())
 if r_len < 2:
-    print(f"  expand_query returned only {r_len} term(s) (need 2+, stub rejected)", file=sys.stderr)
-    sys.exit(1)
+    print(f"  expand_query returned only {r_len} term(s), need >=2", file=sys.stderr); sys.exit(1)
 
-# Anti-stub: different keys must produce different results
+# Different keys -> different results
 if len(aliases) >= 2:
-    second_key = list(aliases.keys())[1]
-    result2 = found_module.expand_query(second_key)
-    if str(result) == str(result2):
-        print(f"  expand_query returns identical results for different keys (stub)", file=sys.stderr)
+    k2 = list(aliases.keys())[1]
+    r2 = found.expand_query(k2)
+    if str(r1) == str(r2):
+        print("  expand_query returns identical results for different keys (stub)", file=sys.stderr)
         sys.exit(1)
 
-print(f"  TASK_ALIASES: {len(aliases)} entries, expand_query callable + differentiated")
-PYEOF
-
-# ---------------------------------------------------------------------------
-# Check 2 (0.08): TASK_ALIASES extracted from knowledge.py — STRUCTURAL
-#   knowledge.py should import from shared module, not define inline
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Check 2: TASK_ALIASES extracted from knowledge.py ==="
-python3 << 'PYEOF' && { echo "PASS: TASK_ALIASES extracted"; add_reward 0.08; } || echo "FAIL: TASK_ALIASES still inline in knowledge.py"
-import re, sys
-
-with open("cli_tools/registry/knowledge.py") as f:
-    source = f.read()
-
-# Check that the large inline TASK_ALIASES dict is gone
-alias_defs = re.findall(r'TASK_ALIASES\s*=\s*\{', source)
-if alias_defs:
-    lines = source.split('\n')
-    in_dict = False
-    dict_lines = 0
-    for line in lines:
-        if 'TASK_ALIASES' in line and '=' in line and '{' in line:
-            in_dict = True
-            dict_lines = 1
-            continue
-        if in_dict:
-            dict_lines += 1
-            if '}' in line:
-                break
-    if dict_lines > 10:
-        print(f"  TASK_ALIASES still defined inline ({dict_lines} lines)", file=sys.stderr)
-        sys.exit(1)
-
-# Verify knowledge.py uses expand_query or imports from search
-if not re.search(r'(from\s+\S*search\s+import|import\s+\S*search|expand_query)', source):
-    print("  knowledge.py doesn't import from search module", file=sys.stderr)
-    sys.exit(1)
-
-# Anti-stub: knowledge.py must actually import successfully (search module must exist)
-import importlib
+# Non-alias input must not crash
 try:
-    importlib.import_module("cli_tools.registry.knowledge")
+    found.expand_query("nonexistent_xyz_query_12345")
 except Exception as e:
-    print(f"  knowledge.py fails to import (search module missing?): {e}", file=sys.stderr)
-    sys.exit(1)
+    print(f"  Crashes on non-alias input: {e}", file=sys.stderr); sys.exit(1)
+
+print(f"  {len(aliases)} aliases, {matched} domain keys, expand_query works")
 PYEOF
 
 # ---------------------------------------------------------------------------
-# Check 3 (0.15): MCP server analysis tools — BEHAVIORAL
-#   Both mcp_server and analysis modules must import successfully.
-#   mcp_server must define Tool() entries for analysis functions.
-#   analysis module must have >=2 callable functions matching tools.
-#   Source is stripped of comments before regex to prevent comment injection.
+# Check 2 (0.20): MCP analysis tools + wiring — BEHAVIORAL (core)
+#   MCP server must have >=9 tools (was 7), >=2 with analysis keywords.
+#   mcp_server.py source must contain >=2 CALL expressions to analysis functions
+#   (regex for func_name\( pattern, not just function names).
+#   find_upstream must be callable with real workflow and return a dict.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Check 3: MCP server integrates analysis tools (behavioral) ==="
-python3 << 'PYEOF' && { echo "PASS: MCP server has working analysis tools"; add_reward 0.15; } || echo "FAIL: MCP server analysis tools broken"
-import re, sys, importlib
+echo "=== Check 2: MCP analysis tools + wiring (0.20, behavioral, core) ==="
+python3 << 'PYEOF' && { echo "PASS: MCP analysis tools"; add_reward 0.20; } || echo "FAIL: MCP analysis tools"
+import ast, sys, re, importlib, json
 sys.path.insert(0, ".")
 
-# 1. Both modules must be importable (behavioral gate)
+# Both must import
 try:
     mcp_mod = importlib.import_module("cli_tools.registry.mcp_server")
 except Exception as e:
-    print(f"  mcp_server import failed: {e}", file=sys.stderr)
-    sys.exit(1)
-
+    print(f"  mcp_server import failed: {e}", file=sys.stderr); sys.exit(1)
 try:
     analysis_mod = importlib.import_module("cli_tools.analysis")
 except Exception as e:
-    print(f"  analysis import failed: {e}", file=sys.stderr)
-    sys.exit(1)
+    print(f"  analysis import failed: {e}", file=sys.stderr); sys.exit(1)
 
-# 2. Read source, strip comment-only lines to prevent comment injection gaming
+# AST: count Tool definitions
 with open(mcp_mod.__file__) as f:
-    lines = f.readlines()
-uncommented = "\n".join(l for l in lines if not l.strip().startswith("#"))
+    source = f.read()
+tree = ast.parse(source)
 
-# 3. Must have Tool() definitions for at least 2 analysis tools
-tool_names = re.findall(r'Tool\s*\(\s*name\s*=\s*["\']([^"\']+)["\']', uncommented)
-analysis_tools = [t for t in tool_names if any(kw in t.lower() for kw in ['trace', 'upstream', 'downstream', 'path', 'orphan', 'subgraph'])]
+tool_names = set()
+# Pattern 1: Tool(name="...")
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id == 'Tool') or \
+           (isinstance(func, ast.Attribute) and func.attr == 'Tool'):
+            for kw in node.keywords:
+                if kw.arg == 'name' and isinstance(kw.value, ast.Constant):
+                    tool_names.add(kw.value.value)
+            if node.args and isinstance(node.args[0], ast.Constant):
+                tool_names.add(node.args[0].value)
 
-if len(analysis_tools) < 2:
-    print(f"  Only {len(analysis_tools)} analysis Tool() entries: {analysis_tools}", file=sys.stderr)
-    sys.exit(1)
+# Pattern 2: @server.tool() / @app.tool() decorated functions
+for node in ast.walk(tree):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for dec in node.decorator_list:
+            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'tool':
+                name = dec.args[0].value if dec.args and isinstance(dec.args[0], ast.Constant) else node.name
+                tool_names.add(name)
+            elif isinstance(dec, ast.Attribute) and dec.attr == 'tool':
+                tool_names.add(node.name)
 
-# 4. analysis module must have >=2 callable functions that match tool names
-analysis_funcs = ['find_upstream', 'find_downstream', 'trace_node', 'find_path',
-                  'find_subgraph', 'find_orphans', 'analyze_workflow', 'trace_signal', 'trace_flow']
-found = [f for f in analysis_funcs if hasattr(analysis_mod, f) and callable(getattr(analysis_mod, f))]
-if len(found) < 2:
-    print(f"  Only {len(found)} callable analysis functions: {found}", file=sys.stderr)
-    sys.exit(1)
-
-# 5. Total tool count must be > 7 (original 7 + at least 2 new)
 if len(tool_names) < 9:
-    print(f"  Only {len(tool_names)} total tools (need 9+, was 7 originally)", file=sys.stderr)
+    print(f"  Only {len(tool_names)} tools (need >=9, was 7 originally)", file=sys.stderr); sys.exit(1)
+
+# >=2 analysis-related tool names
+analysis_kw = ['trace', 'upstream', 'downstream', 'path', 'orphan',
+               'subgraph', 'dependency', 'signal', 'flow', 'graph', 'analyze']
+analysis_tools = [t for t in tool_names if any(k in t.lower() for k in analysis_kw)]
+if len(analysis_tools) < 2:
+    print(f"  Only {len(analysis_tools)} analysis tools: {analysis_tools}", file=sys.stderr); sys.exit(1)
+
+# Anti-gaming: mcp_server.py must CALL analysis functions (function_name\( pattern)
+# This rejects stubs that merely name functions without calling them
+call_pattern = r'(?:analysis\.)?(?:find_upstream|find_downstream|find_path|find_subgraph|find_orphans|find_dangling|analyze_workflow|trace_node|trace_signal)\s*\('
+calls = re.findall(call_pattern, source)
+if len(calls) < 2:
+    print(f"  Only {len(calls)} analysis function calls in mcp_server (need >=2)", file=sys.stderr)
     sys.exit(1)
 
-print(f"  {len(tool_names)} total tools, {len(analysis_tools)} analysis tools, {len(found)} analysis funcs: {found}")
+# BEHAVIORAL: call find_upstream with real workflow fixture
+fn_up = getattr(analysis_mod, 'find_upstream', None)
+if not fn_up:
+    print("  analysis.find_upstream missing", file=sys.stderr); sys.exit(1)
+
+wf = None
+try:
+    with open("workflows/workflow_fixed_node.json") as f:
+        wf = json.load(f)
+except Exception:
+    pass
+
+if wf and wf.get("nodes"):
+    target_id = wf["nodes"][-1].get("id")
+    try:
+        result = fn_up(wf, target_id)
+        if not isinstance(result, dict):
+            print(f"  find_upstream returned {type(result).__name__}, expected dict", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"  find_upstream call error: {e}", file=sys.stderr); sys.exit(1)
+
+print(f"  {len(tool_names)} tools, {len(analysis_tools)} analysis tools, {len(calls)} analysis calls")
 PYEOF
 
 # ---------------------------------------------------------------------------
-# Check 4 (0.12): trace_node in analysis.py — BEHAVIORAL
-#   Must be callable with a workflow dict and node ID, and return a result
+# Check 3 (0.23): Integration end-to-end — BEHAVIORAL
+#   All 4 core modules import. MCP server calls analysis functions.
+#   >7 tools. expand_query works via knowledge module.
+#   Knowledge search_nodes still works (P2P behavioral).
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Check 4: trace_node works (behavioral) ==="
-python3 << 'PYEOF' && { echo "PASS: trace_node works"; add_reward 0.12; } || echo "FAIL: trace_node broken"
-import sys, inspect
+echo "=== Check 3: Integration E2E (0.23, behavioral) ==="
+python3 << 'PYEOF' && { echo "PASS: Integration works"; add_reward 0.23; } || echo "FAIL: Integration"
+import sys, ast, re
 sys.path.insert(0, ".")
 
-import cli_tools.analysis as analysis
-
-# trace_node might be a top-level function or nested inside analysis.py
-# The agent might also name it differently (e.g. trace_signal, trace_flow)
-fn = None
-for name in ['trace_node', 'trace_signal', 'trace_flow', 'node_trace']:
-    if hasattr(analysis, name):
-        fn = getattr(analysis, name)
-        break
-
-if fn is None:
-    # Check if the function was added but under a different pattern
-    import re
-    with open(analysis.__file__) as f:
-        src = f.read()
-    trace_funcs = re.findall(r'def\s+(trace\w*)\s*\(', src)
-    for tf_name in trace_funcs:
-        if hasattr(analysis, tf_name):
-            fn = getattr(analysis, tf_name)
-            break
-
-if fn is None:
-    print("  No trace function found in analysis module", file=sys.stderr)
-    sys.exit(1)
-sig = inspect.signature(fn)
-params = list(sig.parameters.keys())
-
-# Must accept at least 2 params (workflow/wf and node_id/target_id/node)
-if len(params) < 2:
-    print(f"  trace_node has only {len(params)} params: {params} (need >=2)", file=sys.stderr)
+# All 4 modules must import
+errors = []
+for mod in ["cli_tools.analysis", "cli_tools.registry.knowledge",
+            "cli_tools.registry.mcp_server", "cli_tools.descriptions"]:
+    try:
+        __import__(mod)
+    except Exception as e:
+        errors.append(f"{mod}: {e}")
+if errors:
+    for e in errors: print(f"  Import error: {e}", file=sys.stderr)
     sys.exit(1)
 
-# Try calling with a minimal workflow to ensure it doesn't crash
-# Simple 2-node workflow: KSampler -> SaveImage
-test_wf = {
-    "nodes": [
-        {"id": 1, "type": "KSampler", "inputs": [], "outputs": [{"links": [1]}]},
-        {"id": 2, "type": "SaveImage", "inputs": [{"link": 1}], "outputs": []}
-    ],
-    "links": [[1, 1, 0, 2, 0, "IMAGE"]]
-}
+# MCP server must call analysis functions
+import cli_tools.registry.mcp_server as mcp_mod
+with open(mcp_mod.__file__) as f:
+    mcp_src = f.read()
+call_pat = r'(?:analysis\.)?(?:find_upstream|find_downstream|find_path|find_subgraph|find_orphans|analyze_workflow)\s*\('
+if not re.search(call_pat, mcp_src):
+    print("  MCP server doesn't call analysis functions", file=sys.stderr); sys.exit(1)
 
-try:
-    result = fn(test_wf, 2)
-    # Should return something (dict, list, string — not None/empty/trivial)
-    if result is None:
-        print("  trace_node returned None for valid input", file=sys.stderr)
-        sys.exit(1)
-    if isinstance(result, dict) and len(result) == 0:
-        print("  trace_node returned empty dict", file=sys.stderr)
-        sys.exit(1)
-    if isinstance(result, list) and len(result) == 0:
-        print("  trace_node returned empty list", file=sys.stderr)
-        sys.exit(1)
-    if isinstance(result, str) and len(result) < 10:
-        print(f"  trace_node returned trivial string: '{result}'", file=sys.stderr)
-        sys.exit(1)
+# >7 tools
+tree = ast.parse(mcp_src)
+tool_count = 0
+seen = set()
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id == 'Tool') or \
+           (isinstance(func, ast.Attribute) and func.attr == 'Tool'):
+            for kw in node.keywords:
+                if kw.arg == 'name' and isinstance(kw.value, ast.Constant) and kw.value.value not in seen:
+                    seen.add(kw.value.value); tool_count += 1
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for dec in node.decorator_list:
+            if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'tool') or \
+               (isinstance(dec, ast.Attribute) and dec.attr == 'tool'):
+                if node.name not in seen:
+                    seen.add(node.name); tool_count += 1
+if tool_count <= 7:
+    print(f"  Only {tool_count} tools (need >7)", file=sys.stderr); sys.exit(1)
 
-    # Anti-stub: result must have >=2 entries (dict keys or list items or string tokens)
-    if isinstance(result, dict) and len(result) < 2:
-        print(f"  trace_node returned dict with only {len(result)} key (need 2+, stub rejected)", file=sys.stderr)
-        sys.exit(1)
-    if isinstance(result, (list, tuple)) and len(result) < 2:
-        print(f"  trace_node returned list with only {len(result)} item (need 2+, stub rejected)", file=sys.stderr)
-        sys.exit(1)
-
-    # Anti-stub: results must differ for different node IDs
-    try:
-        result1 = fn(test_wf, 1)
-        if str(result) == str(result1):
-            print("  trace_node returns identical results for different nodes (stub)", file=sys.stderr)
-            sys.exit(1)
-    except Exception:
-        pass  # OK if node 1 tracing fails differently
-
-except TypeError as e:
-    # If signature is different, try common alternatives
-    try:
-        result = fn(test_wf, node_id=2)
-    except Exception:
-        try:
-            result = fn(wf=test_wf, target_id=2)
-        except Exception as e2:
-            print(f"  trace_node call failed: {e2}", file=sys.stderr)
-            sys.exit(1)
-except Exception as e:
-    # Some errors are OK if it's a format issue — the function exists and runs
-    if "key" in str(e).lower() or "index" in str(e).lower() or "node" in str(e).lower():
-        pass  # Expected: our minimal wf may not match expected format exactly
+# expand_query works via knowledge module
+import cli_tools.registry.knowledge as knowledge
+if hasattr(knowledge, 'expand_query'):
+    ta = getattr(knowledge, 'TASK_ALIASES', {})
+    key = list(ta.keys())[0] if ta else "upscale"
+    r = knowledge.expand_query(key)
+    if r is None or (isinstance(r, (list, str)) and len(r) == 0):
+        print("  expand_query via knowledge returned empty", file=sys.stderr); sys.exit(1)
+elif hasattr(knowledge, 'ComfyKnowledge'):
+    ck = knowledge.ComfyKnowledge()
+    if hasattr(ck, 'search_nodes'):
+        r = ck.search_nodes("upscale")
+        if not r:
+            print("  search_nodes returned empty", file=sys.stderr); sys.exit(1)
     else:
-        print(f"  trace_node raised unexpected: {e}", file=sys.stderr)
-        sys.exit(1)
+        print("  No search capability", file=sys.stderr); sys.exit(1)
+else:
+    print("  knowledge has no expand_query or ComfyKnowledge", file=sys.stderr); sys.exit(1)
 
-print(f"  trace_node({params}) is callable and processes workflows")
+# Knowledge search_nodes still works (P2P)
+ck = knowledge.ComfyKnowledge()
+if hasattr(ck, 'search_nodes'):
+    results = ck.search_nodes("controlnet", 5)
+    if not results or len(results) == 0:
+        print("  search_nodes('controlnet') broken", file=sys.stderr); sys.exit(1)
+
+print(f"  All imports OK, {tool_count} tools, search works")
 PYEOF
 
 # ---------------------------------------------------------------------------
-# Check 5 (0.08): .mcp.json config — STRUCTURAL + valid JSON
+# Check 4 (0.12): Test suite — BEHAVIORAL
+#   Agent must create test_*.py with >=5 tests importing cli_tools.
+#   Anti-stub: >=3 test functions must have project references + >=4
+#   non-trivial stmts + assert statements + actual function calls.
+#   At least 3 tests must pass with pytest.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Check 5: .mcp.json auto-config ==="
-python3 << 'PYEOF' && { echo "PASS: .mcp.json configured"; add_reward 0.08; } || echo "FAIL: .mcp.json missing/broken"
-import json, sys, os
-
-mcp_path = None
-for candidate in [".mcp.json", "mcp.json"]:
-    if os.path.exists(candidate):
-        mcp_path = candidate
-        break
-
-if not mcp_path:
-    print("  .mcp.json not found", file=sys.stderr)
-    sys.exit(1)
-
-with open(mcp_path) as f:
-    config = json.load(f)
-
-servers = config.get("mcpServers", config.get("servers", {}))
-if not servers:
-    print("  No MCP servers defined", file=sys.stderr)
-    sys.exit(1)
-
-# Must reference mcp_server.py in command/args
-found_server = False
-for name, server_config in servers.items():
-    args = server_config.get("args", [])
-    command = server_config.get("command", "")
-    full_cmd = command + " " + " ".join(str(a) for a in args)
-    if "mcp_server" in full_cmd or "registry" in full_cmd:
-        found_server = True
-        break
-
-if not found_server:
-    print("  No MCP server entry references mcp_server module", file=sys.stderr)
-    sys.exit(1)
-PYEOF
-
-# ---------------------------------------------------------------------------
-# Check 6 (0.10): Skills reorganized — STRUCTURAL + content quality
-#   Need 3+ SKILL.md files, each with meaningful content (>50 chars)
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Check 6: Skills reorganized ==="
-python3 << 'PYEOF' && { echo "PASS: Skills reorganized"; add_reward 0.10; } || echo "FAIL: Skills not reorganized"
-import os, sys
-
-skill_files = []
-for root, dirs, files in os.walk(".claude/skills"):
-    for f in files:
-        if f == "SKILL.md":
-            path = os.path.join(root, f)
-            with open(path) as fh:
-                content = fh.read().strip()
-            skill_files.append((path, len(content)))
-
-if len(skill_files) < 3:
-    print(f"  Only {len(skill_files)} SKILL.md files (need 3+)", file=sys.stderr)
-    sys.exit(1)
-
-# Each skill must have meaningful content (not just a title)
-thin_skills = [p for p, sz in skill_files if sz < 50]
-if thin_skills:
-    print(f"  Thin skills (<50 chars): {thin_skills}", file=sys.stderr)
-    sys.exit(1)
-
-# Skills must reference project-specific content (not lorem ipsum)
-project_keywords = ['comfy', 'node', 'workflow', 'mcp', 'registry', 'analysis', 'tool', 'search']
-generic_skills = []
-for p, sz in skill_files:
-    with open(p) as fh:
-        content = fh.read().lower()
-    if not any(kw in content for kw in project_keywords):
-        generic_skills.append(p)
-if generic_skills:
-    print(f"  Generic skills (no project keywords): {generic_skills}", file=sys.stderr)
-    sys.exit(1)
-
-print(f"  {len(skill_files)} skills, all with substantive project content")
-PYEOF
-
-# ---------------------------------------------------------------------------
-# Check 7 (0.12): Tests actually pass — BEHAVIORAL
-#   Run the agent's test suite and check that most tests pass
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Check 7: Test suite passes (behavioral) ==="
-python3 << 'PYEOF' && { echo "PASS: Tests run successfully"; add_reward 0.12; } || echo "FAIL: Tests don't pass"
-import subprocess, re, sys, os
+echo "=== Check 4: Test suite (0.12, behavioral) ==="
+python3 << 'PYEOF' && { echo "PASS: Tests pass"; add_reward 0.12; } || echo "FAIL: Test suite"
+import subprocess, ast, re, sys, os
 
 # Find test files
 test_files = []
 for root, dirs, files in os.walk("."):
-    if ".git" in root or "__pycache__" in root:
-        continue
+    if ".git" in root or "__pycache__" in root: continue
     for f in files:
         if f.startswith("test_") and f.endswith(".py"):
             test_files.append(os.path.join(root, f))
 
 if not test_files:
-    print("  No test files found", file=sys.stderr)
-    sys.exit(1)
+    print("  No test files found", file=sys.stderr); sys.exit(1)
 
-# Count test functions first
-max_tests = 0
-best_file = None
+# Find file with most test functions
+max_tests = 0; best_file = None
 for tf in test_files:
-    with open(tf) as f:
-        source = f.read()
-    count = len(re.findall(r'def\s+test_\w+', source))
-    if count > max_tests:
-        max_tests = count
-        best_file = tf
+    with open(tf) as f: src = f.read()
+    count = len(re.findall(r'def\s+test_\w+', src))
+    if count > max_tests: max_tests = count; best_file = tf
 
 if max_tests < 5:
-    print(f"  Best file {best_file} has only {max_tests} tests (need 5+)", file=sys.stderr)
-    sys.exit(1)
+    print(f"  Best file has only {max_tests} tests (need 5+)", file=sys.stderr); sys.exit(1)
 
-# Tests must import from project modules (reject trivial assert-True stubs)
 with open(best_file) as f:
-    test_source = f.read()
-if not re.search(r'(from\s+cli_tools|import\s+cli_tools)', test_source):
-    print(f"  Test file doesn't import from cli_tools (trivial tests rejected)", file=sys.stderr)
-    sys.exit(1)
+    tree = ast.parse(f.read())
 
-# Anti-stub: at least 3 test functions must reference project code in their body
-# (not just a top-level import with assert True tests)
-test_blocks = re.split(r'(?=def\s+test_\w+)', test_source)
-project_refs = ['cli_tools', 'analysis', 'search', 'knowledge', 'mcp_server',
+# Must import from cli_tools
+has_cli_import = False
+for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom) and node.module and 'cli_tools' in node.module:
+        has_cli_import = True; break
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if 'cli_tools' in alias.name: has_cli_import = True; break
+if not has_cli_import:
+    print("  Tests don't import from cli_tools (stubs rejected)", file=sys.stderr); sys.exit(1)
+
+# Anti-stub: >=3 tests with project refs + >=4 stmts + assert + function calls
+project_refs = {'analysis', 'search', 'knowledge', 'mcp_server',
                 'expand_query', 'trace_node', 'find_upstream', 'find_downstream',
-                'TASK_ALIASES', 'trace_signal', 'trace_flow']
-substantive_tests = 0
-for block in test_blocks:
-    if not block.strip().startswith('def test_'):
-        continue
-    # Get just the function body (skip the def line)
-    body_lines = block.split('\n')[1:]
-    body = '\n'.join(body_lines)
-    if any(ref in body for ref in project_refs):
-        substantive_tests += 1
-if substantive_tests < 3:
-    print(f"  Only {substantive_tests} test functions reference project code (need 3+, stubs rejected)", file=sys.stderr)
+                'TASK_ALIASES', 'trace_signal', 'trace_flow', 'ComfyKnowledge',
+                'search_nodes', 'get_node_spec', 'simplify_workflow', 'find_path'}
+substantive = 0
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name.startswith('test_'):
+        body_dump = ast.dump(node)
+        has_ref = any(ref in body_dump for ref in project_refs)
+        body_stmts = [s for s in node.body
+                      if not isinstance(s, ast.Pass)
+                      and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+        has_assert = any(isinstance(s, ast.Assert) for s in ast.walk(node))
+        has_call = any(isinstance(s, ast.Call) for s in ast.walk(node))
+        if has_ref and len(body_stmts) >= 4 and has_assert and has_call:
+            substantive += 1
+
+if substantive < 3:
+    print(f"  Only {substantive} substantive tests (need 3+ with refs+stmts+assert+calls)", file=sys.stderr)
     sys.exit(1)
 
-# Actually run the tests with pytest (preferred) or unittest fallback
+# Run with pytest
 env = os.environ.copy()
 env["PYTHONPATH"] = "."
-
-# Try pytest first, then unittest
 result = subprocess.run(
     ["python3", "-m", "pytest", best_file, "-v", "--tb=short", "-q"],
     capture_output=True, text=True, timeout=60, cwd="/workspace/VibeComfy", env=env
 )
 output = result.stdout + result.stderr
 
-# Parse pytest output
 passed_match = re.search(r'(\d+)\s+passed', output)
 failed_match = re.search(r'(\d+)\s+failed', output)
 
@@ -473,95 +391,219 @@ if passed_match:
     passed = int(passed_match.group(1))
     failed = int(failed_match.group(1)) if failed_match else 0
 else:
-    # Fallback: try running test file directly with unittest discover
-    # First try: python3 -m unittest discover
+    # Fallback: unittest
     test_dir = os.path.dirname(best_file) or "."
     result = subprocess.run(
         ["python3", "-m", "unittest", "discover", "-s", test_dir, "-p", "test_*.py", "-v"],
         capture_output=True, text=True, timeout=60, cwd="/workspace/VibeComfy", env=env
     )
     output = result.stdout + result.stderr
-    # Count "ok" and "FAIL" in unittest output
     passed = len(re.findall(r'\.\.\. ok', output))
-    failed = len(re.findall(r'\.\.\. (FAIL|ERROR)', output))
-    # Also check "Ran X tests" + OK pattern
     ran_match = re.search(r'Ran (\d+) test', output)
     if ran_match and passed == 0 and result.returncode == 0:
         passed = int(ran_match.group(1))
-
-    if passed == 0:
-        # Last resort: run the file directly
-        result = subprocess.run(
-            ["python3", best_file],
-            capture_output=True, text=True, timeout=60, cwd="/workspace/VibeComfy", env=env
-        )
-        output = result.stdout + result.stderr
-        passed = len(re.findall(r'\.\.\. ok', output))
-        failed = len(re.findall(r'\.\.\. (FAIL|ERROR)', output))
-        ran_match = re.search(r'Ran (\d+) test', output)
-        if ran_match and passed == 0 and result.returncode == 0:
-            passed = int(ran_match.group(1))
+    failed = len(re.findall(r'\.\.\. (FAIL|ERROR)', output))
 
 if passed < 3:
     print(f"  Only {passed} tests passed ({failed} failed)", file=sys.stderr)
-    print(f"  Output: {output[-500:]}", file=sys.stderr)
-    sys.exit(1)
+    print(f"  Output tail: {output[-300:]}", file=sys.stderr); sys.exit(1)
 
-print(f"  {passed} tests passed, {failed} failed")
+print(f"  {passed} tests passed, {substantive} substantive")
 PYEOF
 
 # ---------------------------------------------------------------------------
-# Check 8 (0.08): MCP tool descriptions are prescriptive — STRUCTURAL
-#   Descriptions must contain guidance words (start, use, when, after, first)
-#   AND total tools must be >= 9 (7 original + 2 new analysis tools)
-#   Source is stripped of comments to prevent comment injection gaming.
+# Check 5 (0.07): TASK_ALIASES extracted from knowledge.py — STRUCTURAL
+#   knowledge.py should import TASK_ALIASES/expand_query from shared module,
+#   not define a large inline dict (>10 entries). Must still import successfully.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Check 8: MCP descriptions prescriptive ==="
-python3 << 'PYEOF' && { echo "PASS: Descriptions prescriptive"; add_reward 0.08; } || echo "FAIL: Descriptions not prescriptive"
-import re, sys
+echo "=== Check 5: TASK_ALIASES extracted (0.07, structural) ==="
+python3 << 'PYEOF' && { echo "PASS: TASK_ALIASES extracted"; add_reward 0.07; } || echo "FAIL: TASK_ALIASES extraction"
+import ast, sys, importlib
+
+with open("cli_tools/registry/knowledge.py") as f:
+    source = f.read()
+tree = ast.parse(source)
+
+# TASK_ALIASES should NOT be a large inline dict (>10 keys)
+for node in ast.walk(tree):
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == 'TASK_ALIASES':
+                if isinstance(node.value, ast.Dict) and len(node.value.keys) > 10:
+                    print(f"  TASK_ALIASES still inline ({len(node.value.keys)} entries)", file=sys.stderr)
+                    sys.exit(1)
+
+# Must import from shared module
+has_import = False
+for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            if alias.name in ('TASK_ALIASES', 'expand_query', '*'):
+                has_import = True; break
+        if node.module and ('search' in node.module or 'shared' in node.module):
+            has_import = True
+    if has_import: break
+
+if not has_import:
+    print("  knowledge.py doesn't import from shared module", file=sys.stderr); sys.exit(1)
+
+# Verify knowledge.py imports successfully
+try:
+    importlib.import_module("cli_tools.registry.knowledge")
+except Exception as e:
+    print(f"  knowledge.py import failed: {e}", file=sys.stderr); sys.exit(1)
+
+print("  Extracted, shared module imported")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Check 6a (0.03): .mcp.json auto-config — STRUCTURAL
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Check 6a: .mcp.json (0.03, structural) ==="
+python3 << 'PYEOF' && { echo "PASS: .mcp.json"; add_reward 0.03; } || echo "FAIL: .mcp.json"
+import json, sys, os
+
+mcp_path = None
+for c in [".mcp.json", "mcp.json"]:
+    if os.path.exists(c): mcp_path = c; break
+if not mcp_path:
+    print("  Not found", file=sys.stderr); sys.exit(1)
+
+with open(mcp_path) as f:
+    config = json.load(f)
+
+servers = config.get("mcpServers", config.get("servers", {}))
+if not servers:
+    print("  No servers defined", file=sys.stderr); sys.exit(1)
+
+found = any("mcp_server" in (sc.get("command", "") + " " + " ".join(str(a) for a in sc.get("args", [])))
+            or "registry" in (sc.get("command", "") + " " + " ".join(str(a) for a in sc.get("args", [])))
+            for sc in servers.values())
+if not found:
+    print("  No server entry references mcp_server", file=sys.stderr); sys.exit(1)
+print(f"  {mcp_path}: {len(servers)} server(s)")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Check 6b (0.02): requirements.txt — STRUCTURAL
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Check 6b: requirements.txt (0.02, structural) ==="
+python3 << 'PYEOF' && { echo "PASS: requirements.txt"; add_reward 0.02; } || echo "FAIL: requirements.txt"
+import sys, os
+if not os.path.exists("requirements.txt"):
+    print("  Not found", file=sys.stderr); sys.exit(1)
+with open("requirements.txt") as f:
+    content = f.read().lower()
+if "mcp" not in content:
+    print("  Missing mcp dependency", file=sys.stderr); sys.exit(1)
+print("  OK")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Check 7 (0.05): Skills reorganized — STRUCTURAL
+#   Need >=3 distinct skill definitions under .claude/skills/.
+#   A skill is either a direct .md file or a subdirectory with .md content.
+#   Each must have >=100 chars and >=2 project keywords.
+#   (Base commit has only 1 skill dir "comfy-nodes" — fails this check.)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Check 7: Skills reorganized (0.05, structural) ==="
+python3 << 'PYEOF' && { echo "PASS: Skills reorganized"; add_reward 0.05; } || echo "FAIL: Skills reorganization"
+import os, sys
+
+skills_dir = ".claude/skills"
+if not os.path.isdir(skills_dir):
+    print("  .claude/skills/ not found", file=sys.stderr); sys.exit(1)
+
+project_kw = ['comfy', 'node', 'workflow', 'mcp', 'registry', 'analysis', 'tool', 'search']
+
+# Count distinct skills: direct .md files + subdirectories
+valid_skills = 0
+for item in os.listdir(skills_dir):
+    path = os.path.join(skills_dir, item)
+    content = ""
+    if os.path.isfile(path) and item.endswith(".md"):
+        content = open(path).read().strip()
+    elif os.path.isdir(path):
+        # Find primary .md in subdirectory (prefer SKILL.md)
+        for f in sorted(os.listdir(path), key=lambda x: (0 if 'skill' in x.lower() else 1, x)):
+            fp = os.path.join(path, f)
+            if os.path.isfile(fp) and f.endswith(".md"):
+                c = open(fp).read().strip()
+                if len(c) >= 100:
+                    content = c; break
+    else:
+        continue
+
+    if len(content) < 100:
+        continue
+    lc = content.lower()
+    if sum(1 for kw in project_kw if kw in lc) >= 2:
+        valid_skills += 1
+
+if valid_skills < 3:
+    print(f"  Only {valid_skills} valid skill(s) (need 3+)", file=sys.stderr); sys.exit(1)
+
+print(f"  {valid_skills} skills, all substantive")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Check 8 (0.05): MCP tool descriptions prescriptive — STRUCTURAL
+#   >=9 tool descriptions, >=4 with prescriptive language.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Check 8: Prescriptive descriptions (0.05, structural) ==="
+python3 << 'PYEOF' && { echo "PASS: Descriptions prescriptive"; add_reward 0.05; } || echo "FAIL: Descriptions"
+import ast, re, sys
 
 with open("cli_tools/registry/mcp_server.py") as f:
-    lines = f.readlines()
-# Strip comment-only lines to prevent comment injection gaming
-source = "\n".join(l for l in lines if not l.strip().startswith("#"))
+    source = f.read()
+tree = ast.parse(source)
 
-# Extract descriptions from Tool() definitions — multiple formats
-# Format 1: description="..." or description='...' (single-line)
-descriptions = re.findall(r'description\s*=\s*"([^"]+)"', source)
-descriptions += re.findall(r"description\s*=\s*'([^']+)'", source)
+descriptions = []
 
-# Format 2: triple-quoted descriptions
-triple_descs = re.findall(r'description\s*=\s*"""(.*?)"""', source, re.DOTALL)
-triple_descs += re.findall(r"description\s*=\s*'''(.*?)'''", source, re.DOTALL)
-descriptions.extend([d.strip() for d in triple_descs])
+# Tool(description="...") keyword
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id == 'Tool') or \
+           (isinstance(func, ast.Attribute) and func.attr == 'Tool'):
+            for kw in node.keywords:
+                if kw.arg == 'description' and isinstance(kw.value, ast.Constant):
+                    descriptions.append(kw.value.value)
+                if kw.arg == 'description' and isinstance(kw.value, ast.JoinedStr):
+                    parts = [v.value for v in kw.value.values if isinstance(v, ast.Constant)]
+                    descriptions.append(" ".join(parts))
 
-# Format 3: f-string descriptions
-f_descs = re.findall(r'description\s*=\s*f"([^"]+)"', source)
-f_descs += re.findall(r"description\s*=\s*f'([^']+)'", source)
-descriptions.extend(f_descs)
+# @server.tool() docstrings
+for node in ast.walk(tree):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for dec in node.decorator_list:
+            is_tool = (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'tool') or \
+                      (isinstance(dec, ast.Attribute) and dec.attr == 'tool')
+            if is_tool:
+                ds = ast.get_docstring(node)
+                if ds and len(ds) > 10:
+                    descriptions.append(ds)
+                break
 
-# Format 4: "desc" or "description" keys in dicts (common in MCP tool definitions)
-dict_descs = re.findall(r'["\']description["\']\s*:\s*"([^"]+)"', source)
-dict_descs += re.findall(r'["\']description["\']\s*:\s*\'([^\']+)\'', source)
-descriptions.extend(dict_descs)
+# Dict-style
+for node in ast.walk(tree):
+    if isinstance(node, ast.Dict):
+        for i, key in enumerate(node.keys):
+            if isinstance(key, ast.Constant) and key.value == 'description':
+                val = node.values[i]
+                if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                    descriptions.append(val.value)
 
-# Format 5: docstrings in @server.tool() decorated functions
-# Look for triple-quoted strings right after def lines
-docstrings = re.findall(r'def\s+\w+[^:]*:\s*\n\s*"""(.*?)"""', source, re.DOTALL)
-docstrings += re.findall(r"def\s+\w+[^:]*:\s*\n\s*'''(.*?)'''", source, re.DOTALL)
-descriptions.extend([d.strip().split('\n')[0] for d in docstrings if len(d.strip()) > 10])
-
-# Deduplicate while preserving order
 descriptions = list(dict.fromkeys(descriptions))
-
 if len(descriptions) < 9:
-    print(f"  Only {len(descriptions)} tool descriptions (need 9+)", file=sys.stderr)
-    sys.exit(1)
+    print(f"  Only {len(descriptions)} descriptions (need 9+)", file=sys.stderr); sys.exit(1)
 
-# Check for prescriptive language: at least 4 descriptions should have
-# guidance words that tell the agent WHEN/HOW to use the tool
-guidance_patterns = [
+patterns = [
     r'\b(start|begin|first)\b',
     r'\b(use|run|call)\s+(this|after|before|when|for)\b',
     r'\b(after|before|once)\b',
@@ -569,97 +611,89 @@ guidance_patterns = [
     r'\b(recommended|prefer|best|ideal)\b',
     r'\b(e\.g\.|for example|such as)\b',
 ]
+prescriptive = sum(1 for d in descriptions
+                   if any(re.search(p, d, re.I) for p in patterns))
+if prescriptive < 4:
+    print(f"  Only {prescriptive}/{len(descriptions)} prescriptive", file=sys.stderr); sys.exit(1)
 
-prescriptive_count = 0
-for desc in descriptions:
-    for pat in guidance_patterns:
-        if re.search(pat, desc, re.IGNORECASE):
-            prescriptive_count += 1
-            break
-
-if prescriptive_count < 4:
-    print(f"  Only {prescriptive_count}/{len(descriptions)} descriptions have guidance language", file=sys.stderr)
-    sys.exit(1)
-
-print(f"  {prescriptive_count}/{len(descriptions)} descriptions are prescriptive")
+print(f"  {prescriptive}/{len(descriptions)} prescriptive descriptions")
 PYEOF
 
 # ---------------------------------------------------------------------------
-# Check 9 (0.10): Core imports AND new modules integrate — BEHAVIORAL
-#   All 4 core modules must import, AND the search module must be usable
-#   from knowledge.py (i.e., the refactoring actually works end-to-end)
+# Check 9 (0.13): Analysis functions callable — BEHAVIORAL (P2P)
+#   find_upstream and find_downstream must still work with the real workflow
+#   fixture after integration changes. Returns must be dicts with expected
+#   structure. Different node IDs must produce different results.
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Check 9: Integration works end-to-end (behavioral) ==="
-python3 << 'PYEOF' && { echo "PASS: Integration works"; add_reward 0.10; } || echo "FAIL: Integration broken"
-import sys
+echo "=== Check 9: Analysis functions P2P (0.13, behavioral) ==="
+python3 << 'PYEOF' && { echo "PASS: Analysis functions work"; add_reward 0.13; } || echo "FAIL: Analysis functions"
+import sys, json
 sys.path.insert(0, ".")
+import cli_tools.analysis as analysis
 
-errors = []
+# Load real workflow fixture
+wf = None
+try:
+    with open("workflows/workflow_fixed_node.json") as f:
+        wf = json.load(f)
+except Exception:
+    pass
 
-# Core imports
-for mod_name in ["cli_tools.analysis", "cli_tools.registry.knowledge",
-                 "cli_tools.registry.mcp_server", "cli_tools.descriptions"]:
+if not wf or not wf.get("nodes"):
+    # Minimal fallback
+    wf = {
+        "nodes": [
+            {"id": 1, "type": "CLIPTextEncode", "inputs": [], "outputs": [{"links": [1]}]},
+            {"id": 2, "type": "KSampler", "inputs": [{"link": 1}], "outputs": [{"links": [2]}]},
+            {"id": 3, "type": "SaveImage", "inputs": [{"link": 2}], "outputs": []}
+        ],
+        "links": [[1, 1, 0, 2, 0, "CONDITIONING"], [2, 2, 0, 3, 0, "IMAGE"]]
+    }
+
+nodes = wf["nodes"]
+node_ids = [n.get("id") for n in nodes if n.get("id") is not None]
+
+# find_upstream
+fn_up = getattr(analysis, 'find_upstream', None)
+if not fn_up:
+    print("  find_upstream missing", file=sys.stderr); sys.exit(1)
+
+result_up = fn_up(wf, node_ids[-1])
+if not isinstance(result_up, dict):
+    print(f"  find_upstream returned {type(result_up).__name__}, expected dict", file=sys.stderr)
+    sys.exit(1)
+if 'nodes' not in result_up:
+    print(f"  find_upstream missing 'nodes' key: {list(result_up.keys())}", file=sys.stderr)
+    sys.exit(1)
+
+# find_downstream
+fn_down = getattr(analysis, 'find_downstream', None)
+if not fn_down:
+    print("  find_downstream missing", file=sys.stderr); sys.exit(1)
+
+result_down = fn_down(wf, node_ids[0])
+if not isinstance(result_down, dict):
+    print(f"  find_downstream returned {type(result_down).__name__}, expected dict", file=sys.stderr)
+    sys.exit(1)
+
+# Different inputs -> different results (anti-static-return stub)
+if len(node_ids) >= 5:
+    r1 = fn_up(wf, node_ids[0])
+    r2 = fn_up(wf, node_ids[-1])
+    if r1.get('nodes') == r2.get('nodes'):
+        print("  Identical results for different nodes (stub)", file=sys.stderr); sys.exit(1)
+
+# find_path exists and is callable
+fn_path = getattr(analysis, 'find_path', None)
+if fn_path:
     try:
-        __import__(mod_name)
-    except Exception as e:
-        errors.append(f"{mod_name}: {e}")
+        fn_path(wf, node_ids[0], node_ids[-1])
+    except Exception:
+        pass  # Format mismatch OK for P2P
 
-if errors:
-    for e in errors:
-        print(f"  Import error: {e}", file=sys.stderr)
-    sys.exit(1)
-
-# Verify knowledge.py can access expand_query (the refactoring link)
-import cli_tools.registry.knowledge as knowledge
-# The module should either have expand_query directly or import it
-has_expand = hasattr(knowledge, 'expand_query')
-# Or it should use the search module
-import cli_tools.registry.mcp_server as mcp_mod
-mcp_source = open(mcp_mod.__file__).read()
-uses_analysis = 'analysis' in mcp_source.lower()
-
-if not has_expand and not uses_analysis:
-    print("  knowledge.py doesn't integrate with search module", file=sys.stderr)
-    sys.exit(1)
-
-# Verify mcp_server module has more tools than original 7
-import re
-tool_names = re.findall(r'Tool\s*\(\s*name\s*=\s*["\']([^"\']+)["\']', mcp_source)
-if len(tool_names) <= 7:
-    print(f"  mcp_server still has only {len(tool_names)} tools (need >7)", file=sys.stderr)
-    sys.exit(1)
-
-# Anti-stub: verify expand_query actually works end-to-end through knowledge module
-if has_expand:
-    try:
-        eq = knowledge.expand_query
-        test_result = eq(list(knowledge.TASK_ALIASES.keys())[0]) if hasattr(knowledge, 'TASK_ALIASES') else eq("test")
-        if test_result is None or (isinstance(test_result, (list, str)) and len(test_result) == 0):
-            print("  expand_query via knowledge module returned empty (stub)", file=sys.stderr)
-            sys.exit(1)
-    except Exception as e:
-        print(f"  expand_query via knowledge failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-print(f"  All modules import, {len(tool_names)} MCP tools, integration linked + verified")
+print(f"  find_upstream/find_downstream work ({len(node_ids)} nodes)")
 PYEOF
-
-# ---------------------------------------------------------------------------
-# Check 10 (0.05): requirements.txt with mcp — STRUCTURAL
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Check 10: requirements.txt ==="
-if [ -f "requirements.txt" ]; then
-    if grep -qi "mcp" requirements.txt; then
-        echo "PASS: requirements.txt has mcp"
-        add_reward 0.05
-    else
-        echo "FAIL: requirements.txt missing mcp"
-    fi
-else
-    echo "FAIL: requirements.txt not found"
-fi
 
 # ---------------------------------------------------------------------------
 # Write final reward
