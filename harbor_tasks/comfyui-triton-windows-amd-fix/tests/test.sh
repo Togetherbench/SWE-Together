@@ -3,25 +3,25 @@
 # Verification test for ComfyUI-WanVideoWrapper Triton AMD GPU fix.
 #
 # Bug: In _attn_fwd_inner(), k_scale is loaded via a mutating pointer:
-#   k_scale = tl.load(K_scale_ptr)   ← bare load, no index
-#   K_scale_ptr += 1                  ← pointer mutation at loop end
+#   k_scale = tl.load(K_scale_ptr)   <- bare load, no index
+#   K_scale_ptr += 1                  <- pointer mutation at loop end
 # This causes "operation destroyed but still has uses" on AMD GPU (Triton WMMA backend).
 #
 # Fix: Replace with indexed load from stable base pointer and remove mutation.
 #
 # NOTE: Triton @triton.jit kernels require GPU hardware to execute.
-# Core fix verification uses AST semantic analysis + offset simulation.
+# Core fix verification uses AST semantic analysis + behavioral validation.
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
 # Scoring:
 #   Test 1: 0.05  Silver      — mock-import, verify functions callable + K_scale_ptr param
-#   Test 2: 0.05  Bronze      — anti-stub: _attn_fwd_inner has for loop + ≥15 meaningful stmts
+#   Test 2: 0.05  Bronze      — anti-stub: _attn_fwd_inner has for loop + >=15 meaningful stmts
 #   Test 3: 0.25  F2P-AST     — CORE: bare tl.load(K_scale_ptr) removed from loop + indexed load in loop
-#   Test 4: 0.30  Silver      — offset simulation: indexed load produces correct [0,1,2,...] sequence
+#   Test 4: 0.30  Silver      — loop variable is used in load expression + offset correctness
 #   Test 5: 0.20  F2P-AST     — K_scale_ptr mutation removed + for-loop preserved
 #   Test 6: 0.05  P2P-AST     — k_scale assigned + used + K_ptrs/V_ptrs updates preserved
 #   Test 7: 0.05  Bronze      — _attn_fwd calls _attn_fwd_inner (interface intact)
-#   Test 8: 0.05  Bronze      — _attn_fwd has substantial body (≥10 stmts)
+#   Test 8: 0.05  Bronze      — _attn_fwd has substantial body (>=10 stmts)
 #
 # Behavioral: 35% (Tests 1,4) | F2P-AST: 45% (Tests 3,5) | P2P-AST: 5% (Test 6) | Structural: 15% (Tests 2,7,8)
 # AST justified: @triton.jit kernels cannot execute on CPU
@@ -245,18 +245,27 @@ echo "  Result: $T3"
 if [ "$T3" = "PASS" ]; then add_reward 0.25; fi
 
 # ═══════════════════════════════════════════════════════════
-# TEST 4 (0.30): Silver — offset simulation: correct index sequence
-#   Extracts the offset expression from tl.load(K_scale_ptr + <expr>),
-#   evaluates it for 5 loop iterations (BLOCK_N=64), and verifies
-#   the result is [0, 1, 2, 3, 4] — matching the original ptr mutation
-#   semantics. Accepts any arithmetic expression that produces the
-#   correct sequence (start_n // BLOCK_N, (start_n - lo) // BLOCK_N, etc).
+# TEST 4 (0.30): Silver — loop variable used in load + offset correctness
 #
-#   If the offset is a local variable (e.g., k_idx), resolves it by
-#   finding the most recent assignment to that variable in the loop.
+#   The core fix replaces `K_scale_ptr += 1` (pointer mutation) with
+#   indexed access using the loop variable. This test verifies:
+#
+#   (a) The offset expression in tl.load(K_scale_ptr + <expr>) references
+#       the loop iteration variable (e.g., start_n) — NOT a hardcoded constant.
+#       This prevents gaming with `tl.load(K_scale_ptr + 0)` or similar.
+#
+#   (b) The offset expression produces the correct [0, 1, 2, 3, 4] sequence
+#       when evaluated across 5 loop iterations (BLOCK_N=64).
+#
+#   (c) The offset expression uses division or similar to convert the loop
+#       variable (which steps by BLOCK_N) into an index (which steps by 1).
+#       A hardcoded sequence can't adapt to different BLOCK_N values.
+#
+#   Two-BLOCK_N validation: evaluates with BLOCK_N=64 AND BLOCK_N=128 to
+#   ensure the expression actually depends on BLOCK_N (not hardcoded).
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 4/8: Silver — offset simulation: correct index sequence ==="
+echo "=== Test 4/8: Silver — loop variable in load expr + offset correctness ==="
 T4=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -279,15 +288,34 @@ for node in ast.walk(tree):
 if inner_fn is None:
     print("FAIL:no_inner_fn"); sys.exit(0)
 
-# Find the for loop
+# Find the for loop and its iteration variable
 for_loop = None
+loop_var_name = None
 for node in ast.walk(inner_fn):
     if isinstance(node, ast.For):
         for_loop = node
+        # Extract the loop variable name (e.g., start_n)
+        if isinstance(node.target, ast.Name):
+            loop_var_name = node.target.id
         break
 
 if for_loop is None:
     print("FAIL:no_for_loop"); sys.exit(0)
+
+if loop_var_name is None:
+    print("FAIL:cannot_determine_loop_variable"); sys.exit(0)
+
+# Extract the range() args to understand loop bounds
+lo_expr = None
+hi_expr = None
+step_expr = None
+if isinstance(for_loop.iter, ast.Call) and isinstance(for_loop.iter.func, ast.Name):
+    if for_loop.iter.func.id == "range":
+        args = for_loop.iter.args
+        if len(args) == 3:
+            lo_expr = ast.unparse(args[0])
+            hi_expr = ast.unparse(args[1])
+            step_expr = ast.unparse(args[2])
 
 # Collect all assignments in the for loop (for variable resolution)
 loop_assignments = {}
@@ -324,34 +352,83 @@ if offset_expr_node is None:
     print("FAIL:no_indexed_k_scale_load"); sys.exit(0)
 
 # If offset is a simple variable name, resolve it from loop assignments
+resolved_expr_node = offset_expr_node
 if isinstance(offset_expr_node, ast.Name) and offset_expr_node.id in loop_assignments:
-    offset_expr_node = loop_assignments[offset_expr_node.id]
+    resolved_expr_node = loop_assignments[offset_expr_node.id]
 
-offset_expr_src = ast.unparse(offset_expr_node)
+offset_expr_src = ast.unparse(resolved_expr_node)
 
-# Simulate: evaluate offset for 5 loop iterations with typical values
-BLOCK_N = 64
-lo = 0
-hi = 5 * BLOCK_N  # 320
+# CHECK (a): The offset expression must reference the loop variable.
+# Collect all Name references in the offset expression.
+referenced_names = set()
+for node in ast.walk(resolved_expr_node):
+    if isinstance(node, ast.Name):
+        referenced_names.add(node.id)
 
-expected = list(range(5))  # [0, 1, 2, 3, 4]
-actual = []
+# The loop variable (e.g., start_n) must appear in the offset expression
+if loop_var_name not in referenced_names:
+    # Also check if the unresolved expression references the loop var
+    # (in case the resolved assignment uses it indirectly)
+    unresolved_names = set()
+    for node in ast.walk(offset_expr_node):
+        if isinstance(node, ast.Name):
+            unresolved_names.add(node.id)
 
-safe_builtins = {"int": int, "float": float, "abs": abs, "round": round, "min": min, "max": max}
-
-for start_n in range(lo, hi, BLOCK_N):
-    try:
-        val = eval(offset_expr_src, {"__builtins__": safe_builtins},
-                   {"start_n": start_n, "BLOCK_N": BLOCK_N, "lo": lo, "hi": hi, "kv_len": hi})
-        actual.append(int(val))
-    except Exception as e:
-        print(f"FAIL:eval_error:{offset_expr_src}:{e}")
+    # Check if the offset variable itself is derived from the loop variable
+    if isinstance(offset_expr_node, ast.Name) and offset_expr_node.id in loop_assignments:
+        derived_names = set()
+        for node in ast.walk(loop_assignments[offset_expr_node.id]):
+            if isinstance(node, ast.Name):
+                derived_names.add(node.id)
+        if loop_var_name not in derived_names:
+            print(f"FAIL:offset_does_not_use_loop_var:{loop_var_name}:refs={referenced_names}")
+            sys.exit(0)
+    elif loop_var_name not in unresolved_names:
+        print(f"FAIL:offset_does_not_use_loop_var:{loop_var_name}:refs={referenced_names | unresolved_names}")
         sys.exit(0)
 
-if actual == expected:
-    print("PASS")
-else:
-    print(f"FAIL:wrong_sequence:expr={offset_expr_src}:expected={expected}:got={actual}")
+# CHECK (b): Simulate offset for 5 loop iterations with BLOCK_N=64
+# The offset must produce [0, 1, 2, 3, 4]
+safe_builtins = {"int": int, "float": float, "abs": abs, "round": round, "min": min, "max": max}
+
+def eval_offsets(block_n, n_iters=5):
+    lo = 0
+    hi = n_iters * block_n
+    results = []
+    for start_n in range(lo, hi, block_n):
+        try:
+            val = eval(offset_expr_src, {"__builtins__": safe_builtins},
+                       {loop_var_name: start_n, "BLOCK_N": block_n, "lo": lo, "hi": hi, "kv_len": hi})
+            results.append(int(val))
+        except Exception as e:
+            return None, str(e)
+    return results, None
+
+expected_64 = list(range(5))  # [0, 1, 2, 3, 4]
+actual_64, err_64 = eval_offsets(64)
+
+if err_64:
+    print(f"FAIL:eval_error_64:{offset_expr_src}:{err_64}")
+    sys.exit(0)
+
+if actual_64 != expected_64:
+    print(f"FAIL:wrong_sequence_64:expr={offset_expr_src}:expected={expected_64}:got={actual_64}")
+    sys.exit(0)
+
+# CHECK (c): Two-BLOCK_N validation — with BLOCK_N=128, must also produce [0,1,2,3,4]
+# A hardcoded expression like `start_n // 64` would produce [0, 2, 4, 6, 8] with BLOCK_N=128
+expected_128 = list(range(5))  # [0, 1, 2, 3, 4]
+actual_128, err_128 = eval_offsets(128)
+
+if err_128:
+    print(f"FAIL:eval_error_128:{offset_expr_src}:{err_128}")
+    sys.exit(0)
+
+if actual_128 != expected_128:
+    print(f"FAIL:wrong_sequence_128:expr={offset_expr_src}:expected={expected_128}:got={actual_128}")
+    sys.exit(0)
+
+print("PASS")
 PYEOF
 )
 echo "  Result: $T4"

@@ -3,20 +3,19 @@
 # Verification tests for the reigh TimelineModeContent refactor.
 #
 # Scoring: 20 total points
-#   Structural (TS AST/Bronze): 8 pts (40%) — tests 1-7
-#   Behavioral (F2P/P2P):      12 pts (60%) — tests 8, 9a, 9b
+#   Behavioral (F2P/P2P):      16 pts (80%) — tests 8, 9a, 9b, 9c
+#   Structural (TS AST/Bronze): 4 pts (20%) — tests 1-7 (all gated behind TSC)
 #
-# TSC gate: if tsc fails, reward capped at 0.25
-# Core behavioral (9a) = 7/20 = 0.35 ≥ 0.15 threshold
-#
-# AST justification: All AST checks use TypeScript compiler on .tsx React files.
-# React JSX components cannot be called/executed without a browser/DOM runtime —
-# tsc --noEmit is the strongest behavioral validation available.
+# TSC gate: ALL structural tests only count if tsc passes.
+# Without TSC passing, the agent gets 0 from structural tests.
+# This prevents gaming via stub files that parse but break compilation.
 #
 # Gaming analysis:
 #   Base state (no changes):    P2P only → 2/20 = 0.10
-#   Max stub (delete TMC only): 1+2 = 3/20 = 0.15, capped at 0.25
-#   Core refactor no cleanup:   5+2+7 = 14/20 = 0.70
+#   Delete TMC only (no tsc):   P2P only → 2/20 = 0.10
+#   Delete TMC + tsc passes:    1+1+0+0+2 = 4/20 = 0.20 (unlikely tsc passes without fixing ShotImagesEditor)
+#   Stub with tsc pass:         Requires real refactoring for tsc to pass → genuine solution
+#   Core refactor no cleanup:   4+2+8+0 = 14/20 = 0.70
 #   Full solution:              20/20 = 1.0
 #
 set +e
@@ -39,15 +38,39 @@ TS_MOD="$REPO/node_modules/typescript"
 
 TSC_PASSED=0
 CORE_PASS=0    # count of core structural tests (1-4) that pass
-CLEANUP_PASS=0 # count of cleanup structural tests (5-6) that pass
+CLEANUP_PASS=0 # count of cleanup structural tests (5-7) that pass
 
 ###############################################################################
-# STRUCTURAL — Core Refactoring (5 pts: 1+1+2+1)
+# BEHAVIORAL — TypeScript compilation (must run FIRST as gate for structural)
+###############################################################################
+
+echo "=== TypeScript compilation (tsc --noEmit) ==="
+if command -v npx &>/dev/null && [ -d "$REPO/node_modules" ] && [ -f "$REPO/tsconfig.json" ]; then
+    cd "$REPO"
+    TSC_OUT=$(npx tsc --noEmit 2>&1)
+    TSC_EXIT=$?
+    if [ "$TSC_EXIT" -eq 0 ]; then
+        echo "tsc: PASS (zero errors)"
+        TSC_PASSED=1
+    else
+        ERROR_COUNT=$(echo "$TSC_OUT" | grep -c "error TS" || echo "?")
+        echo "FAIL: TypeScript compilation failed ($ERROR_COUNT errors)"
+        echo "$TSC_OUT" | head -20
+    fi
+else
+    echo "SKIP: node_modules not available"
+fi
+
+###############################################################################
+# STRUCTURAL — Core Refactoring (4 pts: 1+1+1+1) — ALL GATED BEHIND TSC
 ###############################################################################
 
 # Test 1 (1 pt, Bronze): TimelineModeContent.tsx is deleted
+echo ""
 echo "=== Test 1/9: TimelineModeContent.tsx deleted ==="
-if [ ! -f "$TMC" ]; then
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate (structural tests require tsc pass)"
+elif [ ! -f "$TMC" ]; then
     echo "PASS"
     PASS=$((PASS + 1))
     CORE_PASS=$((CORE_PASS + 1))
@@ -58,7 +81,9 @@ fi
 # Test 2 (1 pt, Bronze): Barrel file no longer exports TimelineModeContent
 echo ""
 echo "=== Test 2/9: Barrel file cleaned ==="
-if [ ! -f "$BARREL" ]; then
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate"
+elif [ ! -f "$BARREL" ]; then
     echo "PASS: Barrel file deleted (acceptable)"
     PASS=$((PASS + 1))
     CORE_PASS=$((CORE_PASS + 1))
@@ -91,12 +116,12 @@ else
     echo "FAIL: Barrel still exports TimelineModeContent"
 fi
 
-# Test 3 (2 pts, Silver/AST): ShotImagesEditor renders <Timeline> with substantial props
-# Accepts ≥15 named JSX attributes OR spread attributes (e.g. {...props}).
-# AST justified: React JSX components cannot execute without browser/DOM.
+# Test 3 (1 pt, Silver/AST): ShotImagesEditor renders <Timeline> with substantial props
 echo ""
 echo "=== Test 3/9: ShotImagesEditor renders <Timeline> with props ==="
-if [ -f "$SHOT_EDITOR" ]; then
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate"
+elif [ -f "$SHOT_EDITOR" ]; then
     node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -118,7 +143,7 @@ if (hasTMC) {
     process.exit(1);
 }
 
-// Must have <Timeline> with ≥15 named attributes OR at least one spread attribute
+// Must have <Timeline> with >=15 named attributes OR at least one spread attribute
 let found = false;
 function findTimeline(node) {
     if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
@@ -139,7 +164,7 @@ if (!found) {
 }
 console.log('PASS: <Timeline> rendered with sufficient props');
 " 2>/dev/null && {
-        PASS=$((PASS + 2))
+        PASS=$((PASS + 1))
         CORE_PASS=$((CORE_PASS + 1))
     } || echo "FAIL: ShotImagesEditor does not render <Timeline> properly"
 else
@@ -147,12 +172,11 @@ else
 fi
 
 # Test 4 (1 pt, Silver/AST): Unpositioned generations div inlined into ShotImagesEditor
-# At the base commit, "unpositioned generation" text only existed in TimelineModeContent.tsx.
-# After refactoring, the conditional div must live in ShotImagesEditor.tsx.
-# AST justified: React JSX components cannot execute without browser/DOM.
 echo ""
 echo "=== Test 4/9: Unpositioned generations div inlined ==="
-if [ -f "$SHOT_EDITOR" ]; then
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate"
+elif [ -f "$SHOT_EDITOR" ]; then
     node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -203,13 +227,16 @@ else
 fi
 
 ###############################################################################
-# STRUCTURAL — Dead Prop Cleanup (2 pts: 1+1)
+# STRUCTURAL — Dead Prop Cleanup + Import Graph (0 pts standalone, part of 9b)
+# These only count via test 9b (TSC + cleanup). Tracked via CLEANUP_PASS.
 ###############################################################################
 
-# Test 5 (1 pt, Bronze): hookData prop removed from Timeline.tsx interface
+# Test 5: hookData prop removed from Timeline.tsx interface
 echo ""
 echo "=== Test 5/9: hookData removed from Timeline.tsx ==="
-if [ -f "$TIMELINE" ]; then
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate"
+elif [ -f "$TIMELINE" ]; then
     node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -232,24 +259,24 @@ ts.forEachChild(sf, visit);
 if (foundHookData) { console.error('FAIL: hookData/propHookData still in Timeline interface'); process.exit(1); }
 console.log('PASS');
 " 2>/dev/null && {
-        PASS=$((PASS + 1))
         CLEANUP_PASS=$((CLEANUP_PASS + 1))
     } || echo "FAIL: hookData still present in Timeline.tsx"
 else
     echo "FAIL: Timeline.tsx not found"
 fi
 
-# Test 6 (1 pt, Bronze): enhancedPrompts / EMPTY_ENHANCED_PROMPTS removed from Timeline.tsx
+# Test 6: enhancedPrompts / EMPTY_ENHANCED_PROMPTS removed from Timeline.tsx
 echo ""
 echo "=== Test 6/9: enhancedPrompts removed from Timeline.tsx ==="
-if [ -f "$TIMELINE" ]; then
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate"
+elif [ -f "$TIMELINE" ]; then
     node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
 const src = fs.readFileSync('$TIMELINE', 'utf8');
 const sf = ts.createSourceFile('Timeline.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
-// EMPTY_ENHANCED_PROMPTS constant must be gone
 let hasConst = false;
 function findConst(node) {
     if (hasConst) return;
@@ -260,7 +287,6 @@ function findConst(node) {
 ts.forEachChild(sf, findConst);
 if (hasConst) { console.error('FAIL: EMPTY_ENHANCED_PROMPTS still present'); process.exit(1); }
 
-// enhancedPrompts must not be in any interface
 let hasInInterface = false;
 function findInterface(node) {
     if (hasInInterface) return;
@@ -278,23 +304,18 @@ ts.forEachChild(sf, findInterface);
 if (hasInInterface) { console.error('FAIL: enhancedPrompts still in Timeline interface'); process.exit(1); }
 console.log('PASS');
 " 2>/dev/null && {
-        PASS=$((PASS + 1))
         CLEANUP_PASS=$((CLEANUP_PASS + 1))
     } || echo "FAIL: enhancedPrompts still in Timeline.tsx"
 else
     echo "FAIL: Timeline.tsx not found"
 fi
 
-###############################################################################
-# STRUCTURAL — Import Graph + TimelineContainer Cleanup (1 pt)
-###############################################################################
-
-# Test 7 (1 pt, Silver/AST): No dangling TimelineModeContent imports anywhere,
-# ShotImagesEditor imports Timeline, enhancedPrompts removed from TimelineContainer.
-# AST justified: import graph analysis requires parsing, not execution.
+# Test 7: Import graph clean + TimelineContainer cleanup
 echo ""
 echo "=== Test 7/9: Import graph clean + TimelineContainer cleanup ==="
-if node -e "
+if [ "$TSC_PASSED" -eq 0 ]; then
+    echo "SKIP: TSC gate"
+elif node -e "
 const ts = require('$TS_MOD');
 const { execSync } = require('child_process');
 const fs = require('fs');
@@ -382,7 +403,7 @@ if (fs.existsSync('$TC')) {
 
 console.log('PASS: Import graph clean, TimelineContainer cleaned');
 " 2>/dev/null; then
-    PASS=$((PASS + 1))
+    CLEANUP_PASS=$((CLEANUP_PASS + 1))
 else
     echo "FAIL: Import graph or TimelineContainer cleanup incomplete"
 fi
@@ -418,62 +439,53 @@ else
 fi
 
 ###############################################################################
-# BEHAVIORAL — TypeScript compilation, gated on structural evidence (10 pts)
+# BEHAVIORAL — TSC-gated composite scores (16 pts)
 ###############################################################################
 
-# Test 9 (7+3 pts): TypeScript compilation — split into core and cleanup gates
 echo ""
-echo "=== Test 9/9: TypeScript compilation (tsc --noEmit) ==="
-if command -v npx &>/dev/null && [ -d "$REPO/node_modules" ] && [ -f "$REPO/tsconfig.json" ]; then
-    cd "$REPO"
-    TSC_OUT=$(npx tsc --noEmit 2>&1)
-    TSC_EXIT=$?
-    if [ "$TSC_EXIT" -eq 0 ]; then
-        echo "tsc: PASS (zero errors)"
-        TSC_PASSED=1
+echo "=== Test 9/9: TSC-gated behavioral composite ==="
 
-        # 9a (7 pts): tsc passes AND core refactoring done (≥2 of tests 1-4)
-        if [ "$CORE_PASS" -ge 2 ]; then
-            echo "  9a PASS: tsc + core refactoring verified ($CORE_PASS/4 core tests)"
-            PASS=$((PASS + 7))
-        else
-            echo "  9a FAIL: tsc passes but core refactoring not done ($CORE_PASS/4 core tests)"
-        fi
-
-        # 9b (3 pts): tsc passes AND dead prop cleanup done (≥2 of tests 5-6)
-        if [ "$CLEANUP_PASS" -ge 2 ]; then
-            echo "  9b PASS: tsc + dead prop cleanup verified ($CLEANUP_PASS/2 cleanup tests)"
-            PASS=$((PASS + 3))
-        else
-            echo "  9b FAIL: cleanup not verified ($CLEANUP_PASS/2 cleanup tests)"
-        fi
+if [ "$TSC_PASSED" -eq 1 ]; then
+    # 9a (8 pts): tsc passes AND core refactoring done (>=2 of tests 1-4)
+    if [ "$CORE_PASS" -ge 2 ]; then
+        echo "  9a PASS: tsc + core refactoring verified ($CORE_PASS/4 core tests)"
+        PASS=$((PASS + 8))
     else
-        ERROR_COUNT=$(echo "$TSC_OUT" | grep -c "error TS" || echo "?")
-        echo "FAIL: TypeScript compilation failed ($ERROR_COUNT errors)"
-        echo "$TSC_OUT" | head -20
+        echo "  9a FAIL: tsc passes but core refactoring not done ($CORE_PASS/4 core tests)"
+    fi
+
+    # 9b (4 pts): tsc passes AND dead prop cleanup done (>=2 of tests 5-7)
+    if [ "$CLEANUP_PASS" -ge 2 ]; then
+        echo "  9b PASS: tsc + dead prop cleanup verified ($CLEANUP_PASS/3 cleanup tests)"
+        PASS=$((PASS + 4))
+    else
+        echo "  9b FAIL: cleanup not verified ($CLEANUP_PASS/3 cleanup tests)"
+    fi
+
+    # 9c (2 pts): tsc passes AND full refactoring (core>=3 AND cleanup>=2)
+    # This is a completeness bonus requiring both core and cleanup
+    if [ "$CORE_PASS" -ge 3 ] && [ "$CLEANUP_PASS" -ge 2 ]; then
+        echo "  9c PASS: tsc + full refactoring + cleanup verified"
+        PASS=$((PASS + 2))
+    else
+        echo "  9c FAIL: incomplete (core=$CORE_PASS/4, cleanup=$CLEANUP_PASS/3)"
     fi
 else
-    echo "SKIP: node_modules not available"
+    echo "  9a/9b/9c SKIP: tsc failed — behavioral composite not awarded"
 fi
 
 ###############################################################################
-# Results — with TSC gate
+# Results
 ###############################################################################
 echo ""
 echo "================================"
-echo "Core structural: $CORE_PASS/4 | Cleanup structural: $CLEANUP_PASS/2"
+echo "TSC: $([ $TSC_PASSED -eq 1 ] && echo 'PASS' || echo 'FAIL')"
+echo "Core structural: $CORE_PASS/4 | Cleanup structural: $CLEANUP_PASS/3"
 echo "P2P: $([ $P2P_AWARDED -eq 1 ] && echo 'awarded' || echo 'failed')"
 echo "Results: $PASS / $TOTAL"
 echo "================================"
 
-if [ "$TSC_PASSED" -eq 1 ]; then
-    REWARD=$(python3 -c "print(round(min(1.0, $PASS / $TOTAL), 2))")
-else
-    # If tsc fails, the refactor is broken — cap reward
-    UNCAPPED=$(python3 -c "print(round(min(1.0, $PASS / $TOTAL), 2))")
-    REWARD=$(python3 -c "print(round(min(0.25, $PASS / $TOTAL), 2))")
-    echo "(TSC gate: reward capped at 0.25; uncapped would be $UNCAPPED)"
-fi
+REWARD=$(python3 -c "print(round(min(1.0, $PASS / $TOTAL), 2))")
 
 echo "$REWARD" > "$REWARD_FILE"
 echo "REWARD: $REWARD"

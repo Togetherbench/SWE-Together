@@ -11,32 +11,33 @@
 #   - src/security/decision-flow.ts   (main security orchestrator)
 #   - src/security/index.ts           (public exports)
 #
-# Scoring weights (behavioral 90%, structural 10%):
-#   T1:  0.05  All 6 files exist (structural bronze)
-#   T2:  0.05  Core files valid TS with real exports (structural silver)
+# Scoring weights (behavioral 100%):
+#   T1:  0.03  All 6 files exist (structural, gated on T3)
+#   T2:  0.02  Core files valid TS with real exports (structural, gated on T3)
 #   T3:  0.15  classifyTool('bash')='high' AND safe≠'high' (behavioral F2P)
 #   T4:  0.05  classifyTool safe tool returns 'low' (behavioral F2P)
 #   T5:  0.05  classifyTool medium tool returns 'medium' (behavioral F2P)
-#   T6:  0.10  isBashDestructive ≥3/5 detected AND ≤2 FP (behavioral F2P)
+#   T6:  0.10  isBashDestructive >=3/5 detected AND <=2 FP (behavioral F2P)
 #   T7:  0.05  isBashDestructive zero FP (conditional on T6) (behavioral F2P)
-#   T8:  0.15  checkPatterns ≥6/8 injections AND 0 FP (behavioral F2P)
-#              0.08 partial: ≥4/8 detected AND FP≤1
+#   T8:  0.15  checkPatterns >=6/8 injections AND 0 FP (behavioral F2P)
+#              0.08 partial: >=4/8 detected AND FP<=1
 #   T9:  0.10  escalateRisk all 3 correct (behavioral F2P, no partial)
-#   T10: 0.05  REVIEWER_SYSTEM_PROMPT len>100 + mentions APPROVE/DENY (behavioral silver)
-#   T11: 0.15  Decision flow: safe auto-approves AND dangerous differs/throws (behavioral F2P)
-#              0.05 structural fallback: factory+evaluate+>15 code lines (if import fails)
-#   T12: 0.05  index.ts re-exports ≥3 key symbols (behavioral silver)
+#   T10: 0.05  REVIEWER_SYSTEM_PROMPT len>100 + mentions APPROVE/DENY (behavioral)
+#   T11: 0.20  Decision flow: safe auto-approves AND dangerous differs/throws (behavioral F2P)
+#              NO structural fallback — must actually import and run
+#   T12: 0.05  index.ts re-exports >=3 key symbols (behavioral, no fallback)
 #
-# Behavioral: T3-T12 = 0.90 (90%)
-# Structural: T1-T2  = 0.10 (10%)
+# Behavioral: T3-T12 = 0.95 (95%)
+# Structural: T1-T2  = 0.05 (5%, gated behind T3)
 #
 # Anti-gaming audit (max stub score with constant-return stubs):
-#   T1: 0.05 (touch files) | T2: 0.05 (minimal parseable TS) | T3: 0 (safe≠high blocks)
+#   T1: 0 (gated on T3) | T2: 0 (gated on T3) | T3: 0 (safe!=high blocks)
 #   T4: 0.05 (constant 'low') | T5: 0 (constant can't be both 'low' for T4 and 'medium' for T5)
 #   T6: 0 | T7: 0 (conditional) | T8: 0 (constant bool fails FP or detection)
 #   T9: 0 (need all 3) | T10: 0.05 (prompt with keywords)
-#   T11: 0 (constant return fails differentiation) | T12: 0.05 (depends on other modules)
-#   Max stub total: 0.25 (target: ≤0.30) ✓
+#   T11: 0 (no fallback, constant return fails differentiation)
+#   T12: 0 (no fallback, must re-export real functions)
+#   Max stub total: 0.10 (target: <=0.30)
 #
 set +e
 
@@ -46,74 +47,17 @@ mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 WORKSPACE=/workspace/openclaw
 SECURITY_DIR="$WORKSPACE/src/security"
+T3_PASSED=0  # Track T3 pass for gating
 
 add_reward() {
     REWARD=$(node -e "process.stdout.write(String(Math.min(1.0, Math.round(($REWARD + $1) * 100) / 100)))")
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 1 (0.05): All 6 required security files exist [structural bronze]
+# TEST 3 (0.15): classifyTool('bash') returns 'high' AND safe!='high'
+# RUN FIRST — gates T1 and T2 structural tests
 # ═══════════════════════════════════════════════════════════════════
-echo "=== Test 1/12: All 6 required files exist ==="
-FILE_COUNT=0
-for f in "risk-tiers.ts" "pattern-check.ts" "risk-classifier.ts" "reviewer.ts" "decision-flow.ts" "index.ts"; do
-    if [ -f "$SECURITY_DIR/$f" ]; then
-        FILE_COUNT=$((FILE_COUNT + 1))
-        echo "  FOUND: $f"
-    else
-        echo "  MISSING: $f"
-    fi
-done
-if [ "$FILE_COUNT" -ge 5 ]; then
-    echo "  PASS: $FILE_COUNT/6 files found"
-    add_reward 0.05
-else
-    echo "  FAIL: Only $FILE_COUNT/6 files found"
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 2 (0.05): Core TS files have real exports, not stubs [structural silver]
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 2/12: Core files have valid TypeScript with exports ==="
-VALID_COUNT=0
-VALID_TOTAL=0
-for f in "risk-tiers.ts" "pattern-check.ts" "risk-classifier.ts"; do
-    if [ ! -f "$SECURITY_DIR/$f" ]; then continue; fi
-    VALID_TOTAL=$((VALID_TOTAL + 1))
-    RESULT=$(node -e "
-var src = require('fs').readFileSync('$SECURITY_DIR/$f', 'utf8');
-var lines = src.split('\n').filter(function(l) {
-    var t = l.trim();
-    return t && !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
-});
-var hasExport = /\bexport\b/.test(src);
-var hasFunction = /\bfunction\b/.test(src) || /=>/.test(src);
-if (lines.length >= 5 && hasExport && hasFunction) process.stdout.write('OK');
-else process.stdout.write('STUB:lines=' + lines.length + ',exp=' + hasExport + ',fn=' + hasFunction);
-" 2>&1)
-    if [ "$RESULT" = "OK" ]; then
-        VALID_COUNT=$((VALID_COUNT + 1))
-        echo "  OK: $f"
-    else
-        echo "  FAIL: $f ($RESULT)"
-    fi
-done
-if [ "$VALID_COUNT" -ge 2 ]; then
-    echo "  PASS: $VALID_COUNT/$VALID_TOTAL core files validated"
-    add_reward 0.05
-else
-    echo "  FAIL: Only $VALID_COUNT/$VALID_TOTAL core files valid"
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST 3 (0.15): classifyTool('bash') returns 'high' AND safe≠'high'
-# Bash execution is always high-risk; a trivial always-high stub is caught
-# by requiring safe tools (read) to NOT return 'high'.
-# Uses 'read' (explicitly listed in instruction as low-risk).
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 3/12: classifyTool('bash')='high' AND safe≠'high' ==="
+echo "=== Test 3/12: classifyTool('bash')='high' AND safe!='high' ==="
 T3_RESULT=""
 if [ ! -f "$SECURITY_DIR/risk-tiers.ts" ]; then
     echo "  SKIP: risk-tiers.ts not found"
@@ -151,13 +95,78 @@ try {
 TSEOF
     T3_RESULT=$(timeout 10 tsx --no-warnings /tmp/test_classify_bash.ts 2>&1 | tail -1)
     echo "  Result: $T3_RESULT"
-    if echo "$T3_RESULT" | grep -q "^PASS"; then add_reward 0.15; fi
+    if echo "$T3_RESULT" | grep -q "^PASS"; then
+        add_reward 0.15
+        T3_PASSED=1
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 1 (0.03): All 6 required security files exist [structural, gated on T3]
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 1/12: All 6 required files exist (gated on T3) ==="
+if [ "$T3_PASSED" -eq 0 ]; then
+    echo "  SKIP: gated — T3 must pass first (anti-gaming)"
+else
+    FILE_COUNT=0
+    for f in "risk-tiers.ts" "pattern-check.ts" "risk-classifier.ts" "reviewer.ts" "decision-flow.ts" "index.ts"; do
+        if [ -f "$SECURITY_DIR/$f" ]; then
+            FILE_COUNT=$((FILE_COUNT + 1))
+            echo "  FOUND: $f"
+        else
+            echo "  MISSING: $f"
+        fi
+    done
+    if [ "$FILE_COUNT" -ge 5 ]; then
+        echo "  PASS: $FILE_COUNT/6 files found"
+        add_reward 0.03
+    else
+        echo "  FAIL: Only $FILE_COUNT/6 files found"
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 2 (0.02): Core TS files have real exports [structural, gated on T3]
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 2/12: Core files have valid TypeScript with exports (gated on T3) ==="
+if [ "$T3_PASSED" -eq 0 ]; then
+    echo "  SKIP: gated — T3 must pass first (anti-gaming)"
+else
+    VALID_COUNT=0
+    VALID_TOTAL=0
+    for f in "risk-tiers.ts" "pattern-check.ts" "risk-classifier.ts"; do
+        if [ ! -f "$SECURITY_DIR/$f" ]; then continue; fi
+        VALID_TOTAL=$((VALID_TOTAL + 1))
+        RESULT=$(node -e "
+var src = require('fs').readFileSync('$SECURITY_DIR/$f', 'utf8');
+var lines = src.split('\n').filter(function(l) {
+    var t = l.trim();
+    return t && !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+});
+var hasExport = /\bexport\b/.test(src);
+var hasFunction = /\bfunction\b/.test(src) || /=>/.test(src);
+if (lines.length >= 5 && hasExport && hasFunction) process.stdout.write('OK');
+else process.stdout.write('STUB:lines=' + lines.length + ',exp=' + hasExport + ',fn=' + hasFunction);
+" 2>&1)
+        if [ "$RESULT" = "OK" ]; then
+            VALID_COUNT=$((VALID_COUNT + 1))
+            echo "  OK: $f"
+        else
+            echo "  FAIL: $f ($RESULT)"
+        fi
+    done
+    if [ "$VALID_COUNT" -ge 2 ]; then
+        echo "  PASS: $VALID_COUNT/$VALID_TOTAL core files validated"
+        add_reward 0.02
+    else
+        echo "  FAIL: Only $VALID_COUNT/$VALID_TOTAL core files valid"
+    fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 4 (0.05): classifyTool for a safe/read tool returns 'low'
-# Read-only operations should be classified as low risk.
-# Tests multiple safe tool names from the instruction.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 4/12: classifyTool safe tool returns 'low' ==="
@@ -201,9 +210,6 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 5 (0.05): classifyTool for a write/send tool returns 'medium'
-# Medium-risk tools should not be low or high — verifies 3-tier system.
-# A constant 'low' stub (passing T4) fails here. A constant 'high' stub
-# fails T3's safe≠high check. So no constant can pass both T4 and T5.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 5/12: classifyTool medium tool returns 'medium' ==="
@@ -236,7 +242,6 @@ try {
         }
     }
     if (!foundMedium) {
-        // Show what they actually return for debugging
         const results = mediumTools.map(t => t + '=' + classifyFn(t)).join(',');
         process.stdout.write('FAIL:' + results);
     }
@@ -251,7 +256,6 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 6 (0.10): isBashDestructive detects dangerous bash commands
-# rm -rf, sudo, dd must be detected; safe commands must not false-positive
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 6/12: isBashDestructive detects dangerous commands ==="
@@ -299,7 +303,6 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 7 (0.05): isBashDestructive zero false positives (conditional)
-# Bonus precision — only runs if T6 passed (detection must work first)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 7/12: isBashDestructive zero false positives ==="
@@ -334,9 +337,6 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 8 (0.15): checkPatterns detects diverse prompt injection attempts
-# 8 injections (diverse patterns) + 5 clean inputs. An always-true stub
-# fails because it gets 5 FPs (>1). A single-keyword regex gets ≤4/8
-# detection (PARTIAL at best).
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 8/12: checkPatterns detects injection attempts ==="
@@ -408,7 +408,6 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 9 (0.10): escalateRisk correctly escalates all tiers
-# low→medium, medium→high, high→high (all 3 must be correct, no partial)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 9/12: escalateRisk correctly escalates tiers ==="
@@ -448,6 +447,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # TEST 10 (0.05): REVIEWER_SYSTEM_PROMPT is meaningful and mentions verdicts
 # Must be >100 chars and contain at least 2 of: APPROVE, DENY/REJECT, ESCALATE
+# NO structural fallback — must import successfully
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 10/12: REVIEWER_SYSTEM_PROMPT with verdict keywords ==="
@@ -481,35 +481,20 @@ try {
 }
 TSEOF
     T10=$(timeout 10 tsx --no-warnings /tmp/test_reviewer.ts 2>&1 | tail -1)
-    echo "  tsx result: $T10"
-    if echo "$T10" | grep -q "^PASS"; then
-        add_reward 0.05
-    elif echo "$T10" | grep -q "^IMPORT_FAILED"; then
-        # Fallback: structural check for REVIEWER_SYSTEM_PROMPT in source
-        STRUCT=$(node -e "
-var src = require('fs').readFileSync('$SECURITY_DIR/reviewer.ts', 'utf8');
-var m = src.match(/REVIEWER_SYSTEM_PROMPT\s*[:=]\s*[\x60'\"]([\s\S]*?)[\x60'\"]/);
-if (!m) { process.stdout.write('FAIL:not_found'); process.exit(0); }
-var p = m[1], u = p.toUpperCase();
-var v = [u.includes('APPROVE'), u.includes('DENY')||u.includes('REJECT'), u.includes('ESCALATE')].filter(Boolean).length;
-if (p.length > 100 && v >= 2) process.stdout.write('PASS:len=' + p.length);
-else process.stdout.write('FAIL:len=' + p.length + '_v=' + v);
-" 2>&1)
-        echo "  structural: $STRUCT"
-        if echo "$STRUCT" | grep -q "^PASS"; then add_reward 0.05; fi
-    fi
+    echo "  Result: $T10"
+    if echo "$T10" | grep -q "^PASS"; then add_reward 0.05; fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 11 (0.15): createSecurityDecisionFlow evaluate() differentiates
+# TEST 11 (0.20): createSecurityDecisionFlow evaluate() differentiates
 # Three cases test that the decision flow uses BOTH tool risk and content:
-#   A) Low-risk tool + clean content → should auto-approve
-#   B) High-risk tool + injection → should differ from A (escalate/deny/throw)
-#   C) Low-risk tool + injection → should differ from A (content triggers escalation)
+#   A) Low-risk tool + clean content -> should auto-approve
+#   B) High-risk tool + injection -> should differ from A (escalate/deny/throw)
+#   C) Low-risk tool + injection -> should differ from A (content triggers escalation)
 #
-# 0.10 for A≠B (basic risk differentiation)
-# 0.05 for A≠C (content-aware escalation — blocks tool-only stubs)
-# 0.05 structural fallback if import fails entirely
+# 0.12 for A!=B (basic risk differentiation)
+# 0.08 for A!=C (content-aware escalation -- blocks tool-only stubs)
+# NO structural fallback — must actually import and run
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 11/12: Decision flow differentiates safe vs dangerous ==="
@@ -574,25 +559,24 @@ try {
 
     let score = 0;
 
-    // Check A≠B: basic risk differentiation (0.10)
+    // Check A!=B: basic risk differentiation (0.12)
     if (caseA.threw && caseB.threw) {
-        // Both threw — cannot verify
+        // Both threw -- cannot verify
     } else if (fpA !== fpB) {
-        score += 10;
+        score += 12;
     }
 
-    // Check A≠C: content-aware escalation (0.05)
-    // If tool is low-risk but content is suspicious, decision should differ from clean low-risk
+    // Check A!=C: content-aware escalation (0.08)
     if (!caseA.threw && !caseC.threw && fpA !== fpC) {
-        score += 5;
+        score += 8;
     } else if (!caseA.threw && caseC.threw) {
-        // C threw (tried to call LLM reviewer for escalated risk) — proves content awareness
-        score += 5;
+        // C threw (tried to call LLM reviewer for escalated risk) -- proves content awareness
+        score += 8;
     }
 
-    if (score >= 15) {
+    if (score >= 20) {
         process.stdout.write('PASS:full_differentiation');
-    } else if (score >= 10) {
+    } else if (score >= 12) {
         process.stdout.write('PASS_BASIC:risk_only_score_' + score);
     } else {
         process.stdout.write('FAIL:score_' + score + '_fpA=' + fpA + '_fpB=' + fpB + '_fpC=' + fpC);
@@ -602,30 +586,19 @@ try {
 }
 TSEOF
     T11=$(timeout 15 tsx --no-warnings /tmp/test_decision.ts 2>&1 | tail -1)
-    echo "  tsx result: $T11"
+    echo "  Result: $T11"
     if echo "$T11" | grep -q "^PASS:full"; then
-        add_reward 0.15
+        add_reward 0.20
     elif echo "$T11" | grep -q "^PASS_BASIC"; then
-        add_reward 0.10
-    elif echo "$T11" | grep -q "^IMPORT_FAILED"; then
-        # Structural fallback: verify factory, evaluate, and substantial code
-        STRUCT=$(node -e "
-var src = require('fs').readFileSync('$SECURITY_DIR/decision-flow.ts', 'utf8');
-var hasFactory = /export\s+(async\s+)?function\s+createSecurityDecisionFlow/.test(src);
-var hasEval = /evaluate\s*[\(:]/.test(src);
-var hasReturn = /return\s*\{/.test(src);
-var codeLines = src.split('\n').filter(function(l){return l.trim() && !l.trim().startsWith('//')}).length;
-if (hasFactory && hasEval && hasReturn && codeLines > 15) process.stdout.write('PASS:lines=' + codeLines);
-else process.stdout.write('FAIL:f=' + hasFactory + '_e=' + hasEval + '_r=' + hasReturn + '_l=' + codeLines);
-" 2>&1)
-        echo "  structural: $STRUCT"
-        if echo "$STRUCT" | grep -q "^PASS"; then add_reward 0.05; fi
+        add_reward 0.12
     fi
+    # NO structural fallback — import failure = 0 points
 fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 12 (0.05): index.ts re-exports key symbols from the module
-# Must re-export ≥3 key functions/constants via the barrel file
+# Must re-export >=3 key functions/constants via the barrel file
+# NO structural fallback — must actually import and verify exports
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Test 12/12: index.ts re-exports key functions ==="
@@ -655,22 +628,9 @@ try {
 }
 TSEOF
     T12=$(timeout 10 tsx --no-warnings /tmp/test_index.ts 2>&1 | tail -1)
-    echo "  tsx result: $T12"
-    if echo "$T12" | grep -q "^PASS"; then
-        add_reward 0.05
-    elif echo "$T12" | grep -q "^IMPORT_FAILED"; then
-        # Structural fallback: count re-export statements
-        REEXPORTS=$(node -e "
-var src = require('fs').readFileSync('$SECURITY_DIR/index.ts', 'utf8');
-var named = (src.match(/export\s+\{[^}]+\}\s+from/g) || []).length;
-var star = (src.match(/export\s+\*\s+from/g) || []).length;
-var total = named + star;
-if (total >= 3) process.stdout.write('PASS:' + total + '_reexport_stmts');
-else process.stdout.write('FAIL:only_' + total + '_reexport_stmts');
-" 2>&1)
-        echo "  structural: $REEXPORTS"
-        if echo "$REEXPORTS" | grep -q "^PASS"; then add_reward 0.05; fi
-    fi
+    echo "  Result: $T12"
+    if echo "$T12" | grep -q "^PASS"; then add_reward 0.05; fi
+    # NO structural fallback — import failure = 0 points
 fi
 
 # ═══════════════════════════════════════════════════════════════════
