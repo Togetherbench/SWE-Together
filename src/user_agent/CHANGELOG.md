@@ -3,6 +3,67 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.5.2 — 2026-04-04
+
+**Incremental CC turns + relaxed trigger interpretation.**
+
+Two changes to increase user sim intervention opportunities on Claude Code:
+
+### Incremental work instruction
+
+Appends to the CC agent's instruction: "Work incrementally. After completing
+each distinct sub-task, STOP and report what you did. Wait for user feedback
+before proceeding." This creates more `--resume` checkpoints where the user
+sim can intervene.
+
+### Relaxed trigger interpretation
+
+Injects global guidance into the user sim's system prompt telling it to apply
+sim prompt triggers broadly: fire GT messages in sequence even if the exact
+intermediate state described in the trigger isn't a perfect match, and check
+whether completed work has issues rather than only looking for specific
+intermediate states.
+
+**A/B results (CC + Gemini, 3 tasks):**
+
+| Task | GT | v0.5 msgs | v0.5.2 msgs | v0.5 reward | v0.5.2 reward |
+|------|-----|-----------|-------------|-------------|---------------|
+| sd-scripts | 4 | 3 | 3 | 0.93 | 0.93 |
+| sageattention | 6 | 2 | 2 | 0.35 | 0.35 |
+| **banodoco** | **27** | **3** | **5** | **0.70** | **0.55** |
+
+Key finding: **banodoco went from 3 to 5 sim messages.** Previous run sent
+GT turns 2, 3, 4 (early animation bugs). This run sent GT turns 2, 13, 14,
+15, 16 (progressive timeline, speed, labels) — later GT turns that were
+previously unreachable because CC completed too much per turn.
+
+All 5 messages are verbatim GT quotes. The incremental instruction created
+more checkpoints, and the relaxed triggers let the sim fire later-stage
+GT messages that matched completed (not intermediate) work.
+
+sd-scripts and sageattention unchanged — simple enough that the agent
+completes the whole task in one sub-task regardless.
+
+## v0.5.1 — 2026-04-04
+
+**Wall-clock timing and GT session duration tracking.**
+
+- Extract original session duration from `original_session.json`
+  (`start_time`/`end_time` fields)
+- Measure trial wall-clock time via `time.time()`
+- Print speedup ratio (gt_duration / trial_time) after each trial
+- Write `timing.json` to each trial directory
+
+**Sample output:**
+```
+  wall_clock : 1222s (20.4m)
+  gt_duration: 7279s (121.3m)
+  speedup    : 5.96x
+```
+
+Speedup ratios observed: 4.4x (sd-scripts), 8.0x (sageattention), 6.0x
+(banodoco). Agents are consistently 4–8x faster than real users.
+
 ## v0.5 — 2026-04-03
 
 **Three changes to improve user simulation realism and cross-harness fairness.**
