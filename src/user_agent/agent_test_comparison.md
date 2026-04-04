@@ -334,7 +334,103 @@ This section analyzes how faithfully the user simulator reproduces real user beh
 
 ---
 
-## 6. Raw Trial Index
+## 6. Large-Scale Run: 19 Tasks (Claude Code + Gemini 3.1 Pro)
+
+Full run of 40 tasks with Claude Code harness + Gemini 3.1 Pro user model. 21 tasks failed at Docker setup (resource exhaustion from parallel launches); 19 completed and scored.
+
+### 6.1 Results Overview
+
+| Task | GT msgs | Sim msgs | Ratio | Reward |
+|------|---------|----------|-------|--------|
+| comfyui-triton-windows-amd-fix | 4 | 0 | 0x | **1.0** |
+| comfyui-jina-clip-v2-full | 5 | 0 | 0x | **0.9** |
+| comfyui-jina-clip-v2-review | 3 | 2 | 0.67x | **0.9** |
+| banodoco-video-perf-optimize | 27 | 3 | 0.11x | **0.7** |
+| desloppify-treesitter-plugins | 11 | 4 | 0.36x | **0.7** |
+| reigh-timeline-mode-cleanup | 14 | 2 | 0.14x | **0.7** |
+| sageattention-rebase-conflicts | 10 | 2 | 0.20x | **0.55** |
+| triton-amd-fp8-lowering | 3 | 0 | 0x | **0.5** |
+| triton-msvc-c4267-warnings | 3 | 1 | 0.33x | **0.5** |
+| desloppify-zone-classification | 14 | 3 | 0.21x | 0.39 |
+| comfyui-lumina-axes-lens | 5 | 1 | 0.20x | 0.3 |
+| amdgpu-kernel-619-compat | 4 | 3 | 0.75x | 0.25 |
+| sd-scripts-skip-resolution-tuple | 5 | 1 | 0.20x | 0.08 |
+| llama-cpp-lora-moe-rank1 | 4 | 6 | 1.50x | 0.0 |
+| nunchaku-bias-permutation | 3 | 0 | 0x | 0.0 |
+| sd-scripts-torch-compile-sdxl | 6 | 4 | 0.67x | 0.0 |
+| unsloth-idefics3-finetune | 21 | 2 | 0.10x | 0.0 |
+
+**Avg reward: 0.41** across 17 scored tasks. (2 tasks with GT but no sim data excluded.)
+
+### 6.2 User Sim Behavior Analysis
+
+**Intervention rate distribution:**
+
+| Ratio range | Tasks | Avg reward |
+|-------------|-------|-----------|
+| 0x (silent) | 4 tasks | 0.60 |
+| 0.01–0.49x (under-target) | 9 tasks | 0.39 |
+| **0.50–1.50x (target range)** | **4 tasks** | **0.29** |
+| >1.50x (over-target) | 0 tasks | — |
+
+Only 4/17 tasks hit the 0.5–1.5x target range. The majority (13/17) under-simulate. Interestingly, silent tasks (0x) have higher avg reward than the target range — because those are tasks where the agent solved the problem in one shot without needing user help.
+
+**Message quality observations:**
+
+- **amdgpu** (0.75x, reward 0.25): Sim sent 3 GT-faithful messages about build errors — realistic progressive debugging. Low reward because the task is genuinely hard.
+- **desloppify-treesitter-plugins** (0.36x, reward 0.7): "find a random repo to test", "test whatever is available locally" — natural testing requests matching GT pattern.
+- **llama-cpp-lora-moe-rank1** (1.50x, reward 0.0): 6 messages, but sim got frustrated and invented off-topic messages ("dude just delete AGENTS.md and write the code") — over-simulation with degraded quality.
+- **sd-scripts-torch-compile-sdxl** (0.67x, reward 0.0): 4 messages matching GT arc (test SDXL → check compilation → add musubi-tuner flags) but agent failed to implement.
+
+### 6.3 Sim vs GT Content Fidelity (19 Tasks)
+
+For each task where the sim sent messages, we compared content against GT side-by-side and classified each sim message:
+
+| Category | Definition | Count |
+|----------|-----------|-------|
+| **Verbatim match** | Sim message is identical or near-identical to a GT message | 19 |
+| **Paraphrase** | Same intent as a GT message, different wording | 5 |
+| **Plausible invention** | Not in GT but realistic and task-relevant | 7 |
+| **Harmful invention** | Not in GT and derails the agent | 3 |
+| **Total sim messages** | | **34** |
+
+**56% verbatim, 15% paraphrase, 20% plausible invention, 9% harmful.**
+
+#### Tasks with high GT fidelity (verbatim matches)
+
+- **sd-scripts-torch-compile-sdxl** — 4/4 sim messages are exact GT quotes (GT-3,4,5,6). The sim perfectly reproduced the real user's progressive testing arc.
+- **desloppify-treesitter-plugins** — SIM-1,2,4 are verbatim GT-2,3,4. SIM-3 ("ok just test whatever is available locally") is a plausible adaptation when the agent couldn't find the rust repo.
+- **sageattention-rebase-conflicts** — SIM-1,2 are verbatim GT-7,8. The sim correctly identified the two most impactful follow-ups from a 10-message GT sequence.
+- **comfyui-jina-clip-v2-review** — SIM-1,2 are verbatim GT-2,3.
+- **reigh-timeline-mode-cleanup** — SIM-1,2 are verbatim GT-2,4.
+- **desloppify-zone-classification** — SIM-1,2,3 are verbatim GT-2,3,4.
+- **comfyui-lumina-axes-lens** — SIM-1 is verbatim GT-5.
+- **sd-scripts-skip-resolution-tuple** — SIM-1 is verbatim GT-2.
+
+#### Tasks with mixed fidelity
+
+- **amdgpu-kernel-619-compat** — SIM follows GT's pattern (report build errors → point to specific error) but invents specific error details. The real user said "see make.log"; the sim elaborated on error content. Plausible but not GT-faithful.
+- **banodoco-video-perf-optimize** — SIM-1 is verbatim GT-3. SIM-2 ("let's move on to animation") is a paraphrase. SIM-3 is verbatim GT-6. But sim sent only 3/27 GT messages — massive under-coverage of the iterative UI refinement loop.
+- **llama-cpp-lora-moe-rank1** — SIM-2 is verbatim GT-2. But SIM-1,3,4,5,6 are invented and increasingly frustrated ("dude just delete AGENTS.md"). The sim got derailed by the agent's focus on AGENTS.md instead of code.
+- **unsloth-idefics3-finetune** — SIM-1 paraphrases GT-1. SIM-2 ("let's start with option A") is a plausible acceleration. But 2/21 GT messages is extreme under-coverage.
+
+#### Summary: How close is the sim to real users?
+
+**For tasks with clear, technical GT messages: very close.** sd-scripts, sageattention, desloppify, comfyui tasks all show 60–100% verbatim GT reproduction. The sim correctly identifies the most impactful GT messages and sends them at appropriate times.
+
+**For tasks with long iterative loops (GT>10): poor coverage.** banodoco (3/27), reigh (2/14), unsloth (2/21). The sim captures the opening moves but can't sustain a 20+ message debugging session because Claude Code completes too much in each turn — by the time the sim is consulted, the agent has already moved past the point where the GT message was relevant.
+
+**For tasks where the agent goes off-track: sim can derail.** llama-cpp shows the sim inventing increasingly frustrated redirects when the agent doesn't respond to corrections. This is realistic human behavior (users do get frustrated) but counterproductive for the benchmark.
+
+### 6.4 Implications
+
+1. **The sim is a faithful GT proxy for short-to-medium sessions (GT ≤ 10 msgs).** Use with confidence for these tasks.
+2. **For long sessions (GT > 10), the sim under-covers.** The CC harness structure (one autonomous turn) limits how many GT messages can be reproduced. T2 harness may be better for these tasks.
+3. **Over-simulation is worse than under-simulation.** The llama-cpp case shows that invented messages can actively harm the agent. The sim's default-to-silence behavior is a reasonable safety measure.
+
+---
+
+## 7. Raw Trial Index
 
 ### v0.5 Runs (soft guidance, structured output)
 
