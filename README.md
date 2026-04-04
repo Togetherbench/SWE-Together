@@ -151,8 +151,8 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 ### Architecture (v0.4.1)
 
 - **Multi-agent support** — `--agent-type` selects the coding agent backend:
-  - `terminus` (default) — in-process LLM agent; user sim injects messages directly into chat history
-  - `claude-code` (recommended) — Claude Code CLI; multi-turn via `claude --resume <session_id>`. Most realistic turn structure.
+  - `terminus` — in-process LLM agent; user sim injects messages directly into chat history
+  - `claude-code` (default) — Claude Code CLI; multi-turn via `claude --resume <session_id>`. Most realistic turn structure.
   - `codex` — Codex CLI; multi-turn via sequential re-runs with accumulated context
   - Other Harbor-installed agents (`aider`, `swe-agent`, etc.) — single-shot, no user sim
 - **Recommended configuration** — Claude Code harness + Gemini 3.1 Pro as user model. Best GT coverage, most realistic turn structure, lower cost. See `src/user_agent/agent_test_comparison.md` for the 24-experiment analysis.
