@@ -430,7 +430,60 @@ For each task where the sim sent messages, we compared content against GT side-b
 
 ---
 
-## 7. Raw Trial Index
+## 7. Incremental CC Turns (v0.5.2)
+
+Two changes to increase user sim intervention opportunities on Claude Code:
+
+1. **Incremental work instruction** — appended to the CC agent's instruction: "Work incrementally. After completing each distinct sub-task, STOP and report. Wait for user feedback before proceeding."
+2. **Relaxed trigger interpretation** — global guidance telling the sim to fire GT messages in sequence even if the exact intermediate state isn't a perfect match.
+
+### 7.1 A/B Results (CC + Gemini)
+
+| Task | GT | v0.5 msgs | v0.5.2 msgs | v0.5 reward | v0.5.2 reward | v0.5.2 wall clock | Speedup |
+|------|-----|-----------|-------------|-------------|---------------|-------------------|---------|
+| sd-scripts | 4 | 3 | 3 | 0.93 | 0.93 | 3.7m | 4.4x |
+| sageattention | 6 | 2 | 2 | 0.35 | 0.35 | 4.1m | 8.0x |
+| **banodoco** | **27** | **3** | **5** | **0.70** | **0.55** | **20.4m** | **6.0x** |
+
+### 7.2 Banodoco Deep Dive
+
+The key improvement is on banodoco (GT=27, 121-min real session):
+
+**Before (v0.5):** 3 messages — GT turns 2, 3, 4 (early animation bugs)
+```
+Turn 1: "Is this well structured? Will it work on mobile?" → GT Turn 2
+Turn 2: "animation doesn't run the whole way"              → GT Turn 3
+Turn 3: "still happens, completes too early"                → GT Turn 4
+```
+
+**After (v0.5.2):** 5 messages — GT turns 2, 13, 14, 15, 16 (later-stage features)
+```
+Turn 1: "Is this well structured? Will it work on mobile?"                  → GT Turn 2  VERBATIM
+Turn 2: "only show the times that actually have entries / timeline reveal"  → GT Turn 13 VERBATIM
+Turn 3: "make it half the speed"                                            → GT Turn 14 VERBATIM
+Turn 4: "labels for new models — white with model name on its segment"      → GT Turn 15 VERBATIM
+Turn 5: "make it last long and follow the centre along the X axis"          → GT Turn 16 VERBATIM
+```
+
+All 5 messages are verbatim GT quotes. The incremental instruction created more `--resume` checkpoints, allowing the sim to observe the agent's progress at each sub-task and fire later-stage GT messages (progressive timeline, speed, labels) that were previously unreachable.
+
+**Reward dropped 0.70 → 0.55** — the agent attempted more features (responding to more user messages) but didn't execute all of them correctly. More interaction ≠ higher reward, but it does mean more realistic human-agent collaboration.
+
+### 7.3 Why sd-scripts and sageattention didn't change
+
+These tasks are simple enough that the agent completes the entire task in one sub-task. The incremental instruction has no effect because there's only one thing to do. The sim sees the same completed state and sends the same messages.
+
+---
+
+## 8. Raw Trial Index
+
+### v0.5.2 Runs (incremental turns + relaxed triggers)
+
+| Trial ID | Task | Harness | User model | Msgs | Sim calls | Reward | Wall clock | Speedup |
+|----------|------|---------|-----------|------|-----------|--------|-----------|---------|
+| *(new)* | sd-scripts | CC | Gemini | 3 | 4 | 0.93 | 3.7m | 4.4x |
+| *(new)* | sageattention | CC | Gemini | 2 | 3 | 0.35 | 4.1m | 8.0x |
+| `77k2vjo` | banodoco | CC | Gemini | 5 | 6 | 0.55 | 20.4m | 6.0x |
 
 ### v0.5 Runs (soft guidance, structured output)
 

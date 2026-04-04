@@ -320,6 +320,18 @@ class UserEnabledClaudeCode(BaseAgent):
         if config_content:
             instruction = f"{instruction}\n\n{config_content}"
 
+        # Inject incremental-work instruction so CC stops after each sub-task
+        # instead of completing everything in one autonomous run. This gives the
+        # user sim more opportunities to intervene with corrections/feedback.
+        _INCREMENTAL_NOTICE = (
+            "\n\nIMPORTANT: Work incrementally. After completing each distinct "
+            "sub-task (e.g., implementing one feature, fixing one bug, making one "
+            "significant change), STOP and report what you did and what you plan "
+            "to do next. Wait for user feedback before proceeding to the next "
+            "sub-task. Do NOT implement everything in one go."
+        )
+        instruction = instruction + _INCREMENTAL_NOTICE
+
         self._task_instruction = instruction
 
         # Turn 0: initial run via inner agent's commands

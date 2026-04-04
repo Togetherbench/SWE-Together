@@ -289,7 +289,21 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         f"Aim for **{msg_low}–{msg_high} messages** total. "
         f"This is a soft target — send fewer if the agent handles everything "
         f"well, send more if it needs correction. Do NOT treat any cap in "
-        f"the session analysis above as a hard limit; use this range instead."
+        f"the session analysis above as a hard limit; use this range instead.\n\n"
+        f"## Trigger Interpretation (auto-generated)\n"
+        f"The agent works incrementally and reports after each sub-task. "
+        f"When evaluating trigger conditions from the session analysis above, "
+        f"apply them broadly:\n"
+        f"- If a trigger says 'ONLY if agent has X but not Y', also fire "
+        f"if the agent has completed both X and Y but Y has issues.\n"
+        f"- If the agent reports completing a sub-task, check whether the "
+        f"next ground-truth message in sequence is relevant and send it.\n"
+        f"- Do NOT skip a turn just because the agent already moved past "
+        f"the exact intermediate state described in the trigger. The agent "
+        f"may have done it incorrectly.\n"
+        f"- Prioritize sending ground-truth messages in order. If the agent's "
+        f"progress maps to turn N in the session analysis, send turn N's "
+        f"message even if the trigger condition is not a perfect match."
     )
     session_analysis_with_guidance = session_analysis + guidance_note
 
