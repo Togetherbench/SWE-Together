@@ -25,6 +25,7 @@ from harbor.models.agent.context import AgentContext
 from harbor.models.trial.paths import EnvironmentPaths
 from harbor.llms.lite_llm import LiteLLM
 
+from .repo_config import discover_repo_config_files
 from .user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -209,6 +210,11 @@ class UserEnabledCodex(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
+        # Inject repo config files into the instruction
+        config_content = await discover_repo_config_files(environment)
+        if config_content:
+            instruction = f"{instruction}\n\n{config_content}"
+
         self._task_instruction = instruction
 
         # Turn 0: initial run via inner agent's commands

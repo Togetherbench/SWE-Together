@@ -21,6 +21,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.llms.lite_llm import LiteLLM
 
+from .repo_config import discover_repo_config_files
 from .user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -83,26 +84,52 @@ class UserEnabledClaudeCode(BaseAgent):
     # ── session ID extraction ────────────────────────────────────────
 
     def _find_session_id(self) -> str | None:
-        """Parse session ID from Claude Code JSONL session logs."""
-        session_dir = self._inner._get_session_dir()
-        if not session_dir:
-            return None
+        """Parse session ID from Claude Code output.
 
-        for jsonl_file in session_dir.glob("*.jsonl"):
-            with open(jsonl_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                        sid = event.get("sessionId")
-                        if isinstance(sid, str) and sid:
-                            return sid
-                    except json.JSONDecodeError:
-                        continue
-        # Fall back to directory name
-        return session_dir.name if session_dir else None
+        Tries three sources in order:
+        1. The stream-json stdout captured in _cumulative_output (most reliable —
+           the init event always contains session_id)
+        2. JSONL session logs on disk via _get_session_dir()
+        3. Fallback to directory name
+
+        Source 1 avoids the "Multiple session directories" bug in Harbor's
+        _get_session_dir() which returns None when multiple project dirs exist.
+        """
+        # Source 1: parse from captured stdout (stream-json init event)
+        for raw in self._cumulative_output:
+            for line in raw.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    # The init event has {"type": "system", "subtype": "init", "session_id": "..."}
+                    sid = event.get("session_id") or event.get("sessionId")
+                    if isinstance(sid, str) and sid:
+                        return sid
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+        # Source 2: JSONL files on disk
+        session_dir = self._inner._get_session_dir()
+        if session_dir:
+            for jsonl_file in session_dir.glob("*.jsonl"):
+                with open(jsonl_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                            sid = event.get("sessionId")
+                            if isinstance(sid, str) and sid:
+                                return sid
+                        except json.JSONDecodeError:
+                            continue
+            # Source 3: directory name
+            return session_dir.name
+
+        return None
 
     # ── resume command builder ───────────────────────────────────────
 
@@ -139,14 +166,99 @@ class UserEnabledClaudeCode(BaseAgent):
 
     # ── trajectory snapshot for user sim ─────────────────────────────
 
+    @staticmethod
+    def _parse_stream_json(raw: str) -> list[str]:
+        """Parse Claude Code stream-json output into structured step summaries.
+
+        Converts raw JSONL (thinking, tool_use, text, result) into a format
+        similar to Terminus 2's trajectory steps, so the user simulator sees
+        structured information instead of raw JSON noise.
+        """
+        steps: list[str] = []
+        step_id = 0
+        for line in raw.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            t = obj.get("type")
+
+            if t == "assistant":
+                for block in obj.get("message", {}).get("content", []):
+                    bt = block.get("type")
+                    if bt == "thinking":
+                        step_id += 1
+                        text = block.get("thinking", "")[:300]
+                        steps.append(f"[{step_id}] thinking: {text}")
+                    elif bt == "tool_use":
+                        step_id += 1
+                        name = block.get("name", "?")
+                        inp = block.get("input", {})
+                        # Show the most useful part of each tool call
+                        if name in ("Bash", "bash"):
+                            detail = inp.get("command", "")[:200]
+                        elif name in ("Read", "read"):
+                            detail = inp.get("file_path", "")
+                        elif name in ("Edit", "edit"):
+                            detail = inp.get("file_path", "")
+                        elif name in ("Write", "write"):
+                            detail = inp.get("file_path", "")
+                        elif name in ("Grep", "grep"):
+                            detail = f'pattern={inp.get("pattern", "")} path={inp.get("path", "")}'
+                        elif name in ("Glob", "glob"):
+                            detail = inp.get("pattern", "")
+                        else:
+                            detail = json.dumps(inp)[:200]
+                        steps.append(f"[{step_id}] tool_call({name}): {detail}")
+                    elif bt == "text":
+                        step_id += 1
+                        text = block.get("text", "")[:300]
+                        steps.append(f"[{step_id}] agent: {text}")
+
+            elif t == "result":
+                step_id += 1
+                result = obj.get("result", "")
+                if isinstance(result, str):
+                    steps.append(f"[{step_id}] result: {result[:300]}")
+                else:
+                    steps.append(f"[{step_id}] result: {json.dumps(result)[:300]}")
+
+        return steps
+
     def _snapshot_recent_output(self) -> str:
-        """Return a tail window of agent output within context budget."""
+        """Return a structured summary of agent activity within context budget.
+
+        Parses Claude Code's stream-json output into structured steps (similar
+        to Terminus 2's trajectory format), then returns the tail that fits
+        within the context budget.
+        """
         if not self._cumulative_output:
             return "(nothing yet)"
-        full = "\n".join(self._cumulative_output)
-        if len(full) <= self._ctx_budget:
-            return full
-        return full[-self._ctx_budget:]
+
+        # Parse the latest turn's raw output into structured steps
+        all_steps: list[str] = []
+        for raw in self._cumulative_output:
+            all_steps.extend(self._parse_stream_json(raw))
+
+        if not all_steps:
+            # Fallback to raw tail if parsing yields nothing
+            full = "\n".join(self._cumulative_output)
+            return full[-self._ctx_budget:]
+
+        # Walk backwards to fit within budget
+        lines: list[str] = []
+        chars = 0
+        for step in reversed(all_steps):
+            if chars + len(step) + 1 > self._ctx_budget and lines:
+                break
+            lines.append(step)
+            chars += len(step) + 1
+        lines.reverse()
+        return "\n".join(lines)
 
     # ── user simulation ──────────────────────────────────────────────
 
@@ -203,6 +315,11 @@ class UserEnabledClaudeCode(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
+        # Inject repo config files into the instruction
+        config_content = await discover_repo_config_files(environment)
+        if config_content:
+            instruction = f"{instruction}\n\n{config_content}"
+
         self._task_instruction = instruction
 
         # Turn 0: initial run via inner agent's commands

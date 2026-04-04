@@ -187,24 +187,17 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
     ]
 
 
-def _extract_max_messages(session_analysis: str, gt_count: int) -> int | None:
-    """Extract max message cap from user_simulation_prompt.md or default from GT count."""
-    import re
-    # Match various patterns: "Target: ~N messages", "at most N messages",
-    # "NEVER send more than N messages", "max N messages", "N messages total"
-    patterns = [
-        r'(?:target|at most|max)[^0-9]*(\d+)\s*(?:messages|follow-up)',
-        r'(?:never|do not) send more than\s*(\d+)\s*messages',
-        r'(\d+)\s*messages?\s*(?:total|max)',
-    ]
-    for pat in patterns:
-        m = re.search(pat, session_analysis, re.IGNORECASE)
-        if m:
-            return int(m.group(1))
-    # Default: GT count + 5 buffer, but cap at 15 to prevent runaway
-    if gt_count > 1:
-        return min(gt_count + 5, 15)
-    return None
+def _compute_message_guidance(gt_count: int) -> tuple[int, int]:
+    """Compute a suggested message range based on ground-truth count.
+
+    Returns (low, high) — a guidance range of [GT*0.5, GT*1.5] that is
+    injected into the user sim's system prompt as a soft target. No hard
+    cap is enforced; the user sim decides based on the session context.
+    """
+    import math
+    low = max(1, math.ceil(gt_count * 0.5))
+    high = max(low + 1, math.ceil(gt_count * 1.5))
+    return low, high
 
 
 def resolve_task_dir(task_name: str) -> Path | None:
@@ -259,8 +252,21 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     if session_analysis:
         log.info("Loaded user_simulation_prompt.md (%d chars)", len(session_analysis))
 
-    # Extract max_messages from prompt if specified (e.g., "Target for simulation: ~4 messages")
-    max_messages = _extract_max_messages(session_analysis, len(user_messages))
+    # Compute GT-based message guidance range (soft target, no hard cap)
+    gt_count = len(user_messages)
+    msg_low, msg_high = _compute_message_guidance(gt_count)
+    log.info("Message guidance: %d–%d (from GT=%d)", msg_low, msg_high, gt_count)
+
+    # Inject guidance into session analysis so user sim sees it
+    guidance_note = (
+        f"\n\n## Message Guidance (auto-generated)\n"
+        f"The real user sent {gt_count} messages in the original session. "
+        f"Aim for **{msg_low}–{msg_high} messages** total. "
+        f"This is a soft target — send fewer if the agent handles everything "
+        f"well, send more if it needs correction. Do NOT treat any cap in "
+        f"the session analysis above as a hard limit; use this range instead."
+    )
+    session_analysis_with_guidance = session_analysis + guidance_note
 
     # Build AgentConfig based on agent type
     agent_type = args.agent_type
@@ -268,8 +274,8 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         "user_model_name": user_model,
         "user_api_key": user_key,
         "original_user_messages": user_messages,
-        "session_analysis": session_analysis,
-        "max_messages": max_messages,
+        "session_analysis": session_analysis_with_guidance,
+        "max_messages": None,  # no hard cap — guidance is soft
         "user_context_chars": args.user_context_chars,
         "call_user_on_completion": args.call_user_on_completion,
     }

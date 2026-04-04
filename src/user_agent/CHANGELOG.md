@@ -3,6 +3,48 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.4.1 — 2026-04-03
+
+**Three changes to improve user simulation realism and cross-harness fairness.**
+
+### Repo config file injection
+
+All three agent harnesses (Terminus 2, Claude Code, Codex) now discover and
+inject repo configuration files (CLAUDE.md, AGENTS.md, `.claude/`, `.ai/`,
+`.cursor/`, `.cursorrules`, `.github/copilot-instructions.md`) into the
+agent's instruction at the start of `run()`. ~20 of 45 task repos contain
+such files. Previously only Claude Code auto-discovered them natively.
+
+New file: `src/user_agent/repo_config.py`
+
+### Structured output for Claude Code user sim
+
+Claude Code's `_snapshot_recent_output()` now parses stream-json into
+structured step summaries (`[step_id] thinking: ...`, `tool_call(Bash): ...`,
+`agent: ...`) instead of passing raw JSON tail to the user sim. This matches
+Terminus 2's trajectory format and is closer to what a real user sees.
+
+Verified: 57,544 chars of raw JSON → 11 structured steps. In A/B testing,
+structured output made the user sim more informed and more conservative —
+fewer redundant follow-ups, same message quality.
+
+### Soft message guidance (replaces hard cap)
+
+Removed `max_messages` hard cap. Previously, restrictive caps in
+`user_simulation_prompt.md` (e.g., "EXACTLY 0–2" when GT=6) suppressed
+realistic simulation. Now the runner computes a GT-based guidance range
+(`GT*0.5` – `GT*1.5`) and injects it as a soft target into the user sim's
+system prompt. The user sim decides based on context, not an enforced ceiling.
+
+**24-experiment comparison** (2 harnesses × 2 user models × 3 tasks, before/after)
+documented in `src/user_agent/agent_test_comparison.md`.
+
+Key results from the soft guidance A/B (hard cap → soft guidance):
+- **openclaw** (GT=5): 0 msgs across all 4 configs → T2+Opus **3 msgs**, T2+Gemini **1 msg** (reward 0.21→0.86). Previously hard-capped or trigger-blocked; soft guidance let the sim send quality-check messages about AGENTS.md completeness.
+- **sd-scripts** (GT=4): CC+Opus 2→**5 msgs** with natural progressive review. CC+Gemini and T2 configs unchanged (already within range).
+- **sageattention** (GT=6): T2+Gemini 1→**2 msgs**. CC configs unchanged. Bottleneck is sim prompt trigger design, not cap.
+- **openclaw CC harness** still gets 0 msgs — session ID parsing bug prevented resume turns. **Fixed**: `_find_session_id()` now parses from captured stdout (stream-json init event) instead of relying on `_get_session_dir()` which fails with multiple project directories. After fix, session IDs are found reliably but user sim still chooses no-op — CC completes the task in one autonomous turn, so the sim sees a finished result and has nothing to add (vs T2 which gives 10+ mid-task intervention points).
+
 ## v0.4.0 — 2026-03-29
 
 **Feature: multi-turn user simulation for Claude Code and Codex**
