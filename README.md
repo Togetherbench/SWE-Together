@@ -148,15 +148,18 @@ Each task under `harbor_tasks/<name>/` contains:
 
 The user simulator (`src/user_agent/`) is an LLM that role-plays as the original human user. It watches the agent's terminal output and decides when to intervene.
 
-### Architecture (v0.4.0)
+### Architecture (v0.4.1)
 
 - **Multi-agent support** — `--agent-type` selects the coding agent backend:
   - `terminus` (default) — in-process LLM agent; user sim injects messages directly into chat history
-  - `claude-code` — Claude Code CLI; multi-turn via `claude --resume <session_id>`
+  - `claude-code` (recommended) — Claude Code CLI; multi-turn via `claude --resume <session_id>`. Most realistic turn structure.
   - `codex` — Codex CLI; multi-turn via sequential re-runs with accumulated context
   - Other Harbor-installed agents (`aider`, `swe-agent`, etc.) — single-shot, no user sim
+- **Recommended configuration** — Claude Code harness + Gemini 3.1 Pro as user model. Best GT coverage, most realistic turn structure, lower cost. See `src/user_agent/agent_test_comparison.md` for the 24-experiment analysis.
+- **Repo config file injection** — all harnesses discover and inject CLAUDE.md, AGENTS.md, `.claude/`, `.ai/`, `.cursor/` into agent instructions for cross-harness parity.
+- **Structured output** — Claude Code's stream-json is parsed into structured step summaries (matching Terminus 2 format) before being shown to the user sim.
+- **Soft message guidance** — GT-based guidance range (`GT×0.5` – `GT×1.5`) replaces the old hard `max_messages` cap, allowing the sim to decide based on context.
 - **Conversation history** — accumulated across turns (tau-bench pattern). The LLM sees what it already said.
-- **Hard message cap** — extracted from the task prompt or defaulted to GT count + 5. Enforced programmatically, never relying on LLM self-regulation.
 - **Tool-calling for structured output** — the sim picks one of: `no-op`, `question`, `redirect`, `new_requirement`, `check_external`.
 - **State-conditional triggers** — each user turn in `user_simulation_prompt.md` has a trigger condition (e.g., "ONLY send if agent tries `sudo dkms build`").
 
@@ -168,6 +171,7 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 | v0.3.0 | Conversation history + hard cap | 1.2% | 72.7% |
 | v0.3.1 | Fixed fallback_parse leak | **0%** | **72.7%** |
 | v0.4.0 | Multi-agent support (Claude Code, Codex) | — | — |
+| v0.4.1 | Structured output, soft guidance, repo config injection, session ID fix | — | — |
 
 See `src/user_agent/CHANGELOG.md` for full details.
 
