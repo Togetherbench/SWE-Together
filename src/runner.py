@@ -24,6 +24,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -200,6 +201,28 @@ def _compute_message_guidance(gt_count: int) -> tuple[int, int]:
     return low, high
 
 
+def _extract_gt_session_duration(task_dir: Path) -> float | None:
+    """Extract the original session duration in seconds from original_session.json."""
+    from datetime import datetime, timezone
+
+    session_path = task_dir / "original_session.json"
+    if not session_path.exists():
+        return None
+
+    try:
+        session = json.loads(session_path.read_text())
+        start = session.get("start_time")
+        end = session.get("end_time")
+        if start and end:
+            t0 = datetime.fromisoformat(start)
+            t1 = datetime.fromisoformat(end)
+            return (t1 - t0).total_seconds()
+    except Exception as exc:
+        log.debug("Could not extract GT session duration: %s", exc)
+
+    return None
+
+
 def resolve_task_dir(task_name: str) -> Path | None:
     """Support both current and legacy harbor task layouts."""
     candidates = [
@@ -225,6 +248,8 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     log.info("Action agent : %s", action_model)
     log.info("User agent   : %s", user_model)
+
+    trial_start = time.time()
 
     task_dir = resolve_task_dir(task_name)
 
@@ -307,6 +332,9 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     trial = Trial(config=trial_config)
     result = await trial.run()
 
+    trial_elapsed = time.time() - trial_start
+    gt_duration = _extract_gt_session_duration(task_dir)
+
     print("\n" + "=" * 60)
     print(f"  task   : {task_name}")
     rewards = result.verifier_result.rewards if result.verifier_result else None
@@ -315,7 +343,14 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     print(f"  success: {result.exception_info is None}")
     if result.exception_info:
         print(f"  error  : {result.exception_info.exception_type}: {result.exception_info.exception_message}")
+    print(f"  wall_clock : {trial_elapsed:.0f}s ({trial_elapsed/60:.1f}m)")
+    if gt_duration:
+        print(f"  gt_duration: {gt_duration:.0f}s ({gt_duration/60:.1f}m)")
+        print(f"  speedup    : {gt_duration/trial_elapsed:.2f}x" if trial_elapsed > 0 else "")
     print("=" * 60)
+
+    # Write timing.json into each trial directory for this task
+    _write_timing(task_dir, Path(args.trials_dir), task_name, trial_elapsed, gt_duration)
 
     # Copy user_simulation_prompt.md into trial dirs so it gets uploaded with traces
     _copy_sim_prompts_to_trials(task_dir, Path(args.trials_dir))
@@ -325,6 +360,24 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     # Auto-upload traces to Railway S3 if credentials available
     _auto_upload_traces()
+
+
+def _write_timing(
+    task_dir: Path, trials_dir: Path, task_name: str,
+    trial_elapsed: float, gt_duration: float | None,
+):
+    """Write timing.json into each trial directory for the task."""
+    timing = {
+        "trial_wall_clock_sec": round(trial_elapsed, 1),
+        "gt_session_duration_sec": round(gt_duration, 1) if gt_duration else None,
+        "speedup": round(gt_duration / trial_elapsed, 2) if gt_duration and trial_elapsed > 0 else None,
+    }
+    for trial in trials_dir.iterdir():
+        if trial.is_dir() and trial.name.startswith(task_name):
+            path = trial / "timing.json"
+            if not path.exists():
+                path.write_text(json.dumps(timing, indent=2))
+                log.info("Wrote timing.json → %s", path)
 
 
 def _copy_sim_prompts_to_trials(task_dir: Path, trials_dir: Path):
