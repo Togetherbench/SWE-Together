@@ -3,7 +3,7 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
-## v0.4.1 — 2026-04-03
+## v0.5 — 2026-04-03
 
 **Three changes to improve user simulation realism and cross-harness fairness.**
 

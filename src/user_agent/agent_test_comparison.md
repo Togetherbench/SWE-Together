@@ -113,9 +113,9 @@ This is the most important difference for simulation realism.
   > terminal: +        if not should_dedupe: continue
 ```
 
-**Claude Code (before v0.4.1)** gave the raw tail of stream-json stdout — 3000 characters of mixed JSON containing thinking, tool calls, and results. Not human-readable.
+**Claude Code (before v0.5)** gave the raw tail of stream-json stdout — 3000 characters of mixed JSON containing thinking, tool calls, and results. Not human-readable.
 
-**Claude Code (v0.4.1+)** now parses stream-json into structured steps matching Terminus format:
+**Claude Code (v0.5+)** now parses stream-json into structured steps matching Terminus format:
 ```
 [1] thinking: Let me look at the last commit...
 [2] tool_call(Bash): git show fa99b4a --stat
@@ -198,9 +198,9 @@ The following remain structurally different — these are inherent to each harne
 
 ---
 
-## 4. Effect of Soft Message Guidance (v0.4.1)
+## 4. Effect of Soft Message Guidance (v0.5)
 
-In v0.4.1, we replaced the hard `max_messages` cap with a soft GT-based guidance range (`GT*0.5` – `GT*1.5`) injected into the user sim's system prompt. This section compares the same 12 experiment configurations before and after.
+In v0.5, we replaced the hard `max_messages` cap with a soft GT-based guidance range (`GT*0.5` – `GT*1.5`) injected into the user sim's system prompt. This section compares the same 12 experiment configurations before and after.
 
 ### 4.1 Message Counts: Hard Cap vs Soft Guidance
 
@@ -254,7 +254,7 @@ Progressive: inspect → clarify safety → direct action → review. GT-faithfu
 
 ## 5. Simulator vs Ground Truth Behavioral Consistency
 
-This section analyzes how faithfully the user simulator reproduces real user behavior across all 12 v0.4.1 experiments.
+This section analyzes how faithfully the user simulator reproduces real user behavior across all 12 v0.5 experiments.
 
 ### 5.1 sd-scripts-dedup-early-exit
 
@@ -336,7 +336,7 @@ This section analyzes how faithfully the user simulator reproduces real user beh
 
 ## 6. Raw Trial Index
 
-### v0.4.1 Runs (soft guidance, structured output)
+### v0.5 Runs (soft guidance, structured output)
 
 | Trial ID | Task | Harness | User model | Msgs | Sim calls | Reward |
 |----------|------|---------|-----------|------|-----------|--------|
@@ -353,7 +353,7 @@ This section analyzes how faithfully the user simulator reproduces real user beh
 | `Bp9oiCH` | openclaw | T2 | Gemini | 1 | 12 | 0.86 |
 | `7AjnXnX` | openclaw | T2 | Opus | 3 | 12 | 0.21 |
 
-### Earlier Runs (hard cap, pre-v0.4.1)
+### Earlier Runs (hard cap, pre-v0.5)
 
 | Trial ID | Task | Harness | User model | Msgs | Sim calls | Reward | Notes |
 |----------|------|---------|-----------|------|-----------|--------|-------|

@@ -148,7 +148,7 @@ Each task under `harbor_tasks/<name>/` contains:
 
 The user simulator (`src/user_agent/`) is an LLM that role-plays as the original human user. It watches the agent's terminal output and decides when to intervene.
 
-### Architecture (v0.4.1)
+### Architecture (v0.5)
 
 - **Multi-agent support** — `--agent-type` selects the coding agent backend:
   - `terminus` — in-process LLM agent; user sim injects messages directly into chat history
@@ -171,7 +171,7 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 | v0.3.0 | Conversation history + hard cap | 1.2% | 72.7% |
 | v0.3.1 | Fixed fallback_parse leak | **0%** | **72.7%** |
 | v0.4.0 | Multi-agent support (Claude Code, Codex) | — | — |
-| v0.4.1 | Structured output, soft guidance, repo config injection, session ID fix | — | — |
+| v0.5 | Structured output, soft guidance, repo config injection, session ID fix | — | — |
 
 See `src/user_agent/CHANGELOG.md` for full details.
 
