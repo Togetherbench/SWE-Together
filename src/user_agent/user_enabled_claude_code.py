@@ -230,35 +230,25 @@ class UserEnabledClaudeCode(BaseAgent):
         return steps
 
     def _snapshot_recent_output(self) -> str:
-        """Return a structured summary of agent activity within context budget.
+        """Return a structured summary of all agent activity.
 
         Parses Claude Code's stream-json output into structured steps (similar
-        to Terminus 2's trajectory format), then returns the tail that fits
-        within the context budget.
+        to Terminus 2's trajectory format) and returns all of them. No
+        truncation — the user sim should see the full picture, just like a
+        real user who has been watching the agent work.
         """
         if not self._cumulative_output:
             return "(nothing yet)"
 
-        # Parse the latest turn's raw output into structured steps
+        # Parse all turns' raw output into structured steps
         all_steps: list[str] = []
         for raw in self._cumulative_output:
             all_steps.extend(self._parse_stream_json(raw))
 
         if not all_steps:
-            # Fallback to raw tail if parsing yields nothing
-            full = "\n".join(self._cumulative_output)
-            return full[-self._ctx_budget:]
+            return "\n".join(self._cumulative_output)
 
-        # Walk backwards to fit within budget
-        lines: list[str] = []
-        chars = 0
-        for step in reversed(all_steps):
-            if chars + len(step) + 1 > self._ctx_budget and lines:
-                break
-            lines.append(step)
-            chars += len(step) + 1
-        lines.reverse()
-        return "\n".join(lines)
+        return "\n".join(all_steps)
 
     # ── user simulation ──────────────────────────────────────────────
 
@@ -269,7 +259,7 @@ class UserEnabledClaudeCode(BaseAgent):
         decision = await self._sim_user.process(
             task_description=self._task_instruction,
             recent_trajectory=self._snapshot_recent_output(),
-            latest_observation=observation[:self._ctx_budget],
+            latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
             is_completion_attempt=completing,
