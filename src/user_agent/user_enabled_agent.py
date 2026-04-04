@@ -15,6 +15,7 @@ from typing import Any
 from harbor.agents.terminus_2.terminus_2 import Terminus2, Command
 from harbor.llms.lite_llm import LiteLLM
 
+from .repo_config import discover_repo_config_files
 from .user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -68,6 +69,15 @@ class UserEnabledTerminus2(Terminus2):
         self._ctx_budget = max(500, user_context_chars)
         self._check_on_completion = call_user_on_completion
         self._task_instruction = ""
+
+    # ── instruction augmentation ────────────────────────────────────
+
+    async def run(self, instruction, environment, context):
+        """Override to inject repo config files into the instruction."""
+        config_content = await discover_repo_config_files(environment)
+        if config_content:
+            instruction = f"{instruction}\n\n{config_content}"
+        await super().run(instruction, environment, context)
 
     # ── trajectory snapshot ──────────────────────────────────────────
 
