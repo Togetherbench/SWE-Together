@@ -79,7 +79,16 @@ _PROVIDER_MAP = {
     "anthropic":   ("ANTHROPIC_API_KEY",   "ANTHROPIC_API_KEY"),
     "openrouter":  ("OPENROUTER_API_KEY",  "OPENROUTER_API_KEY"),
     "openai":      ("OPENAI_API_KEY",      "OPENAI_API_KEY"),
+    "chutes":      ("CHUTES_API_KEY",      "ANTHROPIC_API_KEY"),
 }
+
+# Proxy URLs for routing non-Anthropic models through Claude Code CLI.
+# Both expose Anthropic Messages API-compatible endpoints.
+#
+# Chutes: --model chutes/moonshotai/Kimi-K2.5-TEE
+# OpenRouter: --model openrouter/minimax/minimax-m2.7
+_CHUTES_BASE_URL = "https://claude.chutes.ai"
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 
 
 def resolve_model(model_arg: str) -> tuple[str, str, str]:
@@ -247,7 +256,13 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     user_model_arg = args.user_model or args.model
     user_model, user_key, _user_env_var = resolve_model(user_model_arg)
 
-    log.info("Action agent : %s", action_model)
+    # Detect proxy provider for Claude Code CLI env setup
+    action_provider = args.model.split("/", 1)[0] if "/" in args.model else None
+    is_chutes = action_provider == "chutes"
+    is_openrouter = action_provider == "openrouter"
+    proxy_label = " (via Chutes)" if is_chutes else " (via OpenRouter)" if is_openrouter else ""
+
+    log.info("Action agent : %s%s", action_model, proxy_label)
     log.info("User agent   : %s", user_model)
 
     trial_start = time.time()
@@ -322,13 +337,89 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     setup_timeout = getattr(args, 'setup_timeout', None)
 
+    # Build agent env: API key + optional proxy for non-Anthropic models.
+    # When using a proxy (Chutes/OpenRouter), Claude Code CLI needs:
+    #   ANTHROPIC_BASE_URL → proxy endpoint (Anthropic Messages API-compatible)
+    #   ANTHROPIC_AUTH_TOKEN + ANTHROPIC_API_KEY → both set to the proxy's API key
+    #   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC → prevent calls to api.anthropic.com
+    #   All model aliases → point to the selected model
+    # Ref: /home/alex/agentsmd-rl/scripts/run_agentmd_overnight.sh (Z.AI pattern)
+    agent_env = {action_env_var: action_key}
+
+    def _configure_proxy(base_url: str, key: str, model: str, label: str):
+        """Set Claude Code CLI env vars for an Anthropic API-compatible proxy.
+
+        Sets vars in both agent_env (passed to sandbox) AND os.environ (read by
+        Harbor's ClaudeCode.create_run_agent_commands() on the host side).
+        """
+        proxy_vars = {
+            "ANTHROPIC_BASE_URL": base_url,
+            "ANTHROPIC_AUTH_TOKEN": key,
+            "ANTHROPIC_API_KEY": key,
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+            "ANTHROPIC_SMALL_FAST_MODEL": model,
+            "CLAUDE_CODE_SUBAGENT_MODEL": model,
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+            "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+            "CLAUDE_CODE_SIMPLE": "1",  # --bare mode: disables context management beta header
+            "IS_SANDBOX": "1",
+            "API_TIMEOUT_MS": "6000000",
+        }
+        agent_env.update(proxy_vars)
+        # Also set on host so Harbor's ClaudeCode._setup_env() picks them up
+        os.environ.update(proxy_vars)
+        log.info("%s proxy: %s → model %s", label, base_url, model)
+
+    if is_chutes:
+        # Strip "chutes/" prefix — Claude Code sees just the model ID
+        action_model = action_model.split("/", 1)[1]
+        _configure_proxy(_CHUTES_BASE_URL, action_key, action_model, "Chutes")
+    elif is_openrouter:
+        # OpenRouter: use a local LiteLLM proxy inside the E2B sandbox.
+        # Claude Code sends Anthropic beta headers that OpenRouter rejects for
+        # non-Anthropic models. The proxy (with drop_params=true) strips them.
+        # Ref: agentsmd-rl/scripts/eval_models_overnight.sh
+        or_model = action_model.split("/", 1)[1]  # strip "openrouter/"
+        proxy_port = "4210"
+        # Tell Claude Code to connect to localhost proxy
+        proxy_vars = {
+            "ANTHROPIC_BASE_URL": f"http://localhost:{proxy_port}",
+            "ANTHROPIC_API_KEY": "sk-litellm-local",
+            "ANTHROPIC_AUTH_TOKEN": "sk-litellm-local",
+            "ANTHROPIC_MODEL": "claude-sonnet-4-6",  # proxy remaps this
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+            "API_TIMEOUT_MS": "6000000",
+            # These are read by UserEnabledClaudeCode.setup() to start the proxy
+            "LITELLM_PROXY_MODEL": or_model,
+            "LITELLM_PROXY_PORT": proxy_port,
+            "OPENROUTER_API_KEY": action_key,
+        }
+        agent_env.update(proxy_vars)
+        os.environ.update(proxy_vars)
+        # Keep action_model as a standard Claude name (proxy remaps it)
+        action_model = "claude-sonnet-4-6"
+        log.info("OpenRouter via LiteLLM proxy: localhost:%s → %s", proxy_port, or_model)
+
+    agent_timeout = getattr(args, 'agent_timeout', None)
+
     if agent_type in _USER_SIM_AGENT_TYPES:
         agent_config = AgentConfig(
             import_path=_USER_SIM_AGENT_TYPES[agent_type],
             model_name=action_model,
             override_setup_timeout_sec=setup_timeout,
+            override_timeout_sec=agent_timeout,
             kwargs=user_sim_kwargs,
-            env={action_env_var: action_key},
+            env=agent_env,
         )
     else:
         log.info("Using installed agent type: %s (user simulation not supported)", agent_type)
@@ -336,7 +427,8 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
             name=agent_type,
             model_name=action_model,
             override_setup_timeout_sec=setup_timeout,
-            env={action_env_var: action_key},
+            override_timeout_sec=agent_timeout,
+            env=agent_env,
         )
 
     env_type = getattr(args, 'env_type', None)
@@ -541,6 +633,9 @@ def main():
                         help="Environment type (default: docker). Use 'e2b' for cloud sandbox.")
     parser.add_argument("--setup-timeout", default=None, type=float,
                         help="Agent setup timeout in seconds (default: 360). Increase for slow E2B installs.")
+    parser.add_argument("--agent-timeout", default=None, type=float,
+                        help="Agent execution timeout in seconds (default: from task.toml, usually 1800). "
+                             "Increase for slower open-source models.")
     parser.add_argument("--trials-dir", default=None,
                         help="Directory for trial results")
     parser.add_argument("--keep",       action="store_true", default=None,
@@ -562,6 +657,7 @@ def main():
         agent_type            = cli.agent_type or cfg.get("agent_type", "terminus")
         env_type              = cli.env_type   or cfg.get("env_type")  # None = docker (default)
         setup_timeout         = cli.setup_timeout or cfg.get("setup_timeout")  # None = default (360s)
+        agent_timeout         = cli.agent_timeout or cfg.get("agent_timeout")  # None = from task.toml
         trials_dir            = cli.trials_dir or cfg.get("trials_dir", "trials")
         keep                  = cli.keep       or cfg.get("keep_container", False)
         user_context_chars    = cfg.get("user_context_chars",    3000)

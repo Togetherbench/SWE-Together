@@ -10,6 +10,7 @@ Multi-turn flow:
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,123 @@ class UserEnabledClaudeCode(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await self._inner.setup(environment)
+
+        # If using a non-Anthropic model via OpenRouter, start a minimal reverse
+        # proxy inside the sandbox that strips the anthropic-beta header (which
+        # contains context-management-2025-06-27 that OpenRouter rejects for
+        # non-Anthropic models). No dependencies needed — uses stdlib only.
+        proxy_model = os.environ.get("LITELLM_PROXY_MODEL")
+        if proxy_model:
+            proxy_port = os.environ.get("LITELLM_PROXY_PORT", "4210")
+            openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+            log.info("Starting header-strip proxy in sandbox: model=%s port=%s", proxy_model, proxy_port)
+
+            # Upload a minimal proxy script and start it
+            proxy_script = f'''#!/usr/bin/env python3
+"""Minimal reverse proxy: strips anthropic-beta header, forwards to OpenRouter."""
+import http.server, urllib.request, ssl, json, sys, threading
+
+TARGET = "https://openrouter.ai/api"
+PORT = {proxy_port}
+API_KEY = "{openrouter_key}"
+REMAP_MODEL = "{proxy_model}"
+
+class Proxy(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        # Rewrite model field to target OpenRouter model
+        if REMAP_MODEL:
+            try:
+                data = json.loads(body)
+                data["model"] = REMAP_MODEL
+                body = json.dumps(data).encode()
+            except (json.JSONDecodeError, KeyError):
+                pass
+        url = TARGET + self.path
+        headers = {{}}
+        for k, v in self.headers.items():
+            k_lower = k.lower()
+            if k_lower in ("host", "anthropic-beta", "content-length"):
+                continue
+            headers[k] = v
+        # Use OpenRouter auth
+        headers["Authorization"] = f"Bearer {{API_KEY}}"
+        headers["HTTP-Referer"] = "https://togetherbench.com"
+        headers["X-Title"] = "togetherbench-eval"
+        if "x-api-key" in headers:
+            del headers["x-api-key"]
+        if "X-Api-Key" in headers:
+            del headers["X-Api-Key"]
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        ctx = ssl.create_default_context()
+        try:
+            with urllib.request.urlopen(req, context=ctx) as resp:
+                resp_body = resp.read()
+                self.send_response(resp.status)
+                for k, v in resp.getheaders():
+                    if k.lower() not in ("transfer-encoding", "content-encoding"):
+                        self.send_header(k, v)
+                self.send_header("Content-Length", str(len(resp_body)))
+                self.end_headers()
+                self.wfile.write(resp_body)
+        except urllib.error.HTTPError as e:
+            resp_body = e.read()
+            self.send_response(e.code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(resp_body)))
+            self.end_headers()
+            self.wfile.write(resp_body)
+        except Exception as e:
+            err = json.dumps({{"error": {{"message": str(e), "type": "proxy_error"}}}}).encode()
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            body = b'{{"status":"ok"}}'
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, format, *args):
+        pass  # suppress logs
+
+server = http.server.HTTPServer(("0.0.0.0", PORT), Proxy)
+print(f"Proxy listening on port {{PORT}}")
+server.serve_forever()
+'''
+            from pathlib import Path
+            proxy_path = self.logs_dir / "openrouter_proxy.py"
+            proxy_path.write_text(proxy_script)
+
+            await environment.upload_file(
+                source_path=proxy_path,
+                target_path="/tmp/openrouter_proxy.py",
+            )
+
+            # Start proxy in background and wait for health
+            setup_cmd = (
+                f"nohup python3 /tmp/openrouter_proxy.py > /tmp/proxy.log 2>&1 & "
+                f"for i in $(seq 1 15); do "
+                f"  sleep 1; "
+                f"  curl -s http://localhost:{proxy_port}/health > /dev/null 2>&1 && "
+                f"  echo 'Proxy ready on port {proxy_port}' && exit 0; "
+                f"done; "
+                f"echo 'WARNING: proxy not healthy after 15s' >&2; "
+                f"cat /tmp/proxy.log >&2; exit 1"
+            )
+            result = await environment.exec(command=setup_cmd)
+            if result.return_code != 0:
+                log.warning("Proxy start failed: %s", result.stderr or result.stdout)
+            else:
+                log.info("Header-strip proxy started successfully")
 
     # ── session ID extraction ────────────────────────────────────────
 

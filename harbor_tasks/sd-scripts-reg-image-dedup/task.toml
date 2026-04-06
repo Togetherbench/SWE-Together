@@ -14,7 +14,7 @@ timeout_sec = 120.0
 
 [agent]
 timeout_sec = 1800.0
-allow_internet = false
+allow_internet = true
 
 [environment]
 docker_image = "harbor-sd-scripts-refactor-ses_38"

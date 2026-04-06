@@ -14,7 +14,7 @@ timeout_sec = 180.0
 
 [agent]
 timeout_sec = 1200.0
-allow_internet = false
+allow_internet = true
 
 [environment]
 build_timeout_sec = 900.0
