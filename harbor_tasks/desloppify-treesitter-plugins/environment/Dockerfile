@@ -29,9 +29,11 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 #   - No langs command
 #   - No test_generic_plugin.py
 # The agent must implement all of these from the instruction plan.
-RUN git clone https://github.com/peteromallet/desloppify.git /workspace/desloppify && \
+RUN git init /workspace/desloppify && \
     cd /workspace/desloppify && \
-    git checkout 295d32158be25d8424bc397e4cd43cbf498eb956
+    git remote add origin https://github.com/peteromallet/desloppify.git && \
+    git fetch --depth=1 origin 295d32158be25d8424bc397e4cd43cbf498eb956 && \
+    git checkout FETCH_HEAD
 
 # Install the project and its dependencies with pinned versions
 RUN cd /workspace/desloppify && \

@@ -26,9 +26,11 @@ RUN mkdir -p /workspace /logs/verifier
 #   - TimelineModeContent.tsx exists as a pure pass-through of 65 props
 #   - Timeline.tsx has dead props: hookData, pairPrompts, enhancedPrompts, EMPTY_ENHANCED_PROMPTS
 #   - ShotImagesEditor.tsx routes through TimelineModeContent to reach Timeline
-RUN git clone https://github.com/banodoco/reigh.git /workspace/reigh && \
+RUN git init /workspace/reigh && \
     cd /workspace/reigh && \
-    git checkout 65e12652c1b36264a9db20a5745e5861df669de1
+    git remote add origin https://github.com/banodoco/reigh.git && \
+    git fetch --depth=1 origin 65e12652c1b36264a9db20a5745e5861df669de1 && \
+    git checkout FETCH_HEAD
 
 # Install project dependencies (needed for TypeScript compilation checks)
 # Uses package-lock.json for reproducible installs

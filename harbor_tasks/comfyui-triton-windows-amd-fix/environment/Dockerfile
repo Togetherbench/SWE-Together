@@ -26,9 +26,11 @@ WORKDIR /workspace
 # with the buggy k_scale pointer mutation pattern that causes an
 # "operation destroyed but still has uses" LLVM error on AMD GPU (Windows).
 # The fix has never been applied to main; agent must fix the Python code.
-RUN git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git /workspace/ComfyUI-WanVideoWrapper && \
+RUN git init /workspace/ComfyUI-WanVideoWrapper && \
     cd /workspace/ComfyUI-WanVideoWrapper && \
-    git checkout b06c7d2d6d9bda2cdb6f61e1476f4db37d309f17
+    git remote add origin https://github.com/kijai/ComfyUI-WanVideoWrapper.git && \
+    git fetch --depth=1 origin b06c7d2d6d9bda2cdb6f61e1476f4db37d309f17 && \
+    git checkout FETCH_HEAD
 
 # Set up Python virtual environment
 RUN python3 -m venv /workspace/venv

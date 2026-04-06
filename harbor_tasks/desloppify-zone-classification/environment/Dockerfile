@@ -22,9 +22,11 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 # was added. This commit has narrative bug fixes but no zone infrastructure.
 # The zone classification system (zones.py, zone_cmd.py, lang integration,
 # CLI wiring, scoring integration) was added in f96b6cd0.
-RUN git clone https://github.com/peteromallet/desloppify.git /workspace/desloppify && \
+RUN git init /workspace/desloppify && \
     cd /workspace/desloppify && \
-    git checkout eba4ad1cc33f6a6e94588c8ac3ee69450c603db4
+    git remote add origin https://github.com/peteromallet/desloppify.git && \
+    git fetch --depth=1 origin eba4ad1cc33f6a6e94588c8ac3ee69450c603db4 && \
+    git checkout FETCH_HEAD
 
 # Install the project and its dependencies
 RUN cd /workspace/desloppify && \

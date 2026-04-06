@@ -19,9 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Clone the repo at the initial release commit — before any tests were committed
 # (tests/ directory was included in cda7e501 but we remove it below to synthesize
 # the pre-test baseline state the session started from)
-RUN git clone https://github.com/banodoco/dataclaw.git /workspace/dataclaw && \
+RUN git init /workspace/dataclaw && \
     cd /workspace/dataclaw && \
-    git checkout cda7e501452c450a7a8f4cb63b324e32a14247ce
+    git remote add origin https://github.com/banodoco/dataclaw.git && \
+    git fetch --depth=1 origin cda7e501452c450a7a8f4cb63b324e32a14247ce && \
+    git checkout FETCH_HEAD
 
 # Synthesize the buggy/incomplete state: remove the tests directory
 # The session task is to write these tests from scratch

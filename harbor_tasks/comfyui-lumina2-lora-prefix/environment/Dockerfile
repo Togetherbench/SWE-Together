@@ -25,9 +25,11 @@ WORKDIR /workspace
 # and lycoris_ entries — but is MISSING the base_model.model. prefix mapping.
 # The agent must add: key_map["base_model.model.{}".format(key_lora)] = to
 # to the Lumina2 block in comfy/lora.py.
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI && \
+RUN git init /workspace/ComfyUI && \
     cd /workspace/ComfyUI && \
-    git checkout 8e889c535d1fc407bf27dbf8359eef9580f2ed60
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
+    git fetch --depth=1 origin 8e889c535d1fc407bf27dbf8359eef9580f2ed60 && \
+    git checkout FETCH_HEAD
 
 # Generic commit message to avoid leaking synthesis context
 RUN cd /workspace/ComfyUI && \

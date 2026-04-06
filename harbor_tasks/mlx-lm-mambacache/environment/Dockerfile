@@ -21,9 +21,11 @@ WORKDIR /workspace
 # Clone mlx-lm at commit 298b67c (last main commit before PR #739).
 # At this commit, ArraysCache/MambaCache lack merge/extract/prepare/finalize,
 # CacheList lacks merge/extract, and _merge_caches() only handles KVCache/RotatingKVCache.
-RUN git clone https://github.com/ml-explore/mlx-lm.git /workspace/mlx-lm && \
+RUN git init /workspace/mlx-lm && \
     cd /workspace/mlx-lm && \
-    git checkout 298b67c755f4dc0fd47b0d1baa591607798d384d
+    git remote add origin https://github.com/ml-explore/mlx-lm.git && \
+    git fetch --depth=1 origin 298b67c755f4dc0fd47b0d1baa591607798d384d && \
+    git checkout FETCH_HEAD
 
 # Install mlx-lm in editable mode (CPU-only -- no Metal/GPU needed for structural tests)
 RUN cd /workspace/mlx-lm && \

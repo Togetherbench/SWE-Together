@@ -19,10 +19,11 @@ RUN git config --global user.email "agent@harbor.test" && \
     git config --global user.name "Harbor Agent"
 
 # Clone VibeComfy at the base commit (head of PR #1 before session changes)
-RUN git clone https://github.com/peteromallet/VibeComfy.git /workspace/VibeComfy && \
+RUN git init /workspace/VibeComfy && \
     cd /workspace/VibeComfy && \
-    git fetch origin refs/pull/1/head && \
-    git checkout eba7a29aae86be3af23739618bd2504e5bf77af7 && \
+    git remote add origin https://github.com/peteromallet/VibeComfy.git && \
+    git fetch --depth=1 origin eba7a29aae86be3af23739618bd2504e5bf77af7 && \
+    git checkout FETCH_HEAD && \
     git checkout -b workspace
 
 # Install Python dependencies

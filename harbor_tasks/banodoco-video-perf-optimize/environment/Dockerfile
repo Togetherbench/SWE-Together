@@ -27,9 +27,11 @@ WORKDIR /workspace
 # - ModelTrends.tsx starts with visibleCount=data.length (all data visible, no animation)
 # - ModelTrends.tsx has constant STEP_MS=180 (no ease-out)
 # - ModelTrends.tsx has no IntersectionObserver auto-play (requires manual Play click)
-RUN git clone https://github.com/xliry/banodoco-wrapped.git /workspace/banodoco-wrapped && \
+RUN git init /workspace/banodoco-wrapped && \
     cd /workspace/banodoco-wrapped && \
-    git checkout 13a06f8
+    git remote add origin https://github.com/xliry/banodoco-wrapped.git && \
+    git fetch --depth=1 origin 13a06f8d91c6eece10bf42c4218c4fe6fa83636b && \
+    git checkout FETCH_HEAD
 
 # Install npm dependencies (includes typescript, tsx, vite, recharts, framer-motion)
 RUN cd /workspace/banodoco-wrapped && npm install

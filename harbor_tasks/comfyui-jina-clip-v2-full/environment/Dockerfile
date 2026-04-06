@@ -26,9 +26,11 @@ WORKDIR /workspace
 # the Jina CLIP v2 implementation was added (PR #11415, merged Dec 20 2025).
 # comfy/text_encoders/jina_clip_2.py does not exist at this commit.
 # The agent must implement it from scratch following ComfyUI idioms.
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI && \
+RUN git init /workspace/ComfyUI && \
     cd /workspace/ComfyUI && \
-    git checkout 31e961736a476851e2579d5d9202ed4177a71720
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
+    git fetch --depth=1 origin 31e961736a476851e2579d5d9202ed4177a71720 && \
+    git checkout FETCH_HEAD
 
 # Set up Python virtual environment
 RUN python3 -m venv /workspace/venv

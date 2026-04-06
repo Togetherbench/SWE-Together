@@ -26,9 +26,11 @@ WORKDIR /workspace
 
 # Clone sd-scripts at commit e21a773 (Support Anima model — the commit just before
 # the user's local multi-resolution SD1/SDXL commit that starts this session).
-RUN git clone https://github.com/kohya-ss/sd-scripts.git /workspace/sd-scripts && \
+RUN git init /workspace/sd-scripts && \
     cd /workspace/sd-scripts && \
-    git checkout e21a7736f8fdd2477836edf254105518beb9790e
+    git remote add origin https://github.com/kohya-ss/sd-scripts.git && \
+    git fetch --depth=1 origin e21a7736f8fdd2477836edf254105518beb9790e && \
+    git checkout FETCH_HEAD
 
 # Install CPU-only PyTorch and torchvision
 RUN pip3 install --no-cache-dir --break-system-packages \

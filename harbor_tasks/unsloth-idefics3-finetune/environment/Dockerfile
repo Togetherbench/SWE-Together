@@ -14,9 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Clone the unsloth repo at commit 8f0b57ae (2026-02-02)
 # "Use standard gradient checkpointing for small sequence lengths (#3867)"
 # This is the last commit before the session on 2026-02-03.
-RUN git clone https://github.com/unslothai/unsloth.git /workspace/unsloth && \
+RUN git init /workspace/unsloth && \
     cd /workspace/unsloth && \
-    git checkout 8f0b57ae18b153c8ef0eff26cc1ac0906af3a73f
+    git remote add origin https://github.com/unslothai/unsloth.git && \
+    git fetch --depth=1 origin 8f0b57ae18b153c8ef0eff26cc1ac0906af3a73f && \
+    git checkout FETCH_HEAD
 
 # Install CPU-only PyTorch (no CUDA needed for structural verification)
 RUN pip install --no-cache-dir \

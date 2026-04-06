@@ -26,9 +26,11 @@ WORKDIR /workspace
 # This is AFTER fp8_scaled was added for HunyuanImage but BEFORE it was added for Lumina.
 # The agent must implement fp8_scaled support for the Lumina model,
 # matching the pattern used in library/hunyuan_image_models.py.
-RUN git clone https://github.com/kohya-ss/sd-scripts.git /workspace/sd-scripts && \
+RUN git init /workspace/sd-scripts && \
     cd /workspace/sd-scripts && \
-    git checkout a5a162044ca9
+    git remote add origin https://github.com/kohya-ss/sd-scripts.git && \
+    git fetch --depth=1 origin a5a162044ca953faabdb07742b4b8925f26096ce && \
+    git checkout FETCH_HEAD
 
 # Set up Python virtual environment
 RUN python3 -m venv /workspace/venv

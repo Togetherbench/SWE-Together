@@ -29,9 +29,11 @@ RUN npm install -g tsx@4 typescript@5
 # This is BEFORE the prompt-injection security module was added (session started 2026-02-01T18:55).
 # The session creates: src/security/risk-tiers.ts, pattern-check.ts, risk-classifier.ts,
 # reviewer.ts, decision-flow.ts, index.ts, gateway-integration.ts, audit-log.ts, approval-manager.ts
-RUN git clone https://github.com/OpenClaw/OpenClaw.git /workspace/openclaw && \
+RUN git init /workspace/openclaw && \
     cd /workspace/openclaw && \
-    git checkout 17287bc8d01b12a293e0452a76b1c117dd1e42c1
+    git remote add origin https://github.com/OpenClaw/OpenClaw.git && \
+    git fetch --depth=1 origin 17287bc8d01b12a293e0452a76b1c117dd1e42c1 && \
+    git checkout FETCH_HEAD
 
 # Configure git for agent use (generic message to avoid hinting at synthesis strategy)
 RUN git config --global user.email "agent@test.com" && \

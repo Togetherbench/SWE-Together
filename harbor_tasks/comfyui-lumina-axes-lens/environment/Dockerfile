@@ -26,9 +26,11 @@ WORKDIR /workspace
 # This is the state where comfy/ldm/lumina/model.py stores self.axes_lens in NextDiT but
 # passes only axes_dims (NOT axes_lens) to EmbedND, effectively ignoring axes_lens in RoPE.
 # The agent must implement axes_lens support by creating a LuminaEmbedND class or equivalent.
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI && \
+RUN git init /workspace/ComfyUI && \
     cd /workspace/ComfyUI && \
-    git checkout da2bfb5b0af26c7a1c44ec951dbd0fffe413c793
+    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
+    git fetch --depth=1 origin da2bfb5b0af26c7a1c44ec951dbd0fffe413c793 && \
+    git checkout FETCH_HEAD
 
 # Set up Python virtual environment
 RUN python3 -m venv /workspace/venv
