@@ -57,4 +57,8 @@ RUN mkdir -p /logs/verifier
 # Set PYTHONPATH so dataclaw is importable
 ENV PYTHONPATH="/workspace/dataclaw"
 
+# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
+
 WORKDIR /workspace/dataclaw

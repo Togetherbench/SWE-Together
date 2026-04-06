@@ -79,4 +79,8 @@ RUN curl -fsSL -o /tmp/libevent.deb \
     dpkg -i /tmp/libevent.deb /tmp/libutempter.deb /tmp/tmux.deb && \
     rm /tmp/libevent.deb /tmp/libutempter.deb /tmp/tmux.deb
 
+# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
+
 WORKDIR /workspace/ComfyUI

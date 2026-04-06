@@ -46,4 +46,8 @@ RUN cd /workspace/reigh && \
     git add -A && \
     git commit --allow-empty -m "initial workspace state"
 
+# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
+
 WORKDIR /workspace/reigh

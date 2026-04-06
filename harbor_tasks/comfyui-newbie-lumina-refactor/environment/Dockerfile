@@ -83,4 +83,8 @@ RUN cd /workspace/ComfyUI && \
     git commit -m "initial workspace state" && \
     git checkout -b newbie
 
+# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
+
 WORKDIR /workspace/ComfyUI

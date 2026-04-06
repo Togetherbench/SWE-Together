@@ -58,4 +58,8 @@ RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent" && \
     cd /workspace && git add -A && git commit -m "initial workspace state"
 
+# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:$PATH"
+
 WORKDIR /workspace

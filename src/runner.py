@@ -41,6 +41,7 @@ HARBOR_SRC = HARBOR_ROOT / "src"
 sys.path.insert(0, str(HARBOR_SRC))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from harbor.models.environment_type import EnvironmentType
 from harbor.models.trial.config import (
     AgentConfig,
     EnvironmentConfig,
@@ -319,10 +320,13 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         "call_user_on_completion": args.call_user_on_completion,
     }
 
+    setup_timeout = getattr(args, 'setup_timeout', None)
+
     if agent_type in _USER_SIM_AGENT_TYPES:
         agent_config = AgentConfig(
             import_path=_USER_SIM_AGENT_TYPES[agent_type],
             model_name=action_model,
+            override_setup_timeout_sec=setup_timeout,
             kwargs=user_sim_kwargs,
             env={action_env_var: action_key},
         )
@@ -331,16 +335,20 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         agent_config = AgentConfig(
             name=agent_type,
             model_name=action_model,
+            override_setup_timeout_sec=setup_timeout,
             env={action_env_var: action_key},
         )
+
+    env_type = getattr(args, 'env_type', None)
+    env_kwargs: dict = {"delete": not args.keep}
+    if env_type:
+        env_kwargs["type"] = EnvironmentType(env_type)
 
     trial_config = TrialConfig(
         task=TaskConfig(path=task_dir),
         trials_dir=Path(args.trials_dir),
         agent=agent_config,
-        environment=EnvironmentConfig(
-            delete=not args.keep,
-        ),
+        environment=EnvironmentConfig(**env_kwargs),
     )
 
     trial = Trial(config=trial_config)
@@ -528,10 +536,15 @@ def main():
                              "'claude-code' uses Claude Code CLI with user sim via --resume. "
                              "'codex' uses Codex CLI with user sim via sequential re-runs. "
                              "Others use Harbor's installed CLI agents (no user sim).")
+    parser.add_argument("--env-type",   default=None,
+                        choices=["docker", "e2b", "daytona", "modal", "gke"],
+                        help="Environment type (default: docker). Use 'e2b' for cloud sandbox.")
+    parser.add_argument("--setup-timeout", default=None, type=float,
+                        help="Agent setup timeout in seconds (default: 360). Increase for slow E2B installs.")
     parser.add_argument("--trials-dir", default=None,
                         help="Directory for trial results")
     parser.add_argument("--keep",       action="store_true", default=None,
-                        help="Keep docker container after run")
+                        help="Keep container after run")
     cli = parser.parse_args()
 
     # Load config file first, then overlay CLI args (CLI wins)
@@ -547,6 +560,8 @@ def main():
         model                 = cli.model      or cfg.get("model",      "gemini/gemini-3.1-pro-preview")
         user_model            = cli.user_model or cfg.get("user_model") or cfg.get("model") or "gemini/gemini-3.1-pro-preview"
         agent_type            = cli.agent_type or cfg.get("agent_type", "terminus")
+        env_type              = cli.env_type   or cfg.get("env_type")  # None = docker (default)
+        setup_timeout         = cli.setup_timeout or cfg.get("setup_timeout")  # None = default (360s)
         trials_dir            = cli.trials_dir or cfg.get("trials_dir", "trials")
         keep                  = cli.keep       or cfg.get("keep_container", False)
         user_context_chars    = cfg.get("user_context_chars",    3000)
