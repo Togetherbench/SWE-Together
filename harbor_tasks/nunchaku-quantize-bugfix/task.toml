@@ -16,7 +16,6 @@ timeout_sec = 120.0
 timeout_sec = 900.0
 
 [environment]
-docker_image = "harbor-nunchaku-implement-a136a8"
 build_timeout_sec = 600.0
 cpus = 1
 memory = "4G"
