@@ -286,6 +286,59 @@ def build_trial_config(
     )
 
 
+def _sanitize_and_upload(trials_dir: Path):
+    """Sanitize traces (strip API keys) and upload to Railway S3."""
+    import subprocess as _sp
+
+    scripts_dir = REPO_ROOT / "scripts"
+    sanitize_script = scripts_dir / "sanitize_traces.py"
+    upload_script = scripts_dir / "upload_traces.py"
+    python_bin = str(REPO_ROOT / ".venv" / "bin" / "python3")
+
+    # Check for bucket credentials
+    bucket = os.environ.get("BUCKET_NAME", "")
+    if not bucket:
+        log.info("Skipping trace upload: BUCKET_NAME not set")
+        return
+
+    # Sanitize
+    if sanitize_script.exists():
+        log.info("Sanitizing traces...")
+        _sp.run([python_bin, str(sanitize_script)], cwd=str(REPO_ROOT), timeout=120, check=False)
+
+    # Upload — the existing script only checks trials/, so we upload manually
+    endpoint = os.environ.get("BUCKET_ENDPOINT", "")
+    access_key = os.environ.get("BUCKET_ACCESS_KEY", "")
+    secret_key = os.environ.get("BUCKET_SECRET_KEY", "")
+    if not all([endpoint, access_key, secret_key]):
+        log.info("Skipping trace upload: missing BUCKET_* env vars")
+        return
+
+    log.info("Uploading traces from %s to S3...", trials_dir)
+    try:
+        import boto3
+        s3 = boto3.client("s3", endpoint_url=endpoint,
+                          aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+        uploaded = 0
+        skipped = 0
+        for path in sorted(trials_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            key = str(path)
+            try:
+                head = s3.head_object(Bucket=bucket, Key=key)
+                if head["ContentLength"] == path.stat().st_size:
+                    skipped += 1
+                    continue
+            except Exception:
+                pass
+            s3.upload_file(str(path), bucket, key)
+            uploaded += 1
+        log.info("Traces uploaded: %d new, %d skipped", uploaded, skipped)
+    except Exception as e:
+        log.warning("Trace upload failed (non-fatal): %s", e)
+
+
 async def main():
     parser = argparse.ArgumentParser(
         description="In-process batch eval using Harbor's LocalOrchestrator",
@@ -450,19 +503,50 @@ async def main():
         print(f"Avg reward: {sum(rewards)/len(rewards):.3f}")
         print(f"Min/Max:    {min(rewards):.3f} / {max(rewards):.3f}")
 
-    print(f"\n{'Task':<45} {'Reward':>7} {'Status':<10}")
-    print("-" * 70)
     def _extract_reward(r):
         if r.verifier_result and r.verifier_result.rewards is not None:
             rv = r.verifier_result.rewards
             return rv.get("reward", 0.0) if isinstance(rv, dict) else float(rv)
         return None
 
+    def _count_user_interventions(trial_name: str) -> tuple[int, list[str]]:
+        """Count user interventions from episode user_decision.json files."""
+        trial_dir = trials_dir / trial_name / "agent"
+        if not trial_dir.exists():
+            return 0, []
+        actions = []
+        for ep_dir in sorted(trial_dir.iterdir()):
+            decision_file = ep_dir / "user_decision.json"
+            if decision_file.exists():
+                try:
+                    d = json.loads(decision_file.read_text())
+                    if d.get("has_message"):
+                        actions.append(d.get("action", "message"))
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        return len(actions), actions
+
+    # Build per-result stats
+    result_stats = []
     for r in sorted(results, key=lambda x: x.task_name):
         rv = _extract_reward(r)
-        reward = f"{rv:.2f}" if rv is not None else "?"
-        status = "error" if r.exception_info else "done"
-        print(f"{r.task_name:<45} {reward:>7} {status:<10}")
+        interventions, actions = _count_user_interventions(r.trial_name)
+        result_stats.append({
+            "task": r.task_name,
+            "trial": r.trial_name,
+            "reward": rv,
+            "interventions": interventions,
+            "actions": actions,
+            "error": r.exception_info.exception_type if r.exception_info else None,
+        })
+
+    print(f"\n{'Task':<40} {'Reward':>7} {'Turns':>5} {'Actions':<20} {'Status':<8}")
+    print("-" * 85)
+    for s in result_stats:
+        reward = f"{s['reward']:.2f}" if s['reward'] is not None else "?"
+        actions_str = ", ".join(s["actions"]) if s["actions"] else "-"
+        status = "error" if s["error"] else "done"
+        print(f"{s['task']:<40} {reward:>7} {s['interventions']:>5} {actions_str:<20} {status:<8}")
 
     # Write summary JSON
     summary_dir = REPO_ROOT / "pipeline_logs"
@@ -477,17 +561,13 @@ async def main():
         "total": len(results),
         "scored": len(rewards),
         "avg_reward": sum(rewards) / len(rewards) if rewards else None,
-        "results": [
-            {
-                "task": r.task_name,
-                "reward": _extract_reward(r),
-                "error": r.exception_info.exception_type if r.exception_info else None,
-            }
-            for r in results
-        ],
+        "results": result_stats,
     }
     summary_path.write_text(json.dumps(summary_data, indent=2))
     log.info("Summary written to %s", summary_path)
+
+    # Post-run: sanitize and upload traces
+    _sanitize_and_upload(trials_dir)
 
 
 if __name__ == "__main__":
