@@ -377,12 +377,15 @@ async def main():
 
     # Run via Harbor's LocalOrchestrator
     start = time.time()
-    # Retry on E2B sandbox rate limits (429) with exponential backoff
+    # Retry on E2B sandbox rate limits (429) with exponential backoff.
+    # Retries happen INSIDE the semaphore — a retrying trial holds its
+    # concurrency slot, so total E2B pressure stays ≤ n_concurrent_trials.
+    # Backoff: 30s → 60s → 120s → 240s → 300s (capped) ≈ 12 min total window.
     retry_config = RetryConfig(
         max_retries=5,
         include_exceptions=["SandboxException"],
-        min_wait_sec=10.0,
-        max_wait_sec=120.0,
+        min_wait_sec=30.0,
+        max_wait_sec=300.0,
         wait_multiplier=2.0,
     )
     orchestrator = LocalOrchestrator(
