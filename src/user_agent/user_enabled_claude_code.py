@@ -28,6 +28,7 @@ from .user_agent import UserAgent, UserDecision
 log = logging.getLogger(__name__)
 
 _MAX_RESUME_TURNS = 15
+_MAX_CONSECUTIVE_NOOPS = 2  # allow agent to continue N times without user input before stopping
 
 
 class UserEnabledClaudeCode(BaseAgent):
@@ -551,6 +552,7 @@ server.serve_forever()
 
         log.info("Claude Code session ID: %s", session_id)
 
+        consecutive_noops = 0
         for turn in range(1, _MAX_RESUME_TURNS + 1):
             observation = self._snapshot_recent_output()
 
@@ -560,11 +562,20 @@ server.serve_forever()
             )
 
             if not decision.has_message:
-                log.info("User sim silent at turn %d — ending", turn)
-                break
+                consecutive_noops += 1
+                if consecutive_noops >= _MAX_CONSECUTIVE_NOOPS:
+                    log.info("User sim silent %d consecutive times at turn %d — ending",
+                             consecutive_noops, turn)
+                    break
+                # No-op means "let the agent keep working" — resume without
+                # user input so the agent can continue where it left off.
+                log.info("User sim no-op at turn %d (streak %d/%d) — resuming agent",
+                         turn, consecutive_noops, _MAX_CONSECUTIVE_NOOPS)
+                user_msg = "continue"
+            else:
+                consecutive_noops = 0
+                user_msg = decision.format_for_injection()
 
-            # Resume with user message
-            user_msg = decision.format_for_injection()
             log.info("Resuming claude-code session with user message (turn %d)", turn)
 
             resume_commands = self._build_resume_command(session_id, user_msg)
