@@ -345,7 +345,7 @@ async def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", required=True, help="Action agent model (e.g., anthropic/claude-opus-4-6)")
-    parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview", help="User sim model")
+    parser.add_argument("--user-model", default="openrouter/google/gemini-3.1-pro-preview", help="User sim model")
     parser.add_argument("--tag", required=True, help="Short tag for this run")
     parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
     parser.add_argument("--env-type", default=None, help="Environment: docker, e2b, etc.")
