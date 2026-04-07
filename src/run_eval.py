@@ -46,7 +46,7 @@ sys.path.insert(0, str(REPO_ROOT / "external" / "harbor" / "src"))
 from harbor.environments.base import EnvironmentType
 from harbor.models.job.config import EnvironmentConfig
 from harbor.models.trial.config import AgentConfig, TaskConfig, TrialConfig
-from harbor.orchestrators.local import LocalOrchestrator
+from harbor.orchestrators.local import LocalOrchestrator, RetryConfig
 
 # Import shared utilities from runner.py
 from runner import (
@@ -91,12 +91,20 @@ def get_all_tasks() -> list[str]:
 
 
 def is_task_completed(task_name: str, trials_dir: Path) -> bool:
+    """Check if a task has a successful trial (result.json with a real reward)."""
     if not trials_dir.exists():
         return False
     for d in trials_dir.iterdir():
         if d.is_dir() and d.name.startswith(task_name + "__"):
-            if (d / "result.json").exists():
-                return True
+            result_path = d / "result.json"
+            if result_path.exists():
+                try:
+                    result = json.loads(result_path.read_text())
+                    vr = result.get("verifier_result")
+                    if vr and vr.get("rewards"):
+                        return True
+                except (json.JSONDecodeError, KeyError):
+                    pass
     return False
 
 
@@ -369,11 +377,20 @@ async def main():
 
     # Run via Harbor's LocalOrchestrator
     start = time.time()
+    # Retry on E2B sandbox rate limits (429) with exponential backoff
+    retry_config = RetryConfig(
+        max_retries=5,
+        include_exceptions=["SandboxException"],
+        min_wait_sec=10.0,
+        max_wait_sec=120.0,
+        wait_multiplier=2.0,
+    )
     orchestrator = LocalOrchestrator(
         trial_configs=trial_configs,
         n_concurrent_trials=args.workers,
         metrics={},
         quiet=True,
+        retry_config=retry_config,
     )
     results = await orchestrator.run()
     elapsed = time.time() - start
