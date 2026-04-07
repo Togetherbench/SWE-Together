@@ -324,7 +324,9 @@ def _sanitize_and_upload(trials_dir: Path):
         for path in sorted(trials_dir.rglob("*")):
             if path.is_dir():
                 continue
-            key = str(path)
+            # Always upload under trials/ prefix so the viewer can find them
+            relative = path.relative_to(trials_dir)
+            key = f"trials/{relative}"
             try:
                 head = s3.head_object(Bucket=bucket, Key=key)
                 if head["ContentLength"] == path.stat().st_size:
