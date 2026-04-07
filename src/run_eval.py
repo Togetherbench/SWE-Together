@@ -405,12 +405,11 @@ async def main():
             return rv.get("reward", 0.0) if isinstance(rv, dict) else float(rv)
         return None
 
-    for r in sorted(results, key=lambda x: x.trial_config.task.path.name):
-        task_name = r.trial_config.task.path.name
+    for r in sorted(results, key=lambda x: x.task_name):
         rv = _extract_reward(r)
         reward = f"{rv:.2f}" if rv is not None else "?"
         status = "error" if r.exception_info else "done"
-        print(f"{task_name:<45} {reward:>7} {status:<10}")
+        print(f"{r.task_name:<45} {reward:>7} {status:<10}")
 
     # Write summary JSON
     summary_dir = REPO_ROOT / "pipeline_logs"
@@ -427,7 +426,7 @@ async def main():
         "avg_reward": sum(rewards) / len(rewards) if rewards else None,
         "results": [
             {
-                "task": r.trial_config.task.path.name,
+                "task": r.task_name,
                 "reward": _extract_reward(r),
                 "error": r.exception_info.exception_type if r.exception_info else None,
             }
