@@ -294,7 +294,7 @@ async def main():
     parser.add_argument("--model", required=True, help="Action agent model (e.g., anthropic/claude-opus-4-6)")
     parser.add_argument("--user-model", default="anthropic/claude-opus-4-6", help="User sim model")
     parser.add_argument("--tag", required=True, help="Short tag for this run")
-    parser.add_argument("--workers", type=int, default=25, help="Max concurrent trials (default: 25)")
+    parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
     parser.add_argument("--env-type", default=None, help="Environment: docker, e2b, etc.")
     parser.add_argument("--agent-timeout", type=int, default=None, help="Agent timeout in seconds")
     parser.add_argument("--trials-dir", default=None, help="Trials directory (default: trials/)")
@@ -333,9 +333,19 @@ async def main():
         task_names = [t for t in task_names if not is_task_completed(t, trials_dir)]
         log.info("Skip existing: %d → %d tasks", before, len(task_names))
 
+    # Reproducibility metadata
+    import subprocess as _sp
+    git_sha = _sp.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=str(REPO_ROOT)).stdout.strip()
+    git_tag = _sp.run(["git", "describe", "--tags", "--exact-match"], capture_output=True, text=True, cwd=str(REPO_ROOT)).stdout.strip() or "untagged"
+    git_dirty = "clean" if _sp.run(["git", "diff", "--quiet"], cwd=str(REPO_ROOT)).returncode == 0 else "dirty"
+    from datetime import datetime
+    started_at = datetime.now().isoformat()
+
     print(f"\n{'='*70}")
     print(f"In-Process Eval (Harbor LocalOrchestrator)")
     print(f"{'='*70}")
+    print(f"Git:       {git_sha[:12]} ({git_tag}) tree={git_dirty}")
+    print(f"Started:   {started_at}")
     print(f"Model:     {args.model}")
     print(f"User sim:  {args.user_model}")
     print(f"Env:       {args.env_type or 'docker (default)'}")
@@ -345,6 +355,29 @@ async def main():
     print(f"Trials:    {trials_dir}")
     print(f"Tasks:     {len(task_names)}")
     print(f"{'='*70}\n")
+
+    # Save manifest
+    manifest = {
+        "git_sha": git_sha,
+        "git_tag": git_tag,
+        "git_dirty": git_dirty,
+        "started_at": started_at,
+        "model": args.model,
+        "user_model": args.user_model,
+        "agent_type": "claude-code",
+        "env_type": args.env_type,
+        "agent_timeout": args.agent_timeout,
+        "tag": args.tag,
+        "workers": args.workers,
+        "trials_dir": str(trials_dir),
+        "task_count": len(task_names),
+        "tasks": task_names,
+    }
+    manifest_dir = REPO_ROOT / "pipeline_logs"
+    manifest_dir.mkdir(exist_ok=True)
+    manifest_path = manifest_dir / f"eval-{args.tag}-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    log.info("Manifest: %s", manifest_path)
 
     if args.dry_run:
         for t in task_names:
