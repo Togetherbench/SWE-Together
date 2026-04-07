@@ -80,6 +80,8 @@ _PROVIDER_MAP = {
     "openrouter":  ("OPENROUTER_API_KEY",  "OPENROUTER_API_KEY"),
     "openai":      ("OPENAI_API_KEY",      "OPENAI_API_KEY"),
     "chutes":      ("CHUTES_API_KEY",      "ANTHROPIC_API_KEY"),
+    "fireworks":   ("FIREWORKS_API_KEY",   "ANTHROPIC_API_KEY"),
+    "glm":         ("GLM_API_KEY",         "ANTHROPIC_API_KEY"),
 }
 
 # Proxy URLs for routing non-Anthropic models through Claude Code CLI.
@@ -89,6 +91,8 @@ _PROVIDER_MAP = {
 # OpenRouter: --model openrouter/minimax/minimax-m2.7
 _CHUTES_BASE_URL = "https://claude.chutes.ai"
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+_FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference"
+_GLM_BASE_URL = "https://api.z.ai/api/anthropic"
 
 
 def resolve_model(model_arg: str) -> tuple[str, str, str]:
@@ -260,7 +264,15 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     action_provider = args.model.split("/", 1)[0] if "/" in args.model else None
     is_chutes = action_provider == "chutes"
     is_openrouter = action_provider == "openrouter"
-    proxy_label = " (via Chutes)" if is_chutes else " (via OpenRouter)" if is_openrouter else ""
+    is_fireworks = action_provider == "fireworks"
+    is_glm = action_provider == "glm"
+    proxy_label = (
+        " (via Chutes)" if is_chutes
+        else " (via OpenRouter)" if is_openrouter
+        else " (via Fireworks)" if is_fireworks
+        else " (via Z.AI direct)" if is_glm
+        else ""
+    )
 
     log.info("Action agent : %s%s", action_model, proxy_label)
     log.info("User agent   : %s", user_model)
@@ -325,9 +337,21 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     # Build AgentConfig based on agent type
     agent_type = args.agent_type
+
+    # Determine the user sim's api_base. When a proxy (Chutes/Fireworks/OpenRouter)
+    # sets ANTHROPIC_BASE_URL in os.environ, LiteLLM would route the user sim's
+    # Anthropic calls through that proxy too. Fix: explicitly set user_api_base so
+    # the user sim always hits the correct provider endpoint.
+    user_provider = user_model_arg.split("/", 1)[0] if "/" in user_model_arg else None
+    user_api_base = None  # default: let LiteLLM use the provider's default endpoint
+    if user_provider == "anthropic":
+        # Force the real Anthropic endpoint so proxy env vars don't interfere
+        user_api_base = "https://api.anthropic.com"
+
     user_sim_kwargs = {
         "user_model_name": user_model,
         "user_api_key": user_key,
+        "user_api_base": user_api_base,
         "original_user_messages": user_messages,
         "session_analysis": session_analysis_with_guidance,
         "max_messages": None,  # no hard cap — guidance is soft
@@ -409,6 +433,80 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         # Keep action_model as a standard Claude name (proxy remaps it)
         action_model = "claude-sonnet-4-6"
         log.info("OpenRouter via LiteLLM proxy: localhost:%s → %s", proxy_port, or_model)
+    elif is_fireworks:
+        # Fireworks: use a local proxy inside the E2B sandbox (like OpenRouter).
+        # Claude Code CLI rejects non-Claude model names client-side, so we give it
+        # a standard Claude model name and have the proxy remap to the real Fireworks
+        # model. Fireworks handles anthropic-beta headers natively, so the proxy only
+        # needs to remap the model field — no header stripping required.
+        # On 429, falls back to OpenRouter.
+        fw_model = action_model.split("/", 1)[1]  # strip "fireworks/" prefix
+        proxy_port = "4210"
+        or_key = os.environ.get("OPENROUTER_API_KEY", "")
+        # Map Fireworks model → OpenRouter fallback model
+        _FW_TO_OR = {
+            "accounts/fireworks/routers/kimi-k2p5-turbo": "moonshotai/kimi-k2.5",
+            "accounts/fireworks/models/glm-5": "z-ai/glm-5",
+        }
+        or_fallback = _FW_TO_OR.get(fw_model, "")
+        proxy_vars = {
+            "ANTHROPIC_BASE_URL": f"http://localhost:{proxy_port}",
+            "ANTHROPIC_API_KEY": "sk-proxy-local",
+            "ANTHROPIC_AUTH_TOKEN": "sk-proxy-local",
+            "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+            "API_TIMEOUT_MS": "6000000",
+            "LITELLM_PROXY_MODEL": fw_model,
+            "LITELLM_PROXY_PORT": proxy_port,
+            "PROXY_TARGET_URL": _FIREWORKS_BASE_URL,
+            "PROXY_API_KEY": action_key,
+            # Fallback to OpenRouter on 429
+            "PROXY_FALLBACK_URL": _OPENROUTER_BASE_URL,
+            "PROXY_FALLBACK_KEY": or_key,
+            "PROXY_FALLBACK_MODEL": or_fallback,
+        }
+        agent_env.update(proxy_vars)
+        os.environ.update(proxy_vars)
+        action_model = "claude-sonnet-4-6"
+        log.info("Fireworks via proxy: localhost:%s → %s (fallback: OpenRouter/%s)", proxy_port, fw_model, or_fallback)
+    elif is_glm:
+        # Z.AI GLM: speaks Anthropic Messages API natively, but we still use an
+        # in-sandbox proxy so it can fall back to OpenRouter on 429 (rate limit).
+        glm_model = action_model.split("/", 1)[1]  # strip "glm/" prefix
+        proxy_port = "4210"
+        or_key = os.environ.get("OPENROUTER_API_KEY", "")
+        proxy_vars = {
+            "ANTHROPIC_BASE_URL": f"http://localhost:{proxy_port}",
+            "ANTHROPIC_API_KEY": "sk-proxy-local",
+            "ANTHROPIC_AUTH_TOKEN": "sk-proxy-local",
+            "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+            "API_TIMEOUT_MS": "6000000",
+            "LITELLM_PROXY_MODEL": glm_model,
+            "LITELLM_PROXY_PORT": proxy_port,
+            "PROXY_TARGET_URL": _GLM_BASE_URL,
+            "PROXY_API_KEY": action_key,
+            # Fallback to OpenRouter on 429
+            "PROXY_FALLBACK_URL": _OPENROUTER_BASE_URL,
+            "PROXY_FALLBACK_KEY": or_key,
+            "PROXY_FALLBACK_MODEL": f"z-ai/{glm_model}",
+        }
+        agent_env.update(proxy_vars)
+        os.environ.update(proxy_vars)
+        action_model = "claude-sonnet-4-6"
+        log.info("Z.AI GLM via proxy: localhost:%s → %s (fallback: OpenRouter)", proxy_port, glm_model)
 
     agent_timeout = getattr(args, 'agent_timeout', None)
 

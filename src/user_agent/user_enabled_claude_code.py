@@ -82,79 +82,157 @@ class UserEnabledClaudeCode(BaseAgent):
     async def setup(self, environment: BaseEnvironment) -> None:
         await self._inner.setup(environment)
 
-        # If using a non-Anthropic model via OpenRouter, start a minimal reverse
-        # proxy inside the sandbox that strips the anthropic-beta header (which
-        # contains context-management-2025-06-27 that OpenRouter rejects for
-        # non-Anthropic models). No dependencies needed — uses stdlib only.
+        # If using a non-Anthropic model via OpenRouter/Fireworks, start a minimal
+        # reverse proxy inside the sandbox. Claude Code CLI rejects non-Claude model
+        # names, so this proxy remaps the model field. For OpenRouter it also strips
+        # the anthropic-beta header (which OpenRouter rejects for non-Anthropic models).
+        # For Fireworks, headers pass through as-is (Fireworks handles them natively).
+        # No dependencies needed — uses stdlib only.
         proxy_model = os.environ.get("LITELLM_PROXY_MODEL")
         if proxy_model:
             proxy_port = os.environ.get("LITELLM_PROXY_PORT", "4210")
-            openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
-            log.info("Starting header-strip proxy in sandbox: model=%s port=%s", proxy_model, proxy_port)
+            target_url = os.environ.get("PROXY_TARGET_URL", "https://openrouter.ai/api")
+            proxy_api_key = os.environ.get("PROXY_API_KEY") or os.environ.get("OPENROUTER_API_KEY", "")
+            is_openrouter_target = "openrouter" in target_url
+            # Fallback config (OpenRouter) for 429 rate limits
+            fallback_url = os.environ.get("PROXY_FALLBACK_URL", "")
+            fallback_key = os.environ.get("PROXY_FALLBACK_KEY", "")
+            fallback_model = os.environ.get("PROXY_FALLBACK_MODEL", "")
+            log.info("Starting proxy in sandbox: model=%s port=%s target=%s fallback=%s",
+                     proxy_model, proxy_port, target_url, fallback_url or "none")
 
             # Upload a minimal proxy script and start it
             proxy_script = f'''#!/usr/bin/env python3
-"""Minimal reverse proxy: strips anthropic-beta header, forwards to OpenRouter."""
-import http.server, urllib.request, ssl, json, sys, threading
+"""Reverse proxy: remaps model, forwards to target API, falls back to OpenRouter on 429."""
+import http.server, urllib.request, ssl, json, sys, threading, time
 
-TARGET = "https://openrouter.ai/api"
+TARGET = "{target_url}"
 PORT = {proxy_port}
-API_KEY = "{openrouter_key}"
+API_KEY = "{proxy_api_key}"
 REMAP_MODEL = "{proxy_model}"
+IS_OPENROUTER = {is_openrouter_target}
+
+# Fallback to OpenRouter on 429 rate limit
+FALLBACK_URL = "{fallback_url}"
+FALLBACK_KEY = "{fallback_key}"
+FALLBACK_MODEL = "{fallback_model}"
+MAX_RETRIES = 2
+RETRY_DELAY = 5  # seconds
 
 class Proxy(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        # Rewrite model field to target OpenRouter model
-        if REMAP_MODEL:
-            try:
-                data = json.loads(body)
-                data["model"] = REMAP_MODEL
-                body = json.dumps(data).encode()
-            except (json.JSONDecodeError, KeyError):
-                pass
-        url = TARGET + self.path
+    def _build_request(self, url, body, is_or):
+        """Build a request for either primary or OpenRouter fallback."""
         headers = {{}}
         for k, v in self.headers.items():
             k_lower = k.lower()
-            if k_lower in ("host", "anthropic-beta", "content-length"):
+            if k_lower in ("host", "content-length"):
+                continue
+            if is_or and k_lower == "anthropic-beta":
                 continue
             headers[k] = v
-        # Use OpenRouter auth
-        headers["Authorization"] = f"Bearer {{API_KEY}}"
-        headers["HTTP-Referer"] = "https://togetherbench.com"
-        headers["X-Title"] = "togetherbench-eval"
-        if "x-api-key" in headers:
-            del headers["x-api-key"]
-        if "X-Api-Key" in headers:
-            del headers["X-Api-Key"]
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        if is_or:
+            headers["Authorization"] = f"Bearer {{FALLBACK_KEY}}"
+            headers["HTTP-Referer"] = "https://togetherbench.com"
+            headers["X-Title"] = "togetherbench-eval"
+            for h in ("x-api-key", "X-Api-Key"):
+                headers.pop(h, None)
+        else:
+            headers["x-api-key"] = API_KEY
+        return urllib.request.Request(url, data=body, headers=headers, method="POST")
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw_body = self.rfile.read(length)
+
+        # Rewrite model for primary target
+        body_primary = raw_body
+        if REMAP_MODEL:
+            try:
+                data = json.loads(raw_body)
+                data["model"] = REMAP_MODEL
+                body_primary = json.dumps(data).encode()
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        url = TARGET + self.path
         ctx = ssl.create_default_context()
-        try:
-            with urllib.request.urlopen(req, context=ctx) as resp:
-                resp_body = resp.read()
-                self.send_response(resp.status)
-                for k, v in resp.getheaders():
-                    if k.lower() not in ("transfer-encoding", "content-encoding"):
-                        self.send_header(k, v)
+
+        # Try primary
+        for attempt in range(MAX_RETRIES + 1):
+            req = self._build_request(url, body_primary, IS_OPENROUTER)
+            try:
+                with urllib.request.urlopen(req, context=ctx) as resp:
+                    resp_body = resp.read()
+                    self.send_response(resp.status)
+                    for k, v in resp.getheaders():
+                        if k.lower() not in ("transfer-encoding", "content-encoding"):
+                            self.send_header(k, v)
+                    self.send_header("Content-Length", str(len(resp_body)))
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                    return
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < MAX_RETRIES:
+                    print(f"[proxy] 429 from primary (attempt {{attempt+1}}), retrying in {{RETRY_DELAY}}s...", flush=True)
+                    e.read()  # drain
+                    time.sleep(RETRY_DELAY)
+                    continue
+                elif e.code == 429 and FALLBACK_URL and FALLBACK_MODEL:
+                    print(f"[proxy] 429 from primary, falling back to OpenRouter/{{FALLBACK_MODEL}}", flush=True)
+                    e.read()
+                    break  # fall through to fallback
+                else:
+                    resp_body = e.read()
+                    self.send_response(e.code)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(resp_body)))
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                    return
+            except Exception as e:
+                err = json.dumps({{"error": {{"message": str(e), "type": "proxy_error"}}}}).encode()
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
+                return
+
+        # Fallback to OpenRouter
+        if FALLBACK_URL and FALLBACK_MODEL:
+            try:
+                data = json.loads(raw_body)
+                data["model"] = FALLBACK_MODEL
+                body_fb = json.dumps(data).encode()
+            except:
+                body_fb = raw_body
+            fb_url = FALLBACK_URL + self.path
+            req = self._build_request(fb_url, body_fb, True)
+            try:
+                with urllib.request.urlopen(req, context=ctx) as resp:
+                    resp_body = resp.read()
+                    self.send_response(resp.status)
+                    for k, v in resp.getheaders():
+                        if k.lower() not in ("transfer-encoding", "content-encoding"):
+                            self.send_header(k, v)
+                    self.send_header("Content-Length", str(len(resp_body)))
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                    return
+            except urllib.error.HTTPError as e:
+                resp_body = e.read()
+                self.send_response(e.code)
+                self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(resp_body)))
                 self.end_headers()
                 self.wfile.write(resp_body)
-        except urllib.error.HTTPError as e:
-            resp_body = e.read()
-            self.send_response(e.code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(resp_body)))
-            self.end_headers()
-            self.wfile.write(resp_body)
-        except Exception as e:
-            err = json.dumps({{"error": {{"message": str(e), "type": "proxy_error"}}}}).encode()
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(err)))
-            self.end_headers()
-            self.wfile.write(err)
+            except Exception as e:
+                err = json.dumps({{"error": {{"message": str(e), "type": "fallback_error"}}}}).encode()
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
     def do_GET(self):
         if self.path == "/health":
             self.send_response(200)
@@ -174,17 +252,17 @@ print(f"Proxy listening on port {{PORT}}")
 server.serve_forever()
 '''
             from pathlib import Path
-            proxy_path = self.logs_dir / "openrouter_proxy.py"
+            proxy_path = self.logs_dir / "model_proxy.py"
             proxy_path.write_text(proxy_script)
 
             await environment.upload_file(
                 source_path=proxy_path,
-                target_path="/tmp/openrouter_proxy.py",
+                target_path="/tmp/model_proxy.py",
             )
 
             # Start proxy in background and wait for health
             setup_cmd = (
-                f"nohup python3 /tmp/openrouter_proxy.py > /tmp/proxy.log 2>&1 & "
+                f"nohup python3 /tmp/model_proxy.py > /tmp/proxy.log 2>&1 & "
                 f"for i in $(seq 1 15); do "
                 f"  sleep 1; "
                 f"  curl -s http://localhost:{proxy_port}/health > /dev/null 2>&1 && "
