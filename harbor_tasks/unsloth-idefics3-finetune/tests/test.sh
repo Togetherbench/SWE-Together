@@ -22,6 +22,26 @@ add_reward() {
     REWARD=$(python3 -c "print(min(1.0, $REWARD + $1))")
 }
 
+# Write a reusable CPU compat preamble that patches unsloth_zoo's device_type
+# module. On CPU-only Docker, get_device_type() raises NotImplementedError at
+# import time.  This preamble must be executed before any unsloth_zoo import.
+cat > /tmp/_cpu_compat.py << 'CPUEOF'
+import sys, types
+try:
+    import unsloth_zoo.device_type as _dt
+except (NotImplementedError, ImportError):
+    _dt = types.ModuleType('unsloth_zoo.device_type')
+    _dt.get_device_type = lambda: 'cpu'
+    _dt.DEVICE_TYPE = 'cpu'
+    sys.modules['unsloth_zoo.device_type'] = _dt
+    if 'unsloth_zoo' not in sys.modules:
+        import importlib
+        _uz = types.ModuleType('unsloth_zoo')
+        _uz.__path__ = []
+        sys.modules['unsloth_zoo'] = _uz
+    sys.modules['unsloth_zoo'].device_type = _dt
+CPUEOF
+
 cd "$WORKSPACE"
 
 # ── Locate the agent's idefics module ──
@@ -69,6 +89,7 @@ echo "--- Check 1 [0.40] F2P: Hook compatibility fix ---"
 
 CHECK1=$(python3 << 'PYEOF'
 import sys, os, importlib, importlib.util
+exec(open('/tmp/_cpu_compat.py').read())
 
 idefics_path = os.environ.get('IDEFICS_PY', '')
 
@@ -245,6 +266,7 @@ echo "--- Check 2 [0.30] Silver: from_pretrained delegation ---"
 
 CHECK2=$(python3 << 'PYEOF'
 import sys, os, importlib.util
+exec(open('/tmp/_cpu_compat.py').read())
 from unittest.mock import MagicMock, patch
 import torch
 
@@ -361,6 +383,7 @@ echo "--- Check 3 [0.05] Silver: VLLM_SUPPORTED_VLM ---"
 
 CHECK3=$(python3 << 'PYEOF'
 import sys, importlib.util, ast
+exec(open('/tmp/_cpu_compat.py').read())
 
 found = False
 
@@ -411,6 +434,7 @@ echo "--- Check 4 [0.05] Silver: __init__.py export ---"
 
 CHECK4=$(python3 << 'PYEOF'
 import sys, importlib.util, ast
+exec(open('/tmp/_cpu_compat.py').read())
 
 found = False
 

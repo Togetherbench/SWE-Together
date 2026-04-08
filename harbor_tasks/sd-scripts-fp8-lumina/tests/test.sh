@@ -3,23 +3,30 @@
 # Verification tests for fp8_scaled implementation for the Lumina model in sd-scripts.
 #
 # The agent must:
-#   1. library/lumina_util.py: Add FP8_OPTIMIZATION_TARGET_KEYS (containing "layers")
-#      and FP8_OPTIMIZATION_EXCLUDE_KEYS (containing "modulation" to prevent loss regression),
-#      modify load_lumina_model to accept fp8_scaled and call apply_fp8_monkey_patch
-#   2. library/lumina_train_util.py: Add --fp8_scaled CLI argument
+#   1. library/lumina_util.py (or lumina_models.py): Add FP8_OPTIMIZATION_TARGET_KEYS
+#      containing "layers" and FP8_OPTIMIZATION_EXCLUDE_KEYS containing "modulation"
+#   2. library/lumina_util.py: Modify load_lumina_model to accept fp8_scaled and
+#      call apply_fp8_monkey_patch
 #   3. library/fp8_optimization_utils.py: Fix fp8_linear_forward_patch to cast
 #      scale_weight to x.dtype (not fp8) before dequantization multiply
+#   4. Add --fp8_scaled CLI argument (lumina_train_util.py or lumina_train_network.py)
 #
-# Scoring breakdown (behavioral=90%, structural=5%, P2P=5%):
-#   Test 1: 0.05  TARGET_KEYS importable, non-empty, contains "layers" (Silver)
-#   Test 2: 0.10  EXCLUDE_KEYS importable, contains "modulation" (Silver)
-#   Test 3: 0.07  load_lumina_model fp8_scaled integration (Silver)
-#   Test 4: 0.28  CORE BUG: fp8 per-tensor scale_weight multiply (F2P)
-#   Test 5: 0.10  fp8 per-channel (2D) scale_weight (F2P)
-#   Test 6: 0.15  Output dtype matches input dtype (F2P)
-#   Test 7: 0.15  Numerical accuracy of fp8 dequantization (Gold)
-#   Test 8: 0.05  --fp8_scaled CLI argument (Bronze/AST)
-#   Test 9: 0.05  Upstream CPU-safe test suite regression (P2P)
+# Scoring breakdown (structural=10%, behavioral=90%):
+#   T1:  0.03  TARGET_KEYS contains "layers" [structural]
+#   T2:  0.03  EXCLUDE_KEYS contains "modulation" [structural]
+#   T3:  0.02  load_lumina_model: fp8_scaled param + apply_fp8_monkey_patch [structural]
+#   T4:  0.02  --fp8_scaled CLI argument [structural]
+#   T5:  0.09  fp8 forward: bf16 + scalar fp8 scale (16->8) [behavioral]
+#   T6:  0.08  fp8 forward: float32 + scalar fp8 scale (16->8) [behavioral]
+#   T7:  0.09  fp8 forward: bf16 + per-channel fp8 scale (16->8) [behavioral]
+#   T8:  0.08  fp8 forward: dtype preservation bf16+float32 [behavioral]
+#   T9:  0.07  fp8 forward: 3D batched input (2,4,16)->(2,4,8) [behavioral]
+#   T10: 0.09  fp8 forward: numerical accuracy per-tensor scale=2.0 [behavioral]
+#   T11: 0.09  fp8 forward: numerical accuracy per-channel [behavioral]
+#   T12: 0.08  fp8 forward: different dims (64->32) + scale=0.5 [behavioral]
+#   T13: 0.08  fp8 forward: wide->narrow (32->4) + scale=128.0 [behavioral]
+#   T14: 0.07  fp8 forward: non-unit scale (24->12) + float32 [behavioral]
+#   T15: 0.08  P2P: upstream CPU-safe tests [behavioral]
 #
 set +e
 
@@ -29,131 +36,147 @@ mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 
 add_reward() {
-    REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 2)))")
+    REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 4)))")
 }
 
-MOCK_SETUP='
+# ═══════════════════════════════════════════════════════════════════
+# Write comprehensive mock setup to temp file (used by behavioral tests).
+# Mocks ALL external dependencies that sd-scripts modules may import
+# transitively, so that importing fp8_optimization_utils succeeds
+# even when optional packages (cv2, diffusers, flash_attn, etc.)
+# are not installed.
+# ═══════════════════════════════════════════════════════════════════
+cat > /tmp/_vfp8mock.py << 'MOCKINIT'
 import sys
 from unittest.mock import MagicMock
-mock_cv2 = MagicMock(); mock_cv2.__spec__ = MagicMock()
-sys.modules["cv2"] = mock_cv2
-for mod in ["diffusers", "diffusers.schedulers",
-            "diffusers.schedulers.scheduling_euler_ancestral_discrete"]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+
+_MODS = [
+    # Image / vision
+    "cv2", "PIL", "PIL.Image", "PIL.ImageFilter", "PIL.ImageOps",
+    # Tensor manipulation
+    "einops", "einops.layers", "einops.layers.torch",
+    # Diffusers framework
+    "diffusers", "diffusers.schedulers",
+    "diffusers.schedulers.scheduling_euler_ancestral_discrete",
+    "diffusers.schedulers.scheduling_euler_discrete",
+    "diffusers.schedulers.scheduling_flow_match_euler_discrete",
+    "diffusers.configuration_utils", "diffusers.models",
+    "diffusers.models.attention_processor", "diffusers.loaders",
+    "diffusers.utils",
+    # Attention backends
+    "flash_attn", "flash_attn.flash_attn_interface", "flash_attn.bert_padding",
+    "sageattention",
+    # NVIDIA / acceleration
+    "apex", "apex.normalization", "apex.optimizers",
+    "xformers", "xformers.ops", "triton",
+    # Quantization
+    "bitsandbytes", "bitsandbytes.nn", "quanto",
+    # LoRA / fine-tuning
+    "lycoris", "lycoris.config", "lycoris.modules", "peft",
+    # UI / logging
+    "gradio", "wandb", "tensorboard", "tensorboardX",
+    # Misc
+    "voluptuous", "open_clip", "open_clip.tokenizer",
+]
+for _m in _MODS:
+    if _m not in sys.modules:
+        _mo = MagicMock()
+        _mo.__spec__ = MagicMock()
+        _mo.__all__ = []
+        sys.modules[_m] = _mo
+
 sys.path.insert(0, "/workspace/sd-scripts")
-'
+MOCKINIT
+
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 1 (0.05): FP8_OPTIMIZATION_TARGET_KEYS importable and correct
-#   Silver: import constant, verify it's a non-empty list containing "layers"
-#   (NextDiT's main transformer blocks use self.layers)
+# STRUCTURAL TESTS (T1-T4, total = 0.10)
+# All use source-file parsing (AST / regex) — no imports needed.
 # ═══════════════════════════════════════════════════════════════════
-echo "=== Test 1/9: TARGET_KEYS importable and contains 'layers' ==="
-T1=$(python3 2>/dev/null << PYEOF | tail -1
-${MOCK_SETUP}
 
-try:
-    from library.lumina_util import FP8_OPTIMIZATION_TARGET_KEYS
-except (ImportError, Exception) as e:
-    print(f"FAIL:import:{e}")
-    sys.exit(0)
+# --- T1 (0.03): TARGET_KEYS contains "layers" ---
+echo "=== Test 1/15: FP8_OPTIMIZATION_TARGET_KEYS contains 'layers' [structural] ==="
+T1=$(python3 << 'PYEOF' | tail -1
+import re, sys
 
-if not isinstance(FP8_OPTIMIZATION_TARGET_KEYS, (list, tuple)):
-    print(f"FAIL:not_list:{type(FP8_OPTIMIZATION_TARGET_KEYS)}")
-    sys.exit(0)
+found = False
+for path in ["/workspace/sd-scripts/library/lumina_util.py",
+             "/workspace/sd-scripts/library/lumina_models.py"]:
+    try:
+        with open(path) as f:
+            src = f.read()
+    except FileNotFoundError:
+        continue
+    if "FP8_OPTIMIZATION_TARGET_KEYS" not in src:
+        continue
+    m = re.search(r'FP8_OPTIMIZATION_TARGET_KEYS\s*=\s*\[([^\]]*)\]', src, re.DOTALL)
+    if m and ("'layers'" in m.group(1) or '"layers"' in m.group(1)):
+        found = True
+        break
 
-if len(FP8_OPTIMIZATION_TARGET_KEYS) == 0:
-    print("FAIL:empty")
-    sys.exit(0)
-
-if "layers" not in FP8_OPTIMIZATION_TARGET_KEYS:
-    print(f"FAIL:no_layers:{FP8_OPTIMIZATION_TARGET_KEYS}")
-    sys.exit(0)
-
-# Cross-reference: verify "layers" exists as an attribute in the Lumina model source
-with open("/workspace/sd-scripts/library/lumina_models.py") as f:
-    src = f.read()
-if "self.layers" not in src:
-    print("FAIL:layers_not_in_model")
-    sys.exit(0)
-
-print("PASS")
+print("PASS" if found else "FAIL:not_found")
 PYEOF
 )
 echo "  Result: $T1"
-if [ "$T1" = "PASS" ]; then add_reward 0.05; fi
+if [ "$T1" = "PASS" ]; then add_reward 0.03; fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 2 (0.10): FP8_OPTIMIZATION_EXCLUDE_KEYS contains "modulation"
-#   Silver: import constant, verify "modulation" is present.
-#   adaLN_modulation layers must be excluded from fp8 quantization —
-#   the session discovered that quantizing them causes loss regression (5.0 vs 0.5).
-# ═══════════════════════════════════════════════════════════════════
+
+# --- T2 (0.03): EXCLUDE_KEYS contains "modulation" ---
 echo ""
-echo "=== Test 2/9: EXCLUDE_KEYS importable and contains 'modulation' ==="
-T2=$(python3 2>/dev/null << PYEOF | tail -1
-${MOCK_SETUP}
+echo "=== Test 2/15: FP8_OPTIMIZATION_EXCLUDE_KEYS contains 'modulation' [structural] ==="
+T2=$(python3 << 'PYEOF' | tail -1
+import re, sys
 
-try:
-    from library.lumina_util import FP8_OPTIMIZATION_EXCLUDE_KEYS
-except (ImportError, Exception) as e:
-    print(f"FAIL:import:{e}")
-    sys.exit(0)
+found = False
+for path in ["/workspace/sd-scripts/library/lumina_util.py",
+             "/workspace/sd-scripts/library/lumina_models.py"]:
+    try:
+        with open(path) as f:
+            src = f.read()
+    except FileNotFoundError:
+        continue
+    if "FP8_OPTIMIZATION_EXCLUDE_KEYS" not in src:
+        continue
+    m = re.search(r'FP8_OPTIMIZATION_EXCLUDE_KEYS\s*=\s*\[([^\]]*)\]', src, re.DOTALL)
+    if m and "modulation" in m.group(1):
+        found = True
+        break
 
-if not isinstance(FP8_OPTIMIZATION_EXCLUDE_KEYS, (list, tuple)):
-    print(f"FAIL:not_list:{type(FP8_OPTIMIZATION_EXCLUDE_KEYS)}")
-    sys.exit(0)
-
-has_modulation = any("modulation" in k for k in FP8_OPTIMIZATION_EXCLUDE_KEYS)
-if not has_modulation:
-    print(f"FAIL:no_modulation:{FP8_OPTIMIZATION_EXCLUDE_KEYS}")
-    sys.exit(0)
-
-# Cross-reference: verify "modulation" appears in the Lumina model
-with open("/workspace/sd-scripts/library/lumina_models.py") as f:
-    src = f.read()
-if "modulation" not in src:
-    print("FAIL:modulation_not_in_model")
-    sys.exit(0)
-
-print("PASS")
+print("PASS" if found else "FAIL:no_modulation")
 PYEOF
 )
 echo "  Result: $T2"
-if [ "$T2" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T2" = "PASS" ]; then add_reward 0.03; fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 3 (0.07): load_lumina_model fp8_scaled integration
-#   Silver: import load_lumina_model, verify fp8_scaled parameter exists (0.03),
-#   and verify apply_fp8_monkey_patch is called in the function body (0.04).
-# ═══════════════════════════════════════════════════════════════════
+
+# --- T3 (0.02): load_lumina_model: fp8_scaled param + apply_fp8_monkey_patch ---
 echo ""
-echo "=== Test 3/9: load_lumina_model fp8_scaled integration ==="
-T3=$(python3 2>/dev/null << PYEOF | tail -1
-${MOCK_SETUP}
-import inspect
+echo "=== Test 3/15: load_lumina_model fp8_scaled + apply_fp8_monkey_patch [structural] ==="
+T3=$(python3 << 'PYEOF' | tail -1
+import ast, sys
 
 try:
-    from library.lumina_util import load_lumina_model
-except (ImportError, Exception) as e:
-    print(f"FAIL:import:{e}")
+    with open("/workspace/sd-scripts/library/lumina_util.py") as f:
+        source = f.read()
+    tree = ast.parse(source)
+except (FileNotFoundError, SyntaxError) as e:
+    print("FAIL:" + str(e))
     sys.exit(0)
 
 score = 0
-
-# Sub-check A: fp8_scaled parameter exists
-sig = inspect.signature(load_lumina_model)
-if "fp8_scaled" in sig.parameters:
-    score += 1
-
-# Sub-check B: apply_fp8_monkey_patch is called within the function
-try:
-    func_source = inspect.getsource(load_lumina_model)
-    if "apply_fp8_monkey_patch" in func_source:
-        score += 1
-except Exception:
-    pass
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == "load_lumina_model":
+        # Sub-check A: fp8_scaled parameter
+        args = [a.arg for a in node.args.args + node.args.kwonlyargs]
+        if "fp8_scaled" in args:
+            score += 1
+        # Sub-check B: apply_fp8_monkey_patch in function body
+        end = getattr(node, "end_lineno", None)
+        if end:
+            func_src = "\n".join(source.split("\n")[node.lineno - 1 : end])
+            if "apply_fp8_monkey_patch" in func_src:
+                score += 1
+        break
 
 if score == 2:
     print("PASS")
@@ -165,48 +188,83 @@ PYEOF
 )
 echo "  Result: $T3"
 if [ "$T3" = "PASS" ]; then
-    add_reward 0.07
+    add_reward 0.02
 elif [ "$T3" = "PARTIAL" ]; then
-    add_reward 0.03
+    add_reward 0.01
 fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 4 (0.28): CORE BUG — fp8_linear_forward_patch with per-tensor fp8 scale_weight
-#   Original bug: original_dtype = self.scale_weight.dtype → fp8, then
-#   self.weight.to(fp8) * fp8_scale_weight raises RuntimeError: "mul_cpu"
-#   not implemented for 'Float8_e4m3fn'.
-#   Fix: use x.dtype as original_dtype, cast scale_weight to x.dtype.
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 4/9: fp8_linear_forward_patch per-tensor fp8 scale_weight (CORE BUG) ==="
-T4=$(python3 2>/dev/null << PYEOF | tail -1
-import sys, torch, torch.nn as nn
-sys.path.insert(0, "/workspace/sd-scripts")
 
-from unittest.mock import MagicMock
-for mod in ["diffusers", "diffusers.schedulers",
-            "diffusers.schedulers.scheduling_euler_ancestral_discrete", "cv2"]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+# --- T4 (0.02): --fp8_scaled CLI argument ---
+echo ""
+echo "=== Test 4/15: --fp8_scaled CLI argument [structural] ==="
+T4=$(python3 << 'PYEOF' | tail -1
+import ast, sys
+
+found = False
+for path in ["/workspace/sd-scripts/library/lumina_train_util.py",
+             "/workspace/sd-scripts/lumina_train_network.py"]:
+    try:
+        with open(path) as f:
+            tree = ast.parse(f.read())
+    except (FileNotFoundError, SyntaxError):
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "add_argument":
+                for arg in node.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        if "fp8_scaled" in arg.value:
+                            found = True
+                            break
+                if not found:
+                    for kw in node.keywords:
+                        if kw.arg == "dest" and isinstance(kw.value, ast.Constant):
+                            if "fp8_scaled" in str(kw.value.value):
+                                found = True
+                                break
+        if found:
+            break
+    if found:
+        break
+
+print("PASS" if found else "FAIL:not_found")
+PYEOF
+)
+echo "  Result: $T4"
+if [ "$T4" = "PASS" ]; then add_reward 0.02; fi
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BEHAVIORAL TESTS (T5-T15, total = 0.90)
+# Each test imports fp8_linear_forward_patch via comprehensive mocking,
+# then exercises it with specific inputs to verify the core bug fix
+# (fp8 scale_weight multiply) and correct behavior.
+# ═══════════════════════════════════════════════════════════════════
+
+# --- T5 (0.09): bf16 + scalar fp8 scale (16->8) — core bug test ---
+echo ""
+echo "=== Test 5/15: fp8 forward: bf16 + scalar fp8 scale 16->8 [behavioral] ==="
+T5=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
 
 try:
     from library.fp8_optimization_utils import fp8_linear_forward_patch
-except ImportError as e:
-    print(f"FAIL:import:{e}")
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
     sys.exit(0)
 
 try:
     linear = nn.Linear(16, 8, bias=False)
-    # Cast weight to fp8 (simulating a quantized layer)
     linear.weight = nn.Parameter(
         linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
-        requires_grad=False
-    )
-    # Per-tensor scale_weight stored in fp8 — this is the bug trigger
-    linear.register_buffer(
-        "scale_weight",
-        torch.tensor([1.0], dtype=torch.float8_e4m3fn)
-    )
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([1.0], dtype=torch.float32).to(torch.float8_e4m3fn))
 
     x = torch.randn(2, 16, dtype=torch.bfloat16)
     out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
@@ -214,203 +272,263 @@ try:
     if out is None:
         print("FAIL:returns_none")
     elif out.shape != (2, 8):
-        print(f"FAIL:wrong_shape:{out.shape}")
+        print("FAIL:shape:" + str(out.shape))
     elif out.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-        print(f"FAIL:output_is_fp8:{out.dtype}")
+        print("FAIL:fp8_output")
     else:
         print("PASS")
-
 except RuntimeError as e:
-    msg = str(e)
-    if "mul_cpu" in msg or "mul_cuda" in msg or "not implemented for" in msg:
-        print(f"FAIL:bug_not_fixed:{msg[:100]}")
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
     else:
-        print(f"FAIL:runtime_error:{msg[:100]}")
+        print("FAIL:runtime:" + s[:80])
 except Exception as e:
-    print(f"ERROR:{type(e).__name__}:{str(e)[:100]}")
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
 PYEOF
 )
-echo "  Result: $T4"
-if [ "$T4" = "PASS" ]; then add_reward 0.28; fi
+echo "  Result: $T5"
+if [ "$T5" = "PASS" ]; then add_reward 0.09; fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 5 (0.10): fp8_linear_forward_patch with per-channel (2D) fp8 scale_weight
-#   The dequantization code has a branch for ndim < 3 (per-tensor/channel).
-#   This exercises the per-channel path with scale shape [out_features, 1].
-# ═══════════════════════════════════════════════════════════════════
+
+# --- T6 (0.08): float32 + scalar fp8 scale (16->8) — dtype generalization ---
 echo ""
-echo "=== Test 5/9: fp8_linear_forward_patch per-channel (2D) fp8 scale_weight ==="
-T5=$(python3 2>/dev/null << PYEOF | tail -1
-import sys, torch, torch.nn as nn
-sys.path.insert(0, "/workspace/sd-scripts")
-
-from unittest.mock import MagicMock
-for mod in ["diffusers", "diffusers.schedulers",
-            "diffusers.schedulers.scheduling_euler_ancestral_discrete", "cv2"]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+echo "=== Test 6/15: fp8 forward: float32 + scalar fp8 scale 16->8 [behavioral] ==="
+T6=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
 
 try:
     from library.fp8_optimization_utils import fp8_linear_forward_patch
-except ImportError as e:
-    print(f"FAIL:import:{e}")
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
     sys.exit(0)
 
 try:
-    out_features, in_features = 8, 16
-    linear = nn.Linear(in_features, out_features, bias=False)
+    linear = nn.Linear(16, 8, bias=False)
     linear.weight = nn.Parameter(
         linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
-        requires_grad=False
-    )
-    # Per-channel scale: shape [out_features, 1], stored in fp8
-    linear.register_buffer(
-        "scale_weight",
-        torch.ones(out_features, 1, dtype=torch.float32).to(torch.float8_e4m3fn)
-    )
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([1.0], dtype=torch.float32).to(torch.float8_e4m3fn))
 
-    x = torch.randn(2, in_features, dtype=torch.bfloat16)
+    x = torch.randn(2, 16, dtype=torch.float32)
     out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
 
     if out is None:
         print("FAIL:returns_none")
-    elif out.shape != (2, out_features):
-        print(f"FAIL:wrong_shape:{out.shape}")
+    elif out.shape != (2, 8):
+        print("FAIL:shape:" + str(out.shape))
     elif out.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-        print(f"FAIL:output_is_fp8:{out.dtype}")
+        print("FAIL:fp8_output")
     else:
         print("PASS")
-
 except RuntimeError as e:
-    msg = str(e)
-    if "mul_cpu" in msg or "mul_cuda" in msg or "not implemented for" in msg:
-        print(f"FAIL:bug_not_fixed:{msg[:100]}")
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
     else:
-        print(f"FAIL:runtime_error:{msg[:100]}")
+        print("FAIL:runtime:" + s[:80])
 except Exception as e:
-    print(f"ERROR:{type(e).__name__}:{str(e)[:100]}")
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
 PYEOF
 )
-echo "  Result: $T5"
-if [ "$T5" = "PASS" ]; then add_reward 0.10; fi
+echo "  Result: $T6"
+if [ "$T6" = "PASS" ]; then add_reward 0.08; fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 6 (0.15): fp8_linear_forward_patch output dtype matches input dtype
-#   The fixed code must dequantize using x.dtype, so output should match input.
-#   Tests float32, bfloat16, and 3D batched input.
-# ═══════════════════════════════════════════════════════════════════
+
+# --- T7 (0.09): bf16 + per-channel fp8 scale (16->8) — 2D scale path ---
 echo ""
-echo "=== Test 6/9: fp8_linear_forward_patch output dtype matches input dtype ==="
-T6=$(python3 2>/dev/null << PYEOF | tail -1
-import sys, torch, torch.nn as nn
-sys.path.insert(0, "/workspace/sd-scripts")
-
-from unittest.mock import MagicMock
-for mod in ["diffusers", "diffusers.schedulers",
-            "diffusers.schedulers.scheduling_euler_ancestral_discrete", "cv2"]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+echo "=== Test 7/15: fp8 forward: bf16 + per-channel fp8 scale 16->8 [behavioral] ==="
+T7=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
 
 try:
     from library.fp8_optimization_utils import fp8_linear_forward_patch
-except ImportError as e:
-    print(f"FAIL:import:{e}")
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
+    sys.exit(0)
+
+try:
+    in_f, out_f = 16, 8
+    linear = nn.Linear(in_f, out_f, bias=False)
+    linear.weight = nn.Parameter(
+        linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.ones(out_f, 1, dtype=torch.float32).to(torch.float8_e4m3fn))
+
+    x = torch.randn(2, in_f, dtype=torch.bfloat16)
+    out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
+
+    if out is None:
+        print("FAIL:returns_none")
+    elif out.shape != (2, out_f):
+        print("FAIL:shape:" + str(out.shape))
+    elif out.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+        print("FAIL:fp8_output")
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
+PYEOF
+)
+echo "  Result: $T7"
+if [ "$T7" = "PASS" ]; then add_reward 0.09; fi
+
+
+# --- T8 (0.08): dtype preservation — bf16 + float32 sub-checks ---
+echo ""
+echo "=== Test 8/15: fp8 forward: output dtype matches input dtype [behavioral] ==="
+T8=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
+
+try:
+    from library.fp8_optimization_utils import fp8_linear_forward_patch
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
     sys.exit(0)
 
 def make_fp8_linear(in_f, out_f):
     linear = nn.Linear(in_f, out_f, bias=False)
     linear.weight = nn.Parameter(
         linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
-        requires_grad=False
-    )
-    linear.register_buffer(
-        "scale_weight",
-        torch.tensor([1.0], dtype=torch.float8_e4m3fn)
-    )
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([1.0], dtype=torch.float32).to(torch.float8_e4m3fn))
     return linear
 
 passed = 0
-total = 3
 
-# Sub-test A: float32 input -> float32 output
+# Sub-test A: bf16 in -> bf16 out
 try:
-    out = fp8_linear_forward_patch(make_fp8_linear(8, 4), torch.randn(1, 8, dtype=torch.float32), use_scaled_mm=False)
-    if out is not None and out.dtype == torch.float32:
-        passed += 1
-except Exception:
-    pass
-
-# Sub-test B: bfloat16 input -> bfloat16 output
-try:
-    out = fp8_linear_forward_patch(make_fp8_linear(32, 16), torch.randn(4, 32, dtype=torch.bfloat16), use_scaled_mm=False)
+    out = fp8_linear_forward_patch(
+        make_fp8_linear(16, 8),
+        torch.randn(2, 16, dtype=torch.bfloat16),
+        use_scaled_mm=False)
     if out is not None and out.dtype == torch.bfloat16:
         passed += 1
 except Exception:
     pass
 
-# Sub-test C: 3D input (batch, seq, hidden) — typical transformer shape
+# Sub-test B: float32 in -> float32 out
 try:
-    out = fp8_linear_forward_patch(make_fp8_linear(16, 8), torch.randn(2, 4, 16, dtype=torch.bfloat16), use_scaled_mm=False)
-    if out is not None and out.shape == (2, 4, 8) and out.dtype == torch.bfloat16:
+    out = fp8_linear_forward_patch(
+        make_fp8_linear(16, 8),
+        torch.randn(2, 16, dtype=torch.float32),
+        use_scaled_mm=False)
+    if out is not None and out.dtype == torch.float32:
         passed += 1
 except Exception:
     pass
 
-if passed == total:
+if passed == 2:
     print("PASS")
-elif passed > 0:
-    print(f"PARTIAL:{passed}/{total}")
+elif passed == 1:
+    print("PARTIAL:1/2")
 else:
-    print("FAIL:no_subtests_passed")
+    print("FAIL:no_dtype_match")
 PYEOF
 )
-echo "  Result: $T6"
-if [ "$T6" = "PASS" ]; then
-    add_reward 0.15
-elif [[ "$T6" == PARTIAL:* ]]; then
-    P_COUNT=$(echo "$T6" | grep -oP '\d+(?=/)')
-    if [ "$P_COUNT" -ge 2 ]; then
-        add_reward 0.10
-    else
-        add_reward 0.05
-    fi
+echo "  Result: $T8"
+if [ "$T8" = "PASS" ]; then
+    add_reward 0.08
+elif [[ "$T8" == PARTIAL* ]]; then
+    add_reward 0.04
 fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 7 (0.15): Numerical accuracy of fp8 dequantization
-#   Gold: create known weights, quantize to fp8 with a known scale,
-#   call fp8_linear_forward_patch, compare to manual reference
-#   (W_fp8.to(x.dtype) * scale.to(x.dtype)) within tolerance.
-# ═══════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 7/9: Numerical accuracy of fp8 dequantization ==="
-T7=$(python3 2>/dev/null << PYEOF | tail -1
-import sys, torch, torch.nn as nn, torch.nn.functional as F
-sys.path.insert(0, "/workspace/sd-scripts")
 
-from unittest.mock import MagicMock
-for mod in ["diffusers", "diffusers.schedulers",
-            "diffusers.schedulers.scheduling_euler_ancestral_discrete", "cv2"]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+# --- T9 (0.07): 3D batched input (2,4,16) -> (2,4,8) ---
+echo ""
+echo "=== Test 9/15: fp8 forward: 3D batched input (2,4,16)->(2,4,8) [behavioral] ==="
+T9=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
 
 try:
     from library.fp8_optimization_utils import fp8_linear_forward_patch
-except ImportError as e:
-    print(f"FAIL:import:{e}")
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
     sys.exit(0)
 
-passed = 0
-total = 2
+try:
+    in_f, out_f = 16, 8
+    linear = nn.Linear(in_f, out_f, bias=False)
+    linear.weight = nn.Parameter(
+        linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([1.0], dtype=torch.float32).to(torch.float8_e4m3fn))
 
-# Sub-test A: per-tensor scale, known values
+    x = torch.randn(2, 4, in_f, dtype=torch.bfloat16)
+    out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
+
+    if out is None:
+        print("FAIL:returns_none")
+    elif out.shape != (2, 4, out_f):
+        print("FAIL:shape:" + str(out.shape))
+    elif out.dtype != torch.bfloat16:
+        print("FAIL:dtype:" + str(out.dtype))
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
+PYEOF
+)
+echo "  Result: $T9"
+if [ "$T9" = "PASS" ]; then add_reward 0.07; fi
+
+
+# --- T10 (0.09): numerical accuracy per-tensor scale=2.0 ---
+echo ""
+echo "=== Test 10/15: fp8 forward: numerical accuracy per-tensor scale=2.0 [behavioral] ==="
+T10=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+try:
+    from library.fp8_optimization_utils import fp8_linear_forward_patch
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
+    sys.exit(0)
+
 try:
     torch.manual_seed(42)
     in_f, out_f = 16, 8
     W = torch.randn(out_f, in_f)
     W_fp8 = W.clamp(-448, 448).to(torch.float8_e4m3fn)
-    scale_val = 2.0  # representable in fp8
-    scale_fp8 = torch.tensor([scale_val], dtype=torch.float8_e4m3fn)
+    scale_val = 2.0
+    scale_fp8 = torch.tensor([scale_val], dtype=torch.float32).to(torch.float8_e4m3fn)
 
     linear = nn.Linear(in_f, out_f, bias=False)
     linear.weight = nn.Parameter(W_fp8, requires_grad=False)
@@ -419,16 +537,48 @@ try:
     x = torch.randn(3, in_f, dtype=torch.bfloat16)
     out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
 
-    # Reference: manual dequantization in bfloat16
+    # Manual reference dequantization
     W_deq = W_fp8.to(torch.bfloat16) * torch.tensor([scale_val], dtype=torch.bfloat16)
     ref = F.linear(x, W_deq)
 
-    if out is not None and torch.allclose(out.float(), ref.float(), atol=0.1, rtol=0.05):
-        passed += 1
-except Exception:
-    pass
+    if out is None:
+        print("FAIL:returns_none")
+    elif not torch.allclose(out.float(), ref.float(), atol=0.1, rtol=0.05):
+        max_diff = (out.float() - ref.float()).abs().max().item()
+        print("FAIL:accuracy:max_diff=" + str(round(max_diff, 4)))
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
+PYEOF
+)
+echo "  Result: $T10"
+if [ "$T10" = "PASS" ]; then add_reward 0.09; fi
 
-# Sub-test B: per-channel scale
+
+# --- T11 (0.09): numerical accuracy per-channel scales ---
+echo ""
+echo "=== Test 11/15: fp8 forward: numerical accuracy per-channel scales [behavioral] ==="
+T11=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+try:
+    from library.fp8_optimization_utils import fp8_linear_forward_patch
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
+    sys.exit(0)
+
 try:
     torch.manual_seed(123)
     in_f, out_f = 8, 4
@@ -444,82 +594,190 @@ try:
     x = torch.randn(2, in_f, dtype=torch.bfloat16)
     out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
 
-    # Reference
+    # Manual reference dequantization
     W_deq = W_fp8.to(torch.bfloat16) * scale_vals.to(torch.bfloat16)
     ref = F.linear(x, W_deq)
 
-    if out is not None and torch.allclose(out.float(), ref.float(), atol=0.1, rtol=0.05):
-        passed += 1
-except Exception:
-    pass
-
-if passed == total:
-    print("PASS")
-elif passed > 0:
-    print(f"PARTIAL:{passed}/{total}")
-else:
-    print("FAIL:no_subtests_passed")
+    if out is None:
+        print("FAIL:returns_none")
+    elif not torch.allclose(out.float(), ref.float(), atol=0.1, rtol=0.05):
+        max_diff = (out.float() - ref.float()).abs().max().item()
+        print("FAIL:accuracy:max_diff=" + str(round(max_diff, 4)))
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
 PYEOF
 )
-echo "  Result: $T7"
-if [ "$T7" = "PASS" ]; then
-    add_reward 0.15
-elif [[ "$T7" == PARTIAL:* ]]; then
-    add_reward 0.08
-fi
+echo "  Result: $T11"
+if [ "$T11" = "PASS" ]; then add_reward 0.09; fi
 
-# ═══════════════════════════════════════════════════════════════════
-# TEST 8 (0.05): --fp8_scaled CLI argument added to lumina_train_util.py
-#   Bronze/AST: can't easily call the argparser without full CLI env.
-#   Checks that add_argument("--fp8_scaled", ...) exists.
-# ═══════════════════════════════════════════════════════════════════
+
+# --- T12 (0.08): different dims (64->32) + scale=0.5 ---
 echo ""
-echo "=== Test 8/9: --fp8_scaled CLI argument in lumina_train_util.py ==="
-T8=$(python3 << 'PYEOF'
-import sys, ast
+echo "=== Test 12/15: fp8 forward: different dims (64->32) + scale=0.5 [behavioral] ==="
+T12=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
 
 try:
-    with open("/workspace/sd-scripts/library/lumina_train_util.py", "r") as f:
-        source = f.read()
-except FileNotFoundError:
-    print("FAIL:file_not_found")
+    from library.fp8_optimization_utils import fp8_linear_forward_patch
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
     sys.exit(0)
 
 try:
-    tree = ast.parse(source)
-except SyntaxError as e:
-    print(f"FAIL:syntax:{e}")
-    sys.exit(0)
+    in_f, out_f = 64, 32
+    linear = nn.Linear(in_f, out_f, bias=False)
+    linear.weight = nn.Parameter(
+        linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([0.5], dtype=torch.float32).to(torch.float8_e4m3fn))
 
-for node in ast.walk(tree):
-    if isinstance(node, ast.Call):
-        func = node.func
-        if isinstance(func, ast.Attribute) and func.attr == "add_argument":
-            for arg in node.args:
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "fp8_scaled" in arg.value:
-                    print("PASS")
-                    sys.exit(0)
-            for kw in node.keywords:
-                if kw.arg == "dest" and isinstance(kw.value, ast.Constant) and "fp8_scaled" in str(kw.value.value):
-                    print("PASS")
-                    sys.exit(0)
+    x = torch.randn(4, in_f, dtype=torch.bfloat16)
+    out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
 
-print("FAIL:not_found")
+    if out is None:
+        print("FAIL:returns_none")
+    elif out.shape != (4, out_f):
+        print("FAIL:shape:" + str(out.shape))
+    elif out.dtype != torch.bfloat16:
+        print("FAIL:dtype:" + str(out.dtype))
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
 PYEOF
 )
-echo "  Result: $T8"
-if [ "$T8" = "PASS" ]; then add_reward 0.05; fi
+echo "  Result: $T12"
+if [ "$T12" = "PASS" ]; then add_reward 0.08; fi
+
+
+# --- T13 (0.08): wide->narrow (32->4) + scale=128.0 ---
+echo ""
+echo "=== Test 13/15: fp8 forward: wide->narrow (32->4) + scale=128.0 [behavioral] ==="
+T13=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
+
+try:
+    from library.fp8_optimization_utils import fp8_linear_forward_patch
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
+    sys.exit(0)
+
+try:
+    in_f, out_f = 32, 4
+    linear = nn.Linear(in_f, out_f, bias=False)
+    linear.weight = nn.Parameter(
+        linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([128.0], dtype=torch.float32).to(torch.float8_e4m3fn))
+
+    x = torch.randn(1, in_f, dtype=torch.bfloat16)
+    out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
+
+    if out is None:
+        print("FAIL:returns_none")
+    elif out.shape != (1, out_f):
+        print("FAIL:shape:" + str(out.shape))
+    elif out.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+        print("FAIL:fp8_output")
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
+PYEOF
+)
+echo "  Result: $T13"
+if [ "$T13" = "PASS" ]; then add_reward 0.08; fi
+
+
+# --- T14 (0.07): non-unit scale (24->12) + scale=3.5 + float32 input ---
+echo ""
+echo "=== Test 14/15: fp8 forward: non-unit scale (24->12) + scale=3.5 + float32 [behavioral] ==="
+T14=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+import torch.nn as nn
+
+try:
+    from library.fp8_optimization_utils import fp8_linear_forward_patch
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
+    sys.exit(0)
+
+try:
+    in_f, out_f = 24, 12
+    linear = nn.Linear(in_f, out_f, bias=False)
+    linear.weight = nn.Parameter(
+        linear.weight.to(torch.float32).clamp(-448, 448).to(torch.float8_e4m3fn),
+        requires_grad=False)
+    linear.register_buffer("scale_weight",
+        torch.tensor([3.5], dtype=torch.float32).to(torch.float8_e4m3fn))
+
+    x = torch.randn(3, in_f, dtype=torch.float32)
+    out = fp8_linear_forward_patch(linear, x, use_scaled_mm=False)
+
+    if out is None:
+        print("FAIL:returns_none")
+    elif out.shape != (3, out_f):
+        print("FAIL:shape:" + str(out.shape))
+    elif out.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+        print("FAIL:fp8_output")
+    else:
+        print("PASS")
+except RuntimeError as e:
+    s = str(e)
+    if "mul_cpu" in s or "mul_cuda" in s or "not implemented for" in s:
+        print("FAIL:fp8_bug_not_fixed")
+    else:
+        print("FAIL:runtime:" + s[:80])
+except Exception as e:
+    print("FAIL:error:" + type(e).__name__ + ":" + str(e)[:80])
+PYEOF
+)
+echo "  Result: $T14"
+if [ "$T14" = "PASS" ]; then add_reward 0.07; fi
+
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 9 (0.05): PASS-TO-PASS — upstream CPU-safe test suite
-#   Runs available CPU-safe tests from the sd-scripts repo to verify
-#   the agent's changes don't break existing functionality.
+# T15 (0.08): P2P — upstream CPU-safe test suite
+# Runs available CPU-safe tests from the sd-scripts repo to verify
+# the agent's changes don't break existing functionality.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 9/9: Upstream CPU-safe test suite (P2P) ==="
+echo "=== Test 15/15: P2P upstream CPU-safe tests [behavioral] ==="
 cd /workspace/sd-scripts
 
-# Discover available test files in tests/library/ (CPU-safe subset)
 P2P_RESULT="SKIP"
 TEST_FILES=""
 if [ -d "tests/library" ]; then
@@ -527,12 +785,10 @@ if [ -d "tests/library" ]; then
 fi
 
 if [ -n "$TEST_FILES" ]; then
-    # Run discovered tests, skip any that require CUDA
     python3 -m pytest $TEST_FILES -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null
     if [ $? -eq 0 ]; then
         P2P_RESULT="PASS"
     else
-        # Try running just the ones that don't import cuda
         P2P_PASSED=0
         P2P_TOTAL=0
         for tf in $TEST_FILES; do
@@ -549,7 +805,6 @@ if [ -n "$TEST_FILES" ]; then
         fi
     fi
 else
-    # No test files found — check for any tests at all
     if [ -d "tests" ]; then
         ALL_TESTS=$(find tests -name "test_*.py" -type f 2>/dev/null | head -5)
         if [ -n "$ALL_TESTS" ]; then
@@ -563,10 +818,11 @@ fi
 
 echo "  P2P result: $P2P_RESULT"
 if [ "$P2P_RESULT" = "PASS" ]; then
-    add_reward 0.05
+    add_reward 0.08
 elif [ "$P2P_RESULT" = "PARTIAL" ]; then
-    add_reward 0.03
+    add_reward 0.04
 fi
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Write final reward

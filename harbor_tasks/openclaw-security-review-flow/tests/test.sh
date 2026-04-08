@@ -54,6 +54,50 @@ add_reward() {
 }
 
 # ═══════════════════════════════════════════════════════════════════
+# Determine TypeScript runner: tsx preferred, fall back to node --experimental-strip-types
+# ═══════════════════════════════════════════════════════════════════
+TS_RUNNER=""
+if command -v tsx >/dev/null 2>&1; then
+    TSX_CHECK=$(tsx -e "process.stdout.write('tsx-ok')" 2>&1)
+    if [ "$TSX_CHECK" = "tsx-ok" ]; then
+        TS_RUNNER="tsx --no-warnings"
+        echo "=== TS runner: tsx ==="
+    fi
+fi
+if [ -z "$TS_RUNNER" ]; then
+    # Node 22+ --experimental-strip-types needs --experimental-detect-module for .ts with top-level await
+    NODE_TS_CHECK=$(node --experimental-strip-types --experimental-detect-module -e "const x: number = 1; process.stdout.write('node-ts-ok')" 2>&1 | grep -o 'node-ts-ok')
+    if [ "$NODE_TS_CHECK" = "node-ts-ok" ]; then
+        TS_RUNNER="node --experimental-strip-types --experimental-detect-module --no-warnings"
+        echo "=== TS runner: node --experimental-strip-types ==="
+    fi
+fi
+if [ -z "$TS_RUNNER" ]; then
+    echo "=== FATAL: No TypeScript runner available (tsx and node --experimental-strip-types both failed) ==="
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
+fi
+
+# run_ts FILE TIMEOUT — run a .ts file, capture last non-empty stdout line, show stderr for debugging
+run_ts() {
+    local file="$1"
+    local secs="${2:-10}"
+    local out
+    out=$(timeout "$secs" $TS_RUNNER "$file" 2>/tmp/_ts_stderr)
+    local rc=$?
+    # Show stderr for debugging but don't mix it into the result
+    if [ -s /tmp/_ts_stderr ]; then
+        echo "  [stderr]: $(head -3 /tmp/_ts_stderr)"
+    fi
+    if [ $rc -ne 0 ] && [ -z "$out" ]; then
+        echo "TS_RUNNER_FAILED:exit_$rc"
+        return
+    fi
+    # Return last non-empty line
+    echo "$out" | grep -v '^\s*$' | tail -1
+}
+
+# ═══════════════════════════════════════════════════════════════════
 # TEST 3 (0.15): classifyTool('bash') returns 'high' AND safe!='high'
 # RUN FIRST — gates T1 and T2 structural tests
 # ═══════════════════════════════════════════════════════════════════
@@ -93,7 +137,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T3_RESULT=$(timeout 10 tsx --no-warnings /tmp/test_classify_bash.ts 2>&1 | tail -1)
+    T3_RESULT=$(run_ts /tmp/test_classify_bash.ts 10)
     echo "  Result: $T3_RESULT"
     if echo "$T3_RESULT" | grep -q "^PASS"; then
         add_reward 0.15
@@ -203,7 +247,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T4=$(timeout 10 tsx --no-warnings /tmp/test_classify_safe.ts 2>&1 | tail -1)
+    T4=$(run_ts /tmp/test_classify_safe.ts 10)
     echo "  Result: $T4"
     if echo "$T4" | grep -q "^PASS"; then add_reward 0.05; fi
 fi
@@ -249,7 +293,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T5=$(timeout 10 tsx --no-warnings /tmp/test_classify_medium.ts 2>&1 | tail -1)
+    T5=$(run_ts /tmp/test_classify_medium.ts 10)
     echo "  Result: $T5"
     if echo "$T5" | grep -q "^PASS"; then add_reward 0.05; fi
 fi
@@ -296,7 +340,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T6_RESULT=$(timeout 10 tsx --no-warnings /tmp/test_destructive.ts 2>&1 | tail -1)
+    T6_RESULT=$(run_ts /tmp/test_destructive.ts 10)
     echo "  Result: $T6_RESULT"
     if echo "$T6_RESULT" | grep -q "^PASS"; then add_reward 0.10; fi
 fi
@@ -330,7 +374,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T7=$(timeout 10 tsx --no-warnings /tmp/test_safe_bash.ts 2>&1 | tail -1)
+    T7=$(run_ts /tmp/test_safe_bash.ts 10)
     echo "  Result: $T7"
     if echo "$T7" | grep -q "^PASS"; then add_reward 0.05; fi
 fi
@@ -400,7 +444,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T8=$(timeout 10 tsx --no-warnings /tmp/test_patterns.ts 2>&1 | tail -1)
+    T8=$(run_ts /tmp/test_patterns.ts 10)
     echo "  Result: $T8"
     if echo "$T8" | grep -q "^PASS"; then add_reward 0.15;
     elif echo "$T8" | grep -q "^PARTIAL"; then add_reward 0.08; fi
@@ -439,7 +483,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 80));
 }
 TSEOF
-    T9=$(timeout 10 tsx --no-warnings /tmp/test_escalate.ts 2>&1 | tail -1)
+    T9=$(run_ts /tmp/test_escalate.ts 10)
     echo "  Result: $T9"
     if echo "$T9" | grep -q "^PASS"; then add_reward 0.10; fi
 fi
@@ -480,7 +524,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 60));
 }
 TSEOF
-    T10=$(timeout 10 tsx --no-warnings /tmp/test_reviewer.ts 2>&1 | tail -1)
+    T10=$(run_ts /tmp/test_reviewer.ts 10)
     echo "  Result: $T10"
     if echo "$T10" | grep -q "^PASS"; then add_reward 0.05; fi
 fi
@@ -585,7 +629,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(importErr.message).slice(0, 60));
 }
 TSEOF
-    T11=$(timeout 15 tsx --no-warnings /tmp/test_decision.ts 2>&1 | tail -1)
+    T11=$(run_ts /tmp/test_decision.ts 15)
     echo "  Result: $T11"
     if echo "$T11" | grep -q "^PASS:full"; then
         add_reward 0.20
@@ -627,7 +671,7 @@ try {
     process.stdout.write('IMPORT_FAILED:' + String(e.message).slice(0, 60));
 }
 TSEOF
-    T12=$(timeout 10 tsx --no-warnings /tmp/test_index.ts 2>&1 | tail -1)
+    T12=$(run_ts /tmp/test_index.ts 10)
     echo "  Result: $T12"
     if echo "$T12" | grep -q "^PASS"; then add_reward 0.05; fi
     # NO structural fallback — import failure = 0 points

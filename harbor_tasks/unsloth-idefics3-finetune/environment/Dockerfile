@@ -46,6 +46,16 @@ RUN pip install --no-cache-dir \
     "hf_transfer" \
     "wheel"
 
+# CPU compat: patch unsloth_zoo's get_device_type to return "cpu" instead of
+# raising NotImplementedError on CPU-only Docker.  The function checks for CUDA,
+# ROCm, XPU etc. and raises if none found.  We make it fall back to "cpu".
+RUN SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
+    DT="$SITE/unsloth_zoo/device_type.py" && \
+    if [ -f "$DT" ]; then \
+      sed -i 's/raise NotImplementedError.*You need a GPU.*/return "cpu"/' "$DT" && \
+      echo "Patched unsloth_zoo device_type.py for CPU compat"; \
+    fi
+
 # Install optional deps that may not be available on all architectures
 RUN pip install --no-cache-dir "bitsandbytes>=0.45.0" 2>&1 || true
 RUN pip install --no-cache-dir "torchvision" 2>&1 || true
