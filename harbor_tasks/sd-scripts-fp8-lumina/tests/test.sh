@@ -29,6 +29,7 @@
 #   T15: 0.08  P2P: upstream CPU-safe tests [behavioral]
 #
 set +e
+export PATH="/workspace/venv/bin:$PATH"
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
