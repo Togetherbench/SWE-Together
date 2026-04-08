@@ -286,6 +286,27 @@ def build_trial_config(
     )
 
 
+def _build_trajectories(trials_dir: Path):
+    """Build trajectory.json for all trials that need it (viewer compatibility)."""
+    import subprocess as _sp
+
+    build_script = REPO_ROOT / "scripts" / "build_trajectory.py"
+    if not build_script.exists():
+        log.warning("build_trajectory.py not found — skipping")
+        return
+
+    log.info("Building trajectory.json files...")
+    result = _sp.run(
+        [sys.executable, str(build_script), "--all", "--trials-dir", str(trials_dir)],
+        cwd=str(REPO_ROOT), timeout=120, capture_output=True, text=True,
+    )
+    if result.stdout:
+        for line in result.stdout.strip().split("\n"):
+            log.info("  %s", line)
+    if result.returncode != 0 and result.stderr:
+        log.warning("build_trajectory errors: %s", result.stderr[:500])
+
+
 def _sanitize_and_upload(trials_dir: Path):
     """Sanitize traces (strip API keys) and upload to Railway S3."""
     import subprocess as _sp
@@ -568,7 +589,8 @@ async def main():
     summary_path.write_text(json.dumps(summary_data, indent=2))
     log.info("Summary written to %s", summary_path)
 
-    # Post-run: sanitize and upload traces
+    # Post-run: build trajectory.json for viewer, then sanitize and upload
+    _build_trajectories(trials_dir)
     _sanitize_and_upload(trials_dir)
 
 
