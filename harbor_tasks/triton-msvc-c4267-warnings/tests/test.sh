@@ -1,38 +1,63 @@
 #!/usr/bin/env bash
 # Verifier for triton-msvc-c4267-warnings
-# Checks that WarpSpecializeUtility.cpp has both size_t→unsigned narrowing fixes.
 #
-# Scoring (total 1.00):
-#   0.05  Bronze:   file exists, non-empty, >400 lines
-#   0.05  Bronze:   key function lowerKernelBarriers still present
-#   0.25  F2P:      Fix 1 behavioral — lambda capture compiles+runs clean with GCC -Wconversion
-#   0.15  Bronze+:  Fix 1 structural — explicit cast OR bug pattern removed + context
-#   0.25  F2P:      Fix 2 behavioral — getResult arg compiles+runs clean with GCC -Wconversion
-#   0.15  Bronze+:  Fix 2 structural — explicit cast OR bug pattern removed + context
-#   0.10  F2P:      Both — combined behavioral confirmation (both narrowings resolved)
+# 17 tests (0.86 behavioral / 0.14 structural), total 1.00
+#
+# Scoring breakdown:
+#   Structural (5 x 0.02 = 0.10):
+#     T1  0.02  File exists, >400 lines
+#     T2  0.02  lowerKernelBarriers present
+#     T3  0.02  partition->walk lambda present
+#     T4  0.02  lowerCallOp present
+#     T5  0.02  enumerate(newOp->getResults context
+#
+#   Fix 1 Behavioral — any approach (5 tests = 0.43):
+#     T6  0.11  compile+value idx=42
+#     T7  0.08  value idx=7
+#     T8  0.08  value idx=1000
+#     T9  0.08  value idx=0
+#     T10 0.08  value idx=12345
+#
+#   Fix 1 Structural (1 x 0.02):
+#     T11 0.02  bug pattern [&, idx=idx] gone OR explicit cast present
+#
+#   Fix 2 Behavioral (5 tests = 0.43):
+#     T12 0.11  compile+value i=42
+#     T13 0.08  value i=99
+#     T14 0.08  value i=0
+#     T15 0.08  value i=100000
+#     T16 0.08  value i=7
+#
+#   Fix 2 Structural (1 x 0.02):
+#     T17 0.02  bare getResult(i) gone + enumerate/replaceAllUsesWith context
+#
+# Key fix over previous test: old behavioral test used std::optional<unsigned>
+# which GCC doesn't warn about through template instantiation. New test uses
+# direct `unsigned x = (EXPR)` assignment which correctly triggers -Wconversion.
+#
+# Any-approach detection: Fix 1 tests extract expressions from three locations
+# (lambda capture, lowerBarrier 3rd arg, lowerCallOp 3rd arg) and award credit
+# if ANY compiles clean. This correctly handles both capture-site and use-site
+# cast approaches.
 
 set +e
 
 REWARD=0.0
 FILE="/workspace/triton/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp"
+STRIPPED="/tmp/stripped_wsu.txt"
 
-# --------------------------------------------------------------------------
-# Create a sanitized copy: strip line comments, block comments, and string
-# literals to prevent injection via comments or strings.
-# --------------------------------------------------------------------------
-STRIPPED=$(mktemp)
+# ==========================================================================
+# Phase 1: Strip comments, block comments, and string literals
+# ==========================================================================
 if [ -f "$FILE" ]; then
-    python3 << PYEOF > "$STRIPPED"
+    python3 << 'PYEOF' > "$STRIPPED"
 import re
 try:
-    with open("$FILE") as f:
+    with open("/workspace/triton/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp") as f:
         code = f.read()
-    # Remove block comments /* ... */
     code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
-    # Remove line comments //...
     code = re.sub(r'//[^\n]*', '', code)
-    # Remove string literals (preserving structure)
-    code = re.sub(r'"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"', '""', code)
+    code = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', code)
     print(code)
 except:
     pass
@@ -42,292 +67,459 @@ else
 fi
 
 # ==========================================================================
-# Bronze 1 (0.05): File exists, non-empty, >400 lines
-# The file is ~570+ lines at the base commit. A fix adds/changes ~2 lines.
-# Threshold 400 blocks stub files and wholesale rewrites.
-# ==========================================================================
-if [ -f "$FILE" ] && [ -s "$FILE" ]; then
-    LINE_COUNT=$(wc -l < "$FILE")
-    if [ "$LINE_COUNT" -gt 400 ]; then
-        REWARD=$(python3 -c "print(round($REWARD + 0.05, 2))")
-    fi
-fi
-
-# ==========================================================================
-# Bronze 2 (0.05): Key function lowerKernelBarriers still present
-# Guards against wholesale file deletion or replacement.
-# ==========================================================================
-if grep -q 'lowerKernelBarriers' "$STRIPPED" 2>/dev/null; then
-    REWARD=$(python3 -c "print(round($REWARD + 0.05, 2))")
-fi
-
-# ==========================================================================
-# F2P Behavioral Fix 1 (0.25): Lambda capture narrowing resolved
+# Phase 2: Extract expressions from the stripped source
 #
-# The bug: partition->walk([&, idx = idx]...) where idx is size_t from
-# llvm::enumerate. The captured idx is size_t, but passed to functions
-# expecting std::optional<unsigned>, triggering MSVC C4267.
-#
-# Strategy: extract the idx initializer expression from the lambda capture,
-# compile AND run a minimal C++ program that assigns it to
-# std::optional<unsigned> with GCC -Wconversion -Werror. The runtime check
-# verifies value preservation (rejects literal constants like 0u).
+# Outputs to temp files:
+#   /tmp/fix1_capture_expr.txt   — capture initializer (single expr or FAIL)
+#   /tmp/fix1_barrier_exprs.txt  — lowerBarrier 3rd args (one per line)
+#   /tmp/fix1_callop_exprs.txt   — lowerCallOp 3rd args (one per line)
+#   /tmp/fix2_getresult_exprs.txt — op->getResult args near replaceAllUsesWith
 # ==========================================================================
-FIX1_BEH=0
-IDX_INIT=$(python3 << PYEOF
+python3 << 'PYEOF'
 import re
+
 try:
-    with open("$STRIPPED") as f:
+    with open("/tmp/stripped_wsu.txt") as f:
         content = f.read()
 except:
-    print("FAIL")
+    open("/tmp/fix1_capture_expr.txt", "w").write("FAIL\n")
+    open("/tmp/fix1_barrier_exprs.txt", "w").write("")
+    open("/tmp/fix1_callop_exprs.txt", "w").write("")
+    open("/tmp/fix2_getresult_exprs.txt", "w").write("")
     exit(0)
 
-# Find partition->walk([...idx...]) — the specific walk with idx in capture
-for m in re.finditer(r'partition->walk\s*\(\s*\[([^\]]*)\]', content, re.DOTALL):
-    capture = m.group(1)
-    if 'idx' not in capture:
-        continue
-    # Extract: idx = EXPRESSION (may include static_cast with nested parens)
-    idx_m = re.search(r'\bidx\s*=\s*(.+)', capture)
-    if idx_m:
-        expr = idx_m.group(1).strip()
-        # Walk the expression, balancing parens/angles, stop at comma at depth 0
-        depth = 0
-        end = len(expr)
-        for i, c in enumerate(expr):
-            if c == '(' or c == '<':
-                depth += 1
-            elif c == ')' or c == '>':
-                depth -= 1
-            elif c == ',' and depth == 0:
-                end = i
+def balanced_extract(text, open_pos):
+    """Extract content between balanced parens starting at open_pos (which must be '(')."""
+    if open_pos >= len(text) or text[open_pos] != '(':
+        return None
+    depth = 0
+    for i in range(open_pos, len(text)):
+        if text[i] == '(':
+            depth += 1
+        elif text[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return text[open_pos + 1:i]
+    return None
+
+def extract_nth_arg(args_str, n):
+    """Extract nth (0-based) comma-separated arg, respecting balanced parens/angles."""
+    depth = 0
+    current = 0
+    start = 0
+    for i, c in enumerate(args_str):
+        if c in '(<[':
+            depth += 1
+        elif c in ')>]':
+            depth -= 1
+        elif c == ',' and depth == 0:
+            if current == n:
+                return args_str[start:i].strip()
+            current += 1
+            start = i + 1
+    if current == n:
+        return args_str[start:].strip()
+    return None
+
+# --- 1. Extract capture_expr from partition->walk([..., idx = EXPR]) ---
+capture_expr = "FAIL"
+walk_match = re.search(r'partition->walk\s*\(\s*\[([^\]]*)\]', content, re.DOTALL)
+if walk_match:
+    capture_list = walk_match.group(1)
+    if 'idx' in capture_list:
+        idx_m = re.search(r'\bidx\s*=\s*(.+)', capture_list)
+        if idx_m:
+            expr = idx_m.group(1).strip()
+            # Walk expression, balancing parens/angles, stop at comma at depth 0
+            depth = 0
+            end = len(expr)
+            for i, c in enumerate(expr):
+                if c in '(<':
+                    depth += 1
+                elif c in ')>':
+                    depth -= 1
+                elif c == ',' and depth == 0:
+                    end = i
+                    break
+            expr = expr[:end].strip()
+            if expr:
+                capture_expr = expr
+
+open("/tmp/fix1_capture_expr.txt", "w").write(capture_expr + "\n")
+
+# --- 2. Find the walk lambda body, then extract lowerBarrier/lowerCallOp args ---
+barrier_exprs = []
+callop_exprs = []
+
+# Locate lambda body: partition->walk([...](...)  {  ... })
+walk_full = re.search(r'partition->walk\s*\(\s*\[[^\]]*\]\s*\([^)]*\)\s*\{', content, re.DOTALL)
+if walk_full:
+    body_start = walk_full.end() - 1  # position of '{'
+    depth = 0
+    body_end = len(content)
+    for i in range(body_start, len(content)):
+        if content[i] == '{':
+            depth += 1
+        elif content[i] == '}':
+            depth -= 1
+            if depth == 0:
+                body_end = i + 1
                 break
-        expr = expr[:end].strip()
-        if expr:
-            print(expr)
-            exit(0)
-print("FAIL")
-PYEOF
-)
+    lambda_body = content[body_start:body_end]
 
-if [ "$IDX_INIT" != "FAIL" ] && [ -n "$IDX_INIT" ]; then
-    cat > /tmp/test_fix1.cpp << CPPEOF
-#include <cstddef>
-#include <optional>
-int main() {
-    size_t idx = 42;
-    auto captured = ($IDX_INIT);
-    // Type check: must assign to optional<unsigned> without narrowing
-    std::optional<unsigned int> opt = captured;
-    // Value check: reject literal constants (e.g. 0u) that don't reference idx
-    return (opt.value() == 42u) ? 0 : 1;
-}
-CPPEOF
-    g++ -std=c++17 -Wconversion -Werror /tmp/test_fix1.cpp -o /tmp/test_fix1 2>/dev/null
-    if [ $? -eq 0 ]; then
-        /tmp/test_fix1 2>/dev/null
-        if [ $? -eq 0 ]; then
-            FIX1_BEH=1
-            REWARD=$(python3 -c "print(round($REWARD + 0.25, 2))")
-        fi
-    fi
-fi
+    # Extract 3rd arg from lowerBarrier calls inside lambda
+    for m in re.finditer(r'lowerBarrier\s*\(', lambda_body):
+        paren_pos = lambda_body.find('(', m.start() + len('lowerBarrier'))
+        if paren_pos == -1:
+            continue
+        args = balanced_extract(lambda_body, paren_pos)
+        if args:
+            arg2 = extract_nth_arg(args, 2)
+            if arg2:
+                barrier_exprs.append(arg2)
 
-# ==========================================================================
-# Bronze+ Structural Fix 1 (0.15): Explicit cast OR bug pattern removed
-#
-# Three detection paths:
-#   A: explicit cast in walk lambda capture (static_cast / C-style / uint32_t)
-#   B: explicit cast of idx anywhere + walk lambda still exists
-#   C: bug pattern [&, idx = idx] gone + partition->walk with idx survives
-# ==========================================================================
-FIX1_STR=0
+    # Extract 3rd arg from lowerCallOp calls inside lambda
+    for m in re.finditer(r'lowerCallOp\s*\(', lambda_body):
+        paren_pos = lambda_body.find('(', m.start() + len('lowerCallOp'))
+        if paren_pos == -1:
+            continue
+        args = balanced_extract(lambda_body, paren_pos)
+        if args:
+            arg2 = extract_nth_arg(args, 2)
+            if arg2:
+                callop_exprs.append(arg2)
 
-# Path A: cast in the lambda capture list itself
-if grep -qP 'walk\s*\(\s*\[.*idx\s*=\s*(static_cast\s*<\s*(unsigned(\s+int)?|uint32_t)\s*>|\(unsigned(\s+int)?\)|\(uint32_t\))' "$STRIPPED" 2>/dev/null; then
-    FIX1_STR=1
-fi
+open("/tmp/fix1_barrier_exprs.txt", "w").write("\n".join(barrier_exprs) + ("\n" if barrier_exprs else ""))
+open("/tmp/fix1_callop_exprs.txt", "w").write("\n".join(callop_exprs) + ("\n" if callop_exprs else ""))
 
-# Path B: explicit cast of idx anywhere + walk lambda still present
-if [ $FIX1_STR -eq 0 ]; then
-    if grep -qP '(static_cast\s*<\s*(unsigned(\s+int)?|uint32_t)\s*>\s*\(\s*idx\s*\)|\((unsigned(\s+int)?|uint32_t)\)\s*\(?\s*idx\s*\)?)' "$STRIPPED" 2>/dev/null; then
-        if grep -qP 'partition->walk\s*\(\s*\[' "$STRIPPED" 2>/dev/null; then
-            FIX1_STR=1
-        fi
-    fi
-fi
-
-# Path C: original bug pattern gone + walk lambda with idx still present
-if [ $FIX1_STR -eq 0 ]; then
-    if ! grep -qP '\[\s*&\s*,\s*idx\s*=\s*idx\s*\]' "$STRIPPED" 2>/dev/null; then
-        if grep -qP 'partition->walk\s*\(\s*\[.*idx' "$STRIPPED" 2>/dev/null; then
-            FIX1_STR=1
-        fi
-    fi
-fi
-
-if [ $FIX1_STR -eq 1 ]; then
-    REWARD=$(python3 -c "print(round($REWARD + 0.15, 2))")
-fi
-
-# ==========================================================================
-# F2P Behavioral Fix 2 (0.25): getResult narrowing resolved
-#
-# The bug: op->getResult(i) where i is size_t from llvm::enumerate.
-# getResult(unsigned idx) expects unsigned, causing C4267 on MSVC.
-#
-# Strategy: extract the arg from op->getResult(ARG) near replaceAllUsesWith
-# using balanced-paren parsing (handles nested parens in static_cast),
-# compile AND run a test that passes it to a function taking unsigned.
-# ==========================================================================
-FIX2_BEH=0
-GETRESULT_ARG=$(python3 << PYEOF
-import re
-try:
-    with open("$STRIPPED") as f:
-        content = f.read()
-except:
-    print("FAIL")
-    exit(0)
-
+# --- 3. Extract getResult arg near replaceAllUsesWith ---
+getresult_exprs = []
 lines = content.split('\n')
-for line_idx, line in enumerate(lines):
+for li, line in enumerate(lines):
     if 'op->getResult' not in line:
         continue
-    # The bug site is near replaceAllUsesWith — check a ±3 line window
-    window = '\n'.join(lines[max(0, line_idx-2):line_idx+4])
+    window = '\n'.join(lines[max(0, li - 2):li + 4])
     if 'replaceAllUsesWith' not in window:
         continue
-    # Find op->getResult( and extract the argument with balanced parens
     pos = line.find('op->getResult')
-    if pos == -1:
-        continue
     rest = line[pos + len('op->getResult'):].lstrip()
     if not rest.startswith('('):
         continue
-    # Balance parentheses to find the full argument
     depth = 0
     start = None
-    for i, c in enumerate(rest):
+    for j, c in enumerate(rest):
         if c == '(':
             if depth == 0:
-                start = i + 1
+                start = j + 1
             depth += 1
         elif c == ')':
             depth -= 1
             if depth == 0:
-                arg = rest[start:i].strip()
+                arg = rest[start:j].strip()
                 if arg:
-                    print(arg)
-                    exit(0)
+                    getresult_exprs.append(arg)
                 break
-print("FAIL")
-PYEOF
-)
+    if getresult_exprs:
+        break
 
-if [ "$GETRESULT_ARG" != "FAIL" ] && [ -n "$GETRESULT_ARG" ]; then
-    cat > /tmp/test_fix2.cpp << CPPEOF
+open("/tmp/fix2_getresult_exprs.txt", "w").write("\n".join(getresult_exprs) + ("\n" if getresult_exprs else ""))
+PYEOF
+
+# ==========================================================================
+# Phase 3: Load extracted expressions
+# ==========================================================================
+CAPTURE_EXPR=$(head -1 /tmp/fix1_capture_expr.txt 2>/dev/null)
+mapfile -t BARRIER_EXPRS < /tmp/fix1_barrier_exprs.txt 2>/dev/null
+mapfile -t CALLOP_EXPRS < /tmp/fix1_callop_exprs.txt 2>/dev/null
+mapfile -t GETRESULT_EXPRS < /tmp/fix2_getresult_exprs.txt 2>/dev/null
+
+# ==========================================================================
+# Test helpers
+# ==========================================================================
+
+# try_compile_run EXPR VALUE VARNAME
+#   Writes a C++ program that assigns (EXPR) to unsigned, compiles with
+#   -Wconversion -Werror, and checks value preservation at runtime.
+#   Returns 0 on success, 1 on failure.
+try_compile_run() {
+    local expr="$1" value="$2" varname="$3"
+    [ -z "$expr" ] && return 1
+    [ "$expr" = "FAIL" ] && return 1
+
+    cat > /tmp/test_narrowing.cpp << CPPEOF
 #include <cstddef>
 int main() {
-    size_t i = 42;
-    // Type check: must assign to unsigned without narrowing
-    unsigned result = ($GETRESULT_ARG);
-    // Value check: reject literal constants that don't reference i
-    return (result == 42u) ? 0 : 1;
+    size_t $varname = ${value}ULL;
+    unsigned result = ($expr);
+    return (result == ${value}u) ? 0 : 1;
 }
 CPPEOF
-    g++ -std=c++17 -Wconversion -Werror /tmp/test_fix2.cpp -o /tmp/test_fix2 2>/dev/null
-    if [ $? -eq 0 ]; then
-        /tmp/test_fix2 2>/dev/null
-        if [ $? -eq 0 ]; then
-            FIX2_BEH=1
-            REWARD=$(python3 -c "print(round($REWARD + 0.25, 2))")
-        fi
+    g++ -std=c++17 -Wconversion -Werror -o /tmp/test_narrowing /tmp/test_narrowing.cpp 2>/dev/null || return 1
+    /tmp/test_narrowing 2>/dev/null || return 1
+    return 0
+}
+
+# try_fix1 VALUE
+#   Try all Fix 1 expression sources. Award if ANY compiles clean.
+try_fix1() {
+    local val="$1"
+    try_compile_run "$CAPTURE_EXPR" "$val" idx && return 0
+    for e in "${BARRIER_EXPRS[@]}"; do
+        try_compile_run "$e" "$val" idx && return 0
+    done
+    for e in "${CALLOP_EXPRS[@]}"; do
+        try_compile_run "$e" "$val" idx && return 0
+    done
+    return 1
+}
+
+# try_fix2 VALUE
+#   Try all Fix 2 expression sources. Award if ANY compiles clean.
+try_fix2() {
+    local val="$1"
+    for e in "${GETRESULT_EXPRS[@]}"; do
+        try_compile_run "$e" "$val" i && return 0
+    done
+    return 1
+}
+
+add_reward() {
+    REWARD=$(python3 -c "print(round($REWARD + $1, 2))")
+}
+
+# ==========================================================================
+# T1 (0.02): File exists, non-empty, >400 lines
+# The base file is ~570 lines. Threshold 400 blocks stubs and rewrites.
+# ==========================================================================
+if [ -f "$FILE" ] && [ -s "$FILE" ]; then
+    LINE_COUNT=$(wc -l < "$FILE")
+    if [ "$LINE_COUNT" -gt 400 ]; then
+        add_reward 0.02
+        echo "T1  PASS  file >400 lines ($LINE_COUNT)"
+    else
+        echo "T1  FAIL  file only $LINE_COUNT lines"
+    fi
+else
+    echo "T1  FAIL  file missing or empty"
+fi
+
+# ==========================================================================
+# T2 (0.02): lowerKernelBarriers function present
+# ==========================================================================
+if grep -q 'lowerKernelBarriers' "$STRIPPED" 2>/dev/null; then
+    add_reward 0.02
+    echo "T2  PASS  lowerKernelBarriers present"
+else
+    echo "T2  FAIL  lowerKernelBarriers missing"
+fi
+
+# ==========================================================================
+# T3 (0.02): partition->walk lambda present
+# ==========================================================================
+if grep -qP 'partition->walk\s*\(\s*\[' "$STRIPPED" 2>/dev/null; then
+    add_reward 0.02
+    echo "T3  PASS  partition->walk lambda present"
+else
+    echo "T3  FAIL  partition->walk lambda missing"
+fi
+
+# ==========================================================================
+# T4 (0.02): lowerCallOp function present
+# ==========================================================================
+if grep -q 'lowerCallOp' "$STRIPPED" 2>/dev/null; then
+    add_reward 0.02
+    echo "T4  PASS  lowerCallOp present"
+else
+    echo "T4  FAIL  lowerCallOp missing"
+fi
+
+# ==========================================================================
+# T5 (0.02): enumerate(newOp->getResults context present
+# ==========================================================================
+if grep -qP 'enumerate\s*\(\s*newOp->getResults' "$STRIPPED" 2>/dev/null; then
+    add_reward 0.02
+    echo "T5  PASS  enumerate getResults context present"
+else
+    echo "T5  FAIL  enumerate getResults context missing"
+fi
+
+# ==========================================================================
+# T6 (0.11): Fix 1 behavioral — any approach, idx=42
+# ==========================================================================
+if try_fix1 42; then
+    add_reward 0.11
+    echo "T6  PASS  Fix1 compile+value idx=42"
+else
+    echo "T6  FAIL  Fix1 idx=42"
+fi
+
+# ==========================================================================
+# T7 (0.08): Fix 1 behavioral — idx=7
+# ==========================================================================
+if try_fix1 7; then
+    add_reward 0.08
+    echo "T7  PASS  Fix1 value idx=7"
+else
+    echo "T7  FAIL  Fix1 idx=7"
+fi
+
+# ==========================================================================
+# T8 (0.08): Fix 1 behavioral — idx=1000
+# ==========================================================================
+if try_fix1 1000; then
+    add_reward 0.08
+    echo "T8  PASS  Fix1 value idx=1000"
+else
+    echo "T8  FAIL  Fix1 idx=1000"
+fi
+
+# ==========================================================================
+# T9 (0.08): Fix 1 behavioral — idx=0
+# ==========================================================================
+if try_fix1 0; then
+    add_reward 0.08
+    echo "T9  PASS  Fix1 value idx=0"
+else
+    echo "T9  FAIL  Fix1 idx=0"
+fi
+
+# ==========================================================================
+# T10 (0.08): Fix 1 behavioral — idx=12345
+# ==========================================================================
+if try_fix1 12345; then
+    add_reward 0.08
+    echo "T10 PASS  Fix1 value idx=12345"
+else
+    echo "T10 FAIL  Fix1 idx=12345"
+fi
+
+# ==========================================================================
+# T11 (0.02): Fix 1 structural — bug pattern gone OR explicit cast present
+#
+# Passes if EITHER:
+#   A) The original [&, idx = idx] capture pattern is gone
+#   B) An explicit unsigned cast of idx exists anywhere in the file
+# ==========================================================================
+FIX1_STR=0
+
+# Path A: original bug pattern [&, idx = idx] gone
+if ! grep -qP '\[\s*&\s*,\s*idx\s*=\s*idx\s*\]' "$STRIPPED" 2>/dev/null; then
+    if grep -qP 'partition->walk\s*\(\s*\[.*idx' "$STRIPPED" 2>/dev/null; then
+        FIX1_STR=1
     fi
 fi
 
-# ==========================================================================
-# Bronze+ Structural Fix 2 (0.15): Explicit cast OR bug pattern removed
-#
-# Two detection paths:
-#   A: explicit cast in op->getResult() call
-#   B: bare getResult(i) gone + enumerate loop + replaceAllUsesWith context
-# ==========================================================================
-FIX2_STR=0
-
-# Path A: static_cast in getResult call
-if grep -qP 'op->getResult\s*\(\s*static_cast\s*<\s*(unsigned(\s+int)?|uint32_t)' "$STRIPPED" 2>/dev/null; then
-    FIX2_STR=1
+# Path B: explicit cast of idx to unsigned exists
+if [ $FIX1_STR -eq 0 ]; then
+    if grep -qP '(static_cast\s*<\s*(unsigned(\s+int)?|uint32_t)\s*>\s*\(\s*idx\s*\)|\(unsigned(\s+int)?\)\s*\(?\s*idx\s*\)?)' "$STRIPPED" 2>/dev/null; then
+        FIX1_STR=1
+    fi
 fi
 
-# Path A2: C-style cast in getResult call
-if [ $FIX2_STR -eq 0 ]; then
-    if grep -qP 'op->getResult\s*\(\s*\(unsigned' "$STRIPPED" 2>/dev/null; then
+if [ $FIX1_STR -eq 1 ]; then
+    add_reward 0.02
+    echo "T11 PASS  Fix1 structural"
+else
+    echo "T11 FAIL  Fix1 structural"
+fi
+
+# ==========================================================================
+# T12 (0.11): Fix 2 behavioral — i=42
+# ==========================================================================
+if try_fix2 42; then
+    add_reward 0.11
+    echo "T12 PASS  Fix2 compile+value i=42"
+else
+    echo "T12 FAIL  Fix2 i=42"
+fi
+
+# ==========================================================================
+# T13 (0.08): Fix 2 behavioral — i=99
+# ==========================================================================
+if try_fix2 99; then
+    add_reward 0.08
+    echo "T13 PASS  Fix2 value i=99"
+else
+    echo "T13 FAIL  Fix2 i=99"
+fi
+
+# ==========================================================================
+# T14 (0.08): Fix 2 behavioral — i=0
+# ==========================================================================
+if try_fix2 0; then
+    add_reward 0.08
+    echo "T14 PASS  Fix2 value i=0"
+else
+    echo "T14 FAIL  Fix2 i=0"
+fi
+
+# ==========================================================================
+# T15 (0.08): Fix 2 behavioral — i=100000
+# ==========================================================================
+if try_fix2 100000; then
+    add_reward 0.08
+    echo "T15 PASS  Fix2 value i=100000"
+else
+    echo "T15 FAIL  Fix2 i=100000"
+fi
+
+# ==========================================================================
+# T16 (0.08): Fix 2 behavioral — i=7
+# ==========================================================================
+if try_fix2 7; then
+    add_reward 0.08
+    echo "T16 PASS  Fix2 value i=7"
+else
+    echo "T16 FAIL  Fix2 i=7"
+fi
+
+# ==========================================================================
+# T17 (0.02): Fix 2 structural — bare getResult(i) gone + context preserved
+#
+# Passes if bare getResult(i) is absent AND the enumerate loop +
+# replaceAllUsesWith context still exists (blocks simple deletion).
+# ==========================================================================
+FIX2_STR=0
+if ! grep -qP '\bgetResult\s*\(\s*i\s*\)' "$STRIPPED" 2>/dev/null; then
+    python3 << 'PYEOF'
+import sys
+try:
+    with open("/tmp/stripped_wsu.txt") as f:
+        content = f.read()
+    lines = content.split('\n')
+    has_enumerate = any('enumerate(newOp->getResults' in l for l in lines)
+    has_context = False
+    for i, line in enumerate(lines):
+        if 'replaceAllUsesWith' in line:
+            window = '\n'.join(lines[max(0, i-3):i+4])
+            if 'getResult' in window:
+                has_context = True
+                break
+    sys.exit(0 if has_enumerate and has_context else 1)
+except:
+    sys.exit(1)
+PYEOF
+    if [ $? -eq 0 ]; then
         FIX2_STR=1
     fi
 fi
 
-# Path B: bare getResult(i) gone + enumerate loop + replaceAllUsesWith in context
-if [ $FIX2_STR -eq 0 ]; then
-    if ! grep -qP '\bgetResult\s*\(\s*i\s*\)' "$STRIPPED" 2>/dev/null; then
-        FALLBACK2=$(python3 << PYEOF
-import re
-try:
-    with open("$STRIPPED") as f:
-        content = f.read()
-except:
-    print(0)
-    exit(0)
-
-lines = content.split('\n')
-
-has_enumerate = any('enumerate(newOp->getResults' in l for l in lines)
-
-has_replace_context = False
-for i, line in enumerate(lines):
-    if 'replaceAllUsesWith' in line:
-        window = '\n'.join(lines[max(0, i-2):i+3])
-        if 'op->getResult' in window:
-            has_replace_context = True
-            break
-
-print(1 if has_enumerate and has_replace_context else 0)
-PYEOF
-        )
-        if [ "$FALLBACK2" = "1" ]; then
-            FIX2_STR=1
-        fi
-    fi
-fi
-
 if [ $FIX2_STR -eq 1 ]; then
-    REWARD=$(python3 -c "print(round($REWARD + 0.15, 2))")
+    add_reward 0.02
+    echo "T17 PASS  Fix2 structural"
+else
+    echo "T17 FAIL  Fix2 structural"
 fi
 
 # ==========================================================================
-# F2P Both (0.10): Combined behavioral confirmation
-# Awards a bonus when BOTH narrowing sites are resolved. If behavioral
-# extraction failed for either, falls back to requiring both structural.
+# Clean up and write result
 # ==========================================================================
-if [ $FIX1_BEH -eq 1 ] && [ $FIX2_BEH -eq 1 ]; then
-    REWARD=$(python3 -c "print(round($REWARD + 0.10, 2))")
-elif [ "$IDX_INIT" = "FAIL" ] || [ "$GETRESULT_ARG" = "FAIL" ]; then
-    # Extraction failed for at least one — accept both structural as fallback
-    if [ $FIX1_STR -eq 1 ] && [ $FIX2_STR -eq 1 ]; then
-        REWARD=$(python3 -c "print(round($REWARD + 0.10, 2))")
-    fi
-fi
+rm -f "$STRIPPED" /tmp/fix1_capture_expr.txt /tmp/fix1_barrier_exprs.txt \
+      /tmp/fix1_callop_exprs.txt /tmp/fix2_getresult_exprs.txt \
+      /tmp/test_narrowing.cpp /tmp/test_narrowing
 
-# --------------------------------------------------------------------------
-# Clean up
-# --------------------------------------------------------------------------
-rm -f "$STRIPPED" /tmp/test_fix1.cpp /tmp/test_fix2.cpp /tmp/test_fix1 /tmp/test_fix2
-
-# --------------------------------------------------------------------------
-# Cap and write result
-# --------------------------------------------------------------------------
 REWARD=$(python3 -c "print(min(1.0, $REWARD))")
 mkdir -p /logs/verifier
 echo "$REWARD" > /logs/verifier/reward.txt
+echo ""
 echo "Score: $REWARD"
