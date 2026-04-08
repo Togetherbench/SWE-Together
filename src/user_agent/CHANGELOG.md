@@ -3,6 +3,66 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.6.0 — 2026-04-07
+
+**Turn quality overhaul: dedup, timing, reasoning, tool_choice.**
+
+Six fixes to the user simulator's turn presentation and decision reliability.
+
+### Turn summary dedup (Fix 1 & 2)
+
+Agent Activity and Terminal Output were byte-for-byte identical — both
+called `_snapshot_recent_output()`. Now `_snapshot_latest_turn()` returns
+separate `(trajectory, observation)`: trajectory is the full step log,
+observation is the last few result/agent lines.
+
+Additionally, Turn N previously re-sent all steps from turns 1..N (O(N²)
+growth). Now only sends the latest turn's activity — prior turns are
+already in conversation history. Step IDs are globally continuous (no
+restart at `[1]` each turn).
+
+Net impact: Turn 2 shrinks from ~54K to ~16K chars (~70% reduction).
+
+### Timing in turn summaries (Fix 3)
+
+`_build_turn_summary()` now includes `**Timing:** Elapsed: 52min, this
+turn took 3min` so the LLM can match time-based triggers from session
+analysis (e.g., "52min 15s after last assistant message").
+
+### Reasoning preservation in history (Fix 4)
+
+Only `decision.content` (the tool argument) was stored in conversation
+history — Gemini's reasoning about *why* it made each decision was
+discarded. `format_for_history()` now preserves reasoning + structured
+decision, filtering internal prefixes and deduplicating.
+
+### tool_choice=required (Fix 5)
+
+Forces Gemini to always call a tool (`no-op`, `question`, `redirect`,
+`new_requirement`, or `check_external`). Eliminates 1,269 text-as-no-op
+cases per eval run. Maps to Gemini's `functionCallingConfig.mode = "ANY"`
+via LiteLLM. Includes one retry if the provider silently ignores it.
+
+### Smart fallback parser (Fix 6)
+
+Replaces the all-or-nothing `_fallback_parse` (which silently dropped
+203 real messages across 10,566 decisions). Now:
+- Detects intended no-ops (model said "stayed silent" as text)
+- Recovers `→ action: content` format from history leaking
+- Recovers short (<500 char) non-reasoning text as redirect messages
+- Defaults to no-op only for long reasoning text
+
+Validated against 10,566 historical decisions: **202/203 recovered, 0
+false positives**.
+
+**E2E validation (3 tasks, claude-opus-4-6 + gemini-3.1-pro):**
+
+| Task | Reward | Interventions |
+|------|--------|---------------|
+| banodoco-video-perf-optimize | 0.70 | 8 |
+| qwen3-moe-gguf-dequant | 0.81 | 6 |
+| comfyui-newbie-lumina-refactor | 0.04 | 1 |
+
 ## v0.5.2 — 2026-04-04
 
 **Incremental CC turns + relaxed trigger interpretation.**
