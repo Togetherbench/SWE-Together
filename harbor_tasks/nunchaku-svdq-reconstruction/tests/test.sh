@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Verifier for nunchaku-svdq-reconstruction
 #
-# 23 micro-tests, total 1.0:
+# 26 micro-tests, total 1.05 (capped at 1.0):
+#   P2P1-P2P3 (0.05) pass-to-pass  upstream sanity (parse, imports, source)
 #   S1-S3   (0.06)  structural  file + functions + anti-stub
 #   Q1-Q3   (0.15)  behavioral  qweight unpack per shape
 #   SC1-SC3 (0.09)  behavioral  scale unpack per shape
@@ -21,6 +22,45 @@ add_score() {
 cd /workspace
 RESULTS=/tmp/verifier_results.txt
 > "$RESULTS"
+
+# ── Pass-to-pass (P2P1-P2P3: 0.05) ────────────────────────────────────
+# Upstream sanity: these must pass even on the unmodified buggy baseline.
+python3 - "$RESULTS" <<'PYEOF'
+import sys
+
+rf = sys.argv[1]
+
+def wr(name, ok):
+    with open(rf, 'a') as f:
+        f.write(f"{name} {1 if ok else 0}\n")
+    print(f"  [{name}] {'PASS' if ok else 'FAIL'}", file=sys.stderr)
+
+# P2P1: reconstruct_weight.py exists and parses as valid Python
+try:
+    import ast
+    with open("reconstruct_weight.py") as f:
+        ast.parse(f.read())
+    wr("P2P1", True)
+except Exception:
+    wr("P2P1", False)
+
+# P2P2: torch is importable and CUDA-free CPU tensors work
+try:
+    import torch
+    t = torch.zeros(2, 2)
+    wr("P2P2", t.shape == (2, 2))
+except Exception:
+    wr("P2P2", False)
+
+# P2P3: upstream nunchaku packer source exists and parses
+try:
+    import ast as _ast
+    with open("nunchaku/nunchaku/lora/flux/packer.py") as f:
+        _ast.parse(f.read())
+    wr("P2P3", True)
+except Exception:
+    wr("P2P3", False)
+PYEOF
 
 # ── Structural (S1-S3: 0.06) ───────────────────────────────────────────
 python3 - "$RESULTS" <<'PYEOF'
@@ -358,6 +398,7 @@ PYEOF
 
 # ── Parse results and compute score ─────────────────────────────────────
 declare -A WEIGHTS
+WEIGHTS[P2P1]=0.02; WEIGHTS[P2P2]=0.02; WEIGHTS[P2P3]=0.01
 WEIGHTS[S1]=0.02;  WEIGHTS[S2]=0.02;  WEIGHTS[S3]=0.02
 WEIGHTS[Q1]=0.05;  WEIGHTS[Q2]=0.05;  WEIGHTS[Q3]=0.05
 WEIGHTS[SC1]=0.03; WEIGHTS[SC2]=0.03; WEIGHTS[SC3]=0.03

@@ -35,6 +35,11 @@ RUN git init /workspace/openclaw && \
     git fetch --depth=1 origin 17287bc8d01b12a293e0452a76b1c117dd1e42c1 && \
     git checkout FETCH_HEAD
 
+# Install project dependencies (skip native addon builds — only needed for vitest P2P tests)
+RUN corepack enable && \
+    cd /workspace/openclaw && \
+    pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -5
+
 # Configure git for agent use (generic message to avoid hinting at synthesis strategy)
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"

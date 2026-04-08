@@ -5,9 +5,9 @@
 # Tests: shared search module, MCP analysis tool wiring, skill reorganization,
 # .mcp.json config, test suite creation, prescriptive descriptions, requirements.txt.
 #
-# Scoring: 78% behavioral, 22% structural. Total = 1.0.
+# Scoring: 83% behavioral, 22% structural. Total capped at 1.0.
 # P2P: analysis functions (find_upstream/find_downstream) at base commit (Check 9).
-# No upstream test suite at base commit.
+# P2P: upstream pytest on tests/ directory (Check 10).
 #
 # Anti-gaming:
 #   - TASK_ALIASES requires >=10 entries with ComfyUI domain terms
@@ -694,6 +694,15 @@ if fn_path:
 
 print(f"  find_upstream/find_downstream work ({len(node_ids)} nodes)")
 PYEOF
+
+# ---------------------------------------------------------------------------
+# Check 10 (0.05): Upstream pass-to-pass — BEHAVIORAL (P2P)
+#   Run pytest on tests/ directory. If the agent created valid tests that
+#   pass, this confirms end-to-end consistency of the implemented modules.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Check 10: Upstream P2P pytest (0.05, behavioral) ==="
+cd /workspace/VibeComfy && python3 -m pytest tests/ -x --timeout=60 -q 2>/dev/null && { echo "PASS: Upstream P2P tests"; add_reward 0.05; } || echo "FAIL: Upstream P2P tests"
 
 # ---------------------------------------------------------------------------
 # Write final reward

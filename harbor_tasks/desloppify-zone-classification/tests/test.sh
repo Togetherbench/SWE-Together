@@ -701,23 +701,9 @@ try:
     fields = {f.name for f in dataclasses.fields(LangConfig)}
     if 'zone_rules' not in fields:
         errors.append('no_zone_rules_field')
-except Exception:
-    # Fallback: AST check on base.py
-    try:
-        with open('desloppify/lang/base.py') as f:
-            tree = ast.parse(f.read())
-        found = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                found.add(node.target.id)
-            elif isinstance(node, ast.Assign):
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        found.add(t.id)
-        if 'zone_rules' not in found:
-            errors.append('no_zone_rules_field')
-    except Exception:
-        errors.append('langconfig_error')
+except Exception as e:
+    # Import failure = check failure (no AST fallback — anti-pattern #2)
+    errors.append('langconfig_import_error')
 
 if not errors:
     print('PASS')
@@ -854,6 +840,19 @@ if [ "$PHASE_RESULT" = "PASS" ]; then
     add_reward 0.07
 else
     echo "  FAIL: ($PHASE_RESULT)"
+fi
+
+# ===================================================================
+# P2P UPSTREAM: Run desloppify's own test suite (bonus 0.05)
+# ===================================================================
+echo ""
+echo "=== P2P Upstream: desloppify tests ==="
+cd /workspace/desloppify
+if python3 -m pytest desloppify/tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
+    echo "  PASS: upstream tests pass"
+    add_reward 0.05
+else
+    echo "  FAIL: upstream tests failed or not found"
 fi
 
 # ===================================================================

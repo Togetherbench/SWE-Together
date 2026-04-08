@@ -8,10 +8,16 @@
 # (header-only) reads — not by decompressing the full array.
 #
 # 12 tests, 100 points total.
-#   Behavioral F2P  (70%): T1(15), T2(10), T3(5), T4(5), T5(20), T6(15)
+#   Behavioral F2P  (75%): T1(15), T2(10), T3(5), T4(5), T5(25), T6(15)
 #   Behavioral Silver (5%): T7(5)
-#   Behavioral P2P  (15%): T8(5), T9(5), T10(5)
-#   Structural Bronze (10%): T11(5), T12(5)
+#   Behavioral P2P  (12%): T8(3), T9(3), T10(6)
+#   Structural Bronze (8%): T11(4), T12(4)
+#
+# Nop protection: all F2P tests are gated on a CANARY check that
+# verifies multi-resolution suffixed-key lookup works. If the base code
+# doesn't use suffixed keys (synthesis broken or no changes), the canary
+# fails and all F2P tests are skipped — preventing false passes from
+# code that trivially finds unsuffixed "latents" keys.
 #
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
@@ -23,10 +29,76 @@ mkdir -p "$(dirname "$REWARD_FILE")"
 SCORE=0
 
 ###############################################################################
+# CANARY: verify that suffixed-key lookup is active (multi_resolution=True).
+# If the code just looks for unsuffixed "latents" (synthesis broken or
+# unmodified base), suffixed-only npz would be REJECTED. In that case, all
+# F2P tests below are meaningless — they'd pass trivially because the code
+# always finds unsuffixed keys.
+###############################################################################
+
+echo "=== CANARY: suffixed-key lookup is active ==="
+CANARY_PASS=0
+python3 << 'PYEOF'
+import sys, os, tempfile, numpy as np
+sys.path.insert(0, "/workspace/sd-scripts")
+
+try:
+    from library.strategy_sd import SdSdxlLatentsCachingStrategy
+except Exception as e:
+    print(f"FAIL: import error: {e}")
+    sys.exit(1)
+
+strat = SdSdxlLatentsCachingStrategy(sd=True, cache_to_disk=True, batch_size=1, skip_disk_cache_validity_check=False)
+
+bucket_reso = (512, 512)
+latents_h = bucket_reso[1] // 8  # 64
+latents_w = bucket_reso[0] // 8  # 64
+key_suffix = f"_{latents_h}x{latents_w}"  # "_64x64"
+
+# Create suffixed-only npz (no unsuffixed "latents" key)
+fd, npz_path = tempfile.mkstemp(suffix=".npz")
+os.close(fd)
+np.savez(npz_path, **{
+    f"latents{key_suffix}": np.ones((4, latents_h, latents_w), dtype=np.float32),
+    f"original_size{key_suffix}": np.array([512, 512]),
+    f"crop_ltrb{key_suffix}": np.array([0, 0, 0, 0]),
+})
+
+try:
+    result = strat.is_disk_cached_latents_expected(bucket_reso, npz_path, flip_aug=False, alpha_mask=False)
+except Exception as e:
+    print(f"FAIL: exception: {e}")
+    sys.exit(1)
+finally:
+    if os.path.exists(npz_path):
+        os.unlink(npz_path)
+
+if not result:
+    print("FAIL: suffixed-only npz not accepted — multi_resolution not active")
+    sys.exit(1)
+
+print("PASS: suffixed-key lookup works (multi_resolution is active)")
+sys.exit(0)
+PYEOF
+if [ $? -eq 0 ]; then
+    CANARY_PASS=1
+fi
+
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo ""
+    echo "WARNING: canary failed — F2P tests will be skipped (base code does not use suffixed keys)"
+    echo ""
+fi
+
+###############################################################################
 # BEHAVIORAL F2P — CORE FALLBACK (Tests 1-4, 35pts)
+# All gated on CANARY_PASS to prevent false positives from unsynthesized base.
 ###############################################################################
 
 echo "=== Test 1/12: is_disk_cached_latents_expected accepts correct-shape legacy npz (15pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
 python3 << 'PYEOF' && SCORE=$((SCORE + 15)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -68,9 +140,13 @@ if not result:
 print("PASS: is_disk_cached_latents_expected=True for legacy unsuffixed npz")
 sys.exit(0)
 PYEOF
+fi
 
 echo ""
 echo "=== Test 2/12: load_latents_from_disk loads from legacy unsuffixed npz (10pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
 python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -130,9 +206,13 @@ if crop_ltrb != [0, 0, 12, 12]:
 print("PASS: load_latents_from_disk loaded legacy npz correctly")
 sys.exit(0)
 PYEOF
+fi
 
 echo ""
 echo "=== Test 3/12: is_disk_cached_latents_expected rejects wrong-shape legacy npz (5pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
 python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -194,9 +274,13 @@ if result:
 print("PASS: is_disk_cached_latents_expected=False for wrong-shape legacy npz")
 sys.exit(0)
 PYEOF
+fi
 
 echo ""
 echo "=== Test 4/12: load_latents_from_disk rejects wrong-shape legacy npz (5pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
 python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -262,18 +346,24 @@ if not rejected:
 print("PASS: load_latents_from_disk rejects wrong-shape legacy npz")
 sys.exit(0)
 PYEOF
+fi
 
 ###############################################################################
-# BEHAVIORAL F2P — HEADER-ONLY PROOF (Tests 5-6, 35pts)
+# BEHAVIORAL F2P — HEADER-ONLY PROOF (Tests 5-6, 40pts)
 #
 # These use corrupted npz files where npy data is truncated but
 # the npy header is intact. A header-only reader extracts the shape;
 # np.load()-based readers crash on the truncated data.
+#
+# Gated on CANARY_PASS to prevent false positives.
 ###############################################################################
 
 echo ""
-echo "=== Test 5/12: Truncated-data legacy npz with correct shape header accepted (20pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 20)) || true
+echo "=== Test 5/12: Truncated-data legacy npz with correct shape header accepted (25pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
+python3 << 'PYEOF' && SCORE=$((SCORE + 25)) || true
 import sys, os, io, tempfile, zipfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -328,9 +418,13 @@ if not result:
 print("PASS: truncated-data legacy npz accepted (header-only shape read confirmed)")
 sys.exit(0)
 PYEOF
+fi
 
 echo ""
 echo "=== Test 6/12: Truncated-data legacy npz with WRONG shape header rejected (15pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
 python3 << 'PYEOF' && SCORE=$((SCORE + 15)) || true
 import sys, os, io, tempfile, zipfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -408,9 +502,11 @@ if result:
 print("PASS: truncated-data npz with wrong shape rejected (header-only rejection confirmed)")
 sys.exit(0)
 PYEOF
+fi
 
 ###############################################################################
 # BEHAVIORAL — SILVER (Test 7, 5pts)
+# Not gated on canary — tests existence of header reader method independently.
 ###############################################################################
 
 echo ""
@@ -491,12 +587,12 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# BEHAVIORAL — PASS-TO-PASS (Tests 8-10, 15pts)
+# BEHAVIORAL — PASS-TO-PASS (Tests 8-10, 12pts)
 ###############################################################################
 
 echo ""
-echo "=== Test 8/12: Resolution-suffixed npz still works (5pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+echo "=== Test 8/12: Resolution-suffixed npz still works (3pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -547,8 +643,8 @@ sys.exit(0)
 PYEOF
 
 echo ""
-echo "=== Test 9/12: Both keys present — suffixed data preferred over legacy (5pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+echo "=== Test 9/12: Both keys present — suffixed data preferred over legacy (3pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -601,7 +697,7 @@ sys.exit(0)
 PYEOF
 
 echo ""
-echo "=== Test 10/12: Upstream test suite pass-to-pass (5pts) ==="
+echo "=== Test 10/12: Upstream test suite pass-to-pass (6pts) ==="
 TEST_DIR="/workspace/sd-scripts/tests"
 if [ -d "$TEST_DIR" ]; then
     TARGET="$TEST_DIR"
@@ -609,7 +705,7 @@ if [ -d "$TEST_DIR" ]; then
     timeout 45 python3 -m pytest "$TARGET" -x --timeout=30 -q 2>&1
     P2P_RC=$?
     if [ $P2P_RC -eq 0 ]; then
-        SCORE=$((SCORE + 5))
+        SCORE=$((SCORE + 6))
         echo "PASS: upstream tests pass — no regressions"
     else
         echo "FAIL: upstream tests failed (exit=$P2P_RC)"
@@ -619,12 +715,12 @@ else
 fi
 
 ###############################################################################
-# STRUCTURAL — BRONZE (Tests 11-12, 10pts)
+# STRUCTURAL — BRONZE (Tests 11-12, 8pts)
 ###############################################################################
 
 echo ""
-echo "=== Test 11/12: Header-only method uses zip/stream approach (5pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+echo "=== Test 11/12: Header-only method uses zip/stream approach (4pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 4)) || true
 import sys, ast
 
 # Main methods that are NOT dedicated header readers
@@ -701,8 +797,8 @@ sys.exit(1)
 PYEOF
 
 echo ""
-echo "=== Test 12/12: SdSdxl enables fallback for backward compat (5pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+echo "=== Test 12/12: SdSdxl enables fallback for backward compat (4pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 4)) || true
 import sys, ast, re
 
 # Approach 1: SdSdxl passes fallback keyword in a call to base class

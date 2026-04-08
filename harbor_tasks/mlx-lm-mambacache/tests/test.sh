@@ -9,7 +9,7 @@
 # behavioral testing on Linux Docker by exec'ing cache.py directly, bypassing
 # the heavy mlx_lm package import chain.
 #
-# No upstream CPU-safe tests available (mlx tests require Apple Metal) -- P2P skipped.
+# Upstream P2P: tool_parsers tests are CPU-safe (pure Python, no mlx needed).
 #
 # Writes reward to /logs/verifier/reward.txt.
 #
@@ -768,6 +768,142 @@ for node in ast.walk(tree):
 if not found:
     print("FAIL: CacheList class not found in cache.py")
 sys.exit(1)
+PYEOF
+
+###############################################################################
+# P2P: Existing mlx-lm Python modules parseable + core cache classes exist
+#
+# mlx is macOS-only (no Linux wheels) so upstream pytest is not CPU-safe.
+# This P2P verifies:
+#   (a) cache.py is valid Python (syntax check)
+#   (b) generate.py is valid Python (syntax check)
+#   (c) The base KVCache/BatchKVCache classes still exist (not deleted by agent)
+# Weight: 5pts out of 100+5 = ~0.05
+###############################################################################
+echo ""
+echo "=== P2P [5pts]: Existing mlx-lm source files intact ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+import ast, sys, os
+
+cache_py = "/workspace/mlx-lm/mlx_lm/models/cache.py"
+generate_py = "/workspace/mlx-lm/mlx_lm/generate.py"
+
+# (a) cache.py parseable
+if not os.path.isfile(cache_py):
+    print("FAIL: cache.py not found")
+    sys.exit(1)
+try:
+    with open(cache_py) as f:
+        tree = ast.parse(f.read())
+except SyntaxError as e:
+    print(f"FAIL: cache.py syntax error: {e}")
+    sys.exit(1)
+
+# (b) generate.py parseable
+if not os.path.isfile(generate_py):
+    print("FAIL: generate.py not found")
+    sys.exit(1)
+try:
+    with open(generate_py) as f:
+        ast.parse(f.read())
+except SyntaxError as e:
+    print(f"FAIL: generate.py syntax error: {e}")
+    sys.exit(1)
+
+# (c) Core cache classes still exist
+class_names = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+required = {"KVCache", "BatchKVCache", "ArraysCache", "MambaCache", "CacheList"}
+missing = required - class_names
+if missing:
+    print(f"FAIL: missing core classes from cache.py: {missing}")
+    sys.exit(1)
+
+print(f"PASS: cache.py + generate.py valid, all {len(required)} core classes present")
+PYEOF
+
+###############################################################################
+# P2P [5pts]: Upstream tool_parsers tests (CPU-safe, no mlx needed)
+#
+# mlx_lm.tool_parsers.* are pure-Python modules (json/regex only).
+# This runs the upstream test_tool_parsing.py logic inline, bypassing the
+# mlx_lm.__init__ import chain (which pulls in mlx.core / transformers).
+# Ensures the agent hasn't broken unrelated package modules.
+###############################################################################
+echo ""
+echo "=== P2P [5pts]: Upstream tool_parsers tests ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+import sys, os, importlib, types
+
+# Ensure mlx_lm package root is importable
+sys.path.insert(0, "/workspace/mlx-lm")
+
+# Load individual parser modules directly, bypassing mlx_lm.__init__
+# (which would trigger import mlx.core and fail on Linux)
+parser_dir = "/workspace/mlx-lm/mlx_lm/tool_parsers"
+if not os.path.isdir(parser_dir):
+    print("FAIL: mlx_lm/tool_parsers directory not found")
+    sys.exit(1)
+
+# Each parser expects a specific input format (positional match from upstream test)
+parser_specs = [
+    ("function_gemma", "call:multiply{a:12234585,b:48838483920}"),
+    ("glm47",          "multiply<arg_key>a</arg_key><arg_value>12234585</arg_value><arg_key>b</arg_key><arg_value>48838483920</arg_value>"),
+    ("json_tools",     '{"name": "multiply", "arguments": {"a": 12234585, "b": 48838483920}}'),
+    ("minimax_m2",     '<invoke name="multiply">\n<parameter name="a">12234585</parameter>\n<parameter name="b">48838483920</parameter>\n</invoke>'),
+    ("qwen3_coder",    "<function=multiply>\n<parameter=a>\n12234585\n</parameter>\n<parameter=b>\n48838483920\n</parameter>\n</function>"),
+]
+
+tools_multiply = [
+    {
+        "type": "function",
+        "function": {
+            "name": "multiply",
+            "description": "Multiply two numbers.",
+            "parameters": {
+                "type": "object",
+                "required": ["a", "b"],
+                "properties": {
+                    "a": {"type": "number", "description": "a is a number"},
+                    "b": {"type": "number", "description": "b is a number"},
+                },
+            },
+        },
+    }
+]
+expected_multiply = {"name": "multiply", "arguments": {"a": 12234585, "b": 48838483920}}
+
+passed = 0
+skipped = 0
+for name, test_input in parser_specs:
+    mod_path = os.path.join(parser_dir, f"{name}.py")
+    if not os.path.isfile(mod_path):
+        print(f"FAIL: parser module {name}.py not found")
+        sys.exit(1)
+    spec = importlib.util.spec_from_file_location(name, mod_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except ImportError as e:
+        # regex package may not be installed; skip that parser
+        print(f"WARN: skipping {name} (import error: {e})")
+        skipped += 1
+        continue
+
+    try:
+        result = mod.parse_tool_call(test_input, tools_multiply)
+        if result != expected_multiply:
+            print(f"FAIL: {name} returned {result}, expected {expected_multiply}")
+            sys.exit(1)
+        passed += 1
+    except Exception as e:
+        print(f"FAIL: {name}.parse_tool_call raised {type(e).__name__}: {e}")
+        sys.exit(1)
+
+if passed < 3:
+    print(f"FAIL: only {passed}/5 parser tests passed ({skipped} skipped)")
+    sys.exit(1)
+
+print(f"PASS: {passed}/5 upstream tool_parsers tests passed ({skipped} skipped)")
 PYEOF
 
 ###############################################################################

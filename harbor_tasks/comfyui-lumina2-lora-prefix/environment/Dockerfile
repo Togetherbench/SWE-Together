@@ -61,6 +61,9 @@ RUN pip install --no-cache-dir \
     sentencepiece \
     spandrel
 
+# Install pytest for upstream P2P regression tests
+RUN pip install --no-cache-dir pytest pytest-timeout
+
 # Set PYTHONPATH so comfy modules are importable
 ENV PYTHONPATH="/workspace/ComfyUI"
 

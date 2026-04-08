@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Verifier for triton-msvc-c4267-warnings
 #
-# 17 tests (0.86 behavioral / 0.14 structural), total 1.00
+# 18 tests (0.86 behavioral / 0.14 structural / 0.05 P2P), total 1.05 (capped 1.0)
 #
 # Scoring breakdown:
 #   Structural (5 x 0.02 = 0.10):
@@ -30,6 +30,9 @@
 #
 #   Fix 2 Structural (1 x 0.02):
 #     T17 0.02  bare getResult(i) gone + enumerate/replaceAllUsesWith context
+#
+#   Pass-to-pass (1 x 0.05):
+#     T18 0.05  brace/paren balance + key functions present + no stray content
 #
 # Key fix over previous test: old behavioral test used std::optional<unsigned>
 # which GCC doesn't warn about through template instantiation. New test uses
@@ -509,6 +512,77 @@ if [ $FIX2_STR -eq 1 ]; then
     echo "T17 PASS  Fix2 structural"
 else
     echo "T17 FAIL  Fix2 structural"
+fi
+
+# ==========================================================================
+# T18 (0.05): Pass-to-pass — modified file is structurally sound
+#
+# Upstream Triton tests require LLVM+GPU so full compilation is not possible.
+# Instead we verify the agent hasn't broken the file's C++ structure:
+#   1. Balanced braces (catches accidental deletions / insertions)
+#   2. Balanced parens (catches broken function calls / casts)
+#   3. All key function definitions still present
+#   4. No stray Python/shell injected (basic sanity)
+# This passes on the unmodified base file (true P2P) and will catch agents
+# that accidentally mangle the file while applying the cast fixes.
+# ==========================================================================
+if [ -f "$FILE" ]; then
+    python3 << 'P2PEOF'
+import sys
+try:
+    with open("/tmp/stripped_wsu.txt") as f:
+        code = f.read()
+
+    # 1. Balanced braces
+    depth = 0
+    for c in code:
+        if c == '{': depth += 1
+        elif c == '}': depth -= 1
+        if depth < 0:
+            print("P2P: unbalanced closing brace", file=sys.stderr)
+            sys.exit(1)
+    if depth != 0:
+        print(f"P2P: brace depth {depth} at EOF", file=sys.stderr)
+        sys.exit(1)
+
+    # 2. Balanced parens
+    depth = 0
+    for c in code:
+        if c == '(': depth += 1
+        elif c == ')': depth -= 1
+        if depth < 0:
+            print("P2P: unbalanced closing paren", file=sys.stderr)
+            sys.exit(1)
+    if depth != 0:
+        print(f"P2P: paren depth {depth} at EOF", file=sys.stderr)
+        sys.exit(1)
+
+    # 3. Key function definitions still present (at least 3 of 4)
+    required = ['lowerKernelBarriers', 'lowerCallOp', 'lowerBarrier', 'partition->walk']
+    found = sum(1 for r in required if r in code)
+    if found < 3:
+        print(f"P2P: only {found}/4 key functions found", file=sys.stderr)
+        sys.exit(1)
+
+    # 4. No stray non-C++ content injected
+    for marker in ['def ', 'import ', '#!/']:
+        if marker in code:
+            print(f"P2P: stray non-C++ marker '{marker.strip()}'", file=sys.stderr)
+            sys.exit(1)
+
+    sys.exit(0)
+except Exception as e:
+    print(f"P2P: {e}", file=sys.stderr)
+    sys.exit(1)
+P2PEOF
+    if [ $? -eq 0 ]; then
+        add_reward 0.05
+        echo "T18 PASS  P2P structure check"
+    else
+        echo "T18 FAIL  P2P structure check"
+    fi
+else
+    echo "T18 FAIL  P2P file missing"
 fi
 
 # ==========================================================================

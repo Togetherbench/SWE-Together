@@ -3,11 +3,11 @@
 # Verification tests for banodoco-wrapped performance improvements.
 #
 # Tests TopGenerations.tsx row virtualization and ModelTrends.tsx animation fixes.
-# 10 tests, total weight 20 (reward = score / 20).
+# 11 tests, total weight 21 (reward = score / 21).
 #
-# P2P (15%):           3/20  — build succeeds, no TS errors
-# Behavioral F2P (60%): 12/20 — extracted functions executed with test data
-# Structural (25%):    5/20  — labels, progressive reveal, auto-play wiring
+# P2P (19%):           4/21  — build succeeds, no TS errors, upstream sources intact
+# Behavioral F2P (57%): 12/21 — extracted functions executed with test data
+# Structural (24%):    5/21  — labels, progressive reveal, auto-play wiring
 #
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
@@ -17,7 +17,7 @@ REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 
 SCORE=0
-TOTAL=20
+TOTAL=21
 
 REPO="/workspace/banodoco-wrapped"
 TOP_GEN="$REPO/components/TopGenerations.tsx"
@@ -724,6 +724,65 @@ if (issues.length > 0) {
 }
 console.log('PASS: ModelTrends has model entry labels with white styling');
 " && SCORE=$((SCORE + 2)) || true
+
+###############################################################################
+# TEST 11/11 [P2P, weight 1/21]: Upstream source files intact
+#
+# Verifies that key non-task source files still parse correctly and export
+# the expected symbols. Catches accidental breakage of files the agent
+# shouldn't have touched. Must pass on the unmodified base commit.
+###############################################################################
+echo ""
+echo "=== Test 11/11 [P2P, weight 1/21]: Upstream source files intact ==="
+node -e "
+const ts = require('typescript');
+const fs = require('fs');
+
+let pass = true;
+
+// 1. constants.ts must export demoData
+const cSrc = fs.readFileSync('constants.ts', 'utf8');
+const cSf = ts.createSourceFile('constants.ts', cSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const hasDemoData = cSf.statements.some(s =>
+  ts.isVariableStatement(s) &&
+  s.declarationList.declarations.some(d => d.name.getText(cSf) === 'demoData')
+);
+if (!hasDemoData) { console.error('FAIL: constants.ts missing demoData export'); pass = false; }
+
+// 2. types.ts must export ModelTrend, TopGeneration, and AppData interfaces
+const tSrc = fs.readFileSync('types.ts', 'utf8');
+const tSf = ts.createSourceFile('types.ts', tSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const typeNames = tSf.statements
+  .filter(s => ts.isInterfaceDeclaration(s))
+  .map(s => s.name.text);
+const neededTypes = ['ModelTrend', 'TopGeneration', 'AppData'];
+for (const t of neededTypes) {
+  if (!typeNames.includes(t)) { console.error('FAIL: types.ts missing ' + t + ' interface'); pass = false; }
+}
+
+// 3. dataProcessing.ts must have exported functions
+const dSrc = fs.readFileSync('dataProcessing.ts', 'utf8');
+const dSf = ts.createSourceFile('dataProcessing.ts', dSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const exportedFns = dSf.statements.filter(s =>
+  ts.isFunctionDeclaration(s) &&
+  s.modifiers && s.modifiers.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
+);
+if (exportedFns.length === 0) { console.error('FAIL: dataProcessing.ts has no exported functions'); pass = false; }
+
+// 4. Key component files parse without syntax errors
+const components = ['components/Hero.tsx', 'components/Heatmap.tsx',
+  'components/Footer.tsx', 'App.tsx'];
+for (const f of components) {
+  try {
+    const s = fs.readFileSync(f, 'utf8');
+    const sf = ts.createSourceFile(f, s, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    if (sf.statements.length === 0) { console.error('FAIL: ' + f + ' parsed to 0 statements'); pass = false; }
+  } catch (e) { console.error('FAIL: ' + f + ' parse error: ' + e.message); pass = false; }
+}
+
+if (pass) console.log('PASS: Upstream source files parse correctly with expected exports');
+else process.exit(1);
+" && SCORE=$((SCORE + 1)) || true
 
 ###############################################################################
 # RESULTS

@@ -563,6 +563,19 @@ echo "  Result: $T15"
 if [[ "$T15" == PASS* ]]; then add_reward 0.11; fi
 
 # ====================================================================
+# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (bonus 0.05)
+# ====================================================================
+echo ""
+echo "=== P2P Upstream: ComfyUI unit tests ==="
+cd /workspace/ComfyUI
+if python3 -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
+    echo "  PASS: upstream tests pass"
+    add_reward 0.05
+else
+    echo "  FAIL: upstream tests failed or not found"
+fi
+
+# ====================================================================
 # Write final reward
 # ====================================================================
 echo ""

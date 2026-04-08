@@ -619,6 +619,19 @@ echo "$BOUT" | grep -q "^B9:PASS" && add_reward 0.12
 echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.08
 
 # ═══════════════════════════════════════════════════════════════
+# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (bonus 0.05)
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "=== P2P Upstream: ComfyUI unit tests ==="
+cd /workspace/ComfyUI
+if python3 -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
+    echo "  PASS: upstream tests pass"
+    add_reward 0.05
+else
+    echo "  FAIL: upstream tests failed or not found"
+fi
+
+# ═══════════════════════════════════════════════════════════════
 echo ""
 echo "======================================="
 echo "Score: $PASS_COUNT/$TOTAL tests passed"

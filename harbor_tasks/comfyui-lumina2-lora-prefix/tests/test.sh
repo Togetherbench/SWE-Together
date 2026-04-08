@@ -6,12 +6,12 @@
 # inside the isinstance(model, comfy.model_base.Lumina2) block in
 # comfy/lora.py's model_lora_keys_unet() function.
 #
-# Scoring (15 tests, total = 1.0):
+# Scoring (16 tests, total = 1.0):
 #   Test 1:  0.02  structural: lora.py valid Python
 #   Test 2:  0.03  structural: AST — "base_model.model." in Lumina2 block
 #   Test 3:  0.03  structural: AST — key_map assignment with base_model.model
 #   Test 4:  0.06  behavioral F2P: base_model.model.* keys exist (n_layers=2)
-#   Test 5:  0.12  behavioral F2P: key count ratio >= 80% of transformer.*
+#   Test 5:  0.10  behavioral F2P: key count ratio >= 80% of transformer.*
 #   Test 6:  0.07  behavioral F2P: layer 0 keys present
 #   Test 7:  0.07  behavioral F2P: layer 1 keys present (varied layer)
 #   Test 8:  0.10  behavioral F2P: >=50% target match with transformer.*
@@ -19,12 +19,13 @@
 #   Test 10: 0.05  behavioral P2P: transformer.* keys still present
 #   Test 11: 0.05  behavioral P2P: diffusion_model.* keys still present
 #   Test 12: 0.05  behavioral P2P: lycoris_* keys still present
-#   Test 13: 0.10  behavioral F2P: n_layers=4 produces more keys than n_layers=2
-#   Test 14: 0.10  behavioral F2P: keys span >=3 distinct component types
+#   Test 13: 0.08  behavioral F2P: n_layers=4 produces more keys than n_layers=2
+#   Test 14: 0.09  behavioral F2P: keys span >=3 distinct component types
 #   Test 15: 0.07  behavioral F2P: diffusion_model.* target consistency
+#   Test 16: 0.05  behavioral P2P: upstream ComfyUI unit tests pass (CPU-safe)
 #
 # Structural: 0.08 (8%) | Behavioral: 0.92 (92%)
-# Max stub score: 0.29 (structural + T4 single-key + P2P on unmodified file)
+# Max stub score: 0.27 (structural + T4 single-key + P2P on unmodified file)
 #
 set +e
 
@@ -34,7 +35,7 @@ mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 LORA_PY="/workspace/ComfyUI/comfy/lora.py"
 PASS=0
-TOTAL=15
+TOTAL=16
 
 # Use venv Python for behavioral tests (has torch installed).
 # Fall back to python3 if venv doesn't exist.
@@ -234,9 +235,9 @@ echo "  Result: $T"
 if [[ "$T" == PASS* ]]; then add_reward 0.06 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 5 (0.12): F2P — base_model.model.* count >= 80% of transformer.*
+# TEST 5 (0.10): F2P — base_model.model.* count >= 80% of transformer.*
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Test 5/$TOTAL: F2P (0.12) — key count ratio >= 80% ---"
+echo "--- Test 5/$TOTAL: F2P (0.10) — key count ratio >= 80% ---"
 T=$($VENV_PY << 'PYEOF'
 exec(open("/tmp/lumina2_test_helper.py").read())
 try:
@@ -256,7 +257,7 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.12 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.10 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 6 (0.07): F2P — layer index 0 keys present in base_model.model.*
@@ -441,7 +442,7 @@ echo "  Result: $T"
 if [[ "$T" == PASS* ]]; then add_reward 0.05 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 13 (0.10): F2P — n_layers=4 produces more base_model.model.* keys
+# TEST 13 (0.08): F2P — n_layers=4 produces more base_model.model.* keys
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 13/$TOTAL: F2P — n_layers=4 scaling ---"
 T=$($VENV_PY << 'PYEOF'
@@ -464,10 +465,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.10 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.08 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 14 (0.10): F2P — keys span >=3 distinct component types
+# TEST 14 (0.09): F2P — keys span >=3 distinct component types
 #   Checks that keys aren't all from a single component (e.g., all
 #   attention). Looks at the second-to-last key segment.
 # ═══════════════════════════════════════════════════════════════════
@@ -499,7 +500,7 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.10 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.09 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # TEST 15 (0.07): F2P — base_model.model.* targets consistent with
@@ -541,6 +542,17 @@ PYEOF
 )
 echo "  Result: $T"
 if [[ "$T" == PASS* ]]; then add_reward 0.07 ; else fail_check "$T"; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 16 (0.05): P2P — upstream ComfyUI CPU-safe unit tests
+# ═══════════════════════════════════════════════════════════════════
+echo "--- Test 16/$TOTAL: P2P — upstream ComfyUI unit tests ---"
+cd /workspace/ComfyUI
+if $VENV_PY -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
+    add_reward 0.05
+else
+    fail_check "upstream tests failed or not found"
+fi
 
 # ═══════════════════════════════════════════════════════════════════
 # Write final reward

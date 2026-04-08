@@ -26,9 +26,11 @@
 #   T11: 0.20  Decision flow: safe auto-approves AND dangerous differs/throws (behavioral F2P)
 #              NO structural fallback — must actually import and run
 #   T12: 0.05  index.ts re-exports >=3 key symbols (behavioral, no fallback)
+#   P2P: 0.05  Upstream vitest unit tests pass (pass-to-pass regression guard)
 #
 # Behavioral: T3-T12 = 0.95 (95%)
 # Structural: T1-T2  = 0.05 (5%, gated behind T3)
+# P2P:        0.05 (bonus, total capped at 1.0)
 #
 # Anti-gaming audit (max stub score with constant-return stubs):
 #   T1: 0 (gated on T3) | T2: 0 (gated on T3) | T3: 0 (safe!=high blocks)
@@ -675,6 +677,98 @@ TSEOF
     echo "  Result: $T12"
     if echo "$T12" | grep -q "^PASS"; then add_reward 0.05; fi
     # NO structural fallback — import failure = 0 points
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# P2P: Run upstream vitest unit tests to verify agent didn't break existing code
+#
+# Runs a targeted subset of upstream unit tests via vitest:
+#   - src/media/parse.test.ts         (media token parsing)
+#   - src/agents/pi-embedded-block-chunker.test.ts (text chunking)
+#   - src/process/spawn-utils.test.ts (process spawn fallback)
+# These cover different parts of the codebase and would fail if the
+# agent corrupted existing source files or broke module resolution.
+# Falls back to basic structural checks if vitest is unavailable.
+# Weight: 0.05
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== P2P [0.05]: Upstream vitest unit tests ==="
+P2P_PASS=false
+
+P2P_TESTS="src/media/parse.test.ts src/agents/pi-embedded-block-chunker.test.ts src/process/spawn-utils.test.ts"
+
+if [ -d "$WORKSPACE/node_modules/.pnpm" ] || [ -d "$WORKSPACE/node_modules/vitest" ]; then
+    echo "  Running upstream vitest on targeted test files..."
+    # Use a minimal inline config to avoid setup.ts which may need native deps
+    cat > /tmp/vitest.p2p.config.ts << 'VITESTCFG'
+import { defineConfig } from "vitest/config";
+export default defineConfig({
+    test: {
+        testTimeout: 15000,
+        pool: "forks",
+        maxWorkers: 1,
+    },
+});
+VITESTCFG
+    P2P_OUTPUT=$(cd "$WORKSPACE" && timeout 30 npx vitest run --config /tmp/vitest.p2p.config.ts --reporter=verbose $P2P_TESTS 2>&1)
+    P2P_RC=$?
+    # Show last 15 lines for debugging
+    echo "$P2P_OUTPUT" | tail -15 | sed 's/^/  /'
+    if [ $P2P_RC -eq 0 ]; then
+        P2P_PASS=true
+        echo "  PASS: upstream vitest tests passed"
+    else
+        echo "  FAIL: upstream vitest tests failed (exit $P2P_RC)"
+    fi
+else
+    echo "  node_modules not found — falling back to structural checks"
+    P2P_FALLBACK=true
+
+    # (a) src/ directory exists with TypeScript files
+    SRC_TS_COUNT=$(find "$WORKSPACE/src" -name "*.ts" -o -name "*.tsx" 2>/dev/null | head -20 | wc -l)
+    if [ "$SRC_TS_COUNT" -lt 3 ]; then
+        echo "  FAIL: only $SRC_TS_COUNT .ts/.tsx files in src/ (expected 3+)"
+        P2P_FALLBACK=false
+    else
+        echo "  OK: $SRC_TS_COUNT+ TypeScript files in src/"
+    fi
+
+    # (b) TS runner works
+    if [ -z "$TS_RUNNER" ]; then
+        echo "  FAIL: no TypeScript runner available"
+        P2P_FALLBACK=false
+    else
+        TS_CHECK=$($TS_RUNNER -e "process.stdout.write('p2p-ok')" 2>/dev/null)
+        if [ "$TS_CHECK" = "p2p-ok" ]; then
+            echo "  OK: TypeScript runner works"
+        else
+            echo "  FAIL: TypeScript runner broken"
+            P2P_FALLBACK=false
+        fi
+    fi
+
+    # (c) package.json is valid JSON
+    if [ -f "$WORKSPACE/package.json" ]; then
+        node -e "JSON.parse(require('fs').readFileSync('$WORKSPACE/package.json','utf8')); process.stdout.write('ok')" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            echo "  OK: package.json is valid JSON"
+        else
+            echo "  FAIL: package.json is not valid JSON"
+            P2P_FALLBACK=false
+        fi
+    else
+        echo "  FAIL: package.json not found"
+        P2P_FALLBACK=false
+    fi
+
+    if [ "$P2P_FALLBACK" = true ]; then
+        P2P_PASS=true
+        echo "  PASS: structural fallback checks passed"
+    fi
+fi
+
+if [ "$P2P_PASS" = true ]; then
+    add_reward 0.05
 fi
 
 # ═══════════════════════════════════════════════════════════════════

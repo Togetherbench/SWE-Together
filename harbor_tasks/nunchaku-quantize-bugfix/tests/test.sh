@@ -10,7 +10,7 @@ set +e
 
 REWARD=0.0
 PASS=0
-TOTAL=10
+TOTAL=16
 
 QF=/workspace/quantize.py
 
@@ -53,10 +53,32 @@ else
     echo "Test 1 FAIL: file does not parse or key functions are stubs"
 fi
 
-# ── Test 2 (0.18): quantize_residual runs + correctness [F2P + Gold] ────
+# ── Test 2a (0.06): quantize_residual runs without crash [F2P core] ────
 # Core bug: .max(dim=-1, keepdim=True) returns namedtuple, needs .values
-# Buggy code crashes with TypeError; fixed code produces valid quantization.
-# Hardened: constant-input check catches stubs returning correct shapes but wrong values.
+# Buggy code crashes with TypeError; fixed code runs cleanly.
+python3 -c "
+import sys
+sys.path.insert(0, '/workspace')
+import torch
+from quantize import quantize_residual
+
+try:
+    torch.manual_seed(0)
+    residual = torch.randn(128, 128, dtype=torch.float32)
+    qweight, wscales = quantize_residual(residual)
+    print('quantize_residual ran without crash')
+    sys.exit(0)
+except Exception as e:
+    print(f'quantize_residual crashed: {type(e).__name__}: {e}')
+    sys.exit(1)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.06 2a "quantize_residual runs without crash"
+else
+    echo "Test 2a FAIL: quantize_residual crashes"
+fi
+
+# ── Test 2b (0.06): quantize_residual output shapes/dtypes correct ─────
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -65,7 +87,6 @@ from quantize import quantize_residual
 
 group_size = 64
 
-# Random inputs: must not crash (F2P) + shape/dtype + scale bound
 for seed, N, K in [(0, 128, 128), (42, 256, 256)]:
     torch.manual_seed(seed)
     residual = torch.randn(N, K, dtype=torch.float32)
@@ -77,13 +98,36 @@ for seed, N, K in [(0, 128, 128), (42, 256, 256)]:
     assert wscales.shape == (K // group_size, N), f'wscales shape: {wscales.shape}'
     assert (wscales > 0).all(), 'wscales must be positive'
 
-    # Scale bound: wscales * 7 >= max(|residual|) per group
+sys.exit(0)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.06 2b "quantize_residual output shapes/dtypes correct"
+else
+    echo "Test 2b FAIL: quantize_residual output shapes/dtypes wrong"
+fi
+
+# ── Test 2c (0.06): quantize_residual scale bounds + constant input ────
+# Scale bound: wscales * 7 >= max(|residual|) per group
+# Constant-input check catches stubs returning correct shapes but wrong values.
+python3 -c "
+import sys
+sys.path.insert(0, '/workspace')
+import torch
+from quantize import quantize_residual
+
+group_size = 64
+
+for seed, N, K in [(0, 128, 128), (42, 256, 256)]:
+    torch.manual_seed(seed)
+    residual = torch.randn(N, K, dtype=torch.float32)
+
+    qweight, wscales = quantize_residual(residual)
+
     res_grouped = residual.view(N, K // group_size, group_size)
     max_abs = res_grouped.abs().max(dim=-1).values
     assert (max_abs <= wscales.T * 7 + 1e-4).all(), 'scale bound violated'
 
-# Constant input: 0.7 everywhere → all quantize to 15 → packed bytes all 0xFF (-1)
-# This catches stubs that return correct shapes but zero/random qweight.
+# Constant input: 0.7 everywhere -> all quantize to 15 -> packed bytes all 0xFF (-1)
 residual_const = torch.full((128, 128), 0.7, dtype=torch.float32)
 qw, ws = quantize_residual(residual_const)
 assert (qw == -1).all(), 'Constant 0.7 input: packed bytes should all be 0xFF'
@@ -91,14 +135,37 @@ assert (qw == -1).all(), 'Constant 0.7 input: packed bytes should all be 0xFF'
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.18 2 "quantize_residual runs + correctness validated"
+    add_reward 0.06 2c "quantize_residual scale bounds checked + constant input OK"
 else
-    echo "Test 2 FAIL: quantize_residual crashes or produces wrong output"
+    echo "Test 2c FAIL: quantize_residual scale bound or constant input check failed"
 fi
 
-# ── Test 3 (0.18): quantize_awq_layer runs + roundtrip [F2P + Gold] ─────
+# ── Test 3a (0.06): quantize_awq_layer runs without crash [F2P core] ───
 # Core bug: .min/.max(dim=-1, keepdim=True) return namedtuples, need .values
-# Buggy code crashes; fixed code produces bounded reconstruction error.
+# Buggy code crashes; fixed code runs cleanly.
+python3 -c "
+import sys
+sys.path.insert(0, '/workspace')
+import torch
+from quantize import quantize_awq_layer
+
+try:
+    torch.manual_seed(1)
+    weight = torch.randn(4, 64, dtype=torch.bfloat16)
+    qweight, wscales, wzeros = quantize_awq_layer(weight)
+    print('quantize_awq_layer ran without crash')
+    sys.exit(0)
+except Exception as e:
+    print(f'quantize_awq_layer crashed: {type(e).__name__}: {e}')
+    sys.exit(1)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.06 3a "quantize_awq_layer runs without crash"
+else
+    echo "Test 3a FAIL: quantize_awq_layer crashes"
+fi
+
+# ── Test 3b (0.06): quantize_awq_layer output shapes/dtypes correct ────
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -110,10 +177,8 @@ for seed, N, K in [(1, 4, 64), (99, 8, 128)]:
     torch.manual_seed(seed)
     weight = torch.randn(N, K, dtype=torch.bfloat16)
 
-    # Must not crash (F2P)
     qweight, wscales, wzeros = quantize_awq_layer(weight)
 
-    # Shape/dtype
     n_groups = K // group_size
     assert qweight.dtype == torch.int32, f'qweight dtype: {qweight.dtype}'
     assert qweight.shape == (N // 4, K // 2), f'qweight shape: {qweight.shape}'
@@ -121,7 +186,31 @@ for seed, N, K in [(1, 4, 64), (99, 8, 128)]:
     assert wzeros.shape == (n_groups, N), f'wzeros shape: {wzeros.shape}'
     assert (wscales > 0).all(), 'wscales must be positive'
 
-    # Roundtrip: unpack AWQ → dequantize → compare with original
+sys.exit(0)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.06 3b "quantize_awq_layer output shapes/dtypes correct"
+else
+    echo "Test 3b FAIL: quantize_awq_layer output shapes/dtypes wrong"
+fi
+
+# ── Test 3c (0.06): quantize_awq_layer roundtrip reconstruction < 0.5 ──
+python3 -c "
+import sys
+sys.path.insert(0, '/workspace')
+import torch
+from quantize import quantize_awq_layer
+
+group_size = 64
+for seed, N, K in [(1, 4, 64), (99, 8, 128)]:
+    torch.manual_seed(seed)
+    weight = torch.randn(N, K, dtype=torch.bfloat16)
+
+    qweight, wscales, wzeros = quantize_awq_layer(weight)
+
+    n_groups = K // group_size
+
+    # Roundtrip: unpack AWQ -> dequantize -> compare with original
     packed_3d = qweight.view(N, K // 32, 4)
     unpacked = torch.zeros((N, K // 32, 32), dtype=torch.int32)
     for g in range(4):
@@ -143,9 +232,9 @@ for seed, N, K in [(1, 4, 64), (99, 8, 128)]:
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.18 3 "quantize_awq_layer runs + roundtrip error bounded"
+    add_reward 0.06 3c "quantize_awq_layer roundtrip reconstruction error < 0.5"
 else
-    echo "Test 3 FAIL: quantize_awq_layer crashes or roundtrip error too large"
+    echo "Test 3c FAIL: quantize_awq_layer roundtrip error too large"
 fi
 
 # ── Test 4 (0.05): pack_svdq_qweight shape/dtype + determinism [Silver] ─
@@ -412,6 +501,99 @@ if [ $? -eq 0 ]; then
     add_reward 0.07 10 "quantize_awq_layer edge cases pass"
 else
     echo "Test 10 FAIL: quantize_awq_layer fails on edge case inputs"
+fi
+
+# ── P2P (0.05): Upstream nunchaku source integrity ───────────────────────
+# P2P: no CPU-safe upstream tests available (nunchaku tests require CUDA/diffusers).
+# Minimal check: verify key Python source files in the cloned nunchaku repo
+# still parse correctly (agent should not have corrupted them while reading).
+python3 -c "
+import ast, sys, os
+
+repo = '/workspace/nunchaku'
+files_to_check = [
+    'nunchaku/__init__.py',
+    'nunchaku/lora/flux/packer.py',
+    'nunchaku/utils.py',
+]
+errors = []
+checked = 0
+for relpath in files_to_check:
+    fpath = os.path.join(repo, relpath)
+    if not os.path.isfile(fpath):
+        continue
+    try:
+        with open(fpath) as f:
+            ast.parse(f.read())
+        checked += 1
+    except SyntaxError as e:
+        errors.append(f'{relpath}: {e}')
+
+if errors:
+    print(f'P2P FAIL: {len(errors)} upstream file(s) have syntax errors: {errors}')
+    sys.exit(1)
+if checked == 0:
+    print('P2P FAIL: no upstream files found to check')
+    sys.exit(1)
+print(f'P2P PASS: {checked} upstream nunchaku files parse OK')
+sys.exit(0)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.05 P2P "upstream nunchaku source integrity"
+else
+    echo "Test P2P FAIL: upstream source corrupted"
+fi
+
+# ── P2P-2 (0.05): modified quantize.py parses + key structures intact ────
+# Pass-to-pass: the agent edits quantize.py to fix bugs. Verify the file
+# still parses and retains all expected top-level functions and imports
+# (guards against accidental deletion or corruption during editing).
+python3 -c "
+import ast, sys
+
+with open('$QF') as f:
+    source = f.read()
+
+try:
+    tree = ast.parse(source)
+except SyntaxError as e:
+    print(f'P2P-2 FAIL: quantize.py has syntax error: {e}')
+    sys.exit(1)
+
+# All functions that must exist at module level
+required_funcs = {
+    'pack_svdq_qweight', 'pack_awq_qweight',
+    'quantize_residual', 'quantize_awq_layer',
+    'quantize_svdq_layer', 'main',
+}
+found_funcs = {
+    node.name for node in ast.iter_child_nodes(tree)
+    if isinstance(node, ast.FunctionDef)
+}
+missing = required_funcs - found_funcs
+if missing:
+    print(f'P2P-2 FAIL: missing top-level functions: {sorted(missing)}')
+    sys.exit(1)
+
+# Key imports that must be present (torch, argparse used in main)
+import_names = set()
+for node in ast.iter_child_nodes(tree):
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            import_names.add(alias.name.split('.')[0])
+    elif isinstance(node, ast.ImportFrom) and node.module:
+        import_names.add(node.module.split('.')[0])
+if 'torch' not in import_names:
+    print('P2P-2 FAIL: torch import missing')
+    sys.exit(1)
+
+print(f'P2P-2 PASS: quantize.py parses, {len(found_funcs & required_funcs)} required functions present')
+sys.exit(0)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.05 P2P-2 "modified quantize.py parses + key structures intact"
+else
+    echo "Test P2P-2 FAIL: quantize.py corrupted or missing key structures"
 fi
 
 # ── Write reward ──────────────────────────────────────────────────────────

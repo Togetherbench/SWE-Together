@@ -22,11 +22,12 @@
 #   Test 6: 0.05  P2P-AST     — k_scale assigned + used + K_ptrs/V_ptrs updates preserved
 #   Test 7: 0.05  Bronze      — _attn_fwd calls _attn_fwd_inner (interface intact)
 #   Test 8: 0.05  Bronze      — _attn_fwd has substantial body (>=10 stmts)
+#   Test 9: 0.05  P2P         — modified Triton kernel file parses as valid Python (ast.parse)
 #
-# Behavioral: 35% (Tests 1,4) | F2P-AST: 45% (Tests 3,5) | P2P-AST: 5% (Test 6) | Structural: 15% (Tests 2,7,8)
+# Behavioral: 35% (Tests 1,4) | F2P-AST: 45% (Tests 3,5) | P2P-AST: 5% (Test 6) | P2P: 5% (Test 9) | Structural: 15% (Tests 2,7,8)
 # AST justified: @triton.jit kernels cannot execute on CPU
 # P2P: no upstream tests available (kijai/ComfyUI-WanVideoWrapper has no test suite)
-# Total: 1.0
+# Total: 1.05 (capped at 1.0)
 
 set +e
 
@@ -47,7 +48,7 @@ add_reward() {
 #   (b) _attn_fwd_inner, _attn_fwd, forward are callable
 #   (c) _attn_fwd_inner has K_scale_ptr in its parameter list
 # ═══════════════════════════════════════════════════════════
-echo "=== Test 1/8: Silver — mock-import + verify functions + signatures ==="
+echo "=== Test 1/9: Silver — mock-import + verify functions + signatures ==="
 T1=$(python3 << 'PYEOF'
 import sys, inspect, importlib.util
 from unittest.mock import MagicMock
@@ -113,7 +114,7 @@ if [ "$T1" = "PASS" ]; then add_reward 0.05; fi
 #   Must have a for loop AND >= 15 meaningful statements
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 2/8: Anti-stub: _attn_fwd_inner has real body ==="
+echo "=== Test 2/9: Anti-stub: _attn_fwd_inner has real body ==="
 T2=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -164,7 +165,7 @@ if [ "$T2" = "PASS" ]; then add_reward 0.05; fi
 #   gaming by placing an indexed load outside the loop.
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 3/8: CORE FIX: bare K_scale_ptr load removed, indexed load in loop ==="
+echo "=== Test 3/9: CORE FIX: bare K_scale_ptr load removed, indexed load in loop ==="
 T3=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -265,7 +266,7 @@ if [ "$T3" = "PASS" ]; then add_reward 0.25; fi
 #   ensure the expression actually depends on BLOCK_N (not hardcoded).
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 4/8: Silver — loop variable in load expr + offset correctness ==="
+echo "=== Test 4/9: Silver — loop variable in load expr + offset correctness ==="
 T4=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -440,7 +441,7 @@ if [ "$T4" = "PASS" ]; then add_reward 0.30; fi
 #   The for loop itself must still be present (not deleted as workaround).
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 5/8: K_scale_ptr mutation removed, loop preserved ==="
+echo "=== Test 5/9: K_scale_ptr mutation removed, loop preserved ==="
 T5=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -503,7 +504,7 @@ if [ "$T5" = "PASS" ]; then add_reward 0.20; fi
 #   (d) V_ptrs += ... present (value pointer advance)
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 6/8: k_scale assigned + used + K_ptrs/V_ptrs preserved ==="
+echo "=== Test 6/9: k_scale assigned + used + K_ptrs/V_ptrs preserved ==="
 T6=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -580,7 +581,7 @@ if [ "$T6" = "PASS" ]; then add_reward 0.05; fi
 # TEST 7 (0.05): _attn_fwd calls _attn_fwd_inner (interface intact)
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 7/8: _attn_fwd calls _attn_fwd_inner (interface intact) ==="
+echo "=== Test 7/9: _attn_fwd calls _attn_fwd_inner (interface intact) ==="
 T7=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -625,7 +626,7 @@ if [ "$T7" = "PASS" ]; then add_reward 0.05; fi
 #   Ensures _attn_fwd itself wasn't simplified into a stub
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 8/8: _attn_fwd has substantial body ==="
+echo "=== Test 8/9: _attn_fwd has substantial body ==="
 T8=$(python3 << 'PYEOF'
 import sys, ast
 
@@ -662,6 +663,35 @@ PYEOF
 )
 echo "  Result: $T8"
 if [ "$T8" = "PASS" ]; then add_reward 0.05; fi
+
+# ═══════════════════════════════════════════════════════════
+# TEST 9 (0.05): P2P — modified Triton kernel file parses as valid Python
+#   Pass-to-pass: the target file must remain syntactically valid Python
+#   after agent modifications. Catches truncation, unclosed brackets,
+#   or other syntax-breaking edits.
+# ═══════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 9/9: P2P — Triton kernel file parses as valid Python ==="
+T9=$(python3 << 'PYEOF'
+import sys, ast
+
+TARGET = "/workspace/ComfyUI-WanVideoWrapper/ultravico/sageattn/attn_qk_int8_per_block.py"
+
+try:
+    with open(TARGET) as f:
+        source = f.read()
+except FileNotFoundError:
+    print("FAIL:file_not_found"); sys.exit(0)
+
+try:
+    ast.parse(source)
+    print("PASS")
+except SyntaxError as e:
+    print(f"FAIL:syntax_error:line_{e.lineno}:{e.msg}")
+PYEOF
+)
+echo "  Result: $T9"
+if [ "$T9" = "PASS" ]; then add_reward 0.05; fi
 
 # ═══════════════════════════════════════════════════════════
 # Final reward

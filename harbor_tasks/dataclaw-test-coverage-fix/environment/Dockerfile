@@ -36,7 +36,8 @@ RUN cd /workspace/dataclaw && \
 # Install additional test dependencies
 RUN pip install --break-system-packages --no-cache-dir \
     pytest==8.3.4 \
-    pytest-cov==6.0.0
+    pytest-cov==6.0.0 \
+    pytest-timeout==2.3.1
 
 # Install huggingface_hub (optional dep referenced in the code)
 RUN pip install --break-system-packages --no-cache-dir \

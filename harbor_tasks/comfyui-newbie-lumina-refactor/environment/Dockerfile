@@ -57,6 +57,9 @@ RUN pip install --no-cache-dir \
     tokenizers>=0.13.3 \
     sentencepiece
 
+# Install pytest for upstream P2P regression tests
+RUN pip install --no-cache-dir pytest pytest-timeout
+
 # Set PYTHONPATH so comfy modules are importable
 ENV PYTHONPATH="/workspace/ComfyUI:$PYTHONPATH"
 

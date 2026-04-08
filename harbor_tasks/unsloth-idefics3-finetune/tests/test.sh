@@ -604,6 +604,94 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Final reward
 # ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+# P2P (0.05): Existing unsloth package intact + key modules importable
+#
+# The upstream unsloth repo should still be functional after agent changes.
+# Verifies:
+#   (a) unsloth/models/__init__.py is valid Python (syntax check)
+#   (b) unsloth/models/vision.py is valid Python (syntax check)
+#   (c) All existing .py files under unsloth/models/ still parse
+#   (d) Key existing model files still present (llama, qwen, etc.)
+#   (e) Basic CPU-safe imports: unsloth package + unsloth.models load
+# No upstream CPU-safe test suite available (unsloth tests require GPU).
+# ═══════════════════════════════════════════════════════════════════
+echo "--- P2P [0.05]: Existing unsloth source intact ---"
+
+P2P_RESULT=$(python3 << 'PYEOF'
+import ast, sys, os, glob
+exec(open('/tmp/_cpu_compat.py').read())
+
+workspace = "/workspace/unsloth"
+os.chdir(workspace)
+
+# (a) unsloth/models/__init__.py parseable
+init_py = os.path.join(workspace, "unsloth/models/__init__.py")
+if not os.path.isfile(init_py):
+    print("FAIL:init_missing"); sys.exit(0)
+try:
+    with open(init_py) as f:
+        ast.parse(f.read())
+except SyntaxError as e:
+    print(f"FAIL:init_syntax:{e}"); sys.exit(0)
+
+# (b) unsloth/models/vision.py parseable
+vision_py = os.path.join(workspace, "unsloth/models/vision.py")
+if os.path.isfile(vision_py):
+    try:
+        with open(vision_py) as f:
+            ast.parse(f.read())
+    except SyntaxError as e:
+        print(f"FAIL:vision_syntax:{e}"); sys.exit(0)
+
+# (c) All existing .py under unsloth/models/ must still parse
+model_dir = os.path.join(workspace, "unsloth/models")
+py_files = sorted(glob.glob(os.path.join(model_dir, "*.py")))
+if len(py_files) < 3:
+    print(f"FAIL:too_few_files:{len(py_files)}"); sys.exit(0)
+
+for fpath in py_files:
+    try:
+        with open(fpath) as f:
+            ast.parse(f.read())
+    except SyntaxError as e:
+        print(f"FAIL:syntax:{os.path.basename(fpath)}:{e}"); sys.exit(0)
+
+# (d) Key existing model files still present (llama, qwen, etc.)
+basenames = [os.path.basename(f).lower() for f in py_files]
+existing_models = [b for b in basenames if any(m in b for m in ["llama", "qwen", "gemma", "mistral"])]
+if len(existing_models) < 1:
+    print(f"FAIL:no_existing_models"); sys.exit(0)
+
+# (e) CPU-safe imports: verify the unsloth package itself loads
+try:
+    import importlib, importlib.util
+    # unsloth top-level __init__.py
+    top_init = os.path.join(workspace, "unsloth/__init__.py")
+    if os.path.isfile(top_init):
+        spec = importlib.util.spec_from_file_location("unsloth._p2p", top_init)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+    # unsloth.models __init__.py
+    spec2 = importlib.util.spec_from_file_location("unsloth.models._p2p", init_py)
+    mod2 = importlib.util.module_from_spec(spec2)
+    spec2.loader.exec_module(mod2)
+except Exception as e:
+    # Import failures on CPU are expected for GPU-heavy code paths;
+    # only fail on clear breakage (SyntaxError, NameError)
+    if isinstance(e, (SyntaxError, NameError)):
+        print(f"FAIL:import:{e}"); sys.exit(0)
+
+print("PASS")
+PYEOF
+)
+
+echo "  Result: $P2P_RESULT"
+if [ "$P2P_RESULT" = "PASS" ]; then
+    add_reward 0.05
+fi
+
 echo ""
 echo "======================================="
 echo "  Tier breakdown:"
@@ -612,7 +700,8 @@ echo "    [0.30] Check 2: from_pretrained delegation (behavioral)"
 echo "    [0.05] Check 3: VLLM_SUPPORTED_VLM (behavioral)"
 echo "    [0.05] Check 4: __init__.py export (behavioral)"
 echo "    [0.20] Check 5: Code substance — methods+LoRA+dispatch+depth (structural)"
-echo "    Behavioral: 0.80 (80%) | Structural: 0.20 (20%)"
+echo "    [0.05] P2P: Existing unsloth source intact + CPU-safe imports"
+echo "    Behavioral: 0.85 (85%) | Structural: 0.20 (20%)"
 echo "  Final reward: $REWARD"
 echo "======================================="
 echo "$REWARD" > "$LOG_DIR/reward.txt"
