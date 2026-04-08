@@ -129,6 +129,33 @@ class UserDecision:
     def format_for_injection(self) -> str:
         return self.content
 
+    # Prefixes that indicate internal/error state, not real model reasoning
+    _INTERNAL_PREFIXES = ("error:", "fallback_noop:", "noop_guard:", "hard_cap_reached")
+
+    def format_for_history(self) -> str:
+        """Format the full decision for conversation history.
+
+        Preserves the model's reasoning (raw_response) alongside the structured
+        decision, so on subsequent turns the model can see *why* it made each
+        prior choice — not just what it said.
+        """
+        parts: list[str] = []
+
+        # Include reasoning if it's genuine model output (not internal markers)
+        reasoning = self.raw_response.strip() if self.raw_response else ""
+        if reasoning and not any(reasoning.startswith(p) for p in self._INTERNAL_PREFIXES):
+            # Avoid duplicating content that's identical to the message
+            if reasoning != self.content.strip():
+                parts.append(reasoning)
+
+        # Append the structured decision
+        if self.has_message:
+            parts.append(f"→ {self.action}: {self.content}")
+        else:
+            parts.append("→ no-op (silent)")
+
+        return "\n\n".join(parts)
+
 
 # ── System prompt ────────────────────────────────────────────────────────
 
@@ -214,6 +241,8 @@ class UserAgent:
         step_count: int,
         is_completion_attempt: bool,
         total_steps_so_far: int = 0,
+        elapsed_sec: float = 0.0,
+        turn_duration_sec: float = 0.0,
     ) -> UserDecision:
         self.total_calls += 1
 
@@ -230,6 +259,7 @@ class UserAgent:
         turn_content = self._build_turn_summary(
             task_description, recent_trajectory, latest_observation,
             latest_analysis, step_count, is_completion_attempt,
+            elapsed_sec, turn_duration_sec,
         )
 
         # Prepend system message in-band (as a "system" role message) so
@@ -249,16 +279,14 @@ class UserAgent:
             log.warning("UserAgent call failed: %s", exc)
             decision = UserDecision(action="no-op", raw_response=f"error: {exc}")
 
-        # Append this turn's user message + sim response to history for continuity
+        # Append this turn's user message + sim response to history for continuity.
+        # Store the full response (reasoning + decision) so the model can see
+        # its own prior thought process on subsequent turns.
         self._messages.append({"role": "user", "content": turn_content})
+        self._messages.append({"role": "assistant", "content": decision.format_for_history()})
         if decision.has_message:
-            self._messages.append({"role": "assistant", "content": decision.content})
             self.message_count += 1
         else:
-            # Record no-op so the LLM sees it stayed silent.
-            # Use natural language (not a bracketed marker) to avoid the LLM
-            # copying the marker verbatim as message content.
-            self._messages.append({"role": "assistant", "content": "(I stayed silent and let the agent keep working.)"})
             self.wait_count += 1
 
         self._counts[decision.action] = self._counts.get(decision.action, 0) + 1
@@ -281,11 +309,31 @@ class UserAgent:
 
     # ── prompt building ──
 
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """Format seconds into human-readable duration like '2min 30s' or '1h 15min'."""
+        if seconds < 60:
+            return f"{seconds:.0f}s"
+        minutes = seconds / 60
+        if minutes < 60:
+            return f"{minutes:.0f}min {seconds % 60:.0f}s"
+        hours = int(minutes // 60)
+        remaining_min = int(minutes % 60)
+        return f"{hours}h {remaining_min}min"
+
     def _build_turn_summary(
         self, task, trajectory, observation, analysis,
         step, is_completion,
+        elapsed_sec=0.0, turn_duration_sec=0.0,
     ) -> str:
         sections = [f"## Turn {step}"]
+
+        # Timing context so the LLM can match time-based triggers
+        if elapsed_sec > 0:
+            timing_parts = [f"Elapsed: {self._format_duration(elapsed_sec)}"]
+            if turn_duration_sec > 0:
+                timing_parts.append(f"this turn took {self._format_duration(turn_duration_sec)}")
+            sections.append(f"**Timing:** {', '.join(timing_parts)}")
 
         if is_completion:
             sections.append("** The agent is signaling completion.")
@@ -294,8 +342,8 @@ class UserAgent:
             # First call — include task description for context
             sections.append(f"\n## Task\n{task[:400]}")
 
-        sections.append(f"\n## Agent activity\n{trajectory}")
-        sections.append(f"\n## Terminal output\n{observation}")
+        sections.append(f"\n## Agent activity (this turn)\n{trajectory}")
+        sections.append(f"\n## Agent output\n{observation}")
 
         if analysis:
             sections.append(f"\n## Agent's thinking\n{analysis[:300]}")

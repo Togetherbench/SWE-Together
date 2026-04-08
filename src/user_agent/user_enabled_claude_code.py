@@ -11,6 +11,7 @@ Multi-turn flow:
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,11 @@ class UserEnabledClaudeCode(BaseAgent):
         self._check_on_completion = call_user_on_completion
         self._task_instruction = ""
         self._cumulative_output: list[str] = []
+        # Timing: wall-clock tracking for turn summaries
+        self._start_time: float = 0.0  # set when run() begins
+        self._turn_start_time: float = 0.0  # set before each agent turn
+        # Global step counter so step IDs don't restart across turns
+        self._global_step_id: int = 0
 
     @staticmethod
     def name() -> str:
@@ -363,16 +369,16 @@ server.serve_forever()
 
     # ── trajectory snapshot for user sim ─────────────────────────────
 
-    @staticmethod
-    def _parse_stream_json(raw: str) -> list[str]:
+    def _parse_stream_json(self, raw: str) -> list[str]:
         """Parse Claude Code stream-json output into structured step summaries.
 
         Converts raw JSONL (thinking, tool_use, text, result) into a format
         similar to Terminus 2's trajectory steps, so the user simulator sees
         structured information instead of raw JSON noise.
+
+        Uses self._global_step_id so step numbers are continuous across turns.
         """
         steps: list[str] = []
-        step_id = 0
         for line in raw.split("\n"):
             line = line.strip()
             if not line:
@@ -388,11 +394,11 @@ server.serve_forever()
                 for block in obj.get("message", {}).get("content", []):
                     bt = block.get("type")
                     if bt == "thinking":
-                        step_id += 1
+                        self._global_step_id += 1
                         text = block.get("thinking", "")[:300]
-                        steps.append(f"[{step_id}] thinking: {text}")
+                        steps.append(f"[{self._global_step_id}] thinking: {text}")
                     elif bt == "tool_use":
-                        step_id += 1
+                        self._global_step_id += 1
                         name = block.get("name", "?")
                         inp = block.get("input", {})
                         # Show the most useful part of each tool call
@@ -410,57 +416,80 @@ server.serve_forever()
                             detail = inp.get("pattern", "")
                         else:
                             detail = json.dumps(inp)[:200]
-                        steps.append(f"[{step_id}] tool_call({name}): {detail}")
+                        steps.append(f"[{self._global_step_id}] tool_call({name}): {detail}")
                     elif bt == "text":
-                        step_id += 1
+                        self._global_step_id += 1
                         text = block.get("text", "")[:300]
-                        steps.append(f"[{step_id}] agent: {text}")
+                        steps.append(f"[{self._global_step_id}] agent: {text}")
 
             elif t == "result":
-                step_id += 1
+                self._global_step_id += 1
                 result = obj.get("result", "")
                 if isinstance(result, str):
-                    steps.append(f"[{step_id}] result: {result[:300]}")
+                    steps.append(f"[{self._global_step_id}] result: {result[:300]}")
                 else:
-                    steps.append(f"[{step_id}] result: {json.dumps(result)[:300]}")
+                    steps.append(f"[{self._global_step_id}] result: {json.dumps(result)[:300]}")
 
         return steps
 
-    def _snapshot_recent_output(self) -> str:
-        """Return a structured summary of all agent activity.
+    def _snapshot_latest_turn(self) -> tuple[str, str]:
+        """Return structured steps and raw observation for the LATEST turn only.
 
-        Parses Claude Code's stream-json output into structured steps (similar
-        to Terminus 2's trajectory format) and returns all of them. No
-        truncation — the user sim should see the full picture, just like a
-        real user who has been watching the agent work.
+        Returns (trajectory, observation) where:
+        - trajectory: structured step summary of the latest turn's agent activity
+        - observation: the last result/agent text from the latest turn (what the
+          agent actually produced, not the full tool-call log)
+
+        Prior turns are already in the user sim's conversation history, so
+        re-sending them would cause O(N²) growth and confuse the LLM.
         """
         if not self._cumulative_output:
-            return "(nothing yet)"
+            return "(nothing yet)", "(nothing yet)"
 
-        # Parse all turns' raw output into structured steps
-        all_steps: list[str] = []
-        for raw in self._cumulative_output:
-            all_steps.extend(self._parse_stream_json(raw))
+        # Parse only the latest turn's raw output
+        latest_raw = self._cumulative_output[-1]
+        steps = self._parse_stream_json(latest_raw)
 
-        if not all_steps:
-            return "\n".join(self._cumulative_output)
+        if not steps:
+            trajectory = latest_raw[:self._ctx_budget] if latest_raw else "(no structured output)"
+        else:
+            trajectory = "\n".join(steps)
 
-        return "\n".join(all_steps)
+        # Observation: extract the last result/agent text as what the agent
+        # actually produced (the user cares about the outcome, not every tool call)
+        observation_lines = [s for s in steps if any(
+            s.split("] ", 1)[-1].startswith(prefix)
+            for prefix in ("result:", "agent:")
+        )]
+        if observation_lines:
+            # Show last few result/agent lines (the actual output)
+            observation = "\n".join(observation_lines[-5:])
+        else:
+            observation = trajectory[-self._ctx_budget:] if trajectory else "(no output)"
+
+        return trajectory, observation
 
     # ── user simulation ──────────────────────────────────────────────
 
     async def _consult_user(
-        self, observation: str, turn: int, completing: bool,
+        self, trajectory: str, observation: str, turn: int, completing: bool,
         logging_dir: Path | None = None,
     ) -> UserDecision:
+        # Compute timing for this turn
+        now = time.monotonic()
+        elapsed_sec = now - self._start_time if self._start_time else 0
+        turn_duration_sec = now - self._turn_start_time if self._turn_start_time else 0
+
         decision = await self._sim_user.process(
             task_description=self._task_instruction,
-            recent_trajectory=self._snapshot_recent_output(),
+            recent_trajectory=trajectory,
             latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
             is_completion_attempt=completing,
             total_steps_so_far=turn,
+            elapsed_sec=elapsed_sec,
+            turn_duration_sec=turn_duration_sec,
         )
         if decision.has_message:
             self._sim_user.advance_original_index(1)
@@ -520,6 +549,8 @@ server.serve_forever()
         instruction = instruction + _INCREMENTAL_NOTICE
 
         self._task_instruction = instruction
+        self._start_time = time.monotonic()
+        self._turn_start_time = self._start_time
 
         # Turn 0: initial run via inner agent's commands
         commands = self._inner.create_run_agent_commands(instruction)
@@ -554,11 +585,12 @@ server.serve_forever()
 
         consecutive_noops = 0
         for turn in range(1, _MAX_RESUME_TURNS + 1):
-            observation = self._snapshot_recent_output()
+            trajectory, observation = self._snapshot_latest_turn()
 
             # Consult user sim (treat every completed claude run as a "completion")
             decision = await self._consult_user(
-                observation, turn, completing=True, logging_dir=self.logs_dir,
+                trajectory, observation, turn, completing=True,
+                logging_dir=self.logs_dir,
             )
 
             if not decision.has_message:
@@ -577,6 +609,7 @@ server.serve_forever()
                 user_msg = decision.format_for_injection()
 
             log.info("Resuming claude-code session with user message (turn %d)", turn)
+            self._turn_start_time = time.monotonic()
 
             resume_commands = self._build_resume_command(session_id, user_msg)
             for j, exec_input in enumerate(resume_commands):
