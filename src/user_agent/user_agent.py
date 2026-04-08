@@ -273,8 +273,20 @@ class UserAgent:
                 prompt=turn_content,
                 message_history=history_with_sys,
                 tools=TOOL_DEFS,
+                tool_choice="required",
             )
             decision = self._extract_decision(resp)
+
+            # If the model returned text despite tool_choice=required,
+            # retry once without it (some providers silently ignore it).
+            if decision.raw_response.startswith("fallback_noop:"):
+                log.info("UserAgent: tool_choice=required failed, retrying")
+                resp = await self._llm.call(
+                    prompt=turn_content + "\n\nYou MUST call one of the provided tools.",
+                    message_history=history_with_sys,
+                    tools=TOOL_DEFS,
+                )
+                decision = self._extract_decision(resp)
         except Exception as exc:
             log.warning("UserAgent call failed: %s", exc)
             decision = UserDecision(action="no-op", raw_response=f"error: {exc}")
@@ -395,9 +407,46 @@ class UserAgent:
 
     @staticmethod
     def _fallback_parse(text: str) -> UserDecision:
-        # No tool call was returned — the LLM responded with plain text.
-        # ALWAYS treat this as no-op. The sim should only send messages
-        # via proper tool calls (question/redirect/new_requirement), never
-        # raw text. Sending raw text as a message caused the "[silent — no-op]"
-        # leak where internal markers were injected into the agent's chat.
-        return UserDecision(action="no-op", raw_response=f"fallback_noop:{text[:200]}")
+        """Parse a plain-text response when the model didn't use tool calling.
+
+        Tries to recover real messages before defaulting to no-op.
+        The old approach silently dropped ~200 messages across eval runs.
+        """
+        stripped = text.strip()
+        lower = stripped.lower()
+
+        # Obvious no-ops — model said "silent" as text instead of tool call
+        _NOOP_PHRASES = (
+            "(i stayed silent", "i stayed silent", "stayed silent",
+            "no-op", "noop", "[silent", "silent —",
+            "→ no-op", "let the agent keep working",
+        )
+        if any(lower.startswith(p) or p in lower for p in _NOOP_PHRASES):
+            return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
+
+        # Model used our history format: "→ action: content"
+        if stripped.startswith("→ "):
+            import re
+            m = re.match(r"→\s*(redirect|question|new_requirement|check_external):\s*(.*)", stripped, re.DOTALL)
+            if m:
+                action, content = m.group(1), m.group(2).strip()
+                if content:
+                    log.info("UserAgent: recovered %s from text fallback", action)
+                    return UserDecision(action=action, content=content, raw_response=f"fallback_recovered:{stripped[:200]}")
+
+        # Model returned what looks like a real user message (not reasoning).
+        # Heuristic: short text (<500 chars) without analysis/reflection markers
+        # is likely an intended message. Longer text is usually reasoning/thinking.
+        _REASONING_MARKERS = (
+            "session analysis", "ground truth", "looking at", "reflecting",
+            "i need to check", "let me wait", "the agent has", "the agent is",
+            "according to", "i should", "i'll wait",
+        )
+        is_reasoning = any(m in lower for m in _REASONING_MARKERS)
+
+        if not is_reasoning and len(stripped) < 500 and stripped:
+            log.info("UserAgent: recovered message from text fallback (%d chars)", len(stripped))
+            return UserDecision(action="redirect", content=stripped, raw_response=f"fallback_recovered:{stripped[:200]}")
+
+        # Default: treat as no-op (model was thinking aloud, not messaging)
+        return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
