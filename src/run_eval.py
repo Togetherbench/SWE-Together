@@ -286,6 +286,27 @@ def build_trial_config(
     )
 
 
+def _copy_sim_prompts(task_names: list[str], trials_dir: Path):
+    """Copy user_simulation_prompt.md into each trial dir for the viewer."""
+    import shutil
+    copied = 0
+    for task_name in task_names:
+        task_dir = resolve_task_dir(task_name)
+        if task_dir is None:
+            continue
+        sim_prompt = task_dir / "user_simulation_prompt.md"
+        if not sim_prompt.exists():
+            continue
+        for trial_dir in trials_dir.iterdir():
+            if trial_dir.is_dir() and trial_dir.name.startswith(task_name + "__"):
+                dest = trial_dir / "user_simulation_prompt.md"
+                if not dest.exists():
+                    shutil.copy2(sim_prompt, dest)
+                    copied += 1
+    if copied:
+        log.info("Copied user_simulation_prompt.md to %d trials", copied)
+
+
 def _build_trajectories(trials_dir: Path):
     """Build trajectory.json for all trials that need it (viewer compatibility)."""
     import subprocess as _sp
@@ -589,7 +610,8 @@ async def main():
     summary_path.write_text(json.dumps(summary_data, indent=2))
     log.info("Summary written to %s", summary_path)
 
-    # Post-run: build trajectory.json for viewer, then sanitize and upload
+    # Post-run: copy sim prompts, build trajectories, sanitize and upload
+    _copy_sim_prompts(task_names, trials_dir)
     _build_trajectories(trials_dir)
     _sanitize_and_upload(trials_dir)
 
