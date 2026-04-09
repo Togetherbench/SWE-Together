@@ -31,13 +31,18 @@ RUN git init /workspace/sd-scripts && \
 
 WORKDIR /workspace/sd-scripts
 
+# Set up Python virtual environment
+RUN python3 -m venv /workspace/venv
+ENV PATH="/workspace/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/workspace/venv"
+
 # Install CPU-only PyTorch and required deps (no GPU needed for structural checks)
-RUN pip3 install --break-system-packages --no-cache-dir \
+RUN pip install --no-cache-dir \
     torch==2.6.0+cpu \
     --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies (ignore GPU-specific extras that fail on CPU)
-RUN pip3 install --break-system-packages --no-cache-dir \
+RUN pip install --no-cache-dir \
     accelerate \
     transformers \
     diffusers \
@@ -52,7 +57,7 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     2>/dev/null || true
 
 # Test runner for P2P upstream tests
-RUN pip3 install --break-system-packages --no-cache-dir pytest pytest-timeout
+RUN pip install --no-cache-dir pytest pytest-timeout
 
 # Apply synthesis: add the min_orig_resolution feature with DUPLICATE balancing loops
 # (the "buggy state" the agent must refactor)

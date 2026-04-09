@@ -5,9 +5,9 @@
 # Tests: shared search module, MCP analysis tool wiring, skill reorganization,
 # .mcp.json config, test suite creation, prescriptive descriptions, requirements.txt.
 #
-# Scoring: 83% behavioral, 22% structural. Total capped at 1.0.
+# Scoring: 83% behavioral, 22% structural. Total 1.05, capped at 1.0.
 # P2P: analysis functions (find_upstream/find_downstream) at base commit (Check 9).
-# P2P: upstream pytest on tests/ directory (Check 10).
+# Agent-created tests: pytest on agent's tests/ directory (Check 10).
 #
 # Anti-gaming:
 #   - TASK_ALIASES requires >=10 entries with ComfyUI domain terms

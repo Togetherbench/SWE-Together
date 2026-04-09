@@ -15,6 +15,7 @@
 # Behavioral tests all require working code that produces correct outputs.
 
 set +e
+export PATH="/workspace/venv/bin:$PATH"
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"

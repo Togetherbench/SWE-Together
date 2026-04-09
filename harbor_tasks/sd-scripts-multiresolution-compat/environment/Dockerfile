@@ -32,12 +32,17 @@ RUN git init /workspace/sd-scripts && \
     git fetch --depth=1 origin e21a7736f8fdd2477836edf254105518beb9790e && \
     git checkout FETCH_HEAD
 
+# Set up Python virtual environment
+RUN python3 -m venv /workspace/venv
+ENV PATH="/workspace/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/workspace/venv"
+
 # Install CPU-only PyTorch and torchvision
-RUN pip3 install --no-cache-dir --break-system-packages \
+RUN pip install --no-cache-dir \
     torch==2.6.0+cpu torchvision==0.21.0+cpu --index-url https://download.pytorch.org/whl/cpu
 
 # Install sd-scripts dependencies (pinned to versions from requirements.txt)
-RUN pip3 install --no-cache-dir --break-system-packages \
+RUN pip install --no-cache-dir \
     "accelerate==1.6.0" \
     "transformers==4.54.1" \
     "diffusers[torch]==0.32.1" \
@@ -62,7 +67,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     "pytest-timeout"
 
 # bitsandbytes may not fully work on CPU but is importable
-RUN pip3 install --no-cache-dir --break-system-packages bitsandbytes || true
+RUN pip install --no-cache-dir bitsandbytes || true
 
 # Synthesize the "last commit" state: enable multi-resolution for SD1/SDXL in strategy_sd.py.
 # This adds multi_resolution=True calls and a load_latents_from_disk override —

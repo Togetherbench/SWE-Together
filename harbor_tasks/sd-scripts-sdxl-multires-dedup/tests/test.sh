@@ -24,6 +24,7 @@
 #   T15 0.03  BEHAVIORAL  upstream test suite P2P
 #
 set +e
+export PATH="/workspace/venv/bin:$PATH"
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"

@@ -35,6 +35,9 @@ RUN cd /workspace/mlx-lm && \
 # Ensure mlx is installed (CPU-only stub is sufficient for unit tests)
 RUN pip install --no-cache-dir mlx 2>/dev/null || true
 
+# Install regex package (used by tool_parsers: function_gemma, minimax_m2, qwen3_coder)
+RUN pip install --no-cache-dir regex 2>/dev/null || true
+
 # Set PYTHONPATH so mlx_lm is importable
 ENV PYTHONPATH="/workspace/mlx-lm:$PYTHONPATH"
 

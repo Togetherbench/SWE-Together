@@ -32,7 +32,8 @@ RUN git init /workspace/VibeComfy && \
 RUN pip3 install --break-system-packages \
     mcp==1.3.0 \
     numpy \
-    pytest
+    pytest \
+    pytest-timeout
 
 # Set up workspace
 RUN mkdir -p /logs/verifier

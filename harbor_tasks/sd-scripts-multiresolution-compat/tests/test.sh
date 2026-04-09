@@ -22,6 +22,7 @@
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
 set +e
+export PATH="/workspace/venv/bin:$PATH"
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
