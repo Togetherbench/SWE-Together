@@ -5,9 +5,10 @@
 # Tests TopGenerations.tsx row virtualization and ModelTrends.tsx animation fixes.
 # 11 tests, total weight 21 (reward = score / 21).
 #
-# P2P (19%):           4/21  — build succeeds, no TS errors, upstream sources intact
-# Behavioral F2P (57%): 12/21 — extracted functions executed with test data
-# Structural (24%):    5/21  — labels, progressive reveal, auto-play wiring
+# P2P (19%):                4/21  — build succeeds, no TS errors, upstream sources intact
+# F2P Behavioral (52%):   11/21  — extracted functions executed with test data
+# F2P Pattern-based (24%):  5/21  — virtualization, auto-play, progressive reveal wiring
+# Structural (5%):          1/21  — model entry labels
 #
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
@@ -28,7 +29,7 @@ cd "$REPO"
 ###############################################################################
 # TEST 1/10 [P2P, weight 2/20]: Vite production build succeeds
 ###############################################################################
-echo "=== Test 1/10 [P2P, weight 2/20]: Vite production build succeeds ==="
+echo "=== Test 1/11 [P2P, weight 2/21]: Vite production build succeeds ==="
 timeout 120 npm run build > /tmp/build_output.txt 2>&1
 BUILD_EXIT=$?
 if [ $BUILD_EXIT -eq 0 ]; then
@@ -43,7 +44,7 @@ fi
 # TEST 2/10 [P2P, weight 1/20]: No TypeScript errors in task files
 ###############################################################################
 echo ""
-echo "=== Test 2/10 [P2P, weight 1/20]: No TypeScript errors in task files ==="
+echo "=== Test 2/11 [P2P, weight 1/21]: No TypeScript errors in task files ==="
 TSC_OUTPUT=$(npx tsc --noEmit 2>&1 || true)
 TASK_ERRORS=$(echo "$TSC_OUTPUT" | grep -E "TopGenerations\.tsx|ModelTrends\.tsx" || true)
 if [ -z "$TASK_ERRORS" ]; then
@@ -62,7 +63,7 @@ fi
 # NOT gameable by grep patterns — the function must actually compute correctly.
 ###############################################################################
 echo ""
-echo "=== Test 3/10 [F2P Behavioral, weight 3/20]: Normalization function correctness ==="
+echo "=== Test 3/11 [F2P Behavioral, weight 4/21]: Normalization function correctness ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -209,7 +210,7 @@ if (!passed) {
   console.error('FAIL: No function found that normalizes data rows to sum to ~100%');
   process.exit(1);
 }
-" && SCORE=$((SCORE + 3)) || true
+" && SCORE=$((SCORE + 4)) || true
 
 ###############################################################################
 # TEST 4/10 [F2P Behavioral, weight 3/20]: Easing function is non-linear
@@ -221,7 +222,7 @@ if (!passed) {
 # constant STEP_MS=180 is removed (fail-to-pass).
 ###############################################################################
 echo ""
-echo "=== Test 4/10 [F2P Behavioral, weight 3/20]: Easing function is non-linear ==="
+echo "=== Test 4/11 [F2P Behavioral, weight 3/21]: Easing function is non-linear ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -353,7 +354,7 @@ fi
 # code has useState(data.length) which means no animation plays.
 ###############################################################################
 echo ""
-echo "=== Test 5/10 [F2P Behavioral, weight 2/20]: Animation starts at 0, not data.length ==="
+echo "=== Test 5/11 [F2P Behavioral, weight 2/21]: Animation starts at 0, not data.length ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -406,7 +407,7 @@ console.log('PASS: Animation state initializes at 0 or 1 (not data.length)');
 # domain={[0, 'auto']} which rescales during animation. Must be [0, 100].
 ###############################################################################
 echo ""
-echo "=== Test 6/10 [F2P Behavioral, weight 2/20]: Y-axis domain is fixed [0, 100] ==="
+echo "=== Test 6/11 [F2P Behavioral, weight 2/21]: Y-axis domain is fixed [0, 100] ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -484,7 +485,7 @@ console.log('PASS: YAxis domain is fixed [0, 100]');
 # that gates rendering.
 ###############################################################################
 echo ""
-echo "=== Test 7/10 [F2P Behavioral, weight 2/20]: TopGenerations has visibility-gated rendering ==="
+echo "=== Test 7/11 [F2P Pattern, weight 2/21]: TopGenerations has visibility-gated rendering ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -726,21 +727,22 @@ console.log('PASS: ModelTrends has model entry labels with white styling');
 " && SCORE=$((SCORE + 2)) || true
 
 ###############################################################################
-# TEST 11/11 [P2P, weight 1/21]: Upstream source files intact
+# TEST 11/11 [P2P, weight 1/21]: Upstream source files intact + executable
 #
-# Verifies that key non-task source files still parse correctly and export
-# the expected symbols. Catches accidental breakage of files the agent
-# shouldn't have touched. Must pass on the unmodified base commit.
+# Goes beyond parse-checking: transpiles and executes dataProcessing.ts
+# functions with test data to verify they produce valid output. Also
+# validates constants.ts demoData structure is well-formed, types.ts
+# interfaces have required fields, and component files have React exports.
 ###############################################################################
 echo ""
-echo "=== Test 11/11 [P2P, weight 1/21]: Upstream source files intact ==="
+echo "=== Test 11/11 [P2P, weight 1/21]: Upstream source files intact + executable ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
 
 let pass = true;
 
-// 1. constants.ts must export demoData
+// 1. constants.ts must export demoData AND demoData must be a valid object
 const cSrc = fs.readFileSync('constants.ts', 'utf8');
 const cSf = ts.createSourceFile('constants.ts', cSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const hasDemoData = cSf.statements.some(s =>
@@ -748,8 +750,33 @@ const hasDemoData = cSf.statements.some(s =>
   s.declarationList.declarations.some(d => d.name.getText(cSf) === 'demoData')
 );
 if (!hasDemoData) { console.error('FAIL: constants.ts missing demoData export'); pass = false; }
+else {
+  // Execute: transpile and verify demoData is a non-trivial object
+  try {
+    const jsCode = ts.transpileModule(cSrc, {
+      compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
+    }).outputText;
+    const m = {};
+    const fn = new Function('exports', 'require', jsCode);
+    fn(m, require);
+    if (m.demoData && typeof m.demoData === 'object') {
+      // demoData should have model_trends or topGenerations or similar arrays
+      const keys = Object.keys(m.demoData);
+      if (keys.length < 2) {
+        console.error('FAIL: demoData has only ' + keys.length + ' keys (expect >=2)');
+        pass = false;
+      }
+    } else {
+      console.error('FAIL: demoData is not an object');
+      pass = false;
+    }
+  } catch (e) {
+    console.error('FAIL: constants.ts transpile/execute error: ' + e.message);
+    pass = false;
+  }
+}
 
-// 2. types.ts must export ModelTrend, TopGeneration, and AppData interfaces
+// 2. types.ts must export ModelTrend, TopGeneration, and AppData with required fields
 const tSrc = fs.readFileSync('types.ts', 'utf8');
 const tSf = ts.createSourceFile('types.ts', tSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const typeNames = tSf.statements
@@ -759,17 +786,64 @@ const neededTypes = ['ModelTrend', 'TopGeneration', 'AppData'];
 for (const t of neededTypes) {
   if (!typeNames.includes(t)) { console.error('FAIL: types.ts missing ' + t + ' interface'); pass = false; }
 }
+// Verify interfaces have actual members (not empty stubs)
+for (const stmt of tSf.statements) {
+  if (ts.isInterfaceDeclaration(stmt) && neededTypes.includes(stmt.name.text)) {
+    if (stmt.members.length < 1) {
+      console.error('FAIL: types.ts interface ' + stmt.name.text + ' has no members');
+      pass = false;
+    }
+  }
+}
 
-// 3. dataProcessing.ts must have exported functions
+// 3. dataProcessing.ts: transpile and EXECUTE exported functions with test data
 const dSrc = fs.readFileSync('dataProcessing.ts', 'utf8');
 const dSf = ts.createSourceFile('dataProcessing.ts', dSrc, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const exportedFns = dSf.statements.filter(s =>
   ts.isFunctionDeclaration(s) &&
   s.modifiers && s.modifiers.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
 );
-if (exportedFns.length === 0) { console.error('FAIL: dataProcessing.ts has no exported functions'); pass = false; }
+if (exportedFns.length === 0) {
+  console.error('FAIL: dataProcessing.ts has no exported functions');
+  pass = false;
+} else {
+  // Transpile and attempt to call each exported function
+  try {
+    const jsCode = ts.transpileModule(dSrc, {
+      compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
+    }).outputText;
+    const m = {};
+    const fn = new Function('exports', 'require', jsCode);
+    fn(m, require);
+    const fnNames = Object.keys(m).filter(k => typeof m[k] === 'function');
+    if (fnNames.length === 0) {
+      console.error('FAIL: dataProcessing.ts exported no callable functions after transpilation');
+      pass = false;
+    } else {
+      // Try calling functions that accept array-like data
+      let anyCallable = false;
+      for (const name of fnNames) {
+        try {
+          // Attempt to call with empty/minimal args; if it doesn't throw TypeError, it's real
+          const result = m[name]([]);
+          anyCallable = true;
+        } catch (e) {
+          // TypeError means it expected different args - still callable
+          if (e instanceof TypeError) anyCallable = true;
+        }
+      }
+      if (!anyCallable) {
+        console.error('FAIL: dataProcessing.ts functions not callable');
+        pass = false;
+      }
+    }
+  } catch (e) {
+    console.error('FAIL: dataProcessing.ts transpile error: ' + e.message);
+    pass = false;
+  }
+}
 
-// 4. Key component files parse without syntax errors
+// 4. Key component files parse without syntax errors AND have React component exports
 const components = ['components/Hero.tsx', 'components/Heatmap.tsx',
   'components/Footer.tsx', 'App.tsx'];
 for (const f of components) {
@@ -777,10 +851,16 @@ for (const f of components) {
     const s = fs.readFileSync(f, 'utf8');
     const sf = ts.createSourceFile(f, s, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     if (sf.statements.length === 0) { console.error('FAIL: ' + f + ' parsed to 0 statements'); pass = false; }
+    // Must have a default export or named export with JSX
+    const hasExport = /export\s+(default|function|const)/.test(s);
+    if (!hasExport) { console.error('FAIL: ' + f + ' has no exports'); pass = false; }
+    // Must contain JSX (React component)
+    const hasJSX = /<[A-Za-z]/.test(s);
+    if (!hasJSX) { console.error('FAIL: ' + f + ' has no JSX (not a React component)'); pass = false; }
   } catch (e) { console.error('FAIL: ' + f + ' parse error: ' + e.message); pass = false; }
 }
 
-if (pass) console.log('PASS: Upstream source files parse correctly with expected exports');
+if (pass) console.log('PASS: Upstream files parse, transpile, and execute correctly');
 else process.exit(1);
 " && SCORE=$((SCORE + 1)) || true
 

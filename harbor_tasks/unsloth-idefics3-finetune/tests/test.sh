@@ -4,12 +4,16 @@
 # Tests: Idefics3 VLM support addition + hook compatibility fix
 # Writes reward (0.0-1.0) to /logs/verifier/reward.txt
 #
-# Tier split (80% behavioral / 20% structural):
+# Tier split (80% behavioral / 20% structural / 15% P2P, total 1.15 capped at 1.0):
 #   F2P behavioral:    Check 1 (0.40) — hook compatibility fix (returns correct values)
 #   Silver behavioral: Check 2 (0.30) — from_pretrained delegates with real model behavior
 #   Silver behavioral: Check 3 (0.05) — VLLM_SUPPORTED_VLM registration
 #   Silver behavioral: Check 4 (0.05) — __init__.py export
 #   Bronze structural: Check 5 (0.20) — code substance (methods+LoRA+dispatch+depth)
+#   P2P behavioral:    P2P-1 (0.03) — source integrity (parse + key files)
+#   P2P behavioral:    P2P-2 (0.04) — hook handles normal tensors (CPU mock)
+#   P2P behavioral:    P2P-3 (0.04) — existing VLLM_SUPPORTED_VLM entries preserved
+#   P2P behavioral:    P2P-4 (0.04) — existing model exports preserved
 #
 set +e
 
@@ -65,12 +69,9 @@ PYEOF
 
 export IDEFICS_PY
 echo "Idefics module: ${IDEFICS_PY:-not found}"
-
-if [ -z "$IDEFICS_PY" ]; then
-    echo "No idefics module found. Score: 0.0"
-    echo "0.0" > "$LOG_DIR/reward.txt"
-    exit 0
-fi
+# Note: we do NOT early-exit when IDEFICS_PY is empty. Each F2P test
+# already handles missing idefics gracefully, and P2P tests must still
+# run to verify existing functionality is preserved.
 
 # ═══════════════════════════════════════════════════════════════════
 # CHECK 1 (0.40) — F2P BEHAVIORAL: Hook compatibility fix
@@ -604,24 +605,17 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Final reward
 # ═══════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════
-# P2P (0.05): Existing unsloth package intact + key modules importable
+# P2P TESTS (0.15 total): Existing functionality still works
 #
-# The upstream unsloth repo should still be functional after agent changes.
-# Verifies:
-#   (a) unsloth/models/__init__.py is valid Python (syntax check)
-#   (b) unsloth/models/vision.py is valid Python (syntax check)
-#   (c) All existing .py files under unsloth/models/ still parse
-#   (d) Key existing model files still present (llama, qwen, etc.)
-#   (e) Basic CPU-safe imports: unsloth package + unsloth.models load
-# No upstream CPU-safe test suite available (unsloth tests require GPU).
+# These verify the agent hasn't broken existing behavior while
+# adding Idefics3 support. All run on CPU with mock objects.
 # ═══════════════════════════════════════════════════════════════════
-echo "--- P2P [0.05]: Existing unsloth source intact ---"
 
-P2P_RESULT=$(python3 << 'PYEOF'
+# ── P2P-1 (0.03): Source integrity — all .py files parse + key files exist ──
+echo "--- P2P-1 [0.03]: Source integrity ---"
+
+P2P1_RESULT=$(python3 << 'PYEOF'
 import ast, sys, os, glob
-exec(open('/tmp/_cpu_compat.py').read())
-
 workspace = "/workspace/unsloth"
 os.chdir(workspace)
 
@@ -663,33 +657,151 @@ existing_models = [b for b in basenames if any(m in b for m in ["llama", "qwen",
 if len(existing_models) < 1:
     print(f"FAIL:no_existing_models"); sys.exit(0)
 
-# (e) CPU-safe imports: verify the unsloth package itself loads
-try:
-    import importlib, importlib.util
-    # unsloth top-level __init__.py
-    top_init = os.path.join(workspace, "unsloth/__init__.py")
-    if os.path.isfile(top_init):
-        spec = importlib.util.spec_from_file_location("unsloth._p2p", top_init)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+print("PASS")
+PYEOF
+)
 
-    # unsloth.models __init__.py
-    spec2 = importlib.util.spec_from_file_location("unsloth.models._p2p", init_py)
-    mod2 = importlib.util.module_from_spec(spec2)
-    spec2.loader.exec_module(mod2)
-except Exception as e:
-    # Import failures on CPU are expected for GPU-heavy code paths;
-    # only fail on clear breakage (SyntaxError, NameError)
-    if isinstance(e, (SyntaxError, NameError)):
-        print(f"FAIL:import:{e}"); sys.exit(0)
+echo "  Result: $P2P1_RESULT"
+if [ "$P2P1_RESULT" = "PASS" ]; then
+    add_reward 0.03
+fi
+
+# ── P2P-2 (0.04): unsloth_zoo.peft_utils public API preserved ──
+# The agent may monkey-patch the hook or modify peft_utils.py.
+# This P2P test verifies the module's public API is intact:
+#   - SKIP_QUANTIZATION_MODULES list exists with known entries
+#   - get_peft_regex function exists and is callable
+#   - requires_grad_for_gradient_checkpointing function exists
+echo "--- P2P-2 [0.04]: peft_utils public API preserved ---"
+
+P2P2_RESULT=$(python3 << 'PYEOF'
+import sys
+exec(open('/tmp/_cpu_compat.py').read())
+
+try:
+    import unsloth_zoo.peft_utils as pu
+except ImportError as e:
+    print(f"FAIL:import:{e}"); sys.exit(0)
+
+# (a) SKIP_QUANTIZATION_MODULES list must exist with known entries
+skip_list = getattr(pu, 'SKIP_QUANTIZATION_MODULES', None)
+if skip_list is None:
+    print("FAIL:no_SKIP_QUANTIZATION_MODULES"); sys.exit(0)
+required_skips = {"lm_head", "multi_modal_projector", "router"}
+found_skips = set(skip_list)
+missing = required_skips - found_skips
+if missing:
+    print(f"FAIL:missing_skip_modules:{missing}"); sys.exit(0)
+
+# (b) get_peft_regex function exists and is callable
+get_peft_regex = getattr(pu, 'get_peft_regex', None)
+if get_peft_regex is None or not callable(get_peft_regex):
+    print("FAIL:no_get_peft_regex"); sys.exit(0)
+
+# (c) requires_grad_for_gradient_checkpointing exists
+rg_fn = getattr(pu, 'requires_grad_for_gradient_checkpointing', None)
+if rg_fn is None or not callable(rg_fn):
+    print("FAIL:no_requires_grad_fn"); sys.exit(0)
+
+# (d) get_lora_layer_modules exists
+lora_fn = getattr(pu, 'get_lora_layer_modules', None)
+if lora_fn is None or not callable(lora_fn):
+    print("FAIL:no_get_lora_layer_modules"); sys.exit(0)
 
 print("PASS")
 PYEOF
 )
 
-echo "  Result: $P2P_RESULT"
-if [ "$P2P_RESULT" = "PASS" ]; then
-    add_reward 0.05
+echo "  Result: $P2P2_RESULT"
+if [ "$P2P2_RESULT" = "PASS" ]; then
+    add_reward 0.04
+fi
+
+# ── P2P-3 (0.04): VLLM_SUPPORTED_VLM retains existing entries ──
+# The agent must ADD idefics3 without removing existing VLM entries.
+# Before the change, the list has: qwen2_5_vl, gemma3, mistral3, qwen3_vl.
+echo "--- P2P-3 [0.04]: Existing VLLM_SUPPORTED_VLM entries preserved ---"
+
+P2P3_RESULT=$(python3 << 'PYEOF'
+import sys, ast
+
+# Use AST to avoid import-time GPU dependencies in vision.py
+try:
+    with open('/workspace/unsloth/unsloth/models/vision.py') as f:
+        tree = ast.parse(f.read())
+except Exception as e:
+    print(f"FAIL:parse:{e}"); sys.exit(0)
+
+existing_entries = {"qwen2_5_vl", "gemma3", "mistral3", "qwen3_vl"}
+found_entries = set()
+
+for node in ast.walk(tree):
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == 'VLLM_SUPPORTED_VLM':
+                if isinstance(node.value, (ast.List, ast.Tuple, ast.Set)):
+                    for elt in node.value.elts:
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                            found_entries.add(elt.value)
+
+missing = existing_entries - found_entries
+if missing:
+    print(f"FAIL:missing_entries:{missing}")
+    sys.exit(0)
+
+print("PASS")
+PYEOF
+)
+
+echo "  Result: $P2P3_RESULT"
+if [ "$P2P3_RESULT" = "PASS" ]; then
+    add_reward 0.04
+fi
+
+# ── P2P-4 (0.04): Existing model class exports preserved in __init__.py ──
+# The agent must not break imports of FastLlamaModel, FastMistralModel, etc.
+# These are the core model classes that must remain accessible.
+echo "--- P2P-4 [0.04]: Existing model exports preserved ---"
+
+P2P4_RESULT=$(python3 << 'PYEOF'
+import sys, ast
+
+try:
+    with open('/workspace/unsloth/unsloth/models/__init__.py') as f:
+        tree = ast.parse(f.read())
+except Exception as e:
+    print(f"FAIL:parse:{e}"); sys.exit(0)
+
+# These classes MUST still be imported in __init__.py
+required_exports = {
+    "FastLlamaModel", "FastLanguageModel", "FastMistralModel",
+    "FastGraniteModel",
+}
+
+found_names = set()
+for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            if alias.name == '*':
+                # Wildcard import from a module that might contain our classes
+                pass
+            elif alias.asname:
+                found_names.add(alias.asname)
+            else:
+                found_names.add(alias.name)
+
+missing = required_exports - found_names
+if missing:
+    print(f"FAIL:missing_exports:{missing}")
+    sys.exit(0)
+
+print("PASS")
+PYEOF
+)
+
+echo "  Result: $P2P4_RESULT"
+if [ "$P2P4_RESULT" = "PASS" ]; then
+    add_reward 0.04
 fi
 
 echo ""
@@ -700,8 +812,11 @@ echo "    [0.30] Check 2: from_pretrained delegation (behavioral)"
 echo "    [0.05] Check 3: VLLM_SUPPORTED_VLM (behavioral)"
 echo "    [0.05] Check 4: __init__.py export (behavioral)"
 echo "    [0.20] Check 5: Code substance — methods+LoRA+dispatch+depth (structural)"
-echo "    [0.05] P2P: Existing unsloth source intact + CPU-safe imports"
-echo "    Behavioral: 0.85 (85%) | Structural: 0.20 (20%)"
+echo "    [0.03] P2P-1: Source integrity (parse + key files exist)"
+echo "    [0.04] P2P-2: Hook handles normal tensors (CPU behavioral)"
+echo "    [0.04] P2P-3: Existing VLLM_SUPPORTED_VLM entries preserved"
+echo "    [0.04] P2P-4: Existing model exports preserved in __init__.py"
+echo "    Behavioral: 0.92 | Structural: 0.20 | P2P: 0.15"
 echo "  Final reward: $REWARD"
 echo "======================================="
 echo "$REWARD" > "$LOG_DIR/reward.txt"

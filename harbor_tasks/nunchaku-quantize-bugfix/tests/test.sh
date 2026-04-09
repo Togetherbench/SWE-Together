@@ -5,6 +5,10 @@
 #   Bug 2: quantize_awq_layer — torch.min/max(dim=) return namedtuples, need .values
 #   Bug 3: main() — f-string uses tensor variables instead of string literals
 #   Enhancement: pack_awq_qweight loop simplification (user-requested, keep |= not sum)
+#
+# Weight budget (sums to 1.00):
+#   P2P (0.21): T1(0.02) T4(0.05) T5(0.06) P2P(0.05) P2P-2(0.03)
+#   F2P (0.79): T2a-c(0.18) T3a-c(0.18) T6(0.10) T7(0.04) T8(0.12) T9(0.10) T10(0.07)
 
 set +e
 
@@ -20,7 +24,7 @@ add_reward() {
     echo "Test $2 PASS: $3 (+$1)"
 }
 
-# ── Test 1 (0.03): file parses + key functions non-stub [Bronze] ────────
+# ── Test 1 (0.02): file parses + key functions non-stub [P2P] ───────────
 python3 -c "
 import ast, sys
 
@@ -48,7 +52,7 @@ for name in ('pack_awq_qweight', 'quantize_residual', 'quantize_awq_layer'):
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.03 1 "file parses, key functions have real bodies"
+    add_reward 0.02 1 "file parses, key functions have real bodies"
 else
     echo "Test 1 FAIL: file does not parse or key functions are stubs"
 fi
@@ -261,7 +265,7 @@ else
     echo "Test 4 FAIL: pack_svdq_qweight error"
 fi
 
-# ── Test 5 (0.08): pack_awq_qweight correct output (ref compare) [Silver]
+# ── Test 5 (0.06): pack_awq_qweight correct output (ref compare) [P2P] ──
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -294,7 +298,7 @@ for seed, N, K in [(42, 4, 64), (100, 8, 128), (200, 16, 64)]:
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.08 5 "pack_awq_qweight correct output (ref compare)"
+    add_reward 0.06 5 "pack_awq_qweight correct output (ref compare)"
 else
     echo "Test 5 FAIL: pack_awq_qweight output incorrect"
 fi
@@ -336,7 +340,7 @@ else
     echo "Test 6 FAIL: f-string still uses tensor variable instead of string literal"
 fi
 
-# ── Test 7 (0.06): pack_awq simplified structure [Bronze] ───────────────
+# ── Test 7 (0.04): pack_awq simplified structure [F2P structural] ───────
 # Original has 2 nested for-loops. Simplified should have at most 1.
 # Must NOT use sum() as replacement for |= (user correction re: int32 overflow).
 python3 -c "
@@ -375,12 +379,12 @@ for node in ast.walk(tree):
 sys.exit(1)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.06 7 "pack_awq_qweight simplified (<=1 loop, no sum)"
+    add_reward 0.04 7 "pack_awq_qweight simplified (<=1 loop, no sum)"
 else
     echo "Test 7 FAIL: pack_awq_qweight not simplified or uses sum instead of |="
 fi
 
-# ── Test 8 (0.15): pack_awq simplified + correct (multiple sizes) [Silver]
+# ── Test 8 (0.12): pack_awq simplified + correct (multiple sizes) [F2P] ─
 python3 -c "
 import ast, sys
 sys.path.insert(0, '/workspace')
@@ -427,9 +431,9 @@ for seed, N, K in [(100, 4, 64), (200, 8, 128), (300, 16, 64), (400, 4, 128)]:
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.15 8 "pack_awq_qweight simplified + correct (multiple sizes)"
+    add_reward 0.12 8 "pack_awq_qweight simplified + correct (multiple sizes)"
 else
-    echo "Test 8 FAIL: pack_awq_qweight not simplified or incorrect on varied inputs"
+    echo "Test 8 FAIL: pack_awq_qweight not simplified or incorrect"
 fi
 
 # ── Test 9 (0.10): quantize_svdq_layer end-to-end [Silver] ──────────────
@@ -503,48 +507,90 @@ else
     echo "Test 10 FAIL: quantize_awq_layer fails on edge case inputs"
 fi
 
-# ── P2P (0.05): Upstream nunchaku source integrity ───────────────────────
-# P2P: no CPU-safe upstream tests available (nunchaku tests require CUDA/diffusers).
-# Minimal check: verify key Python source files in the cloned nunchaku repo
-# still parse correctly (agent should not have corrupted them while reading).
+# ── P2P (0.05): Upstream NunchakuWeightPacker functional test on CPU ──────
+# Import packer.py from cloned nunchaku repo (bypassing CUDA-dependent
+# __init__.py via sys.modules stubs) and verify pack/unpack round-trips
+# produce correct results on CPU tensors. This is a true pass-to-pass test:
+# it should pass on both buggy baseline and fixed version.
 python3 -c "
-import ast, sys, os
+import sys, types, importlib.util
+import torch
 
-repo = '/workspace/nunchaku'
-files_to_check = [
-    'nunchaku/__init__.py',
-    'nunchaku/lora/flux/packer.py',
-    'nunchaku/utils.py',
-]
-errors = []
-checked = 0
-for relpath in files_to_check:
-    fpath = os.path.join(repo, relpath)
-    if not os.path.isfile(fpath):
-        continue
-    try:
-        with open(fpath) as f:
-            ast.parse(f.read())
-        checked += 1
-    except SyntaxError as e:
-        errors.append(f'{relpath}: {e}')
+REPO = '/workspace/nunchaku'
 
-if errors:
-    print(f'P2P FAIL: {len(errors)} upstream file(s) have syntax errors: {errors}')
-    sys.exit(1)
-if checked == 0:
-    print('P2P FAIL: no upstream files found to check')
-    sys.exit(1)
-print(f'P2P PASS: {checked} upstream nunchaku files parse OK')
+# Stub out nunchaku's __init__.py to avoid CUDA model imports
+nunchaku_pkg = types.ModuleType('nunchaku')
+nunchaku_pkg.__path__ = [f'{REPO}/nunchaku']
+nunchaku_pkg.__package__ = 'nunchaku'
+sys.modules['nunchaku'] = nunchaku_pkg
+
+def ceil_divide(x, d):
+    return (x + d - 1) // d
+
+nu = types.ModuleType('nunchaku.utils')
+nu.ceil_divide = ceil_divide
+nu.load_state_dict_in_safetensors = None
+sys.modules['nunchaku.utils'] = nu
+
+for name, path in [
+    ('nunchaku.lora', f'{REPO}/nunchaku/lora'),
+    ('nunchaku.lora.flux', f'{REPO}/nunchaku/lora/flux'),
+]:
+    m = types.ModuleType(name)
+    m.__path__ = [path]
+    m.__package__ = name
+    sys.modules[name] = m
+
+spec = importlib.util.spec_from_file_location(
+    'nunchaku.lora.flux.utils', f'{REPO}/nunchaku/lora/flux/utils.py')
+fu = importlib.util.module_from_spec(spec)
+sys.modules['nunchaku.lora.flux.utils'] = fu
+spec.loader.exec_module(fu)
+
+spec = importlib.util.spec_from_file_location(
+    'nunchaku.lora.flux.packer', f'{REPO}/nunchaku/lora/flux/packer.py')
+pk = importlib.util.module_from_spec(spec)
+sys.modules['nunchaku.lora.flux.packer'] = pk
+spec.loader.exec_module(pk)
+
+wp = pk.NunchakuWeightPacker(bits=4, warp_n=128)
+
+# 1) Lowrank pack->unpack round-trip (both directions)
+for down in [True, False]:
+    for shape in [(256, 16), (512, 32)]:
+        torch.manual_seed(42)
+        orig = torch.randn(*shape, dtype=torch.bfloat16)
+        packed = wp.pack_lowrank_weight(orig, down=down)
+        unpacked = wp.unpack_lowrank_weight(packed, down=down)
+        err = (orig.float() - unpacked.float()).abs().max().item()
+        assert err < 1e-6, f'lowrank round-trip error {err} for down={down} shape={shape}'
+
+# 2) pack_weight shape + determinism
+torch.manual_seed(99)
+N, K = 256, 256
+w = torch.randint(0, 16, (N, K), dtype=torch.int32)
+packed = wp.pack_weight(w)
+assert packed.dtype == torch.int8, f'pack_weight dtype: {packed.dtype}'
+assert packed.shape == (N, K // 2), f'pack_weight shape: {packed.shape}'
+packed2 = wp.pack_weight(w)
+assert torch.equal(packed, packed2), 'pack_weight non-deterministic'
+
+# 3) pack_scale shape
+G = 64
+s = torch.randn(N, K // G, dtype=torch.bfloat16)
+ps = wp.pack_scale(s, group_size=G)
+assert ps.shape == (K // G, N), f'pack_scale shape: {ps.shape}'
+
+print('P2P PASS: NunchakuWeightPacker pack/unpack round-trips correct on CPU')
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.05 P2P "upstream nunchaku source integrity"
+    add_reward 0.05 P2P "upstream NunchakuWeightPacker functional test on CPU"
 else
-    echo "Test P2P FAIL: upstream source corrupted"
+    echo "Test P2P FAIL: upstream NunchakuWeightPacker broken or corrupted"
 fi
 
-# ── P2P-2 (0.05): modified quantize.py parses + key structures intact ────
+# ── P2P-2 (0.03): modified quantize.py parses + key structures intact ────
 # Pass-to-pass: the agent edits quantize.py to fix bugs. Verify the file
 # still parses and retains all expected top-level functions and imports
 # (guards against accidental deletion or corruption during editing).
@@ -591,7 +637,7 @@ print(f'P2P-2 PASS: quantize.py parses, {len(found_funcs & required_funcs)} requ
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.05 P2P-2 "modified quantize.py parses + key structures intact"
+    add_reward 0.03 P2P-2 "modified quantize.py parses + key structures intact"
 else
     echo "Test P2P-2 FAIL: quantize.py corrupted or missing key structures"
 fi

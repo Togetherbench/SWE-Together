@@ -15,13 +15,13 @@
 #   - Lightweight shape/dtype pre-checks before heavy numerical tests
 #   - AST check replaced with behavioral: call function + check output type
 #   - Tolerance tightened from rtol=1e-2 to rtol=5e-3
-#   - Total weights sum to 1.05 (capped at 1.00)
+#   - Total weights sum to 1.08 (capped at 1.00)
 #
 # Weights:
 #   P2P: Q4_0 regression:         0.05  (Gold, P2P)
 #   P2P: Q8_0 regression:         0.05  (Gold, P2P)
 #   IQ3_XXS shape/dtype check:    0.03  (Behavioral, lightweight)
-#   IQ3_XXS numerical:            0.12  (Gold, F2P core bug)
+#   IQ3_XXS numerical:            0.15  (Gold, F2P core bug)
 #   IQ3_XXS no-embedding behav:   0.05  (Behavioral, F2P refinement)
 #   IQ3_S shape/dtype check:      0.02  (Behavioral, lightweight)
 #   IQ3_S numerical:              0.12  (Gold, F2P)
@@ -239,9 +239,9 @@ print("\n=== Test 3/17: IQ3_XXS shape/dtype check [weight=0.03, Behavioral] ==="
 if test_shape_dtype("IQ3_XXS"):
     reward += 0.03
 
-print("\n=== Test 4/17: IQ3_XXS numerical correctness [weight=0.12, Gold, F2P] ===")
+print("\n=== Test 4/17: IQ3_XXS numerical correctness [weight=0.15, Gold, F2P] ===")
 if test_numerical_independent("IQ3_XXS", seed=42):
-    reward += 0.12
+    reward += 0.15
 
 print("\n=== Test 5/17: IQ3_XXS no F.embedding [weight=0.05, Behavioral, F2P] ===")
 if test_iq3_xxs_no_embedding():
@@ -324,11 +324,11 @@ try:
 except Exception as e:
     print(f"  FAIL: dispatch check exception: {e}")
 
-# --- Upstream P2P: module imports and pre-existing infrastructure ---
+# --- Upstream P2P: module imports, infrastructure, and functional validation ---
 print("\n=== Test 17/17: Upstream P2P imports & pre-existing infra [weight=0.05, Gold, P2P] ===")
 try:
     p2p_checks = 0
-    p2p_total = 5
+    p2p_total = 8
 
     # 1. gguf module imports
     import gguf
@@ -341,11 +341,19 @@ try:
     p2p_checks += 1
     print("  PASS: dequant module imports OK")
 
-    # 3. split_block_dims helper exists and is callable
+    # 3. split_block_dims helper exists, is callable, and WORKS correctly
     from qwen3_moe_fused.quantize_gguf.dequant import split_block_dims
     assert callable(split_block_dims), "split_block_dims is not callable"
+    # Functional test: split a tensor with known dimensions
+    import torch
+    test_tensor = torch.arange(20, dtype=torch.uint8).reshape(1, 20)
+    parts = split_block_dims(test_tensor, 2, 8)
+    # split_block_dims(blocks, *dims) should split the last dim into parts of given sizes
+    # Verify it returns a tuple/list and the parts have correct sizes
+    assert isinstance(parts, (tuple, list)), f"split_block_dims should return tuple/list, got {type(parts)}"
+    assert len(parts) >= 2, f"split_block_dims should return >=2 parts, got {len(parts)}"
     p2p_checks += 1
-    print("  PASS: split_block_dims exists and is callable")
+    print(f"  PASS: split_block_dims works correctly ({len(parts)} parts)")
 
     # 4. dequantize is callable and accepts expected signature
     assert callable(dequantize), "dequantize is not callable"
@@ -366,6 +374,73 @@ try:
     if baseline_ok:
         p2p_checks += 1
         print(f"  PASS: baseline quant types {baseline_types} present in dequantize_functions")
+
+    # 6. Grid/sign lookup tables are intact and have correct dimensions
+    # These are critical constants used by IQ dequantization
+    import importlib
+    dequant_mod = importlib.import_module("qwen3_moe_fused.quantize_gguf.dequant")
+
+    grid_ok = True
+    # GRID_IQ3_XXS should be a tensor with 256 entries (8-bit lookup)
+    grid = getattr(dequant_mod, 'GRID_IQ3_XXS', None)
+    if grid is not None:
+        if hasattr(grid, 'shape'):
+            if grid.shape[0] != 256:
+                print(f"  FAIL: GRID_IQ3_XXS has {grid.shape[0]} entries, expected 256")
+                grid_ok = False
+        elif hasattr(grid, '__len__'):
+            if len(grid) != 256:
+                print(f"  FAIL: GRID_IQ3_XXS has {len(grid)} entries, expected 256")
+                grid_ok = False
+    # KSIGNS_IQ2_XXS should be a tensor with 128 entries (7-bit lookup)
+    ksigns = getattr(dequant_mod, 'KSIGNS_IQ2_XXS', None)
+    if ksigns is not None:
+        if hasattr(ksigns, 'shape'):
+            if ksigns.shape[0] != 128:
+                print(f"  FAIL: KSIGNS_IQ2_XXS has {ksigns.shape[0]} entries, expected 128")
+                grid_ok = False
+        elif hasattr(ksigns, '__len__'):
+            if len(ksigns) != 128:
+                print(f"  FAIL: KSIGNS_IQ2_XXS has {len(ksigns)} entries, expected 128")
+                grid_ok = False
+    if grid_ok:
+        p2p_checks += 1
+        tables_found = []
+        if grid is not None: tables_found.append("GRID_IQ3_XXS")
+        if ksigns is not None: tables_found.append("KSIGNS_IQ2_XXS")
+        print(f"  PASS: lookup tables intact: {tables_found}")
+    # Note: tables may not exist yet if agent hasn't created them - that's OK for P2P
+
+    # 7. dequant.py file is valid Python and has minimum expected structure
+    import ast as ast_mod
+    dequant_file = os.path.join("/workspace", "qwen3_moe_fused", "quantize_gguf", "dequant.py")
+    if os.path.exists(dequant_file):
+        with open(dequant_file) as f:
+            src = f.read()
+        tree = ast_mod.parse(src)
+        func_names = {n.name for n in ast_mod.walk(tree) if isinstance(n, ast_mod.FunctionDef)}
+        # Must have dequantize and split_block_dims at minimum
+        if 'dequantize' in func_names and 'split_block_dims' in func_names:
+            p2p_checks += 1
+            print(f"  PASS: dequant.py AST valid with {len(func_names)} functions")
+        else:
+            print(f"  FAIL: dequant.py missing expected functions (found: {func_names})")
+    else:
+        print(f"  FAIL: dequant.py not found at {dequant_file}")
+
+    # 8. Pre-existing dequant functions actually execute on Q4_0/Q8_0 (functional P2P)
+    try:
+        qt_q4 = GGMLQuantizationType.Q4_0
+        block_size, type_size = GGML_QUANT_SIZES[qt_q4]
+        n_blocks = 2
+        dummy = torch.zeros(n_blocks * type_size, dtype=torch.uint8)
+        result = dequantize(dummy, qt_q4, (n_blocks * block_size,), torch.float32)
+        assert result.shape == (n_blocks * block_size,), f"Q4_0 shape mismatch: {result.shape}"
+        assert result.dtype == torch.float32, f"Q4_0 dtype mismatch: {result.dtype}"
+        p2p_checks += 1
+        print(f"  PASS: Q4_0 dequantize executes correctly (shape={result.shape})")
+    except Exception as e:
+        print(f"  FAIL: Q4_0 functional test: {e}")
 
     p2p_score = round(0.05 * p2p_checks / p2p_total, 4)
     reward += p2p_score

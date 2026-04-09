@@ -688,7 +688,7 @@ fi
 #   - src/process/spawn-utils.test.ts (process spawn fallback)
 # These cover different parts of the codebase and would fail if the
 # agent corrupted existing source files or broke module resolution.
-# Falls back to basic structural checks if vitest is unavailable.
+# No structural fallback — vitest must be available (installed by Dockerfile).
 # Weight: 0.05
 # ═══════════════════════════════════════════════════════════════════
 echo ""
@@ -721,50 +721,7 @@ VITESTCFG
         echo "  FAIL: upstream vitest tests failed (exit $P2P_RC)"
     fi
 else
-    echo "  node_modules not found — falling back to structural checks"
-    P2P_FALLBACK=true
-
-    # (a) src/ directory exists with TypeScript files
-    SRC_TS_COUNT=$(find "$WORKSPACE/src" -name "*.ts" -o -name "*.tsx" 2>/dev/null | head -20 | wc -l)
-    if [ "$SRC_TS_COUNT" -lt 3 ]; then
-        echo "  FAIL: only $SRC_TS_COUNT .ts/.tsx files in src/ (expected 3+)"
-        P2P_FALLBACK=false
-    else
-        echo "  OK: $SRC_TS_COUNT+ TypeScript files in src/"
-    fi
-
-    # (b) TS runner works
-    if [ -z "$TS_RUNNER" ]; then
-        echo "  FAIL: no TypeScript runner available"
-        P2P_FALLBACK=false
-    else
-        TS_CHECK=$($TS_RUNNER -e "process.stdout.write('p2p-ok')" 2>/dev/null)
-        if [ "$TS_CHECK" = "p2p-ok" ]; then
-            echo "  OK: TypeScript runner works"
-        else
-            echo "  FAIL: TypeScript runner broken"
-            P2P_FALLBACK=false
-        fi
-    fi
-
-    # (c) package.json is valid JSON
-    if [ -f "$WORKSPACE/package.json" ]; then
-        node -e "JSON.parse(require('fs').readFileSync('$WORKSPACE/package.json','utf8')); process.stdout.write('ok')" 2>/dev/null
-        if [ $? -eq 0 ]; then
-            echo "  OK: package.json is valid JSON"
-        else
-            echo "  FAIL: package.json is not valid JSON"
-            P2P_FALLBACK=false
-        fi
-    else
-        echo "  FAIL: package.json not found"
-        P2P_FALLBACK=false
-    fi
-
-    if [ "$P2P_FALLBACK" = true ]; then
-        P2P_PASS=true
-        echo "  PASS: structural fallback checks passed"
-    fi
+    echo "  FAIL: node_modules not found — vitest required for P2P (no structural fallback)"
 fi
 
 if [ "$P2P_PASS" = true ]; then

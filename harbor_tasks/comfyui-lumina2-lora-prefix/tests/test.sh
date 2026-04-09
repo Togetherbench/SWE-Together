@@ -25,7 +25,7 @@
 #   Test 16: 0.05  behavioral P2P: upstream ComfyUI unit tests pass (CPU-safe)
 #
 # Structural: 0.08 (8%) | Behavioral: 0.92 (92%)
-# Max stub score: 0.27 (structural + T4 single-key + P2P on unmodified file)
+# Max stub score: 0.28 (structural + T4 single-key + P2P on unmodified file)
 #
 set +e
 

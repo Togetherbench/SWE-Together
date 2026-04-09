@@ -5,19 +5,19 @@
 # 15 tests, 100 points total → reward = PASS/100
 #
 #   Structural (10%):  T1-T4   (2+2+3+3 = 10 pts)
-#   Behavioral (90%):  T5-T15  (10+7+7+7+6+6+10+12+12+8+5 = 90 pts)
+#   Behavioral (90%):  T5-T15  (10+7+7+7+6+6+10+15+12+5+5 = 90 pts)
 #
 # Prop mapping tests (T6-T10) check that ShotImagesEditor passes the
 # correctly-renamed props to <Timeline> — each checks a different prop name
 # to catch partial or hardcoded solutions.
 #
 # Gaming analysis (stub scores):
-#   No changes:             T5(10)+T14(8)              = 0.18
-#   Delete TMC only:        T1(2)+T14(8)               = 0.10
-#   Trivial SIE edit+commit: T5(10)+T14(8)+T15(5)      = 0.23
-#   All structural hacks:   T1-T4(10)+T14(8)           = 0.18
-#   Core refactor only:     10+10+40+10+8+5            = 0.83
-#   Core + partial cleanup: 83+12                      = 0.95
+#   No changes:             T5(10)+T14(5)              = 0.15
+#   Delete TMC only:        T1(2)+T14(5)               = 0.07
+#   Trivial SIE edit+commit: T5(10)+T14(5)+T15(5)      = 0.20
+#   All structural hacks:   T1-T4(10)+T14(5)           = 0.15
+#   Core refactor only:     10+10+40+10+5+5            = 0.80
+#   Core + partial cleanup: 80+15                      = 0.95
 #   Full solution:          100                        = 1.00
 #
 set +e
@@ -307,16 +307,16 @@ echo "  $T11/10 pts"
 PASS=$((PASS + T11))
 
 ###############################################################################
-# T12 (12 pts, behavioral): hookData + pairPrompts removed from Timeline.tsx
+# T12 (15 pts, behavioral): hookData + pairPrompts removed from Timeline.tsx
 #   These are dead props that were only passed from TimelineModeContent.
 #   After deleting TMC, they serve no purpose in Timeline's interface.
 ###############################################################################
 
 echo ""
-echo "=== T12: hookData + pairPrompts cleanup (12 pts) ==="
+echo "=== T12: hookData + pairPrompts cleanup (15 pts) ==="
 T12=0
 if [ "$TSC_PASSED" -eq 1 ] && [ -f "$TIMELINE" ]; then
-    # Sub-check a (6 pts): hookData removed from interface
+    # Sub-check a (8 pts): hookData removed from interface
     HOOK_FOUND=$(node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -339,13 +339,13 @@ console.log(found ? 'PRESENT' : 'REMOVED');
 " 2>/dev/null)
 
     if [ "$HOOK_FOUND" = "REMOVED" ]; then
-        echo "  +6: hookData removed from Timeline interface"
-        T12=$((T12 + 6))
+        echo "  +8: hookData removed from Timeline interface"
+        T12=$((T12 + 8))
     else
         echo "  -0: hookData still in Timeline interface"
     fi
 
-    # Sub-check b (6 pts): pairPrompts removed from interface
+    # Sub-check b (7 pts): pairPrompts removed from interface
     PAIR_FOUND=$(node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -368,15 +368,15 @@ console.log(found ? 'PRESENT' : 'REMOVED');
 " 2>/dev/null)
 
     if [ "$PAIR_FOUND" = "REMOVED" ]; then
-        echo "  +6: pairPrompts removed from Timeline interface"
-        T12=$((T12 + 6))
+        echo "  +7: pairPrompts removed from Timeline interface"
+        T12=$((T12 + 7))
     else
         echo "  -0: pairPrompts still in Timeline interface"
     fi
 else
     echo "FAIL: tsc did not pass or Timeline.tsx not found"
 fi
-echo "  $T12/12 pts"
+echo "  $T12/15 pts"
 PASS=$((PASS + T12))
 
 ###############################################################################
@@ -463,28 +463,28 @@ echo "  $T13/12 pts"
 PASS=$((PASS + T13))
 
 ###############################################################################
-# T14 (8 pts, behavioral): Pass-to-Pass upstream vitest tests
+# T14 (5 pts, behavioral): Pass-to-Pass upstream vitest tests
 ###############################################################################
 
 echo ""
-echo "=== T14: P2P upstream vitest (8 pts) ==="
+echo "=== T14: P2P upstream vitest (5 pts) ==="
 cd "$REPO"
 if [ -f "$REPO/node_modules/.bin/vitest" ]; then
     VITEST_OUT=$(timeout 60 npx vitest run src/test/supabaseAuth.test.ts src/test/systemLogger.test.ts --reporter=verbose 2>&1)
     VITEST_EXIT=$?
     if [ $VITEST_EXIT -eq 0 ]; then
         echo "PASS: upstream vitest tests pass"
-        PASS=$((PASS + 8))
+        PASS=$((PASS + 5))
     elif echo "$VITEST_OUT" | grep -qiE "Cannot find module|ERR_MODULE_NOT_FOUND|Error: Failed to collect|Config error|no test file|ENOENT|Cannot read config"; then
         echo "SKIP: vitest infra issue (not agent's fault), awarding P2P"
-        PASS=$((PASS + 8))
+        PASS=$((PASS + 5))
     else
         echo "FAIL: upstream vitest tests failed"
         echo "$VITEST_OUT" | tail -10
     fi
 else
     echo "SKIP: vitest not installed, awarding P2P"
-    PASS=$((PASS + 8))
+    PASS=$((PASS + 5))
 fi
 
 ###############################################################################

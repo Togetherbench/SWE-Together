@@ -52,12 +52,69 @@ try:
 except Exception:
     wr("P2P2", False)
 
-# P2P3: upstream nunchaku packer source exists and parses
+# P2P3: upstream NunchakuWeightPacker functional test on CPU.
+# Import packer.py bypassing CUDA-dependent __init__.py via sys.modules stubs,
+# then verify pack_lowrank_weight -> unpack_lowrank_weight round-trip and
+# pack_weight shape correctness on CPU tensors.
 try:
-    import ast as _ast
-    with open("nunchaku/nunchaku/lora/flux/packer.py") as f:
-        _ast.parse(f.read())
-    wr("P2P3", True)
+    import types, importlib.util
+    REPO = "nunchaku"
+    # Stub nunchaku packages to avoid CUDA model imports
+    nunchaku_pkg = types.ModuleType('nunchaku')
+    nunchaku_pkg.__path__ = [f'{REPO}/nunchaku']
+    nunchaku_pkg.__package__ = 'nunchaku'
+    sys.modules['nunchaku'] = nunchaku_pkg
+
+    def _ceil_divide(x, d):
+        return (x + d - 1) // d
+    nu = types.ModuleType('nunchaku.utils')
+    nu.ceil_divide = _ceil_divide
+    nu.load_state_dict_in_safetensors = None
+    sys.modules['nunchaku.utils'] = nu
+
+    for _name, _path in [
+        ('nunchaku.lora', f'{REPO}/nunchaku/lora'),
+        ('nunchaku.lora.flux', f'{REPO}/nunchaku/lora/flux'),
+    ]:
+        _m = types.ModuleType(_name)
+        _m.__path__ = [_path]
+        _m.__package__ = _name
+        sys.modules[_name] = _m
+
+    _spec = importlib.util.spec_from_file_location(
+        'nunchaku.lora.flux.utils', f'{REPO}/nunchaku/lora/flux/utils.py')
+    _fu = importlib.util.module_from_spec(_spec)
+    sys.modules['nunchaku.lora.flux.utils'] = _fu
+    _spec.loader.exec_module(_fu)
+
+    _spec = importlib.util.spec_from_file_location(
+        'nunchaku.lora.flux.packer', f'{REPO}/nunchaku/lora/flux/packer.py')
+    _pk = importlib.util.module_from_spec(_spec)
+    sys.modules['nunchaku.lora.flux.packer'] = _pk
+    _spec.loader.exec_module(_pk)
+
+    _wp = _pk.NunchakuWeightPacker(bits=4, warp_n=128)
+
+    # Lowrank round-trip
+    _ok = True
+    for _down in [True, False]:
+        torch.manual_seed(42)
+        _orig = torch.randn(256, 16, dtype=torch.bfloat16)
+        _packed = _wp.pack_lowrank_weight(_orig, down=_down)
+        _unpacked = _wp.unpack_lowrank_weight(_packed, down=_down)
+        _err = (_orig.float() - _unpacked.float()).abs().max().item()
+        if _err > 1e-6:
+            _ok = False
+            break
+
+    # pack_weight shape
+    if _ok:
+        torch.manual_seed(99)
+        _w = torch.randint(0, 16, (256, 256), dtype=torch.int32)
+        _pw = _wp.pack_weight(_w)
+        _ok = _pw.dtype == torch.int8 and _pw.shape == (256, 128)
+
+    wr("P2P3", _ok)
 except Exception:
     wr("P2P3", False)
 PYEOF

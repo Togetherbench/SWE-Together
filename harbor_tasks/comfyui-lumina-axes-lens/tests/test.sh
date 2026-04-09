@@ -11,22 +11,23 @@
 # All tests run on CPU — no GPU required.
 # Reward written to /logs/verifier/reward.txt (0.0 to 1.0).
 #
-# Scoring (structural 10%, behavioral 90%):
-#   T1:  0.02  model.py parses as valid Python (structural)
-#   T2:  0.03  new class with axes_lens + forward (structural)
-#   T3:  0.02  class has >=8 meaningful AST statements (structural)
-#   T4:  0.03  NextDiT passes axes_lens to rope_embedder (structural)
-#   T5:  0.04  instantiate config A (behavioral)
-#   T6:  0.04  instantiate config B — varied params (behavioral)
-#   T7:  0.06  forward shape matches EmbedND (behavioral)
-#   T8:  0.05  forward values finite, in [-1,1], not zeros (behavioral)
-#   T9:  0.08  sequential positions match EmbedND (behavioral)
-#   T10: 0.08  non-sequential positions match EmbedND (behavioral)
-#   T11: 0.08  config B match EmbedND — different axes_dim (behavioral)
-#   T12: 0.12  precomputed internal state exists (behavioral)
-#   T13: 0.12  different axes_lens -> different state (behavioral)
-#   T14: 0.12  OOB position diverges from EmbedND (behavioral)
-#   T15: 0.11  varied inputs: single + batch of 8 both correct (behavioral)
+# Scoring (P2P 7%, F2P-structural 8%, F2P-behavioral 85%, total=1.00):
+#   T1:  0.02  model.py parses as valid Python (structural, P2P)
+#   T2:  0.03  new class with axes_lens + forward (structural, F2P)
+#   T3:  0.02  class has >=8 meaningful AST statements (structural, F2P)
+#   T4:  0.03  NextDiT passes axes_lens to rope_embedder (structural, F2P)
+#   T5:  0.04  instantiate config A (behavioral, F2P)
+#   T6:  0.04  instantiate config B — varied params (behavioral, F2P)
+#   T7:  0.06  forward shape matches EmbedND (behavioral, F2P)
+#   T8:  0.05  forward values finite, in [-1,1], not zeros (behavioral, F2P)
+#   T9:  0.08  sequential positions match EmbedND (behavioral, F2P)
+#   T10: 0.08  non-sequential positions match EmbedND (behavioral, F2P)
+#   T11: 0.08  config B match EmbedND — different axes_dim (behavioral, F2P)
+#   T12: 0.11  precomputed internal state exists (behavioral, F2P)
+#   T13: 0.11  different axes_lens -> different state (behavioral, F2P)
+#   T14: 0.11  OOB position diverges from EmbedND (behavioral, F2P)
+#   T15: 0.09  varied inputs: single + batch of 8 both correct (behavioral, F2P)
+#   P2P: 0.05  upstream ComfyUI unit tests (P2P)
 #
 set +e
 
@@ -92,7 +93,7 @@ DISCEOF
 # STRUCTURAL TESTS (4 tests, 0.10 total)
 # ====================================================================
 
-echo "=== T1/15: model.py parses as valid Python ==="
+echo "=== T1/16: model.py parses as valid Python ==="
 T1=$(python3 << 'PYEOF'
 import ast
 try:
@@ -106,7 +107,7 @@ echo "  Result: $T1"
 if [ "$T1" = "PASS" ]; then add_reward 0.02; fi
 
 echo ""
-echo "=== T2/15: New class with axes_lens + forward ==="
+echo "=== T2/16: New class with axes_lens + forward ==="
 T2=$(python3 << 'PYEOF'
 import ast
 source = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
@@ -133,7 +134,7 @@ echo "  Result: $T2"
 if [[ "$T2" == PASS* ]]; then add_reward 0.03; fi
 
 echo ""
-echo "=== T3/15: Class has >=8 meaningful AST statements ==="
+echo "=== T3/16: Class has >=8 meaningful AST statements ==="
 T3=$(python3 << 'PYEOF'
 import ast
 source = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
@@ -167,7 +168,7 @@ echo "  Result: $T3"
 if [[ "$T3" == PASS* ]]; then add_reward 0.02; fi
 
 echo ""
-echo "=== T4/15: NextDiT passes axes_lens to rope_embedder ==="
+echo "=== T4/16: NextDiT passes axes_lens to rope_embedder ==="
 T4=$(python3 << 'PYEOF'
 import ast, sys
 source = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
@@ -198,7 +199,7 @@ if [[ "$T4" == PASS* ]]; then add_reward 0.03; fi
 # ====================================================================
 
 echo ""
-echo "=== T5/15: Instantiate config A (dim=32, axes_dim=[8,8,16], axes_lens=[10,20,20]) ==="
+echo "=== T5/16: Instantiate config A (dim=32, axes_dim=[8,8,16], axes_lens=[10,20,20]) ==="
 T5=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -215,7 +216,7 @@ echo "  Result: $T5"
 if [[ "$T5" == PASS* ]]; then add_reward 0.04; fi
 
 echo ""
-echo "=== T6/15: Instantiate config B (dim=64, theta=256, axes_dim=[16,16,32], axes_lens=[5,10,10]) ==="
+echo "=== T6/16: Instantiate config B (dim=64, theta=256, axes_dim=[16,16,32], axes_lens=[5,10,10]) ==="
 T6=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -232,7 +233,7 @@ echo "  Result: $T6"
 if [[ "$T6" == PASS* ]]; then add_reward 0.04; fi
 
 echo ""
-echo "=== T7/15: Forward shape matches EmbedND ==="
+echo "=== T7/16: Forward shape matches EmbedND ==="
 T7=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -263,7 +264,7 @@ echo "  Result: $T7"
 if [[ "$T7" == PASS* ]]; then add_reward 0.06; fi
 
 echo ""
-echo "=== T8/15: Forward values finite, in [-1,1], not zeros ==="
+echo "=== T8/16: Forward values finite, in [-1,1], not zeros ==="
 T8=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -294,7 +295,7 @@ echo "  Result: $T8"
 if [[ "$T8" == PASS* ]]; then add_reward 0.05; fi
 
 echo ""
-echo "=== T9/15: Sequential positions match EmbedND ==="
+echo "=== T9/16: Sequential positions match EmbedND ==="
 T9=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -326,7 +327,7 @@ echo "  Result: $T9"
 if [[ "$T9" == PASS* ]]; then add_reward 0.08; fi
 
 echo ""
-echo "=== T10/15: Non-sequential positions match EmbedND ==="
+echo "=== T10/16: Non-sequential positions match EmbedND ==="
 T10=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -359,7 +360,7 @@ echo "  Result: $T10"
 if [[ "$T10" == PASS* ]]; then add_reward 0.08; fi
 
 echo ""
-echo "=== T11/15: Config B match EmbedND (dim=64, axes_dim=[16,16,32]) ==="
+echo "=== T11/16: Config B match EmbedND (dim=64, axes_dim=[16,16,32]) ==="
 T11=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -391,7 +392,7 @@ echo "  Result: $T11"
 if [[ "$T11" == PASS* ]]; then add_reward 0.08; fi
 
 echo ""
-echo "=== T12/15: Precomputed internal state exists ==="
+echo "=== T12/16: Precomputed internal state exists ==="
 T12=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -420,10 +421,10 @@ else:
 PYEOF
 )
 echo "  Result: $T12"
-if [[ "$T12" == PASS* ]]; then add_reward 0.12; fi
+if [[ "$T12" == PASS* ]]; then add_reward 0.11; fi
 
 echo ""
-echo "=== T13/15: Different axes_lens -> different internal state ==="
+echo "=== T13/16: Different axes_lens -> different internal state ==="
 T13=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -483,10 +484,10 @@ else:
 PYEOF
 )
 echo "  Result: $T13"
-if [[ "$T13" == PASS* ]]; then add_reward 0.12; fi
+if [[ "$T13" == PASS* ]]; then add_reward 0.11; fi
 
 echo ""
-echo "=== T14/15: OOB position diverges from EmbedND ==="
+echo "=== T14/16: OOB position diverges from EmbedND ==="
 T14=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -516,10 +517,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T14"
-if [[ "$T14" == PASS* ]]; then add_reward 0.12; fi
+if [[ "$T14" == PASS* ]]; then add_reward 0.11; fi
 
 echo ""
-echo "=== T15/15: Varied inputs — single position + batch of 8 ==="
+echo "=== T15/16: Varied inputs — single position + batch of 8 ==="
 T15=$(python3 << 'PYEOF'
 exec(open("/tmp/_mock_mm.py").read())
 exec(open("/tmp/_discover.py").read())
@@ -560,13 +561,13 @@ else:
 PYEOF
 )
 echo "  Result: $T15"
-if [[ "$T15" == PASS* ]]; then add_reward 0.11; fi
+if [[ "$T15" == PASS* ]]; then add_reward 0.09; fi
 
 # ====================================================================
-# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (bonus 0.05)
+# T16 P2P: Run ComfyUI's own CPU-safe unit tests (0.05)
 # ====================================================================
 echo ""
-echo "=== P2P Upstream: ComfyUI unit tests ==="
+echo "=== T16/16: P2P — ComfyUI unit tests ==="
 cd /workspace/ComfyUI
 if python3 -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
     echo "  PASS: upstream tests pass"

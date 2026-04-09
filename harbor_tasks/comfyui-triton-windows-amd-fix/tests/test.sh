@@ -665,15 +665,17 @@ echo "  Result: $T8"
 if [ "$T8" = "PASS" ]; then add_reward 0.05; fi
 
 # ═══════════════════════════════════════════════════════════
-# TEST 9 (0.05): P2P — modified Triton kernel file parses as valid Python
-#   Pass-to-pass: the target file must remain syntactically valid Python
-#   after agent modifications. Catches truncation, unclosed brackets,
-#   or other syntax-breaking edits.
+# TEST 9 (0.05): P2P — Triton kernel file valid Python + module structure intact
+#   Goes beyond ast.parse: mock-imports the module and validates that all
+#   expected top-level names exist, @triton.jit decorators are present,
+#   the forward() function has the correct parameter count, and the file
+#   has not been truncated (line count + function count thresholds).
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 9/9: P2P — Triton kernel file parses as valid Python ==="
+echo "=== Test 9/9: P2P — Triton kernel file valid + module structure intact ==="
 T9=$(python3 << 'PYEOF'
-import sys, ast
+import sys, ast, inspect, importlib.util
+from unittest.mock import MagicMock
 
 TARGET = "/workspace/ComfyUI-WanVideoWrapper/ultravico/sageattn/attn_qk_int8_per_block.py"
 
@@ -683,11 +685,89 @@ try:
 except FileNotFoundError:
     print("FAIL:file_not_found"); sys.exit(0)
 
+# (a) Must parse as valid Python
 try:
-    ast.parse(source)
-    print("PASS")
+    tree = ast.parse(source)
 except SyntaxError as e:
     print(f"FAIL:syntax_error:line_{e.lineno}:{e.msg}")
+    sys.exit(0)
+
+# (b) Anti-truncation: file must have sufficient content
+line_count = len(source.strip().split('\n'))
+if line_count < 80:
+    print(f"FAIL:truncated:{line_count}_lines_expected_80+")
+    sys.exit(0)
+
+# (c) Must have at least 3 function definitions (forward, _attn_fwd, _attn_fwd_inner)
+func_names = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+expected_funcs = {'forward', '_attn_fwd', '_attn_fwd_inner'}
+missing_funcs = expected_funcs - set(func_names)
+if missing_funcs:
+    print(f"FAIL:missing_functions:{missing_funcs}")
+    sys.exit(0)
+
+# (d) Must have @triton.jit decorator patterns (at least 2: _attn_fwd_inner and _attn_fwd)
+decorator_count = 0
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef):
+        for dec in node.decorator_list:
+            dec_src = ast.unparse(dec) if hasattr(ast, 'unparse') else ''
+            if 'triton' in dec_src or 'jit' in dec_src:
+                decorator_count += 1
+if decorator_count < 2:
+    print(f"FAIL:only_{decorator_count}_triton_decorators_expected_2+")
+    sys.exit(0)
+
+# (e) Mock-import and verify forward() has expected parameter count (>= 4: q, k, v, sm_scale)
+mock_triton = MagicMock()
+def passthrough_jit(fn=None, **kwargs):
+    if fn is not None:
+        return fn
+    return lambda f: f
+mock_triton.jit = passthrough_jit
+sys.modules['triton'] = mock_triton
+sys.modules['triton.language'] = mock_triton.language
+
+try:
+    spec = importlib.util.spec_from_file_location("attn_mod", TARGET)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    forward_fn = getattr(mod, 'forward', None)
+    if forward_fn is None:
+        print("FAIL:forward_not_found_after_import")
+        sys.exit(0)
+
+    sig = inspect.signature(forward_fn)
+    if len(sig.parameters) < 4:
+        print(f"FAIL:forward_has_only_{len(sig.parameters)}_params_expected_4+")
+        sys.exit(0)
+
+except Exception as e:
+    print(f"FAIL:import_error:{type(e).__name__}:{e}")
+    sys.exit(0)
+finally:
+    # Clean up mock modules
+    sys.modules.pop('triton', None)
+    sys.modules.pop('triton.language', None)
+
+# (f) Must import triton and torch at module level
+imports = set()
+for node in ast.walk(tree):
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            imports.add(alias.name.split('.')[0])
+    elif isinstance(node, ast.ImportFrom) and node.module:
+        imports.add(node.module.split('.')[0])
+
+if 'triton' not in imports:
+    print("FAIL:no_triton_import")
+    sys.exit(0)
+if 'torch' not in imports:
+    print("FAIL:no_torch_import")
+    sys.exit(0)
+
+print("PASS")
 PYEOF
 )
 echo "  Result: $T9"

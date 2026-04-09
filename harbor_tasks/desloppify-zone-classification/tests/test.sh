@@ -5,11 +5,11 @@
 # Writes a reward between 0.0 and 1.0 to /logs/verifier/reward.txt.
 #
 # TIER BREAKDOWN:
-#   Checks 1-5:  Fail-to-pass behavioral (0.55)
-#   Checks 6-8:  Silver behavioral       (0.22)
-#   Checks 9-12: Bronze+ structural      (0.23)
-#   Behavioral: 77% | Structural: 23%
-#   P2P: no upstream tests available at base commit (confirmed: eba4ad1c has zero test files)
+#   Checks 1-5:  Fail-to-pass behavioral core   (0.55)
+#   Checks 6-8:  Fail-to-pass behavioral silver (0.22)
+#   Checks 9-12: Structural (Bronze+)           (0.23)
+#   F2P behavioral: 77% | Structural: 23%
+#   P2P: 0% (no upstream tests at base commit eba4ad1c)
 #
 set +e
 
@@ -840,19 +840,6 @@ if [ "$PHASE_RESULT" = "PASS" ]; then
     add_reward 0.07
 else
     echo "  FAIL: ($PHASE_RESULT)"
-fi
-
-# ===================================================================
-# P2P UPSTREAM: Run desloppify's own test suite (bonus 0.05)
-# ===================================================================
-echo ""
-echo "=== P2P Upstream: desloppify tests ==="
-cd /workspace/desloppify
-if python3 -m pytest desloppify/tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
-    echo "  PASS: upstream tests pass"
-    add_reward 0.05
-else
-    echo "  FAIL: upstream tests failed or not found"
 fi
 
 # ===================================================================

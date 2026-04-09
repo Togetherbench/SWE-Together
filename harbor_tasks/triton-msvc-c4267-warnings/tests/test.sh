@@ -32,7 +32,14 @@
 #     T17 0.02  bare getResult(i) gone + enumerate/replaceAllUsesWith context
 #
 #   Pass-to-pass (1 x 0.05):
-#     T18 0.05  brace/paren balance + key functions present + no stray content
+#     T18 0.05  brace/paren balance + key functions + #includes + namespaces
+#               + enumerate preserved + line count + angle bracket balance
+#
+# NOTE: Triton's Python tests require building libtriton.so (LLVM/MLIR C++
+# backend, ~30min build), and `import triton` fails without it. MLIR lit
+# tests require `triton-opt` binary. No TRITON_TEST_SKIP_GPU mechanism exists.
+# The C++ unit tests under unittest/ require LLVM headers + linking. None of
+# these are feasible in the container. P2P uses structural C++ checks instead.
 #
 # Key fix over previous test: old behavioral test used std::optional<unsigned>
 # which GCC doesn't warn about through template instantiation. New test uses
@@ -517,21 +524,37 @@ fi
 # ==========================================================================
 # T18 (0.05): Pass-to-pass — modified file is structurally sound
 #
-# Upstream Triton tests require LLVM+GPU so full compilation is not possible.
+# Upstream Triton Python/MLIR tests require building libtriton.so and
+# triton-opt (LLVM/MLIR C++ backend), which is not feasible in this
+# container (no cmake, no LLVM headers, build takes ~30 min).
+# Triton has no TRITON_TEST_SKIP_GPU mechanism, and `import triton`
+# itself fails without the built C extension.
+#
 # Instead we verify the agent hasn't broken the file's C++ structure:
 #   1. Balanced braces (catches accidental deletions / insertions)
 #   2. Balanced parens (catches broken function calls / casts)
 #   3. All key function definitions still present
 #   4. No stray Python/shell injected (basic sanity)
+#   5. All original #include directives preserved
+#   6. using namespace declarations intact
+#   7. llvm::enumerate still used (fix should add casts, not remove loops)
+#   8. Line count within reasonable range of original (~570 lines)
+#   9. Angle bracket balance (catches broken template usage from casts)
+#
 # This passes on the unmodified base file (true P2P) and will catch agents
 # that accidentally mangle the file while applying the cast fixes.
 # ==========================================================================
 if [ -f "$FILE" ]; then
     python3 << 'P2PEOF'
-import sys
+import sys, re
 try:
     with open("/tmp/stripped_wsu.txt") as f:
         code = f.read()
+
+    # Also read the raw file for #include checks (comments stripped version
+    # won't have // includes)
+    with open("/workspace/triton/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp") as f:
+        raw = f.read()
 
     # 1. Balanced braces
     depth = 0
@@ -569,6 +592,62 @@ try:
         if marker in code:
             print(f"P2P: stray non-C++ marker '{marker.strip()}'", file=sys.stderr)
             sys.exit(1)
+
+    # 5. Original #include directives preserved -- the fix only adds casts,
+    #    it should never remove includes
+    required_includes = [
+        'WarpSpecializeUtility.h',
+        'TopologicalSortUtils.h',
+        'LLVMDialect.h',
+        'Builders.h',
+        'BuiltinOps.h',
+    ]
+    for inc in required_includes:
+        if inc not in raw:
+            print(f"P2P: missing #include for {inc}", file=sys.stderr)
+            sys.exit(1)
+
+    # 6. using namespace declarations intact
+    for ns in ['mlir', 'mlir::triton']:
+        pattern = rf'using\s+namespace\s+{re.escape(ns)}\s*;'
+        if not re.search(pattern, code):
+            print(f"P2P: 'using namespace {ns}' missing", file=sys.stderr)
+            sys.exit(1)
+
+    # 7. llvm::enumerate still used -- the fix should add casts around the
+    #    enumerate variable, not replace the enumerate loop
+    if 'enumerate' not in code:
+        print("P2P: llvm::enumerate usage removed (fix should cast, not restructure)", file=sys.stderr)
+        sys.exit(1)
+
+    # 8. Line count sanity -- original is ~570 lines, allow +/- 30 lines
+    #    for cast additions but catch major truncation or bloat
+    lines = raw.strip().split('\n')
+    if len(lines) < 500:
+        print(f"P2P: file truncated ({len(lines)} lines, expected ~570)", file=sys.stderr)
+        sys.exit(1)
+    if len(lines) > 700:
+        print(f"P2P: file bloated ({len(lines)} lines, expected ~570)", file=sys.stderr)
+        sys.exit(1)
+
+    # 9. Angle bracket balance in stripped code (catches broken template/cast syntax)
+    #    Note: we skip lines with #include and << / >> operators
+    angle_depth = 0
+    for line in code.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('#'):
+            continue
+        # Remove shift operators before counting angles
+        cleaned = re.sub(r'<<|>>', '', stripped)
+        for c in cleaned:
+            if c == '<': angle_depth += 1
+            elif c == '>': angle_depth -= 1
+
+    # Angle brackets don't need to be perfectly balanced across the file
+    # (e.g. template specializations), but extreme imbalance signals breakage
+    if abs(angle_depth) > 5:
+        print(f"P2P: angle bracket imbalance ({angle_depth})", file=sys.stderr)
+        sys.exit(1)
 
     sys.exit(0)
 except Exception as e:

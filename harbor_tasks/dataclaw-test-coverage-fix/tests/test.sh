@@ -6,13 +6,18 @@
 # Weight budget (sums to 1.10, capped at 1.00):
 #   Structural (0.14): checks 1-7  (file existence, fixtures, assertion quality)
 #   Behavioral  (0.86): checks 8-21 (pytest pass tiers, per-module quality, mutation)
-#   P2P         (0.10): import smoke check + upstream pytest suite passes
+#   P2P         (0.05): import smoke check (package still importable)
+#   F2P-guard   (0.05): agent-written tests pass cleanly (labeled "upstream" but F2P)
 #
-# Max stub score analysis:
-#   - Stub tests (import + assert True) earn: checks 1-3 (0.06) + check 5 maybe (0.02)
-#     + check 8 partial (0.05) = 0.13 max
-#   - Empty test files: check 1 (0.02) = 0.02
-#   - Realistic stub ceiling: ~0.25 (files exist, conftest, some trivial passes)
+# Max stub score analysis (stubs = import + assert True, 0 meaningful assertions):
+#   - Graduated pytest tiers (checks 8-13): 0.00 (guarded by total_asserts >= 5)
+#   - Structural: check 1 (0.02) + check 4 (0.02) = 0.04
+#   - Per-module partials: checks 14-17 partial tiers require sec_pass >= 2
+#     but stub asserts = 0 so mid/full gates blocked. Partial tiers:
+#     0.02 + 0.02 + 0.02 + 0.01 = 0.07
+#   - P2P import: 0.05, F2P agent tests: 0.05
+#   - Mutations: 0.00 (stubs don't call real functions)
+#   - Realistic stub ceiling: ~0.21
 #
 set +e
 
@@ -283,46 +288,59 @@ else:
 
 # ====================================================================
 # BEHAVIORAL — GRADUATED PYTEST PASS TIERS (0.30 total)
+# Guarded by total_asserts >= 5 to prevent stub tests from scoring.
 # ====================================================================
 
 # Check 8 (0.05): tests exist and at least 1 passes
 print("\n--- Check 8: tests exist and pass ---")
-if total_pass >= 1:
+if total_asserts < 5:
+    print("  SKIP: need >= 5 meaningful assertions to unlock pytest tiers")
+elif total_pass >= 1:
     add_reward(0.05, f"at least 1 test passes ({total_pass})")
 else:
     print("  FAIL: no passing tests")
 
 # Check 9 (0.05): >= 5 tests pass
 print("--- Check 9: >= 5 tests pass ---")
-if total_pass >= 5:
+if total_asserts < 5:
+    print("  SKIP: assertion guard")
+elif total_pass >= 5:
     add_reward(0.05, f">= 5 tests pass ({total_pass})")
 else:
     print(f"  FAIL: {total_pass} < 5 passing")
 
 # Check 10 (0.05): >= 10 tests pass
 print("--- Check 10: >= 10 tests pass ---")
-if total_pass >= 10:
+if total_asserts < 5:
+    print("  SKIP: assertion guard")
+elif total_pass >= 10:
     add_reward(0.05, f">= 10 tests pass ({total_pass})")
 else:
     print(f"  FAIL: {total_pass} < 10 passing")
 
 # Check 11 (0.05): >= 20 tests pass
 print("--- Check 11: >= 20 tests pass ---")
-if total_pass >= 20:
+if total_asserts < 5:
+    print("  SKIP: assertion guard")
+elif total_pass >= 20:
     add_reward(0.05, f">= 20 tests pass ({total_pass})")
 else:
     print(f"  FAIL: {total_pass} < 20 passing")
 
 # Check 12 (0.05): >= 40 tests pass
 print("--- Check 12: >= 40 tests pass ---")
-if total_pass >= 40:
+if total_asserts < 5:
+    print("  SKIP: assertion guard")
+elif total_pass >= 40:
     add_reward(0.05, f">= 40 tests pass ({total_pass})")
 else:
     print(f"  FAIL: {total_pass} < 40 passing")
 
 # Check 13 (0.05): suite health — >= 30 pass AND <= 2 failures
 print("--- Check 13: suite health (low failure rate) ---")
-if total_pass >= 30 and total_fail <= 2:
+if total_asserts < 5:
+    print("  SKIP: assertion guard")
+elif total_pass >= 30 and total_fail <= 2:
     add_reward(0.05, f"healthy suite: {total_pass} pass, {total_fail} fail")
 else:
     print(f"  FAIL: {total_pass} pass, {total_fail} fail (need >= 30 pass, <= 2 fail)")
@@ -600,13 +618,14 @@ else:
     print("  FAIL: dataclaw package import/smoke check failed")
 
 # ====================================================================
-# P2P: Upstream test suite passes (agent tests don't crash/hang)
+# F2P: Agent-written test suite passes cleanly
 #
 # Run the agent-written tests end-to-end with a timeout and -x (fail
 # fast). A clean exit (rc 0) means no failures, no collection errors,
-# and no hangs. Weight: 0.05
+# and no hangs. This is F2P: at baseline there are no tests.
+# Weight: 0.05
 # ====================================================================
-print("\n--- P2P: upstream pytest run ---")
+print("\n--- F2P: agent test suite passes cleanly ---")
 try:
     p2p_run = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/", "-x", "--timeout=60", "-q"],
@@ -615,7 +634,7 @@ try:
     )
     print(p2p_run.stdout[-500:] if len(p2p_run.stdout) > 500 else p2p_run.stdout)
     if p2p_run.returncode == 0:
-        add_reward(0.05, "P2P: upstream pytest suite passes cleanly")
+        add_reward(0.05, "F2P: agent test suite passes cleanly")
     else:
         print(f"  FAIL: pytest exited with rc={p2p_run.returncode}")
 except subprocess.TimeoutExpired:

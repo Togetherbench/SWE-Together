@@ -8,25 +8,28 @@
 # All tests run on CPU — no GPU required.
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
-# Scoring weights (15 tests):
-#   Test 1:  0.02  File exists + valid Python (structural)
-#   Test 2:  0.05  Anti-stub: classes, lines, forward(), RoPE, mean-pool (structural)
-#   Test 3:  0.03  Config references: 1024, 24, SentencePiece (structural)
-#   Test 4:  0.07  Module imports + class hierarchy (behavioral)
-#   Test 5:  0.07  Tokenizer Jina config: pad_with_end, embedding_size (behavioral)
-#   Test 6:  0.07  Wrapper instantiates on CPU (behavioral)
-#   Test 7:  0.08  encode_token_weights with tokens [1,42,100,2] (behavioral)
-#   Test 8:  0.08  Output embedding dimension is 1024 (behavioral)
-#   Test 9:  0.07  ≥20 transformer layers with real sub-modules (behavioral)
-#   Test 10: 0.08  Different inputs → different outputs (behavioral)
-#   Test 11: 0.08  ≥10M total parameters (behavioral)
-#   Test 12: 0.08  RoPE: inv_freq buffers, no large position embedding (behavioral)
-#   Test 13: 0.07  Encode 20-token sequence: valid output shape (behavioral)
-#   Test 14: 0.07  Pooled output: encode returns (cond, pooled) format (behavioral)
-#   Test 15: 0.08  P2P: core imports + second encode with different tokens (behavioral)
+# Scoring weights (16 tests, sum 1.05, capped at 1.00):
+#   Test 1:  0.02  File exists + valid Python                       [structural F2P]
+#   Test 2:  0.05  Anti-stub: classes, lines, forward(), RoPE       [structural F2P]
+#   Test 3:  0.03  Config references: 1024, 24, SentencePiece       [structural F2P]
+#   Test 4:  0.07  Module imports + class hierarchy                  [behavioral F2P]
+#   Test 5:  0.07  Tokenizer Jina config: pad_with_end, emb_size    [behavioral F2P]
+#   Test 6:  0.07  Wrapper instantiates on CPU                      [behavioral F2P]
+#   Test 7:  0.08  encode_token_weights with tokens [1,42,100,2]    [behavioral F2P]
+#   Test 8:  0.08  Output embedding dimension is 1024               [behavioral F2P]
+#   Test 9:  0.07  ≥20 transformer layers with real sub-modules     [behavioral F2P]
+#   Test 10: 0.08  Different inputs → different outputs             [behavioral F2P]
+#   Test 11: 0.08  ≥10M total parameters                           [behavioral F2P]
+#   Test 12: 0.08  RoPE: inv_freq buffers, no large pos embed       [behavioral F2P]
+#   Test 13: 0.07  Encode 20-token sequence: valid output shape     [behavioral F2P]
+#   Test 14: 0.07  Pooled output: (cond, pooled) format             [behavioral F2P]
+#   Test 15: 0.08  Core imports + second encode (diff tokens)       [behavioral F2P]
+#   UP:     0.05  Upstream ComfyUI unit tests (10 test files)       [upstream P2P]
 #
-# Structural total: 0.10 (10%)
-# Behavioral total: 0.90 (90%)
+# P2P total:  0.05 (5%)
+# F2P total:  1.00 (95%)
+# Structural: 0.10 (10%)
+# Behavioral: 0.95 (90%)
 #
 set +e
 export PATH="/workspace/venv/bin:$PATH"
@@ -969,11 +972,25 @@ if [[ "$T15" == PASS* ]]; then add_reward 0.08; fi
 echo ""
 echo "=== P2P Upstream: ComfyUI unit tests ==="
 cd /workspace/ComfyUI
-if python3 -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
+UP_RESULT=$("$PYTHON" -m pytest \
+    tests-unit/utils/json_util_test.py \
+    tests-unit/feature_flags_test.py \
+    tests-unit/execution_test/validate_node_input_test.py \
+    tests-unit/execution_test/preview_method_override_test.py \
+    tests-unit/comfy_test/folder_path_test.py \
+    tests-unit/folder_paths_test/misc_test.py \
+    tests-unit/folder_paths_test/filter_by_content_types_test.py \
+    tests-unit/folder_paths_test/system_user_test.py \
+    tests-unit/websocket_feature_flags_test.py \
+    tests-unit/utils/extra_config_test.py \
+    -x --timeout=60 -q 2>&1)
+UP_EXIT=$?
+echo "$UP_RESULT" | tail -5
+if [ $UP_EXIT -eq 0 ]; then
     echo "  PASS: upstream tests pass"
     add_reward 0.05
 else
-    echo "  FAIL: upstream tests failed or not found"
+    echo "  FAIL: upstream tests failed (exit=$UP_EXIT)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════
