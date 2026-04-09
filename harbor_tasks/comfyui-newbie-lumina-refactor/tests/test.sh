@@ -620,15 +620,31 @@ echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.08
 
 # ═══════════════════════════════════════════════════════════════
 # P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (bonus 0.05)
+# Uses tests-unit/ (pure unit tests), NOT tests/ (integration
+# tests that require websocket-client and a running server).
+# Note: preview_method_override_test.py does not exist at this commit.
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "=== P2P Upstream: ComfyUI unit tests ==="
 cd /workspace/ComfyUI
-if python3 -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
-    echo "  PASS: upstream tests pass"
+UP_RESULT=$(python3 -m pytest \
+    tests-unit/utils/json_util_test.py \
+    tests-unit/feature_flags_test.py \
+    tests-unit/execution_test/validate_node_input_test.py \
+    tests-unit/comfy_test/folder_path_test.py \
+    tests-unit/folder_paths_test/misc_test.py \
+    tests-unit/folder_paths_test/filter_by_content_types_test.py \
+    tests-unit/folder_paths_test/system_user_test.py \
+    tests-unit/websocket_feature_flags_test.py \
+    tests-unit/utils/extra_config_test.py \
+    -x --timeout=60 -q 2>&1)
+UP_EXIT=$?
+echo "$UP_RESULT" | tail -5
+if [ $UP_EXIT -eq 0 ]; then
+    echo "  PASS: upstream unit tests pass"
     add_reward 0.05
 else
-    echo "  FAIL: upstream tests failed or not found"
+    echo "  FAIL: upstream unit tests failed (exit=$UP_EXIT)"
 fi
 
 # ═══════════════════════════════════════════════════════════════
