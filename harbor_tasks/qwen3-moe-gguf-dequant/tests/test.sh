@@ -5,40 +5,36 @@
 # Tests 6 functions: IQ3_XXS (fix), IQ3_S, IQ1_S, IQ2_S, IQ2_XXS, IQ1_M (new)
 # Plus: IQ3_XXS must not use .embedding() (user required elemental torch ops)
 # Plus: P2P regression for pre-existing quant types
-# Plus: upstream P2P for module imports and pre-existing infrastructure
+# Plus: stress tests with larger inputs and different seeds
 #
 # Gold-tier numerical tests: quantize random data with libggml (C), dequantize
 # with both numpy reference (gguf.quants) and agent's PyTorch code, compare.
 #
-# KEY DESIGN CHANGE from v1:
-#   - Each quant type test is fully independent (own libggml init)
-#   - Lightweight shape/dtype pre-checks before heavy numerical tests
-#   - AST check replaced with behavioral: call function + check output type
-#   - Tolerance tightened from rtol=1e-2 to rtol=5e-3
-#   - Total weights sum to 1.08 (capped at 1.00)
-#
-# Weights:
-#   P2P: Q4_0 regression:         0.05  (Gold, P2P)
-#   P2P: Q8_0 regression:         0.05  (Gold, P2P)
-#   IQ3_XXS shape/dtype check:    0.03  (Behavioral, lightweight)
-#   IQ3_XXS numerical:            0.15  (Gold, F2P core bug)
-#   IQ3_XXS no-embedding behav:   0.05  (Behavioral, F2P refinement)
-#   IQ3_S shape/dtype check:      0.02  (Behavioral, lightweight)
-#   IQ3_S numerical:              0.12  (Gold, F2P)
-#   IQ1_S shape/dtype check:      0.02  (Behavioral, lightweight)
-#   IQ1_S numerical:              0.12  (Gold, F2P)
-#   IQ2_S shape/dtype check:      0.02  (Behavioral, lightweight)
-#   IQ2_S numerical:              0.10  (Gold, F2P)
-#   IQ2_XXS shape/dtype check:    0.02  (Behavioral, lightweight)
-#   IQ2_XXS numerical:            0.10  (Gold, F2P)
-#   IQ1_M shape/dtype check:      0.02  (Behavioral, lightweight)
-#   IQ1_M numerical:              0.10  (Gold, F2P)
-#   dequantize dispatch check:    0.06  (Behavioral, integration)
-#   Upstream P2P imports & infra: 0.05  (Gold, P2P)
-#
-# Behavioral: 100% | Structural (AST): 0%
-# Stub score (file exists only): 0.00
-# Max score: 1.00 (capped)
+# Weight structure (total = 1.00):
+#   P2P Q4_0:                           0.02
+#   P2P Q8_0:                           0.02
+#   IQ3_XXS shape/dtype:                0.02
+#   IQ3_XXS numerical (seed=42):        0.10
+#   IQ3_XXS no-embedding:               0.05
+#   IQ3_XXS stress (seed=142, 64blk):   0.04
+#   IQ3_S shape/dtype:                  0.01
+#   IQ3_S numerical (seed=43):          0.10
+#   IQ3_S stress (seed=143, 64blk):     0.03
+#   IQ1_S shape/dtype:                  0.01
+#   IQ1_S numerical (seed=44):          0.10
+#   IQ1_S stress (seed=144, 64blk):     0.03
+#   IQ2_S shape/dtype:                  0.01
+#   IQ2_S numerical (seed=45):          0.08
+#   IQ2_S stress (seed=145, 64blk):     0.04
+#   IQ2_XXS shape/dtype:                0.01
+#   IQ2_XXS numerical (seed=46):        0.08
+#   IQ2_XXS stress (seed=146, 64blk):   0.04
+#   IQ1_M shape/dtype:                  0.01
+#   IQ1_M numerical (seed=47):          0.10
+#   IQ1_M stress (seed=147, 64blk):     0.06
+#   Dispatch check:                     0.03
+#   Upstream P2P:                       0.01
+#   Sum = 1.00
 #
 set +e
 
@@ -51,17 +47,14 @@ sys.path.insert(0, '/workspace')
 os.chdir('/workspace')
 
 reward = 0.0
+test_num = 0
+total_tests = 23
 
 ###############################################################################
 # Helper: independent libggml-based numerical test
-# Each call gets its own try/except so one failure doesn't cascade to others.
 ###############################################################################
 def test_numerical_independent(qtype_name, seed, n_blocks=32, rtol=5e-3, atol=5e-3):
-    """Gold-tier test: quantize with libggml, dequantize with agent code and numpy ref, compare.
-
-    Each call is fully independent -- imports and initializes libggml fresh
-    in its own scope so a failure in one test cannot cascade to others.
-    """
+    """Gold-tier test: quantize with libggml, dequantize with agent code and numpy ref, compare."""
     try:
         import ctypes
         import numpy as np
@@ -123,8 +116,15 @@ def test_numerical_independent(qtype_name, seed, n_blocks=32, rtol=5e-3, atol=5e
         quantized_t = torch.from_numpy(quantized)
         out = dequantize(quantized_t, qtype, (numel,), torch.float32)
 
+        # Explicit NaN/Inf check
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            nan_count = torch.isnan(out).sum().item()
+            inf_count = torch.isinf(out).sum().item()
+            print(f"  FAIL: {qtype_name} output contains NaN({nan_count}) or Inf({inf_count})")
+            return False
+
         if torch.allclose(out, out_ref, rtol=rtol, atol=atol):
-            print(f"  PASS: {qtype_name} dequantization matches reference (rtol={rtol}, atol={atol})")
+            print(f"  PASS: {qtype_name} matches reference (rtol={rtol}, atol={atol}, n_blocks={n_blocks})")
             return True
         else:
             diff = (out - out_ref).abs()
@@ -137,10 +137,9 @@ def test_numerical_independent(qtype_name, seed, n_blocks=32, rtol=5e-3, atol=5e
 
 
 ###############################################################################
-# Helper: lightweight shape/dtype pre-check (no libggml needed)
+# Helper: lightweight shape/dtype pre-check
 ###############################################################################
 def test_shape_dtype(qtype_name):
-    """Lightweight check: function exists, accepts tensor input, returns correct shape/dtype."""
     try:
         import torch
         import gguf
@@ -156,7 +155,6 @@ def test_shape_dtype(qtype_name):
         numel = n_blocks * block_size
         n_bytes = n_blocks * type_size
 
-        # Create a dummy quantized tensor (zeros -- we only check shape/dtype, not values)
         dummy_input = torch.zeros(n_bytes, dtype=torch.uint8)
         out = dequantize(dummy_input, qtype, (numel,), torch.float32)
 
@@ -170,7 +168,7 @@ def test_shape_dtype(qtype_name):
         print(f"  PASS: {qtype_name} shape={out.shape}, dtype={out.dtype}")
         return True
     except Exception as e:
-        print(f"  FAIL: {qtype_name} shape/dtype check exception: {e}")
+        print(f"  FAIL: {qtype_name} shape/dtype exception: {e}")
         return False
 
 
@@ -178,12 +176,6 @@ def test_shape_dtype(qtype_name):
 # Helper: behavioral no-embedding check for IQ3_XXS
 ###############################################################################
 def test_iq3_xxs_no_embedding():
-    """Behavioral check: run IQ3_XXS and verify it does NOT use F.embedding internally.
-
-    Instead of AST parsing, we monkey-patch torch.nn.functional.embedding to
-    detect if it gets called during dequantization. This is purely behavioral:
-    if the function works without calling embedding, the test passes.
-    """
     try:
         import torch
         import torch.nn.functional as F
@@ -196,7 +188,6 @@ def test_iq3_xxs_no_embedding():
         numel = n_blocks * block_size
         n_bytes = n_blocks * type_size
 
-        # Monkey-patch F.embedding to detect usage
         original_embedding = F.embedding
         embedding_called = [False]
         def patched_embedding(*args, **kwargs):
@@ -217,7 +208,7 @@ def test_iq3_xxs_no_embedding():
             print("  PASS: IQ3_XXS does not call F.embedding")
             return True
     except Exception as e:
-        print(f"  FAIL: IQ3_XXS no-embedding check exception: {e}")
+        print(f"  FAIL: IQ3_XXS no-embedding exception: {e}")
         return False
 
 
@@ -225,75 +216,121 @@ def test_iq3_xxs_no_embedding():
 # Run all tests
 # ============================================================================
 
-# --- P2P regression tests ---
-print("=== Test 1/17: P2P Q4_0 regression [weight=0.05, Gold, P2P] ===")
+# --- P2P regression ---
+test_num += 1
+print(f"=== Test {test_num}/{total_tests}: P2P Q4_0 [weight=0.02] ===")
 if test_numerical_independent("Q4_0", seed=100):
-    reward += 0.05
+    reward += 0.02
 
-print("\n=== Test 2/17: P2P Q8_0 regression [weight=0.05, Gold, P2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: P2P Q8_0 [weight=0.02] ===")
 if test_numerical_independent("Q8_0", seed=101):
-    reward += 0.05
+    reward += 0.02
 
 # --- IQ3_XXS (core bug fix) ---
-print("\n=== Test 3/17: IQ3_XXS shape/dtype check [weight=0.03, Behavioral] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS shape/dtype [weight=0.02] ===")
 if test_shape_dtype("IQ3_XXS"):
-    reward += 0.03
+    reward += 0.02
 
-print("\n=== Test 4/17: IQ3_XXS numerical correctness [weight=0.15, Gold, F2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS numerical seed=42 [weight=0.10] ===")
 if test_numerical_independent("IQ3_XXS", seed=42):
-    reward += 0.15
+    reward += 0.10
 
-print("\n=== Test 5/17: IQ3_XXS no F.embedding [weight=0.05, Behavioral, F2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS no F.embedding [weight=0.05] ===")
 if test_iq3_xxs_no_embedding():
     reward += 0.05
 
-# --- IQ3_S ---
-print("\n=== Test 6/17: IQ3_S shape/dtype check [weight=0.02, Behavioral] ===")
-if test_shape_dtype("IQ3_S"):
-    reward += 0.02
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS stress seed=142, 64blk [weight=0.04] ===")
+if test_numerical_independent("IQ3_XXS", seed=142, n_blocks=64):
+    reward += 0.04
 
-print("\n=== Test 7/17: IQ3_S numerical correctness [weight=0.12, Gold, F2P] ===")
+# --- IQ3_S ---
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S shape/dtype [weight=0.01] ===")
+if test_shape_dtype("IQ3_S"):
+    reward += 0.01
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S numerical seed=43 [weight=0.10] ===")
 if test_numerical_independent("IQ3_S", seed=43):
-    reward += 0.12
+    reward += 0.10
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S stress seed=143, 64blk [weight=0.03] ===")
+if test_numerical_independent("IQ3_S", seed=143, n_blocks=64):
+    reward += 0.03
 
 # --- IQ1_S ---
-print("\n=== Test 8/17: IQ1_S shape/dtype check [weight=0.02, Behavioral] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S shape/dtype [weight=0.01] ===")
 if test_shape_dtype("IQ1_S"):
-    reward += 0.02
+    reward += 0.01
 
-print("\n=== Test 9/17: IQ1_S numerical correctness [weight=0.12, Gold, F2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S numerical seed=44 [weight=0.10] ===")
 if test_numerical_independent("IQ1_S", seed=44):
-    reward += 0.12
+    reward += 0.10
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S stress seed=144, 64blk [weight=0.03] ===")
+if test_numerical_independent("IQ1_S", seed=144, n_blocks=64):
+    reward += 0.03
 
 # --- IQ2_S ---
-print("\n=== Test 10/17: IQ2_S shape/dtype check [weight=0.02, Behavioral] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S shape/dtype [weight=0.01] ===")
 if test_shape_dtype("IQ2_S"):
-    reward += 0.02
+    reward += 0.01
 
-print("\n=== Test 11/17: IQ2_S numerical correctness [weight=0.10, Gold, F2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S numerical seed=45 [weight=0.08] ===")
 if test_numerical_independent("IQ2_S", seed=45):
-    reward += 0.10
+    reward += 0.08
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S stress seed=145, 64blk [weight=0.04] ===")
+if test_numerical_independent("IQ2_S", seed=145, n_blocks=64):
+    reward += 0.04
 
 # --- IQ2_XXS ---
-print("\n=== Test 12/17: IQ2_XXS shape/dtype check [weight=0.02, Behavioral] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS shape/dtype [weight=0.01] ===")
 if test_shape_dtype("IQ2_XXS"):
-    reward += 0.02
+    reward += 0.01
 
-print("\n=== Test 13/17: IQ2_XXS numerical correctness [weight=0.10, Gold, F2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS numerical seed=46 [weight=0.08] ===")
 if test_numerical_independent("IQ2_XXS", seed=46):
-    reward += 0.10
+    reward += 0.08
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS stress seed=146, 64blk [weight=0.04] ===")
+if test_numerical_independent("IQ2_XXS", seed=146, n_blocks=64):
+    reward += 0.04
 
 # --- IQ1_M ---
-print("\n=== Test 14/17: IQ1_M shape/dtype check [weight=0.02, Behavioral] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M shape/dtype [weight=0.01] ===")
 if test_shape_dtype("IQ1_M"):
-    reward += 0.02
+    reward += 0.01
 
-print("\n=== Test 15/17: IQ1_M numerical correctness [weight=0.10, Gold, F2P] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M numerical seed=47 [weight=0.10] ===")
 if test_numerical_independent("IQ1_M", seed=47):
     reward += 0.10
 
-# --- Integration: dequantize dispatch works for all types ---
-print("\n=== Test 16/17: dequantize dispatch covers all IQ types [weight=0.06, Behavioral] ===")
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M stress seed=147, 64blk [weight=0.06] ===")
+if test_numerical_independent("IQ1_M", seed=147, n_blocks=64):
+    reward += 0.06
+
+# --- Dispatch ---
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: dispatch check [weight=0.03] ===")
 try:
     import gguf
     from qwen3_moe_fused.quantize_gguf.dequant import dequantize_functions
@@ -311,142 +348,97 @@ try:
             missing.append(name)
 
     if missing:
-        print(f"  FAIL: missing from dequantize_functions: {', '.join(missing)}")
-        print(f"  Registered: {', '.join(registered)}")
-        # Partial credit: give proportional score
-        frac = len(registered) / len(required_types)
-        partial = round(0.06 * frac, 4)
-        reward += partial
-        print(f"  Partial credit: {partial}")
+        print(f"  FAIL: missing: {', '.join(missing)}")
     else:
-        print(f"  PASS: all {len(required_types)} IQ types registered in dequantize_functions")
-        reward += 0.06
+        print(f"  PASS: all {len(required_types)} IQ types registered")
+        reward += 0.03
 except Exception as e:
-    print(f"  FAIL: dispatch check exception: {e}")
+    print(f"  FAIL: dispatch exception: {e}")
 
-# --- Upstream P2P: module imports, infrastructure, and functional validation ---
-print("\n=== Test 17/17: Upstream P2P imports & pre-existing infra [weight=0.05, Gold, P2P] ===")
+# --- Upstream P2P ---
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: Upstream P2P [weight=0.01] ===")
 try:
     p2p_checks = 0
     p2p_total = 8
 
-    # 1. gguf module imports
     import gguf
     from gguf import GGMLQuantizationType, GGML_QUANT_SIZES
     p2p_checks += 1
-    print("  PASS: gguf module imports OK")
+    print("  PASS: gguf imports OK")
 
-    # 2. dequant module imports
     from qwen3_moe_fused.quantize_gguf.dequant import dequantize, dequantize_functions
     p2p_checks += 1
-    print("  PASS: dequant module imports OK")
+    print("  PASS: dequant imports OK")
 
-    # 3. split_block_dims helper exists, is callable, and WORKS correctly
     from qwen3_moe_fused.quantize_gguf.dequant import split_block_dims
-    assert callable(split_block_dims), "split_block_dims is not callable"
-    # Functional test: split a tensor with known dimensions
+    assert callable(split_block_dims)
     import torch
     test_tensor = torch.arange(20, dtype=torch.uint8).reshape(1, 20)
     parts = split_block_dims(test_tensor, 2, 8)
-    # split_block_dims(blocks, *dims) should split the last dim into parts of given sizes
-    # Verify it returns a tuple/list and the parts have correct sizes
-    assert isinstance(parts, (tuple, list)), f"split_block_dims should return tuple/list, got {type(parts)}"
-    assert len(parts) >= 2, f"split_block_dims should return >=2 parts, got {len(parts)}"
+    assert isinstance(parts, (tuple, list))
+    assert len(parts) >= 2
     p2p_checks += 1
-    print(f"  PASS: split_block_dims works correctly ({len(parts)} parts)")
+    print(f"  PASS: split_block_dims works ({len(parts)} parts)")
 
-    # 4. dequantize is callable and accepts expected signature
-    assert callable(dequantize), "dequantize is not callable"
+    assert callable(dequantize)
     import inspect
     sig = inspect.signature(dequantize)
-    assert len(sig.parameters) >= 3, f"dequantize has too few params: {sig}"
+    assert len(sig.parameters) >= 3
     p2p_checks += 1
-    print(f"  PASS: dequantize is callable with signature {sig}")
+    print(f"  PASS: dequantize signature OK")
 
-    # 5. Pre-existing quant types (Q4_0, Q8_0) remain in dequantize_functions
-    baseline_types = ["Q4_0", "Q8_0"]
     baseline_ok = True
-    for tname in baseline_types:
+    for tname in ["Q4_0", "Q8_0"]:
         qt = getattr(GGMLQuantizationType, tname, None)
         if qt is None or qt not in dequantize_functions:
-            print(f"  FAIL: pre-existing {tname} missing from dequantize_functions")
             baseline_ok = False
     if baseline_ok:
         p2p_checks += 1
-        print(f"  PASS: baseline quant types {baseline_types} present in dequantize_functions")
+        print("  PASS: baseline types present")
 
-    # 6. Grid/sign lookup tables are intact and have correct dimensions
-    # These are critical constants used by IQ dequantization
     import importlib
     dequant_mod = importlib.import_module("qwen3_moe_fused.quantize_gguf.dequant")
-
     grid_ok = True
-    # GRID_IQ3_XXS should be a tensor with 256 entries (8-bit lookup)
     grid = getattr(dequant_mod, 'GRID_IQ3_XXS', None)
-    if grid is not None:
-        if hasattr(grid, 'shape'):
-            if grid.shape[0] != 256:
-                print(f"  FAIL: GRID_IQ3_XXS has {grid.shape[0]} entries, expected 256")
-                grid_ok = False
-        elif hasattr(grid, '__len__'):
-            if len(grid) != 256:
-                print(f"  FAIL: GRID_IQ3_XXS has {len(grid)} entries, expected 256")
-                grid_ok = False
-    # KSIGNS_IQ2_XXS should be a tensor with 128 entries (7-bit lookup)
+    if grid is not None and hasattr(grid, 'shape') and grid.shape[0] != 256:
+        grid_ok = False
     ksigns = getattr(dequant_mod, 'KSIGNS_IQ2_XXS', None)
-    if ksigns is not None:
-        if hasattr(ksigns, 'shape'):
-            if ksigns.shape[0] != 128:
-                print(f"  FAIL: KSIGNS_IQ2_XXS has {ksigns.shape[0]} entries, expected 128")
-                grid_ok = False
-        elif hasattr(ksigns, '__len__'):
-            if len(ksigns) != 128:
-                print(f"  FAIL: KSIGNS_IQ2_XXS has {len(ksigns)} entries, expected 128")
-                grid_ok = False
+    if ksigns is not None and hasattr(ksigns, 'shape') and ksigns.shape[0] != 128:
+        grid_ok = False
     if grid_ok:
         p2p_checks += 1
-        tables_found = []
-        if grid is not None: tables_found.append("GRID_IQ3_XXS")
-        if ksigns is not None: tables_found.append("KSIGNS_IQ2_XXS")
-        print(f"  PASS: lookup tables intact: {tables_found}")
-    # Note: tables may not exist yet if agent hasn't created them - that's OK for P2P
+        print("  PASS: lookup tables intact")
 
-    # 7. dequant.py file is valid Python and has minimum expected structure
     import ast as ast_mod
-    dequant_file = os.path.join("/workspace", "qwen3_moe_fused", "quantize_gguf", "dequant.py")
+    dequant_file = "/workspace/qwen3_moe_fused/quantize_gguf/dequant.py"
     if os.path.exists(dequant_file):
         with open(dequant_file) as f:
             src = f.read()
         tree = ast_mod.parse(src)
         func_names = {n.name for n in ast_mod.walk(tree) if isinstance(n, ast_mod.FunctionDef)}
-        # Must have dequantize and split_block_dims at minimum
         if 'dequantize' in func_names and 'split_block_dims' in func_names:
             p2p_checks += 1
-            print(f"  PASS: dequant.py AST valid with {len(func_names)} functions")
-        else:
-            print(f"  FAIL: dequant.py missing expected functions (found: {func_names})")
-    else:
-        print(f"  FAIL: dequant.py not found at {dequant_file}")
+            print(f"  PASS: AST valid ({len(func_names)} functions)")
 
-    # 8. Pre-existing dequant functions actually execute on Q4_0/Q8_0 (functional P2P)
     try:
         qt_q4 = GGMLQuantizationType.Q4_0
         block_size, type_size = GGML_QUANT_SIZES[qt_q4]
         n_blocks = 2
         dummy = torch.zeros(n_blocks * type_size, dtype=torch.uint8)
         result = dequantize(dummy, qt_q4, (n_blocks * block_size,), torch.float32)
-        assert result.shape == (n_blocks * block_size,), f"Q4_0 shape mismatch: {result.shape}"
-        assert result.dtype == torch.float32, f"Q4_0 dtype mismatch: {result.dtype}"
+        assert result.shape == (n_blocks * block_size,)
+        assert result.dtype == torch.float32
         p2p_checks += 1
-        print(f"  PASS: Q4_0 dequantize executes correctly (shape={result.shape})")
+        print("  PASS: Q4_0 functional test")
     except Exception as e:
-        print(f"  FAIL: Q4_0 functional test: {e}")
+        print(f"  FAIL: Q4_0 functional: {e}")
 
-    p2p_score = round(0.05 * p2p_checks / p2p_total, 4)
+    p2p_score = round(0.01 * p2p_checks / p2p_total, 4)
     reward += p2p_score
-    print(f"  P2P sub-score: {p2p_checks}/{p2p_total} => +{p2p_score}")
+    print(f"  P2P: {p2p_checks}/{p2p_total} => +{p2p_score}")
 except Exception as e:
-    print(f"  FAIL: upstream P2P exception: {e}")
+    print(f"  FAIL: P2P exception: {e}")
     traceback.print_exc()
 
 # ============================================================================

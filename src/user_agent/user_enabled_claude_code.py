@@ -29,7 +29,7 @@ from .user_agent import UserAgent, UserDecision
 log = logging.getLogger(__name__)
 
 _MAX_RESUME_TURNS = 15
-_MAX_CONSECUTIVE_NOOPS = 2  # allow agent to continue N times without user input before stopping
+_MAX_CONSECUTIVE_NOOPS = 4  # allow agent to continue N times without user input before stopping
 
 
 class UserEnabledClaudeCode(BaseAgent):

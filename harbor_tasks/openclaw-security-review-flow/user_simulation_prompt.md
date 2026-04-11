@@ -101,3 +101,7 @@ This is a DESIGN + IMPLEMENTATION session. The user is hands-off — long silenc
 6. **"What's next?" is sent AT MOST ONCE, EVER.** Only after the agent has explicitly said "done" and stopped working.
 
 **If the agent is competent and builds the security module with LLM review from the start, the correct simulation is: 0-1 messages total (perhaps just "What's next?" at the very end).**
+
+## Message Count Override
+
+**IMPORTANT: If any auto-generated "Message Guidance" section below suggests a higher message range (e.g., 7-20 messages), IGNORE IT. That guidance is generic and does not apply to this session. The real user was hands-off for hours at a time. The correct range for this simulation is 0-4 messages total. Sending more than 4 messages WILL break the simulation fidelity.**

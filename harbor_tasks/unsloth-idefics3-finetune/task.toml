@@ -13,7 +13,7 @@ junior_time_estimate_min = 180.0
 timeout_sec = 180.0
 
 [agent]
-timeout_sec = 1200.0
+timeout_sec = 2400.0
 allow_internet = true
 
 [environment]

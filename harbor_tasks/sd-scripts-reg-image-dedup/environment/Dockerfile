@@ -39,6 +39,7 @@ ENV VIRTUAL_ENV="/workspace/venv"
 # Install CPU-only PyTorch and required deps (no GPU needed for structural checks)
 RUN pip install --no-cache-dir \
     torch==2.6.0+cpu \
+    torchvision==0.21.0+cpu \
     --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies (ignore GPU-specific extras that fail on CPU)
@@ -54,6 +55,7 @@ RUN pip install --no-cache-dir \
     tqdm \
     packaging \
     opencv-python-headless \
+    einops \
     2>/dev/null || true
 
 # Test runner for P2P upstream tests
@@ -75,6 +77,12 @@ RUN git config --global user.email "agent@test.com" && \
 # Stage the synthesized changes so agent sees them via git diff HEAD
 RUN cd /workspace/sd-scripts && git add -A && \
     git commit -m "initial workspace state"
+
+# Remove AGENTS.md / CLAUDE.md that might block agents
+RUN rm -f /workspace/sd-scripts/AGENTS.md /workspace/sd-scripts/CLAUDE.md
+
+# Fix permissions for E2B (runs as 'user', __pycache__ owned by root from build)
+RUN chmod -R a+w /workspace/sd-scripts
 
 # Pre-install Claude Code CLI (standalone binary, no Node.js needed)
 RUN curl -fsSL https://claude.ai/install.sh | bash

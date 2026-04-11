@@ -7,10 +7,10 @@
 # unsuffixed "latents" key and validate its shape using metadata-only
 # (header-only) reads — not by decompressing the full array.
 #
-# 12 tests, 100 points total.
-#   Behavioral F2P  (75%): T1(15), T2(10), T3(5), T4(5), T5(25), T6(15)
+# 13 tests, 100 points total.
+#   Behavioral F2P  (82%): T1(13), T2(10), T3(5), T4(12), T4b(8), T5(22), T6(12)
 #   Behavioral Silver (5%): T7(5)
-#   Behavioral P2P  (12%): T8(3), T9(3), T10(6)
+#   Behavioral P2P   (5%): T8(1), T9(1), T10(3)
 #   Structural Bronze (8%): T11(4), T12(4)
 #
 # Nop protection: all F2P tests are gated on a CANARY check that
@@ -96,11 +96,11 @@ fi
 # All gated on CANARY_PASS to prevent false positives from unsynthesized base.
 ###############################################################################
 
-echo "=== Test 1/12: is_disk_cached_latents_expected accepts correct-shape legacy npz (15pts) ==="
+echo "=== Test 1/13: is_disk_cached_latents_expected accepts correct-shape legacy npz (13pts) ==="
 if [ "$CANARY_PASS" -ne 1 ]; then
     echo "SKIP: canary failed"
 else
-python3 << 'PYEOF' && SCORE=$((SCORE + 15)) || true
+python3 << 'PYEOF' && SCORE=$((SCORE + 13)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -144,7 +144,7 @@ PYEOF
 fi
 
 echo ""
-echo "=== Test 2/12: load_latents_from_disk loads from legacy unsuffixed npz (10pts) ==="
+echo "=== Test 2/13: load_latents_from_disk loads from legacy unsuffixed npz (10pts) ==="
 if [ "$CANARY_PASS" -ne 1 ]; then
     echo "SKIP: canary failed"
 else
@@ -210,7 +210,7 @@ PYEOF
 fi
 
 echo ""
-echo "=== Test 3/12: is_disk_cached_latents_expected rejects wrong-shape legacy npz (5pts) ==="
+echo "=== Test 3/13: is_disk_cached_latents_expected rejects wrong-shape legacy npz (5pts) ==="
 if [ "$CANARY_PASS" -ne 1 ]; then
     echo "SKIP: canary failed"
 else
@@ -278,11 +278,11 @@ PYEOF
 fi
 
 echo ""
-echo "=== Test 4/12: load_latents_from_disk rejects wrong-shape legacy npz (5pts) ==="
+echo "=== Test 4/13: load_latents_from_disk rejects wrong-shape legacy npz (12pts) ==="
 if [ "$CANARY_PASS" -ne 1 ]; then
     echo "SKIP: canary failed"
 else
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+python3 << 'PYEOF' && SCORE=$((SCORE + 12)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -349,8 +349,84 @@ sys.exit(0)
 PYEOF
 fi
 
+echo ""
+echo "=== Test 4b/13: load_latents_from_disk rejects mismatched-resolution legacy npz (8pts) ==="
+if [ "$CANARY_PASS" -ne 1 ]; then
+    echo "SKIP: canary failed"
+else
+python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
+import sys, os, tempfile, numpy as np
+sys.path.insert(0, "/workspace/sd-scripts")
+
+try:
+    from library.strategy_sd import SdSdxlLatentsCachingStrategy
+except Exception as e:
+    print(f"FAIL: import error: {e}")
+    sys.exit(1)
+
+strat = SdSdxlLatentsCachingStrategy(sd=True, cache_to_disk=True, batch_size=1, skip_disk_cache_validity_check=False)
+
+# Gate: correct-shape must load at 512x512 first
+bucket_reso_512 = (512, 512)
+h512 = bucket_reso_512[1] // 8  # 64
+w512 = bucket_reso_512[0] // 8  # 64
+
+fd1, correct_npz = tempfile.mkstemp(suffix=".npz")
+os.close(fd1)
+np.savez(correct_npz,
+    latents=np.ones((4, h512, w512), dtype=np.float32),
+    original_size=np.array([512, 512]),
+    crop_ltrb=np.array([0, 0, 0, 0]),
+)
+
+try:
+    latents, _, _, _, _ = strat.load_latents_from_disk(correct_npz, bucket_reso_512)
+    gate = latents is not None and latents.shape == (4, h512, w512)
+except Exception:
+    gate = False
+finally:
+    if os.path.exists(correct_npz):
+        os.unlink(correct_npz)
+
+if not gate:
+    print("FAIL: gate — correct-shape 512x512 legacy load failed")
+    sys.exit(1)
+
+# Main check: load 512x512-cached npz with 768x768 bucket — MUST reject
+bucket_reso_768 = (768, 768)
+h768 = bucket_reso_768[1] // 8  # 96
+w768 = bucket_reso_768[0] // 8  # 96
+
+fd2, wrong_npz = tempfile.mkstemp(suffix=".npz")
+os.close(fd2)
+np.savez(wrong_npz,
+    latents=np.ones((4, h512, w512), dtype=np.float32),  # 512x512 latents
+    original_size=np.array([512, 512]),
+    crop_ltrb=np.array([0, 0, 0, 0]),
+)
+
+rejected = False
+try:
+    result = strat.load_latents_from_disk(wrong_npz, bucket_reso_768)
+    if result is None or result[0] is None:
+        rejected = True
+except Exception:
+    rejected = True  # exception = rejection
+finally:
+    if os.path.exists(wrong_npz):
+        os.unlink(wrong_npz)
+
+if not rejected:
+    print("FAIL: load_latents_from_disk loaded 512x512 cached latents for 768x768 bucket — must raise or return None")
+    sys.exit(1)
+
+print("PASS: load_latents_from_disk rejects resolution-mismatched legacy npz")
+sys.exit(0)
+PYEOF
+fi
+
 ###############################################################################
-# BEHAVIORAL F2P — HEADER-ONLY PROOF (Tests 5-6, 40pts)
+# BEHAVIORAL F2P — HEADER-ONLY PROOF (Tests 5-6, 34pts)
 #
 # These use corrupted npz files where npy data is truncated but
 # the npy header is intact. A header-only reader extracts the shape;
@@ -360,11 +436,11 @@ fi
 ###############################################################################
 
 echo ""
-echo "=== Test 5/12: Truncated-data legacy npz with correct shape header accepted (25pts) ==="
+echo "=== Test 5/13: Truncated-data legacy npz with correct shape header accepted (22pts) ==="
 if [ "$CANARY_PASS" -ne 1 ]; then
     echo "SKIP: canary failed"
 else
-python3 << 'PYEOF' && SCORE=$((SCORE + 25)) || true
+python3 << 'PYEOF' && SCORE=$((SCORE + 22)) || true
 import sys, os, io, tempfile, zipfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -422,11 +498,11 @@ PYEOF
 fi
 
 echo ""
-echo "=== Test 6/12: Truncated-data legacy npz with WRONG shape header rejected (15pts) ==="
+echo "=== Test 6/13: Truncated-data legacy npz with WRONG shape header rejected (12pts) ==="
 if [ "$CANARY_PASS" -ne 1 ]; then
     echo "SKIP: canary failed"
 else
-python3 << 'PYEOF' && SCORE=$((SCORE + 15)) || true
+python3 << 'PYEOF' && SCORE=$((SCORE + 12)) || true
 import sys, os, io, tempfile, zipfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -511,7 +587,7 @@ fi
 ###############################################################################
 
 echo ""
-echo "=== Test 7/12: Header-only shape reader returns correct shape (5pts) ==="
+echo "=== Test 7/13: Header-only shape reader returns correct shape (5pts) ==="
 python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -592,8 +668,8 @@ PYEOF
 ###############################################################################
 
 echo ""
-echo "=== Test 8/12: Resolution-suffixed npz still works (3pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
+echo "=== Test 8/13: Resolution-suffixed npz still works (1pt) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 1)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -644,8 +720,8 @@ sys.exit(0)
 PYEOF
 
 echo ""
-echo "=== Test 9/12: Both keys present — suffixed data preferred over legacy (3pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
+echo "=== Test 9/13: Both keys present — suffixed data preferred over legacy (1pt) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 1)) || true
 import sys, os, tempfile, numpy as np
 sys.path.insert(0, "/workspace/sd-scripts")
 
@@ -698,7 +774,7 @@ sys.exit(0)
 PYEOF
 
 echo ""
-echo "=== Test 10/12: Upstream test suite pass-to-pass (6pts) ==="
+echo "=== Test 10/13: Upstream test suite pass-to-pass (3pts) ==="
 TEST_DIR="/workspace/sd-scripts/tests"
 if [ -d "$TEST_DIR" ]; then
     TARGET="$TEST_DIR"
@@ -706,7 +782,7 @@ if [ -d "$TEST_DIR" ]; then
     timeout 45 python3 -m pytest "$TARGET" -x --timeout=30 -q 2>&1
     P2P_RC=$?
     if [ $P2P_RC -eq 0 ]; then
-        SCORE=$((SCORE + 6))
+        SCORE=$((SCORE + 3))
         echo "PASS: upstream tests pass — no regressions"
     else
         echo "FAIL: upstream tests failed (exit=$P2P_RC)"
@@ -720,7 +796,7 @@ fi
 ###############################################################################
 
 echo ""
-echo "=== Test 11/12: Header-only method uses zip/stream approach (4pts) ==="
+echo "=== Test 11/13: Header-only method uses zip/stream approach (4pts) ==="
 python3 << 'PYEOF' && SCORE=$((SCORE + 4)) || true
 import sys, ast
 
@@ -798,7 +874,7 @@ sys.exit(1)
 PYEOF
 
 echo ""
-echo "=== Test 12/12: SdSdxl enables fallback for backward compat (4pts) ==="
+echo "=== Test 12/13: SdSdxl enables fallback for backward compat (4pts) ==="
 python3 << 'PYEOF' && SCORE=$((SCORE + 4)) || true
 import sys, ast, re
 

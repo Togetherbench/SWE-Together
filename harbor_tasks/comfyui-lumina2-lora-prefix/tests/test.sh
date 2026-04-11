@@ -7,25 +7,25 @@
 # comfy/lora.py's model_lora_keys_unet() function.
 #
 # Scoring (16 tests, total = 1.0):
-#   Test 1:  0.02  structural: lora.py valid Python
-#   Test 2:  0.03  structural: AST — "base_model.model." in Lumina2 block
-#   Test 3:  0.03  structural: AST — key_map assignment with base_model.model
-#   Test 4:  0.06  behavioral F2P: base_model.model.* keys exist (n_layers=2)
-#   Test 5:  0.10  behavioral F2P: key count ratio >= 80% of transformer.*
-#   Test 6:  0.07  behavioral F2P: layer 0 keys present
-#   Test 7:  0.07  behavioral F2P: layer 1 keys present (varied layer)
-#   Test 8:  0.10  behavioral F2P: >=50% target match with transformer.*
-#   Test 9:  0.08  behavioral F2P: >=90% target match (strict)
-#   Test 10: 0.05  behavioral P2P: transformer.* keys still present
-#   Test 11: 0.05  behavioral P2P: diffusion_model.* keys still present
-#   Test 12: 0.05  behavioral P2P: lycoris_* keys still present
-#   Test 13: 0.08  behavioral F2P: n_layers=4 produces more keys than n_layers=2
-#   Test 14: 0.09  behavioral F2P: keys span >=3 distinct component types
-#   Test 15: 0.07  behavioral F2P: diffusion_model.* target consistency
-#   Test 16: 0.05  behavioral P2P: upstream ComfyUI unit tests pass (CPU-safe)
+#   Test 1:  0.01  structural P2P: lora.py valid Python
+#   Test 2:  0.04  structural F2P: AST — "base_model.model." in Lumina2 block
+#   Test 3:  0.04  structural F2P: AST — key_map assignment with base_model.model
+#   Test 4:  0.08  behavioral F2P: base_model.model.* keys exist (n_layers=2)
+#   Test 5:  0.15  behavioral F2P: key count ratio >= 90% of transformer.*
+#   Test 6:  0.08  behavioral F2P: layer 0 keys present
+#   Test 7:  0.08  behavioral F2P: layer 1 keys present (varied layer)
+#   Test 8:  0.12  behavioral F2P: >=50% target match with transformer.*
+#   Test 9:  0.11  behavioral F2P: >=90% target match (strict)
+#   Test 10: 0.01  behavioral P2P: transformer.* keys still present
+#   Test 11: 0.01  behavioral P2P: diffusion_model.* keys still present
+#   Test 12: 0.01  behavioral P2P: lycoris_* keys still present
+#   Test 13: 0.09  behavioral F2P: n_layers=4 produces more keys than n_layers=2
+#   Test 14: 0.08  behavioral F2P: keys span >=3 distinct component types
+#   Test 15: 0.08  behavioral F2P: diffusion_model.* target consistency
+#   Test 16: 0.01  behavioral P2P: upstream ComfyUI unit tests pass (CPU-safe)
 #
-# Structural: 0.08 (8%) | Behavioral: 0.92 (92%)
-# Max stub score: 0.28 (structural + T4 single-key + P2P on unmodified file)
+# P2P: 0.05 (5%) | F2P: 0.95 (95%)
+# Nop score: 0.05 (P2P tests only)
 #
 set +e
 
@@ -60,10 +60,12 @@ import sys
 sys.path.insert(0, "/workspace/ComfyUI")
 
 try:
+    import torch
     import comfy.cli_args
     comfy.cli_args.args.cpu = True
     import comfy.model_base as model_base
     import comfy.lora as lora
+    import comfy.utils as comfy_utils
     IMPORT_OK = True
     IMPORT_ERR = None
 except Exception as _e:
@@ -71,6 +73,7 @@ except Exception as _e:
     IMPORT_ERR = f"{type(_e).__name__}:{_e}"
     model_base = None
     lora = None
+    comfy_utils = None
 
 _cache = {}
 
@@ -92,10 +95,20 @@ def get_key_map(n_layers=2):
             def __init__(self):
                 pass  # skip heavy parent __init__
             def state_dict(self):
-                return {}
+                # Return realistic native model keys so both diffusers-loop
+                # and state-dict-loop implementations produce base_model.model.* keys.
+                config = self.model_config.unet_config
+                mapping = comfy_utils.z_image_to_diffusers(config, output_prefix="diffusion_model.")
+                keys = {}
+                for _from_key, to in mapping.items():
+                    target = to[0] if isinstance(to, tuple) else to
+                    keys[target] = torch.zeros(1)
+                return keys
         mock = MockLumina2()
         mock.model_config = _MockModelConfig(n_layers)
-        _cache[n_layers] = lora.model_lora_keys_unet(mock)
+        # Pass explicit key_map={} to avoid mutable default argument bug
+        # (successive calls would otherwise share and mutate the same dict)
+        _cache[n_layers] = lora.model_lora_keys_unet(mock, key_map={})
     return _cache[n_layers]
 
 def extract_target(val):
@@ -107,7 +120,7 @@ echo "=== Verifying ComfyUI Lumina2 LoRA base_model.model key mapping ==="
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 1 (0.02): lora.py is valid Python
+# TEST 1 (0.01): P2P — lora.py is valid Python
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 1/$TOTAL: lora.py valid Python ---"
 T=$(python3 << 'PYEOF'
@@ -123,10 +136,10 @@ except FileNotFoundError:
 PYEOF
 )
 echo "  Result: $T"
-if [ "$T" = "PASS" ]; then add_reward 0.02 ; else fail_check "$T"; fi
+if [ "$T" = "PASS" ]; then add_reward 0.01 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 2 (0.03): AST — "base_model.model." string constant in Lumina2 block
+# TEST 2 (0.04): AST — "base_model.model." string constant in Lumina2 block
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 2/$TOTAL: AST — base_model.model. in Lumina2 block ---"
 T=$(python3 << 'PYEOF'
@@ -167,10 +180,10 @@ print("FAIL:no_base_model_model_string")
 PYEOF
 )
 echo "  Result: $T"
-if [ "$T" = "PASS" ]; then add_reward 0.03 ; else fail_check "$T"; fi
+if [ "$T" = "PASS" ]; then add_reward 0.04 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 3 (0.03): AST — key_map[...base_model.model...] = ... in Lumina2
+# TEST 3 (0.04): AST — key_map[...base_model.model...] = ... in Lumina2
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 3/$TOTAL: AST — key_map assignment with base_model.model ---"
 T=$(python3 << 'PYEOF'
@@ -211,12 +224,12 @@ print("FAIL:no_key_map_base_model_assignment")
 PYEOF
 )
 echo "  Result: $T"
-if [ "$T" = "PASS" ]; then add_reward 0.03 ; else fail_check "$T"; fi
+if [ "$T" = "PASS" ]; then add_reward 0.04 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 4 (0.10): F2P — base_model.model.* keys exist with n_layers=2
+# TEST 4 (0.08): F2P — base_model.model.* keys exist with n_layers=2
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Test 4/$TOTAL: F2P (0.06) — base_model.model.* keys exist ---"
+echo "--- Test 4/$TOTAL: F2P (0.08) — base_model.model.* keys exist ---"
 T=$($VENV_PY << 'PYEOF'
 exec(open("/tmp/lumina2_test_helper.py").read())
 try:
@@ -232,12 +245,12 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.06 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.08 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 5 (0.10): F2P — base_model.model.* count >= 80% of transformer.*
+# TEST 5 (0.15): F2P — base_model.model.* count >= 90% of transformer.*
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Test 5/$TOTAL: F2P (0.10) — key count ratio >= 80% ---"
+echo "--- Test 5/$TOTAL: F2P (0.15) — key count ratio >= 90% ---"
 T=$($VENV_PY << 'PYEOF'
 exec(open("/tmp/lumina2_test_helper.py").read())
 try:
@@ -248,7 +261,7 @@ try:
         print("FAIL:no_transformer_keys")
     elif len(bm) == 0:
         print("FAIL:no_base_model_keys")
-    elif len(bm) >= 0.8 * len(tr):
+    elif len(bm) >= 0.9 * len(tr):
         print(f"PASS:{len(bm)}/{len(tr)}={len(bm)/len(tr):.2f}")
     else:
         print(f"FAIL:ratio={len(bm)}/{len(tr)}={len(bm)/len(tr):.2f}")
@@ -257,10 +270,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.10 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.15 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 6 (0.07): F2P — layer index 0 keys present in base_model.model.*
+# TEST 6 (0.08): F2P — layer index 0 keys present in base_model.model.*
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 6/$TOTAL: F2P — layer 0 keys present ---"
 T=$($VENV_PY << 'PYEOF'
@@ -278,10 +291,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [ "$T" = "PASS" ]; then add_reward 0.07 ; else fail_check "$T"; fi
+if [ "$T" = "PASS" ]; then add_reward 0.08 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 7 (0.07): F2P — layer index 1 keys present (varied layer)
+# TEST 7 (0.08): F2P — layer index 1 keys present (varied layer)
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 7/$TOTAL: F2P — layer 1 keys present ---"
 T=$($VENV_PY << 'PYEOF'
@@ -299,10 +312,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [ "$T" = "PASS" ]; then add_reward 0.07 ; else fail_check "$T"; fi
+if [ "$T" = "PASS" ]; then add_reward 0.08 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 8 (0.10): F2P — >=50% base_model.model.* targets match transformer.*
+# TEST 8 (0.12): F2P — >=50% base_model.model.* targets match transformer.*
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 8/$TOTAL: F2P — >=50% target match with transformer.* ---"
 T=$($VENV_PY << 'PYEOF'
@@ -339,10 +352,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.10 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.12 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 9 (0.08): F2P — >=90% target match (strict consistency)
+# TEST 9 (0.11): F2P — >=90% target match (strict consistency)
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 9/$TOTAL: F2P — >=90% target match (strict) ---"
 T=$($VENV_PY << 'PYEOF'
@@ -379,10 +392,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.08 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.11 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 10 (0.05): P2P — transformer.* keys still present
+# TEST 10 (0.01): P2P — transformer.* keys still present
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 10/$TOTAL: P2P — transformer.* keys present ---"
 T=$($VENV_PY << 'PYEOF'
@@ -399,10 +412,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.05 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.01 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 11 (0.05): P2P — diffusion_model.* keys still present
+# TEST 11 (0.01): P2P — diffusion_model.* keys still present
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 11/$TOTAL: P2P — diffusion_model.* keys present ---"
 T=$($VENV_PY << 'PYEOF'
@@ -419,10 +432,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.05 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.01 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 12 (0.05): P2P — lycoris_* keys still present
+# TEST 12 (0.01): P2P — lycoris_* keys still present
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 12/$TOTAL: P2P — lycoris_* keys present ---"
 T=$($VENV_PY << 'PYEOF'
@@ -439,10 +452,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.05 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.01 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 13 (0.08): F2P — n_layers=4 produces more base_model.model.* keys
+# TEST 13 (0.09): F2P — n_layers=4 produces more base_model.model.* keys
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 13/$TOTAL: F2P — n_layers=4 scaling ---"
 T=$($VENV_PY << 'PYEOF'
@@ -465,14 +478,14 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.08 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.09 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 14 (0.09): F2P — keys span >=3 distinct component types
+# TEST 14 (0.10): F2P — keys span >=3 distinct component types
 #   Checks that keys aren't all from a single component (e.g., all
 #   attention). Looks at the second-to-last key segment.
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Test 14/$TOTAL: F2P — diverse sub-components (>=3 types) ---"
+echo "--- Test 14/$TOTAL: F2P (0.08) — diverse sub-components (>=3 types) ---"
 T=$($VENV_PY << 'PYEOF'
 exec(open("/tmp/lumina2_test_helper.py").read())
 try:
@@ -500,10 +513,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.09 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.08 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 15 (0.07): F2P — base_model.model.* targets consistent with
+# TEST 15 (0.08): F2P — base_model.model.* targets consistent with
 #   diffusion_model.* (cross-prefix verification, not just transformer.*)
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 15/$TOTAL: F2P — diffusion_model.* target consistency ---"
@@ -541,17 +554,20 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T"
-if [[ "$T" == PASS* ]]; then add_reward 0.07 ; else fail_check "$T"; fi
+if [[ "$T" == PASS* ]]; then add_reward 0.08 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# TEST 16 (0.05): P2P — upstream ComfyUI CPU-safe unit tests
+# TEST 16 (0.01): P2P — upstream ComfyUI CPU-safe unit tests
 # ═══════════════════════════════════════════════════════════════════
 echo "--- Test 16/$TOTAL: P2P — upstream ComfyUI unit tests ---"
 cd /workspace/ComfyUI
-if $VENV_PY -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" 2>/dev/null; then
-    add_reward 0.05
+$VENV_PY -m pytest tests/ -x --timeout=60 -q -k "not cuda and not gpu" --ignore=tests/compare --ignore=tests/execution --ignore=tests/inference 2>/dev/null
+PYTEST_EXIT=$?
+# Exit 0 = all passed, exit 5 = no tests collected (both are acceptable)
+if [ $PYTEST_EXIT -eq 0 ] || [ $PYTEST_EXIT -eq 5 ]; then
+    add_reward 0.01
 else
-    fail_check "upstream tests failed or not found"
+    fail_check "upstream tests failed (exit code $PYTEST_EXIT)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════

@@ -41,14 +41,21 @@ RUN cd /workspace/reigh && npm ci --legacy-peer-deps 2>&1 | tail -5 || \
 RUN git config --global user.email "agent@benchmark.test" && \
     git config --global user.name "Harbor Agent"
 
+# Remove any AGENTS.md that might block or confuse agents
+RUN rm -f /workspace/reigh/AGENTS.md /workspace/reigh/CLAUDE.md
+
 # Commit the initial workspace state
 RUN cd /workspace/reigh && \
     git add -A && \
     git commit --allow-empty -m "initial workspace state"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+# Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash agent && \
+    chown -R agent:agent /workspace /logs
 
+# Pre-install Claude Code CLI as non-root user
+USER agent
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /workspace/reigh

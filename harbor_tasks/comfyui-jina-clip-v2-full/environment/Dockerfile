@@ -77,4 +77,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
 
 
+# Remove any AGENTS.md / CLAUDE.md that could interfere with agent behavior
+RUN rm -f /workspace/ComfyUI/AGENTS.md /workspace/ComfyUI/CLAUDE.md
+
 WORKDIR /workspace/ComfyUI

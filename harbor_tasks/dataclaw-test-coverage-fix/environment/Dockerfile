@@ -17,8 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone the repo at the initial release commit — before any tests were committed
-# (tests/ directory was included in cda7e501 but we remove it below to synthesize
-# the pre-test baseline state the session started from)
 RUN git init /workspace/dataclaw && \
     cd /workspace/dataclaw && \
     git remote add origin https://github.com/banodoco/dataclaw.git && \
@@ -26,8 +24,10 @@ RUN git init /workspace/dataclaw && \
     git checkout FETCH_HEAD
 
 # Synthesize the buggy/incomplete state: remove the tests directory
-# The session task is to write these tests from scratch
 RUN rm -rf /workspace/dataclaw/tests
+
+# Remove any AGENTS.md or CLAUDE.md that might interfere with agent behavior
+RUN rm -f /workspace/dataclaw/AGENTS.md /workspace/dataclaw/CLAUDE.md
 
 # Install project dependencies (no GPU needed — pure Python)
 RUN cd /workspace/dataclaw && \
@@ -58,9 +58,15 @@ RUN mkdir -p /logs/verifier
 # Set PYTHONPATH so dataclaw is importable
 ENV PYTHONPATH="/workspace/dataclaw"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+# Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash agent && \
+    chown -R agent:agent /workspace /logs && \
+    cp /root/.gitconfig /home/agent/.gitconfig && \
+    chown agent:agent /home/agent/.gitconfig
 
+# Pre-install Claude Code CLI as the non-root user
+USER agent
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /workspace/dataclaw

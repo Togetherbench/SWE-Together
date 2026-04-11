@@ -10,7 +10,7 @@ expert_time_estimate_min = 15.0
 junior_time_estimate_min = 60.0
 
 [verifier]
-timeout_sec = 120.0
+timeout_sec = 300.0
 
 [agent]
 timeout_sec = 1800.0

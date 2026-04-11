@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12-venv \
     python3-pip \
     git \
+    curl \
     ca-certificates \
     tmux \
     asciinema \
@@ -70,10 +71,25 @@ RUN cd /workspace/desloppify && python3 -m desloppify --help > /dev/null 2>&1 ||
 # Create log directory for verifier output
 RUN mkdir -p /logs/verifier
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+# Remove any AGENTS.md / CLAUDE.md that could block or confuse the agent
+RUN rm -f /workspace/desloppify/AGENTS.md /workspace/desloppify/CLAUDE.md \
+         /workspace/desloppify/.claude/settings.json
 
+# Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash agent && \
+    chown -R agent:agent /workspace && \
+    mkdir -p /home/agent/.local/bin /logs/verifier && \
+    chown -R agent:agent /home/agent /logs
+
+# Pre-install Claude Code CLI as the non-root user
+USER agent
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Configure git for agent user
+RUN cd /workspace/desloppify && \
+    git config user.email "agent@benchmark" && \
+    git config user.name "Agent"
 
 WORKDIR /workspace/desloppify
 

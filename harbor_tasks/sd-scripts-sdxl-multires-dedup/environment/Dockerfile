@@ -28,7 +28,8 @@ WORKDIR /workspace
 # and the skip_duplicate_bucketed_images feature.
 RUN git clone --branch sd3 https://github.com/kohya-ss/sd-scripts.git /workspace/sd-scripts && \
     cd /workspace/sd-scripts && \
-    git checkout 609d1292f6e262b27a8c5b2849e7bf0df2ecd7a8
+    git checkout 609d1292f6e262b27a8c5b2849e7bf0df2ecd7a8 && \
+    rm -f AGENTS.md CLAUDE.md
 
 # Set up Python virtual environment
 RUN python3 -m venv /workspace/venv
@@ -76,7 +77,18 @@ RUN git config --global user.email "agent@test.com" && \
 
 # Pre-install Claude Code CLI (standalone binary, no Node.js needed)
 RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
 
+# Create non-root user for Claude Code (--dangerously-skip-permissions requires non-root)
+RUN useradd -m -s /bin/bash agent && \
+    cp -rL /root/.local /home/agent/.local && \
+    chown -R agent:agent /home/agent/.local && \
+    chown -R agent:agent /workspace /logs
 
+# Configure git for agent user
+RUN su - agent -c 'git config --global user.email "agent@test.com" && git config --global user.name "Test Agent"'
+
+ENV PATH="/home/agent/.local/bin:/root/.local/bin:$PATH"
+ENV HOME="/home/agent"
+
+USER agent
 WORKDIR /workspace/sd-scripts

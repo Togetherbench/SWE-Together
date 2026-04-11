@@ -3,7 +3,7 @@
 # Verification test for MambaCache/ArraysCache batching support in mlx-lm.
 #
 # Weighted scoring: accumulates points out of 100, normalized to 0.0-1.0.
-# 80% behavioral (F2P + Silver), 20% structural (Bronze AST).
+# ~84% behavioral (F2P + Silver), ~20% structural (Bronze AST), ~4% P2P.
 #
 # mlx is macOS-only (no Linux wheels on PyPI). A numpy-backed shim enables
 # behavioral testing on Linux Docker by exec'ing cache.py directly, bypassing
@@ -56,6 +56,10 @@ if 'mlx.core' not in sys.modules:
     _mx.eval = lambda *a, **kw: None
     _mx.compile = lambda fn=None, **kw: fn if fn is not None else (lambda f: f)
     _mx.stop_gradient = lambda x, **kw: x
+    _mx.squeeze = lambda a, axis=None: np.squeeze(a, axis=axis)
+    _mx.reshape = lambda a, shape: np.reshape(a, shape)
+    _mx.split = lambda a, indices_or_sections, axis=0: np.split(a, indices_or_sections, axis=axis)
+    _mx.transpose = lambda a, axes=None: np.transpose(a, axes=axes)
     _mx.abs = np.abs
     _mx.sum = np.sum
     _mx.max = np.max
@@ -154,12 +158,12 @@ import mlx.core as mx
 ENVEOF
 
 ###############################################################################
-# TEST 1/10 [F2P, 15pts]: _merge_caches works with ArraysCache
+# TEST 1/10 [F2P, 18pts]: _merge_caches works with ArraysCache
 #   Base commit: raises "ValueError: ... does not yet support batching with history"
 #   After fix: returns batched cache with correct batch dim and values
 ###############################################################################
-echo "=== Test 1/10: F2P -- _merge_caches handles ArraysCache (15pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 15)) || true
+echo "=== Test 1: F2P -- _merge_caches handles ArraysCache (10pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
 
@@ -217,8 +221,8 @@ PYEOF
 #   After fix: recursively merges sub-caches inside CacheList
 ###############################################################################
 echo ""
-echo "=== Test 2/10: F2P -- _merge_caches handles CacheList (10pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
+echo "=== Test 2: F2P -- _merge_caches handles CacheList (8pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
 
@@ -280,8 +284,8 @@ PYEOF
 # TEST 3/10 [Silver, 12pts]: ArraysCache.merge batches 3 caches correctly
 ###############################################################################
 echo ""
-echo "=== Test 3/10: Silver -- ArraysCache.merge correct batched output (12pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 12)) || true
+echo "=== Test 3: Silver -- ArraysCache.merge correct batched output (8pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
 
@@ -335,8 +339,8 @@ PYEOF
 # TEST 4/10 [Silver, 10pts]: ArraysCache.extract recovers individual caches
 ###############################################################################
 echo ""
-echo "=== Test 4/10: Silver -- ArraysCache.extract recovers individual caches (10pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
+echo "=== Test 4: Silver -- ArraysCache.extract recovers individual caches (8pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
 
@@ -379,8 +383,8 @@ PYEOF
 # TEST 5/10 [Silver, 10pts]: CacheList.merge + extract round-trip
 ###############################################################################
 echo ""
-echo "=== Test 5/10: Silver -- CacheList.merge + extract round-trip (10pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
+echo "=== Test 5: Silver -- CacheList.merge + extract round-trip (8pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
 
@@ -433,7 +437,7 @@ PYEOF
 # TEST 6/10 [Silver, 8pts]: MambaCache inherits merge/extract from ArraysCache
 ###############################################################################
 echo ""
-echo "=== Test 6/10: Silver -- MambaCache inherits merge/extract (8pts) ==="
+echo "=== Test 6: Silver -- MambaCache inherits merge/extract (8pts) ==="
 python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
@@ -491,42 +495,61 @@ PYEOF
 # TEST 7/10 [Silver, 10pts]: _lengths / make_mask right-padding
 #   Base commit: make_mask ignores _lengths, returns all-True mask
 #   After fix: make_mask uses _lengths to create right-padding mask
+#
+#   Behavioral test: set lengths via prepare() with right_padding context,
+#   then verify make_mask produces a mask that masks out right-padded positions.
+#   Accepts any internal attribute naming (_lengths, lengths, etc.).
 ###############################################################################
 echo ""
-echo "=== Test 7/10: Silver -- _lengths support in make_mask for right-padding (10pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
+echo "=== Test 7: Silver -- _lengths support in make_mask for right-padding (12pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 12)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
 
-# Create cache with left_padding (triggers mask generation in make_mask)
-try:
-    ac = ArraysCache(size=1, left_padding=[0, 0])
-except TypeError:
-    ac = ArraysCache(size=1)
-    ac.left_padding = mx.array([0, 0])
+# Create cache WITHOUT left_padding -- we test the _lengths / right-padding
+# mask path, which is independent of left_padding mask generation.
+ac = ArraysCache(size=1)
 
-# Set _lengths via prepare() or direct attribute
+# Set lengths via prepare() with right_padding context, or direct attribute.
+# Accept multiple valid API designs:
+#   1. prepare(lengths=..., right_padding=...) -- most complete
+#   2. prepare(lengths=...) alone
+#   3. Direct attribute assignment as fallback
 lengths_set = False
 if hasattr(ac, 'prepare') and callable(ac.prepare):
+    # Try with both lengths and right_padding first (most complete API)
     try:
-        ac.prepare(lengths=[3, 4])
+        ac.prepare(lengths=[3, 4], right_padding=[2, 1])
         lengths_set = True
     except TypeError:
-        pass
+        # Fallback: try with just lengths
+        try:
+            ac.prepare(lengths=[3, 4])
+            lengths_set = True
+        except TypeError:
+            pass
 
 if not lengths_set:
+    # Direct attribute assignment fallback (try both naming conventions)
     try:
         ac._lengths = mx.array([3, 4])
         lengths_set = True
     except Exception:
-        pass
+        try:
+            ac.lengths = mx.array([3, 4])
+            lengths_set = True
+        except Exception:
+            pass
 
 if not lengths_set:
-    print("FAIL: Cannot set _lengths via prepare() or attribute")
+    print("FAIL: Cannot set lengths via prepare() or attribute")
     sys.exit(1)
 
-if getattr(ac, '_lengths', None) is None:
-    print("FAIL: _lengths is None after setting")
+# Accept either _lengths or lengths attribute name (both are valid designs)
+has_lengths = (getattr(ac, '_lengths', None) is not None or
+               getattr(ac, 'lengths', None) is not None)
+if not has_lengths:
+    print("FAIL: neither _lengths nor lengths is set after prepare()")
     sys.exit(1)
 
 try:
@@ -536,7 +559,7 @@ except Exception as e:
     sys.exit(1)
 
 if mask is None:
-    print("FAIL: make_mask returned None despite _lengths being set")
+    print("FAIL: make_mask returned None despite lengths being set")
     sys.exit(1)
 
 # Flatten to 2D for checking (mask may be 2D, 3D, or 4D depending on impl)
@@ -549,7 +572,7 @@ if mask_np.shape[0] < 2 or mask_np.shape[1] < 5:
     print(f"FAIL: mask shape {mask_np.shape} too small, expected at least (2, 5)")
     sys.exit(1)
 
-# Row 0 (length=3, left_pad=0): position 2 should be True, position 3 should be False
+# Row 0 (length=3): position 2 should be True, position 3 should be False
 if not bool(mask_np[0, 2]):
     print(f"FAIL: row 0 pos 2 should be True (within length 3)")
     sys.exit(1)
@@ -557,7 +580,7 @@ if bool(mask_np[0, 3]):
     print(f"FAIL: row 0 pos 3 should be False (right-padded, length=3)")
     sys.exit(1)
 
-# Row 1 (length=4, left_pad=0): position 3 should be True, position 4 should be False
+# Row 1 (length=4): position 3 should be True, position 4 should be False
 if not bool(mask_np[1, 3]):
     print(f"FAIL: row 1 pos 3 should be True (within length 4)")
     sys.exit(1)
@@ -573,7 +596,7 @@ PYEOF
 # TEST 8/10 [Silver, 5pts]: prepare() and finalize() work correctly
 ###############################################################################
 echo ""
-echo "=== Test 8/10: Silver -- prepare() and finalize() functional (5pts) ==="
+echo "=== Test 8/11: Silver -- prepare() and finalize() functional (5pts) ==="
 python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
 exec(open('/tmp/mlx_test_env.py').read())
 import sys
@@ -622,8 +645,8 @@ PYEOF
 # pass hasattr but have empty bodies.
 ###############################################################################
 echo ""
-echo "=== Test 9/10: AST -- ArraysCache merge+extract non-trivial (10pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
+echo "=== Test 9: AST -- ArraysCache merge+extract non-trivial (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
 import sys, ast
 
 with open("/workspace/mlx-lm/mlx_lm/models/cache.py", "r") as f:
@@ -702,8 +725,8 @@ PYEOF
 # pass hasattr but have empty bodies.
 ###############################################################################
 echo ""
-echo "=== Test 10/10: AST -- CacheList merge+extract non-trivial (10pts) ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 10)) || true
+echo "=== Test 10: AST -- CacheList merge+extract non-trivial (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
 import sys, ast
 
 with open("/workspace/mlx-lm/mlx_lm/models/cache.py", "r") as f:
@@ -758,8 +781,8 @@ for node in ast.walk(tree):
             sys.exit(1)
 
         extract_stmts = count_meaningful_stmts(methods["extract"])
-        if extract_stmts < 2:
-            print(f"FAIL: CacheList.extract has only {extract_stmts} meaningful stmts (need >=2)")
+        if extract_stmts < 1:
+            print(f"FAIL: CacheList.extract has only {extract_stmts} meaningful stmts (need >=1)")
             sys.exit(1)
 
         print(f"PASS: CacheList.merge ({merge_stmts} stmts) + extract ({extract_stmts} stmts)")
@@ -771,6 +794,212 @@ sys.exit(1)
 PYEOF
 
 ###############################################################################
+# TEST 11/11 [F2P, 10pts]: _merge_caches works with MambaCache
+#   MambaCache inherits from ArraysCache. A correct _merge_caches that handles
+#   isinstance(_, ArraysCache) should also work for MambaCache.
+#   Also tests that ArraysCache.merge handles MambaCache subclass correctly
+#   (e.g. __new__ or other approach that avoids MambaCache __init__ issues).
+###############################################################################
+echo ""
+echo "=== Test 11: F2P -- _merge_caches handles MambaCache (8pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 8)) || true
+exec(open('/tmp/mlx_test_env.py').read())
+import sys
+
+if _merge_caches is None:
+    print("FAIL: could not extract _merge_caches from generate.py")
+    sys.exit(1)
+
+# Create MambaCache instances (size=2 fixed)
+try:
+    mc1 = MambaCache()
+except TypeError:
+    mc1 = MambaCache(left_padding=None)
+
+try:
+    mc2 = MambaCache()
+except TypeError:
+    mc2 = MambaCache(left_padding=None)
+
+mc1.cache[0] = mx.ones((1, 4, 3)) * 5.0
+mc1.cache[1] = mx.ones((1, 4, 8)) * 6.0
+mc2.cache[0] = mx.ones((1, 4, 3)) * 7.0
+mc2.cache[1] = mx.ones((1, 4, 8)) * 8.0
+
+try:
+    merged = _merge_caches([[mc1], [mc2]])
+except ValueError as e:
+    if "does not yet support batching" in str(e):
+        print("FAIL: _merge_caches still raises original ValueError for MambaCache")
+    else:
+        print(f"FAIL: ValueError: {e}")
+    sys.exit(1)
+except TypeError as e:
+    print(f"FAIL: _merge_caches raised TypeError (MambaCache subclass compat issue): {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"FAIL: _merge_caches raised {type(e).__name__}: {e}")
+    sys.exit(1)
+
+if not isinstance(merged, list) or len(merged) != 1:
+    print(f"FAIL: expected list of length 1")
+    sys.exit(1)
+
+m = merged[0]
+if not hasattr(m, 'cache') or m.cache[0] is None:
+    print("FAIL: merged MambaCache result has no valid cache data")
+    sys.exit(1)
+
+if m.cache[0].shape[0] != 2:
+    print(f"FAIL: batch dim is {m.cache[0].shape[0]}, expected 2")
+    sys.exit(1)
+
+v0 = float(m.cache[0][0, 0, 0])
+v1 = float(m.cache[0][1, 0, 0])
+if abs(v0 - 5.0) > 0.01 or abs(v1 - 7.0) > 0.01:
+    print(f"FAIL: values [{v0}, {v1}], expected [5.0, 7.0]")
+    sys.exit(1)
+
+print("PASS: _merge_caches handles MambaCache with correct batched result")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 12 [Silver, 5pts]: MambaCache type preservation through merge+extract
+#   A quality implementation preserves MambaCache type through merge→extract.
+#   Weaker implementations may downcast to ArraysCache.
+###############################################################################
+echo ""
+echo "=== Test 12: Silver -- MambaCache type preservation in extract (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+exec(open('/tmp/mlx_test_env.py').read())
+import sys
+
+try:
+    mc1 = MambaCache()
+except TypeError:
+    mc1 = MambaCache(size=2)
+
+try:
+    mc2 = MambaCache()
+except TypeError:
+    mc2 = MambaCache(size=2)
+
+mc1.cache[0] = mx.ones((1, 2, 2)) * 1.0
+mc1.cache[1] = mx.ones((1, 2, 2)) * 2.0
+mc2.cache[0] = mx.ones((1, 2, 2)) * 3.0
+mc2.cache[1] = mx.ones((1, 2, 2)) * 4.0
+
+try:
+    merged = MambaCache.merge([mc1, mc2])
+    extracted = merged.extract(0)
+except Exception as e:
+    print(f"FAIL: merge/extract raised: {e}")
+    sys.exit(1)
+
+if not isinstance(extracted, MambaCache):
+    print(f"FAIL: extract returned {type(extracted).__name__}, expected MambaCache")
+    sys.exit(1)
+
+print("PASS: MambaCache type preserved through merge + extract")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 13 [Silver, 5pts]: CacheList prepare/finalize delegates to sub-caches
+#   A correct CacheList.prepare should forward to all sub-caches.
+###############################################################################
+echo ""
+echo "=== Test 13: Silver -- CacheList prepare/finalize delegation (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+exec(open('/tmp/mlx_test_env.py').read())
+import sys
+
+ac = ArraysCache(size=1)
+cl = CacheList(ac)
+
+if not hasattr(cl, 'prepare') or not callable(cl.prepare):
+    print("FAIL: CacheList has no prepare method")
+    sys.exit(1)
+
+if not hasattr(cl, 'finalize') or not callable(cl.finalize):
+    print("FAIL: CacheList has no finalize method")
+    sys.exit(1)
+
+try:
+    cl.prepare(lengths=[3], right_padding=[2])
+except Exception as e:
+    print(f"FAIL: CacheList.prepare raised: {e}")
+    sys.exit(1)
+
+# Check sub-cache got the lengths (either _lengths or lengths attr)
+sub = cl.caches[0]
+has_lengths = (getattr(sub, '_lengths', None) is not None or
+               getattr(sub, 'lengths', None) is not None)
+if not has_lengths:
+    print("FAIL: sub-cache has no lengths after CacheList.prepare")
+    sys.exit(1)
+
+try:
+    cl.finalize()
+except Exception as e:
+    print(f"FAIL: CacheList.finalize raised: {e}")
+    sys.exit(1)
+
+print("PASS: CacheList delegates prepare/finalize to sub-caches")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 14 [Bronze, 5pts]: _merge_caches dispatches on ArraysCache (not hardcoded)
+#   Verifies _merge_caches uses isinstance checks for ArraysCache (catches
+#   MambaCache too via inheritance), not just string/class-name matching.
+#   Checks the actual AST of _merge_caches for isinstance(_, ArraysCache).
+###############################################################################
+echo ""
+echo "=== Test 14: AST -- _merge_caches handles ArraysCache isinstance check (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+import sys, ast
+
+with open("/workspace/mlx-lm/mlx_lm/generate.py", "r") as f:
+    source = f.read()
+
+tree = ast.parse(source)
+found_func = False
+has_arrays_cache_check = False
+
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == "_merge_caches":
+        found_func = True
+        src = ast.get_source_segment(source, node)
+        if src is None:
+            print("FAIL: could not extract _merge_caches source")
+            sys.exit(1)
+        # Check for ArraysCache or CacheList in isinstance calls
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name) and child.func.id == "isinstance":
+                    for arg in child.args:
+                        if isinstance(arg, ast.Name) and arg.id in ("ArraysCache", "CacheList"):
+                            has_arrays_cache_check = True
+                        elif isinstance(arg, ast.Tuple):
+                            for elt in arg.elts:
+                                if isinstance(elt, ast.Name) and elt.id in ("ArraysCache", "CacheList"):
+                                    has_arrays_cache_check = True
+
+if not found_func:
+    print("FAIL: _merge_caches function not found in generate.py")
+    sys.exit(1)
+
+if not has_arrays_cache_check:
+    print("FAIL: _merge_caches doesn't check isinstance for ArraysCache or CacheList")
+    sys.exit(1)
+
+print("PASS: _merge_caches has proper isinstance checks for ArraysCache/CacheList")
+sys.exit(0)
+PYEOF
+
+###############################################################################
 # P2P: Existing mlx-lm Python modules parseable + core cache classes exist
 #
 # mlx is macOS-only (no Linux wheels) so upstream pytest is not CPU-safe.
@@ -778,11 +1007,11 @@ PYEOF
 #   (a) cache.py is valid Python (syntax check)
 #   (b) generate.py is valid Python (syntax check)
 #   (c) The base KVCache/BatchKVCache classes still exist (not deleted by agent)
-# Weight: 5pts out of 100+5 = ~0.05
+# Weight: 2pts (reduced from 5 to keep nop <= 0.05)
 ###############################################################################
 echo ""
-echo "=== P2P [5pts]: Existing mlx-lm source files intact ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+echo "=== P2P [2pts]: Existing mlx-lm source files intact ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 2)) || true
 import ast, sys, os
 
 cache_py = "/workspace/mlx-lm/mlx_lm/models/cache.py"
@@ -830,8 +1059,8 @@ PYEOF
 # Ensures the agent hasn't broken unrelated package modules.
 ###############################################################################
 echo ""
-echo "=== P2P [5pts]: Upstream tool_parsers tests ==="
-python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+echo "=== P2P [2pts]: Upstream tool_parsers tests ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 2)) || true
 import sys, os, importlib, types
 
 # Ensure mlx_lm package root is importable

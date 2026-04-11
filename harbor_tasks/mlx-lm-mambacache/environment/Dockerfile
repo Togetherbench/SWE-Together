@@ -43,11 +43,25 @@ ENV PYTHONPATH="/workspace/mlx-lm:$PYTHONPATH"
 
 # Configure git for agent use
 RUN git config --global user.email "agent@test.com" && \
-    git config --global user.name "Test Agent"
+    git config --global user.name "Test Agent" && \
+    git config --global --add safe.directory /workspace/mlx-lm
 
 # Pre-install Claude Code CLI (standalone binary, no Node.js needed)
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
 
+# Remove any AGENTS.md / CLAUDE.md that could interfere with agent behavior
+RUN rm -f /workspace/mlx-lm/AGENTS.md /workspace/mlx-lm/CLAUDE.md
+
+# Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash agent && \
+    mkdir -p /home/agent/.local/share/claude/versions /home/agent/.local/bin && \
+    CLAUDE_VER=$(ls /root/.local/share/claude/versions/ | head -1) && \
+    cp /root/.local/share/claude/versions/$CLAUDE_VER /home/agent/.local/share/claude/versions/$CLAUDE_VER && \
+    chmod +x /home/agent/.local/share/claude/versions/$CLAUDE_VER && \
+    ln -sf /home/agent/.local/share/claude/versions/$CLAUDE_VER /home/agent/.local/bin/claude && \
+    chown -R agent:agent /home/agent && \
+    chmod -R 777 /workspace /logs && \
+    su - agent -c "git config --global user.email agent@test.com && git config --global user.name Agent && git config --global --add safe.directory /workspace/mlx-lm"
 
 WORKDIR /workspace/mlx-lm

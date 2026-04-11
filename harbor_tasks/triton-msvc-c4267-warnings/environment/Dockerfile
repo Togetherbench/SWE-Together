@@ -39,9 +39,34 @@ RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent" && \
     git config --global commit.gpgsign false
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+# Add development guidelines
+RUN printf '%s\n' \
+    "# Development Notes" \
+    "" \
+    "## Cross-platform build" \
+    "This project targets Linux (GCC/Clang) and Windows (MSVC)." \
+    "Windows CI uses \`/WX\` (warnings-as-errors) so all narrowing warnings must be fixed." \
+    "" \
+    "## Fixing warnings" \
+    "When fixing a type-conversion or narrowing warning, grep the entire file for" \
+    "similar patterns — the same category of bug often occurs at multiple call sites." \
+    "The MSVC error log may only surface one instantiation, but the same root cause" \
+    "(e.g. size_t used where unsigned is expected) can appear wherever \`llvm::enumerate\`" \
+    "index variables are passed to typed APIs." \
+    > /workspace/triton/CLAUDE.md
 
+# Create non-root user for Claude Code (--dangerously-skip-permissions requires non-root)
+RUN useradd -m -s /bin/bash agent && \
+    chown -R agent:agent /workspace /logs
+
+# Pre-install Claude Code CLI as non-root user
+USER agent
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/agent/.local/bin:$PATH"
+
+# Git config for non-root user
+RUN git config --global user.email "agent@test.com" && \
+    git config --global user.name "Test Agent" && \
+    git config --global commit.gpgsign false
 
 WORKDIR /workspace/triton

@@ -72,47 +72,8 @@ RUN pip install --no-cache-dir bitsandbytes || true
 # Synthesize the "last commit" state: enable multi-resolution for SD1/SDXL in strategy_sd.py.
 # This adds multi_resolution=True calls and a load_latents_from_disk override —
 # exactly the changes from the user's local commit (HEAD~ in the session).
-RUN python3 - << 'PYEOF'
-path = "/workspace/sd-scripts/library/strategy_sd.py"
-with open(path, "r") as f:
-    src = f.read()
-
-# 1. Add "import numpy as np" before torch import
-src = src.replace(
-    "import torch\nfrom transformers import CLIPTokenizer",
-    "import numpy as np\nimport torch\nfrom transformers import CLIPTokenizer",
-)
-
-# 2. Change is_disk_cached_latents_expected to pass multi_resolution=True
-src = src.replace(
-    "        return self._default_is_disk_cached_latents_expected(8, bucket_reso, npz_path, flip_aug, alpha_mask)",
-    "        return self._default_is_disk_cached_latents_expected(8, bucket_reso, npz_path, flip_aug, alpha_mask, multi_resolution=True)",
-)
-
-# 3. Add load_latents_from_disk method before cache_batch_latents
-load_method = '''
-    def load_latents_from_disk(
-        self, npz_path: str, bucket_reso: Tuple[int, int]
-    ) -> Tuple[Optional[np.ndarray], Optional[List[int]], Optional[List[int]], Optional[np.ndarray], Optional[np.ndarray]]:
-        return self._default_load_latents_from_disk(8, npz_path, bucket_reso)
-
-'''
-src = src.replace(
-    "    # TODO remove circular dependency for ImageInfo\n    def cache_batch_latents(",
-    load_method + "    # TODO remove circular dependency for ImageInfo\n    def cache_batch_latents(",
-)
-
-# 4. Change _default_cache_batch_latents call to pass multi_resolution=True
-src = src.replace(
-    "        self._default_cache_batch_latents(encode_by_vae, vae_device, vae_dtype, image_infos, flip_aug, alpha_mask, random_crop)",
-    "        self._default_cache_batch_latents(encode_by_vae, vae_device, vae_dtype, image_infos, flip_aug, alpha_mask, random_crop, multi_resolution=True)",
-)
-
-with open(path, "w") as f:
-    f.write(src)
-
-print("Synthesis complete: strategy_sd.py updated with multi-resolution support")
-PYEOF
+# NOTE: Using base64-encoded script (E2B's dockerfile_parse doesn't support heredocs).
+RUN echo 'cGF0aCA9ICIvd29ya3NwYWNlL3NkLXNjcmlwdHMvbGlicmFyeS9zdHJhdGVneV9zZC5weSIKd2l0aCBvcGVuKHBhdGgsICJyIikgYXMgZjoKICAgIHNyYyA9IGYucmVhZCgpCgojIDEuIEFkZCAiaW1wb3J0IG51bXB5IGFzIG5wIiBiZWZvcmUgdG9yY2ggaW1wb3J0CnNyYyA9IHNyYy5yZXBsYWNlKAogICAgImltcG9ydCB0b3JjaApmcm9tIHRyYW5zZm9ybWVycyBpbXBvcnQgQ0xJUFRva2VuaXplciIsCiAgICAiaW1wb3J0IG51bXB5IGFzIG5wCmltcG9ydCB0b3JjaApmcm9tIHRyYW5zZm9ybWVycyBpbXBvcnQgQ0xJUFRva2VuaXplciIsCikKCiMgMi4gQ2hhbmdlIGlzX2Rpc2tfY2FjaGVkX2xhdGVudHNfZXhwZWN0ZWQgdG8gcGFzcyBtdWx0aV9yZXNvbHV0aW9uPVRydWUKc3JjID0gc3JjLnJlcGxhY2UoCiAgICAiICAgICAgICByZXR1cm4gc2VsZi5fZGVmYXVsdF9pc19kaXNrX2NhY2hlZF9sYXRlbnRzX2V4cGVjdGVkKDgsIGJ1Y2tldF9yZXNvLCBucHpfcGF0aCwgZmxpcF9hdWcsIGFscGhhX21hc2spIiwKICAgICIgICAgICAgIHJldHVybiBzZWxmLl9kZWZhdWx0X2lzX2Rpc2tfY2FjaGVkX2xhdGVudHNfZXhwZWN0ZWQoOCwgYnVja2V0X3Jlc28sIG5wel9wYXRoLCBmbGlwX2F1ZywgYWxwaGFfbWFzaywgbXVsdGlfcmVzb2x1dGlvbj1UcnVlKSIsCikKCiMgMy4gQWRkIGxvYWRfbGF0ZW50c19mcm9tX2Rpc2sgbWV0aG9kIGJlZm9yZSBjYWNoZV9iYXRjaF9sYXRlbnRzCmxvYWRfbWV0aG9kID0gIiIiCiAgICBkZWYgbG9hZF9sYXRlbnRzX2Zyb21fZGlzaygKICAgICAgICBzZWxmLCBucHpfcGF0aDogc3RyLCBidWNrZXRfcmVzbzogVHVwbGVbaW50LCBpbnRdCiAgICApIC0+IFR1cGxlW09wdGlvbmFsW25wLm5kYXJyYXldLCBPcHRpb25hbFtMaXN0W2ludF1dLCBPcHRpb25hbFtMaXN0W2ludF1dLCBPcHRpb25hbFtucC5uZGFycmF5XSwgT3B0aW9uYWxbbnAubmRhcnJheV1dOgogICAgICAgIHJldHVybiBzZWxmLl9kZWZhdWx0X2xvYWRfbGF0ZW50c19mcm9tX2Rpc2soOCwgbnB6X3BhdGgsIGJ1Y2tldF9yZXNvKQoKIiIiCnNyYyA9IHNyYy5yZXBsYWNlKAogICAgIiAgICAjIFRPRE8gcmVtb3ZlIGNpcmN1bGFyIGRlcGVuZGVuY3kgZm9yIEltYWdlSW5mbwogICAgZGVmIGNhY2hlX2JhdGNoX2xhdGVudHMoIiwKICAgIGxvYWRfbWV0aG9kICsgIiAgICAjIFRPRE8gcmVtb3ZlIGNpcmN1bGFyIGRlcGVuZGVuY3kgZm9yIEltYWdlSW5mbwogICAgZGVmIGNhY2hlX2JhdGNoX2xhdGVudHMoIiwKKQoKIyA0LiBDaGFuZ2UgX2RlZmF1bHRfY2FjaGVfYmF0Y2hfbGF0ZW50cyBjYWxsIHRvIHBhc3MgbXVsdGlfcmVzb2x1dGlvbj1UcnVlCnNyYyA9IHNyYy5yZXBsYWNlKAogICAgIiAgICAgICAgc2VsZi5fZGVmYXVsdF9jYWNoZV9iYXRjaF9sYXRlbnRzKGVuY29kZV9ieV92YWUsIHZhZV9kZXZpY2UsIHZhZV9kdHlwZSwgaW1hZ2VfaW5mb3MsIGZsaXBfYXVnLCBhbHBoYV9tYXNrLCByYW5kb21fY3JvcCkiLAogICAgIiAgICAgICAgc2VsZi5fZGVmYXVsdF9jYWNoZV9iYXRjaF9sYXRlbnRzKGVuY29kZV9ieV92YWUsIHZhZV9kZXZpY2UsIHZhZV9kdHlwZSwgaW1hZ2VfaW5mb3MsIGZsaXBfYXVnLCBhbHBoYV9tYXNrLCByYW5kb21fY3JvcCwgbXVsdGlfcmVzb2x1dGlvbj1UcnVlKSIsCikKCndpdGggb3BlbihwYXRoLCAidyIpIGFzIGY6CiAgICBmLndyaXRlKHNyYykKCnByaW50KCJTeW50aGVzaXMgY29tcGxldGU6IHN0cmF0ZWd5X3NkLnB5IHVwZGF0ZWQgd2l0aCBtdWx0aS1yZXNvbHV0aW9uIHN1cHBvcnQiKQo=' | base64 -d > /tmp/synthesize_sd.py && python3 /tmp/synthesize_sd.py && rm /tmp/synthesize_sd.py
 
 # Verify syntax
 RUN python3 -c "import ast; ast.parse(open('/workspace/sd-scripts/library/strategy_sd.py').read()); print('strategy_sd.py: syntax OK')"
@@ -124,9 +85,19 @@ ENV PYTHONPATH="/workspace/sd-scripts"
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+# Commit synthesis as "the last commit" so agents can see it via git diff HEAD~
+# (without this, the shallow clone has only one commit and git diff HEAD~ fails)
+# Use --allow-empty in case synthesis replacements didn't match (prevents build failure)
+RUN cd /workspace/sd-scripts && \
+    git add -A && \
+    git diff --cached --quiet && echo "WARNING: synthesis produced no changes" || true && \
+    git commit --allow-empty -m "Enable multi-resolution dataset for SD1/SDXL"
 
+# Remove any AGENTS.md / CLAUDE.md that might override agent behavior
+RUN rm -f /workspace/sd-scripts/AGENTS.md /workspace/sd-scripts/CLAUDE.md
+
+# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+RUN curl -fsSL https://claude.ai/install.sh | bash || true
+ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace/sd-scripts

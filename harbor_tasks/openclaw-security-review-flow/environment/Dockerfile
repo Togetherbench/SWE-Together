@@ -35,6 +35,10 @@ RUN git init /workspace/openclaw && \
     git fetch --depth=1 origin 17287bc8d01b12a293e0452a76b1c117dd1e42c1 && \
     git checkout FETCH_HEAD
 
+# Remove repo-level agent config files that can mislead agents
+# (e.g. "Prefer Bun" instructions, repo-specific conventions)
+RUN rm -f /workspace/openclaw/AGENTS.md /workspace/openclaw/CLAUDE.md
+
 # Install project dependencies (skip native addon builds — only needed for vitest P2P tests)
 RUN corepack enable && \
     cd /workspace/openclaw && \

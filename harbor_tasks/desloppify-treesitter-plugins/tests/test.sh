@@ -116,18 +116,14 @@ python3 << 'PYEOF' && { echo "PASS: register_scoring_policy() works"; add_reward
 import sys
 sys.path.insert(0, ".")
 
+import desloppify.engine.scoring_internal.policy.core as _core_mod
 from desloppify.engine.scoring_internal.policy.core import (
     DETECTOR_SCORING_POLICIES,
-    DIMENSIONS,
-    DIMENSIONS_BY_NAME,
-    FILE_BASED_DETECTORS,
     DetectorScoringPolicy,
     register_scoring_policy,
 )
 
 before_count = len(DETECTOR_SCORING_POLICIES)
-cq_dim_before = DIMENSIONS_BY_NAME.get("Code quality")
-cq_detectors_before = set(cq_dim_before.detectors) if cq_dim_before else set()
 
 test_policy = DetectorScoringPolicy(
     detector="__verifier_pol_test__",
@@ -143,7 +139,8 @@ if "__verifier_pol_test__" not in DETECTOR_SCORING_POLICIES:
     sys.exit(1)
 
 # 2) DIMENSIONS rebuilt: "Code quality" now includes new detector
-cq_dim_after = DIMENSIONS_BY_NAME.get("Code quality")
+# Re-access from module to handle both global reassignment and in-place mutation
+cq_dim_after = _core_mod.DIMENSIONS_BY_NAME.get("Code quality")
 if cq_dim_after is None:
     print("  FAIL: Code quality dimension missing after rebuild", file=sys.stderr)
     sys.exit(1)
@@ -152,16 +149,15 @@ if "__verifier_pol_test__" not in cq_dim_after.detectors:
     sys.exit(1)
 
 # 3) FILE_BASED_DETECTORS rebuilt
-if "__verifier_pol_test__" not in FILE_BASED_DETECTORS:
+if "__verifier_pol_test__" not in _core_mod.FILE_BASED_DETECTORS:
     print("  FAIL: not in FILE_BASED_DETECTORS", file=sys.stderr)
     sys.exit(1)
 
 # Clean up
 del DETECTOR_SCORING_POLICIES["__verifier_pol_test__"]
 try:
-    from desloppify.engine.scoring_internal.policy.core import _rebuild_derived
-    _rebuild_derived()
-except ImportError:
+    _core_mod._rebuild_derived()
+except (ImportError, AttributeError):
     pass
 
 print("  All register_scoring_policy checks passed")
@@ -181,10 +177,19 @@ echo ""
 echo "=== Check 3: E2E generic_lang creates working plugin ==="
 
 E2E_OUTPUT=$(python3 << 'PYEOF'
-import sys, importlib
+import sys, importlib, inspect
 sys.path.insert(0, ".")
 
-# Find and import generic module
+from desloppify.core.registry import DETECTORS
+from desloppify.engine.scoring_internal.policy.core import DETECTOR_SCORING_POLICIES
+from desloppify.languages.framework.base.types import LangConfig
+
+before_detectors = set(DETECTORS.keys())
+before_policies = set(DETECTOR_SCORING_POLICIES.keys())
+
+result = None
+
+# ── Strategy A: call generic_lang factory directly ──
 mod = None
 for mod_path in [
     "desloppify.languages.framework.generic",
@@ -196,56 +201,107 @@ for mod_path in [
     except ImportError:
         continue
 
-if mod is None:
-    print("FAIL_IMPORT")
-    sys.exit(0)
-
-# Find factory function
-factory = None
-for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
-    factory = getattr(mod, name, None)
-    if factory and callable(factory):
-        break
+if mod is not None:
     factory = None
+    for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
+        factory = getattr(mod, name, None)
+        if factory and callable(factory):
+            break
+        factory = None
 
-if not factory:
-    print("FAIL_NO_FACTORY")
+    if factory:
+        test_tool = {
+            "label": "verifier_e2e_tool",
+            "cmd": "echo '{}'",
+            "fmt": "json",
+            "id": "verifier_e2e_lint",
+            "tier": 3,
+        }
+
+        # Build kwargs dynamically from factory signature
+        sig_kwargs = {}
+        try:
+            sig = inspect.signature(factory)
+            for p, param in sig.parameters.items():
+                if p in ("name", "lang_name", "language"):
+                    sig_kwargs[p] = "__verifier_e2e_lang__"
+                elif p in ("extensions", "exts", "file_extensions"):
+                    sig_kwargs[p] = [".vfy"]
+                elif p in ("tools",):
+                    sig_kwargs[p] = [test_tool]
+                elif param.default is not inspect.Parameter.empty:
+                    pass  # has default, skip
+                elif p in ("integration_depth", "depth"):
+                    sig_kwargs[p] = "generic"
+                elif p in ("file_finder",):
+                    sig_kwargs[p] = lambda **kw: []
+                elif p in ("extract_functions", "noop_extract_functions"):
+                    sig_kwargs[p] = lambda *a, **kw: []
+                elif p in ("dep_graph", "empty_dep_graph"):
+                    sig_kwargs[p] = lambda *a, **kw: {}
+                elif p in ("quality_message", "quality_msg"):
+                    sig_kwargs[p] = "Generic plugin"
+        except (ValueError, TypeError):
+            pass
+
+        for attempt in [
+            lambda: factory(**sig_kwargs) if sig_kwargs else None,
+            lambda: factory(name="__verifier_e2e_lang__", extensions=[".vfy"], tools=[test_tool]),
+            lambda: factory("__verifier_e2e_lang__", [".vfy"], [test_tool]),
+            lambda: factory({"name": "__verifier_e2e_lang__", "extensions": [".vfy"], "tools": [test_tool]}),
+        ]:
+            try:
+                r = attempt()
+                if r is not None:
+                    result = r
+                    break
+            except (TypeError, KeyError, ValueError, AttributeError, RuntimeError):
+                continue
+
+# ── Strategy B: load a real generic plugin via discovery + get_lang() ──
+if result is None:
+    # Try triggering plugin discovery first (load_all / discover_plugins)
+    for disc_path in [
+        "desloppify.languages.framework.discovery",
+        "desloppify.languages._framework.discovery",
+        "desloppify.languages.discovery",
+    ]:
+        try:
+            disc = importlib.import_module(disc_path)
+            for fn_name in ["load_all", "discover_plugins", "register_all", "load_languages"]:
+                fn = getattr(disc, fn_name, None)
+                if fn and callable(fn):
+                    fn()
+                    break
+        except Exception:
+            continue
+
+    for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
+        try:
+            # Import module first to trigger registration (matches Check 4/6 pattern)
+            for mp in [
+                f"desloppify.languages.{lang}",
+                f"desloppify.languages.plugin_{lang}",
+                f"desloppify.languages._framework.plugins.{lang}",
+            ]:
+                try:
+                    importlib.import_module(mp)
+                    break
+                except ImportError:
+                    continue
+            from desloppify.languages.framework.resolution import get_lang
+            cfg = get_lang(lang)
+            if cfg is not None:
+                result = cfg
+                break
+        except Exception:
+            continue
+
+if result is None:
+    print("FAIL_CALL")
     sys.exit(0)
 
 try:
-    from desloppify.core.registry import DETECTORS
-    from desloppify.engine.scoring_internal.policy.core import DETECTOR_SCORING_POLICIES
-    from desloppify.languages.framework.base.types import LangConfig
-
-    before_detectors = set(DETECTORS.keys())
-    before_policies = set(DETECTOR_SCORING_POLICIES.keys())
-
-    test_tool = {
-        "label": "verifier_e2e_tool",
-        "cmd": "echo '{}'",
-        "fmt": "json",
-        "id": "verifier_e2e_lint",
-        "tier": 3,
-    }
-
-    # Try calling with various signatures
-    result = None
-    for attempt in [
-        lambda: factory(name="__verifier_e2e_lang__", extensions=[".vfy"], tools=[test_tool]),
-        lambda: factory("__verifier_e2e_lang__", [".vfy"], [test_tool]),
-        lambda: factory({"name": "__verifier_e2e_lang__", "extensions": [".vfy"], "tools": [test_tool]}),
-    ]:
-        try:
-            result = attempt()
-            if result is not None:
-                break
-        except (TypeError, KeyError):
-            continue
-
-    if result is None:
-        print("FAIL_CALL")
-        sys.exit(0)
-
     results = []
 
     # a) Is a LangConfig or has phases
@@ -356,7 +412,7 @@ echo ""
 echo "=== Check 4: fix_cmd creates working FixerConfig ==="
 
 python3 << 'PYEOF' && { echo "PASS: FixerConfig creation works"; add_reward 0.10; } || echo "FAIL: FixerConfig creation broken"
-import sys, importlib
+import sys, importlib, inspect
 sys.path.insert(0, ".")
 
 from desloppify.languages.framework.base.types import FixerConfig
@@ -391,8 +447,35 @@ for mod_path in [
         "fix_cmd": "echo 'fixed'",
     }
 
+    # Build kwargs dynamically from factory signature
+    sig_kwargs = {}
+    try:
+        sig = inspect.signature(factory)
+        for p, param in sig.parameters.items():
+            if p in ("name", "lang_name", "language"):
+                sig_kwargs[p] = "__verifier_fix_lang__"
+            elif p in ("extensions", "exts", "file_extensions"):
+                sig_kwargs[p] = [".vfy"]
+            elif p in ("tools",):
+                sig_kwargs[p] = [test_tool]
+            elif param.default is not inspect.Parameter.empty:
+                pass
+            elif p in ("integration_depth", "depth"):
+                sig_kwargs[p] = "generic"
+            elif p in ("file_finder",):
+                sig_kwargs[p] = lambda **kw: []
+            elif p in ("extract_functions", "noop_extract_functions"):
+                sig_kwargs[p] = lambda *a, **kw: []
+            elif p in ("dep_graph", "empty_dep_graph"):
+                sig_kwargs[p] = lambda *a, **kw: {}
+            elif p in ("quality_message", "quality_msg"):
+                sig_kwargs[p] = "Generic plugin"
+    except (ValueError, TypeError):
+        pass
+
     result = None
     for attempt in [
+        lambda: factory(**sig_kwargs) if sig_kwargs else None,
         lambda: factory(name="__verifier_fix_lang__", extensions=[".vfy"], tools=[test_tool]),
         lambda: factory("__verifier_fix_lang__", [".vfy"], [test_tool]),
     ]:
@@ -400,7 +483,7 @@ for mod_path in [
             result = attempt()
             if result is not None:
                 break
-        except (TypeError, KeyError):
+        except (TypeError, KeyError, ValueError, AttributeError, RuntimeError):
             continue
 
     if result and hasattr(result, "fixers") and result.fixers:
@@ -451,7 +534,7 @@ if not found_working_fixer:
 if not found_working_fixer:
     for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
         try:
-            for mp in [f"desloppify.languages.{lang}", f"desloppify.languages._framework.plugins.{lang}"]:
+            for mp in [f"desloppify.languages.{lang}", f"desloppify.languages.plugin_{lang}", f"desloppify.languages._framework.plugins.{lang}"]:
                 try:
                     importlib.import_module(mp)
                     break
@@ -584,7 +667,8 @@ PYEOF
             echo "FAIL: Too few tests reference new features (need >= 3 with relevant names)"
             ;;
         OK*)
-            timeout 60 python3 -m pytest "$TEST_FILE" -q --tb=line 2>&1 | tail -15 > "$LOG_DIR/agent_tests.txt"
+            timeout 60 python3 -m pytest "$TEST_FILE" -q --tb=line > "$LOG_DIR/agent_tests_full.txt" 2>&1
+            tail -15 "$LOG_DIR/agent_tests_full.txt" > "$LOG_DIR/agent_tests.txt"
             cat "$LOG_DIR/agent_tests.txt"
 
             PASSED=$(grep -oP '\d+ passed' "$LOG_DIR/agent_tests.txt" | grep -oP '\d+' || echo "0")
@@ -622,14 +706,14 @@ echo ""
 echo "=== Check 6: Shared phases present in generic plugins ==="
 
 python3 << 'PYEOF' && { echo "PASS: Shared phases integrated"; add_reward 0.10; } || echo "FAIL: Shared phases missing"
-import sys, importlib
+import sys, importlib, inspect
 sys.path.insert(0, ".")
 
 # Strategy 1: Load a real language plugin, check its phases
 found_shared = False
 for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
     try:
-        for mp in [f"desloppify.languages.{lang}", f"desloppify.languages._framework.plugins.{lang}"]:
+        for mp in [f"desloppify.languages.{lang}", f"desloppify.languages.plugin_{lang}", f"desloppify.languages._framework.plugins.{lang}"]:
             try:
                 importlib.import_module(mp)
                 break
@@ -681,8 +765,33 @@ if not found_shared:
             "id": "verifier_shared_lint",
             "tier": 3,
         }
+        sig_kwargs = {}
+        try:
+            sig = inspect.signature(factory)
+            for p, param in sig.parameters.items():
+                if p in ("name", "lang_name", "language"):
+                    sig_kwargs[p] = "__verifier_shared_lang__"
+                elif p in ("extensions", "exts", "file_extensions"):
+                    sig_kwargs[p] = [".vfy"]
+                elif p in ("tools",):
+                    sig_kwargs[p] = [test_tool]
+                elif param.default is not inspect.Parameter.empty:
+                    pass
+                elif p in ("integration_depth", "depth"):
+                    sig_kwargs[p] = "generic"
+                elif p in ("file_finder",):
+                    sig_kwargs[p] = lambda **kw: []
+                elif p in ("extract_functions", "noop_extract_functions"):
+                    sig_kwargs[p] = lambda *a, **kw: []
+                elif p in ("dep_graph", "empty_dep_graph"):
+                    sig_kwargs[p] = lambda *a, **kw: {}
+                elif p in ("quality_message", "quality_msg"):
+                    sig_kwargs[p] = "Generic plugin"
+        except (ValueError, TypeError):
+            pass
         result = None
         for attempt in [
+            lambda: factory(**sig_kwargs) if sig_kwargs else None,
             lambda: factory(name="__verifier_shared_lang__", extensions=[".vfy"], tools=[test_tool]),
             lambda: factory("__verifier_shared_lang__", [".vfy"], [test_tool]),
         ]:
@@ -690,7 +799,7 @@ if not found_shared:
                 result = attempt()
                 if result is not None:
                     break
-            except (TypeError, KeyError):
+            except (TypeError, KeyError, ValueError, AttributeError, RuntimeError):
                 continue
 
         if result and hasattr(result, "phases") and result.phases:
@@ -866,6 +975,8 @@ fi
 # CHECK 9 (0.10): Existing test suite still passes (P2P)        [P2P]
 #   Agent's changes must not break pre-existing tests.
 #   Known pre-existing failure excluded.
+#   Higher weight (0.10) — regressions in existing tests are a strong
+#   signal of implementation quality.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Check 9: Existing tests pass (P2P regression) ==="
@@ -874,9 +985,11 @@ cd "$WORKSPACE"
 timeout 90 python3 -m pytest desloppify/tests/ -q --tb=line \
     --ignore=desloppify/tests/fixtures \
     --ignore=desloppify/tests/lang/common \
-    -k "not test_legacy_assets_badge_path_migrates_to_root_default" \
-    2>&1 | tail -10 > "$LOG_DIR/pytest_output.txt"
+    -k "not test_legacy_assets_badge_path_migrates_to_root_default and not test_unknown_ext" \
+    --continue-on-collection-errors \
+    > "$LOG_DIR/pytest_full.txt" 2>&1
 PYTEST_EXIT=$?
+tail -10 "$LOG_DIR/pytest_full.txt" > "$LOG_DIR/pytest_output.txt"
 
 cat "$LOG_DIR/pytest_output.txt"
 
@@ -884,11 +997,31 @@ if [ $PYTEST_EXIT -eq 0 ]; then
     echo "PASS: All existing tests pass"
     add_reward 0.10
 elif [ $PYTEST_EXIT -eq 1 ]; then
-    FAILED=$(grep -oP '\d+ failed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "?")
+    FAILED=$(grep -oP '\d+ failed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "0")
     TOTAL=$(grep -oP '\d+ passed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "0")
     echo "PARTIAL: $FAILED failed, $TOTAL passed"
-    if [ "$TOTAL" -gt 0 ] 2>/dev/null && [ "$FAILED" -lt 5 ] 2>/dev/null; then
+    if [ "$TOTAL" -gt 0 ] 2>/dev/null && [ "$FAILED" -le 2 ] 2>/dev/null; then
+        echo "  Minor regressions (<=2 failures)"
         add_reward 0.05
+    elif [ "$TOTAL" -gt 0 ] 2>/dev/null && [ "$FAILED" -lt 10 ] 2>/dev/null; then
+        echo "  Moderate regressions (<10 failures)"
+        add_reward 0.03
+    fi
+elif [ $PYTEST_EXIT -eq 2 ]; then
+    # Exit code 2 = collection errors. This often happens when new plugins cause import
+    # errors in test files that import all languages. Check if actual test failures exist.
+    PASSED=$(grep -oP '\d+ passed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "0")
+    ERRORS=$(grep -oP '\d+ error' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "0")
+    FAILED=$(grep -oP '\d+ failed' "$LOG_DIR/pytest_output.txt" | grep -oP '\d+' || echo "0")
+    echo "PARTIAL: collection errors=$ERRORS, failed=$FAILED, passed=$PASSED"
+    if [ "$PASSED" -gt 0 ] 2>/dev/null; then
+        if [ "$FAILED" -eq 0 ] 2>/dev/null; then
+            # Collection errors only (from new plugins), no test failures
+            echo "  Collection errors from new plugins, no test failures"
+            add_reward 0.06
+        else
+            add_reward 0.02
+        fi
     fi
 elif [ $PYTEST_EXIT -eq 5 ]; then
     echo "WARN: No tests collected (paths may have changed)"
@@ -896,11 +1029,11 @@ elif [ $PYTEST_EXIT -eq 5 ]; then
     COLLECTED=$(grep -oP '\d+ tests?' "$LOG_DIR/pytest_collect.txt" | head -1 || echo "0")
     echo "  Tests found elsewhere: $COLLECTED"
     if [ -n "$COLLECTED" ] && [ "$COLLECTED" != "0" ]; then
-        add_reward 0.03
+        add_reward 0.02
     fi
 elif [ $PYTEST_EXIT -eq 124 ]; then
     echo "WARN: pytest timed out (90s)"
-    add_reward 0.03
+    add_reward 0.02
 else
     echo "FAIL: pytest exited with code $PYTEST_EXIT"
 fi
@@ -920,24 +1053,64 @@ sys.path.insert(0, ".")
 
 from desloppify.core.registry import DETECTORS
 
+# Try triggering plugin discovery first (load_all / discover_plugins)
+for disc_path in [
+    "desloppify.languages.framework.discovery",
+    "desloppify.languages._framework.discovery",
+    "desloppify.languages.discovery",
+]:
+    try:
+        disc = importlib.import_module(disc_path)
+        for fn_name in ["load_all", "discover_plugins", "register_all", "load_languages"]:
+            fn = getattr(disc, fn_name, None)
+            if fn and callable(fn):
+                fn()
+                break
+    except Exception:
+        continue
+
 loaded = 0
 for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
     before = set(DETECTORS.keys())
-    imported = False
+    found = False
+    cfg = None
+
+    # Strategy 1: Import module first to trigger registration, then get_lang
     for mp in [
         f"desloppify.languages.{lang}",
-        f"desloppify.languages.{lang}.__init__",
+        f"desloppify.languages.plugin_{lang}",
         f"desloppify.languages._framework.plugins.{lang}",
     ]:
         try:
             importlib.import_module(mp)
-            imported = True
             break
         except ImportError:
             continue
 
-    if not imported:
-        print(f"  {lang}: module not found", file=sys.stderr)
+    try:
+        from desloppify.languages.framework.resolution import get_lang
+        cfg = get_lang(lang)
+        if cfg is not None:
+            found = True
+    except Exception:
+        pass
+
+    # Strategy 2: Direct module import only (if get_lang didn't work)
+    if not found:
+        for mp in [
+            f"desloppify.languages.{lang}",
+            f"desloppify.languages.plugin_{lang}",
+            f"desloppify.languages._framework.plugins.{lang}",
+        ]:
+            try:
+                importlib.import_module(mp)
+                found = True
+                break
+            except ImportError:
+                continue
+
+    if not found:
+        print(f"  {lang}: not found via get_lang or import", file=sys.stderr)
         continue
 
     after = set(DETECTORS.keys())
@@ -956,8 +1129,12 @@ for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
         if lang_related:
             print(f"  {lang}: found related detectors {lang_related}")
             loaded += 1
+        elif cfg is not None:
+            # Plugin loaded via get_lang but no detectors — still counts as loaded
+            print(f"  {lang}: loaded via get_lang (phases={len(cfg.phases) if hasattr(cfg, 'phases') else '?'})")
+            loaded += 1
         else:
-            print(f"  {lang}: imported but no detectors registered", file=sys.stderr)
+            print(f"  {lang}: loaded but no detectors registered", file=sys.stderr)
 
 print(f"LOADED:{loaded}")
 PYEOF

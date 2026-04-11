@@ -100,6 +100,12 @@ run_ts() {
 }
 
 # ═══════════════════════════════════════════════════════════════════
+# Fix: /tmp/ has no package.json, so Node.js defaults to CJS where
+# top-level await is illegal. Force ESM so tsx can run our temp files.
+# ═══════════════════════════════════════════════════════════════════
+echo '{"type":"module"}' > /tmp/package.json
+
+# ═══════════════════════════════════════════════════════════════════
 # TEST 3 (0.15): classifyTool('bash') returns 'high' AND safe!='high'
 # RUN FIRST — gates T1 and T2 structural tests
 # ═══════════════════════════════════════════════════════════════════
@@ -700,7 +706,7 @@ P2P_TESTS="src/media/parse.test.ts src/agents/pi-embedded-block-chunker.test.ts 
 if [ -d "$WORKSPACE/node_modules/.pnpm" ] || [ -d "$WORKSPACE/node_modules/vitest" ]; then
     echo "  Running upstream vitest on targeted test files..."
     # Use a minimal inline config to avoid setup.ts which may need native deps
-    cat > /tmp/vitest.p2p.config.ts << 'VITESTCFG'
+    cat > "$WORKSPACE/vitest.p2p.config.ts" << 'VITESTCFG'
 import { defineConfig } from "vitest/config";
 export default defineConfig({
     test: {
@@ -710,7 +716,7 @@ export default defineConfig({
     },
 });
 VITESTCFG
-    P2P_OUTPUT=$(cd "$WORKSPACE" && timeout 30 npx vitest run --config /tmp/vitest.p2p.config.ts --reporter=verbose $P2P_TESTS 2>&1)
+    P2P_OUTPUT=$(cd "$WORKSPACE" && timeout 30 npx vitest run --config "$WORKSPACE/vitest.p2p.config.ts" --reporter=verbose $P2P_TESTS 2>&1)
     P2P_RC=$?
     # Show last 15 lines for debugging
     echo "$P2P_OUTPUT" | tail -15 | sed 's/^/  /'

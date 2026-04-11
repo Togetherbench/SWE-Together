@@ -7,14 +7,17 @@
 #   Enhancement: pack_awq_qweight loop simplification (user-requested, keep |= not sum)
 #
 # Weight budget (sums to 1.00):
-#   P2P (0.21): T1(0.02) T4(0.05) T5(0.06) P2P(0.05) P2P-2(0.03)
-#   F2P (0.79): T2a-c(0.18) T3a-c(0.18) T6(0.10) T7(0.04) T8(0.12) T9(0.10) T10(0.07)
+#   P2P (0.05): T1(0.01) T4(0.01) T5(0.01) P2P(0.01) P2P-2(0.01)
+#   F2P (0.95): T2a-c(0.18) T3a-c(0.18) T6(0.12) T7(0.06) T8(0.14) T9(0.10) T10(0.09) T11(0.08)
 
 set +e
 
+# Activate venv so torch is available (E2B resets PATH on sandbox start)
+export PATH="/workspace/venv/bin:$PATH"
+
 REWARD=0.0
 PASS=0
-TOTAL=16
+TOTAL=17
 
 QF=/workspace/quantize.py
 
@@ -24,7 +27,7 @@ add_reward() {
     echo "Test $2 PASS: $3 (+$1)"
 }
 
-# ── Test 1 (0.02): file parses + key functions non-stub [P2P] ───────────
+# ── Test 1 (0.01): file parses + key functions non-stub [P2P] ───────────
 python3 -c "
 import ast, sys
 
@@ -52,14 +55,12 @@ for name in ('pack_awq_qweight', 'quantize_residual', 'quantize_awq_layer'):
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.02 1 "file parses, key functions have real bodies"
+    add_reward 0.01 1 "file parses, key functions have real bodies"
 else
     echo "Test 1 FAIL: file does not parse or key functions are stubs"
 fi
 
 # ── Test 2a (0.06): quantize_residual runs without crash [F2P core] ────
-# Core bug: .max(dim=-1, keepdim=True) returns namedtuple, needs .values
-# Buggy code crashes with TypeError; fixed code runs cleanly.
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -111,8 +112,6 @@ else
 fi
 
 # ── Test 2c (0.06): quantize_residual scale bounds + constant input ────
-# Scale bound: wscales * 7 >= max(|residual|) per group
-# Constant-input check catches stubs returning correct shapes but wrong values.
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -145,8 +144,6 @@ else
 fi
 
 # ── Test 3a (0.06): quantize_awq_layer runs without crash [F2P core] ───
-# Core bug: .min/.max(dim=-1, keepdim=True) return namedtuples, need .values
-# Buggy code crashes; fixed code runs cleanly.
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -241,7 +238,7 @@ else
     echo "Test 3c FAIL: quantize_awq_layer roundtrip error too large"
 fi
 
-# ── Test 4 (0.05): pack_svdq_qweight shape/dtype + determinism [Silver] ─
+# ── Test 4 (0.01): pack_svdq_qweight shape/dtype + determinism [P2P] ────
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -260,12 +257,12 @@ for seed, N, K in [(7, 128, 128), (13, 256, 128)]:
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.05 4 "pack_svdq_qweight correct shape/dtype + deterministic"
+    add_reward 0.01 4 "pack_svdq_qweight correct shape/dtype + deterministic"
 else
     echo "Test 4 FAIL: pack_svdq_qweight error"
 fi
 
-# ── Test 5 (0.06): pack_awq_qweight correct output (ref compare) [P2P] ──
+# ── Test 5 (0.01): pack_awq_qweight correct output (ref compare) [P2P] ──
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -298,14 +295,12 @@ for seed, N, K in [(42, 4, 64), (100, 8, 128), (200, 16, 64)]:
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.06 5 "pack_awq_qweight correct output (ref compare)"
+    add_reward 0.01 5 "pack_awq_qweight correct output (ref compare)"
 else
     echo "Test 5 FAIL: pack_awq_qweight output incorrect"
 fi
 
-# ── Test 6 (0.10): f-string bug fixed in main() [F2P-AST] ──────────────
-# Bug: f"{name}.{weight}" uses tensor variable; fix: f"{name}.weight" literal
-# Can't call main() — requires safetensors model files not in Docker image.
+# ── Test 6 (0.12): f-string bug fixed in main() [F2P-AST] ──────────────
 python3 -c "
 import ast, sys
 
@@ -335,14 +330,12 @@ for node in ast.walk(tree):
 sys.exit(1)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.10 6 "f-string bug fixed in main()"
+    add_reward 0.12 6 "f-string bug fixed in main()"
 else
     echo "Test 6 FAIL: f-string still uses tensor variable instead of string literal"
 fi
 
-# ── Test 7 (0.04): pack_awq simplified structure [F2P structural] ───────
-# Original has 2 nested for-loops. Simplified should have at most 1.
-# Must NOT use sum() as replacement for |= (user correction re: int32 overflow).
+# ── Test 7 (0.06): pack_awq simplified structure [F2P structural] ───────
 python3 -c "
 import ast, sys
 
@@ -379,12 +372,12 @@ for node in ast.walk(tree):
 sys.exit(1)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.04 7 "pack_awq_qweight simplified (<=1 loop, no sum)"
+    add_reward 0.06 7 "pack_awq_qweight simplified (<=1 loop, no sum)"
 else
     echo "Test 7 FAIL: pack_awq_qweight not simplified or uses sum instead of |="
 fi
 
-# ── Test 8 (0.12): pack_awq simplified + correct (multiple sizes) [F2P] ─
+# ── Test 8 (0.14): pack_awq simplified + correct (multiple sizes) [F2P] ─
 python3 -c "
 import ast, sys
 sys.path.insert(0, '/workspace')
@@ -431,14 +424,12 @@ for seed, N, K in [(100, 4, 64), (200, 8, 128), (300, 16, 64), (400, 4, 128)]:
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.12 8 "pack_awq_qweight simplified + correct (multiple sizes)"
+    add_reward 0.14 8 "pack_awq_qweight simplified + correct (multiple sizes)"
 else
     echo "Test 8 FAIL: pack_awq_qweight not simplified or incorrect"
 fi
 
-# ── Test 9 (0.10): quantize_svdq_layer end-to-end [Silver] ──────────────
-# Integration test: SVD decomposition + residual quantization pipeline.
-# Exercises quantize_residual indirectly — catches stubs that skip packing.
+# ── Test 9 (0.10): quantize_svdq_layer end-to-end [F2P] ────────────────
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -477,8 +468,7 @@ else
     echo "Test 9 FAIL: quantize_svdq_layer error"
 fi
 
-# ── Test 10 (0.07): quantize_awq_layer edge cases [Silver] ──────────────
-# Tests edge inputs: near-zero weights (clamping path) and larger tensors.
+# ── Test 10 (0.09): quantize_awq_layer edge cases [F2P] ────────────────
 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
@@ -502,16 +492,92 @@ assert wzeros.shape == (2, 16), f'wzeros shape: {wzeros.shape}'
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.07 10 "quantize_awq_layer edge cases pass"
+    add_reward 0.09 10 "quantize_awq_layer edge cases pass"
 else
     echo "Test 10 FAIL: quantize_awq_layer fails on edge case inputs"
 fi
 
-# ── P2P (0.05): Upstream NunchakuWeightPacker functional test on CPU ──────
-# Import packer.py from cloned nunchaku repo (bypassing CUDA-dependent
-# __init__.py via sys.modules stubs) and verify pack/unpack round-trips
-# produce correct results on CPU tensors. This is a true pass-to-pass test:
-# it should pass on both buggy baseline and fixed version.
+# ── Test 11 (0.08): main() f-string fixed + structural integrity [F2P] ─
+# Gate: f-string bug must be fixed (F2P gate — fails on nop).
+# Then checks that agents didn't over-modify main(): block count, layer lists,
+# and key structure should be preserved. Catches incorrect additions like
+# img_mlp.net.2, txt_mlp.net.2 or changes to block count.
+python3 -c "
+import ast, sys
+
+with open('$QF') as f:
+    tree = ast.parse(f.read())
+
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == 'main':
+        # Anti-stub
+        meaningful = [n for n in ast.walk(node)
+                      if isinstance(n, (ast.Assign, ast.AugAssign, ast.Call,
+                                        ast.For, ast.With, ast.If, ast.Return,
+                                        ast.Expr))]
+        if len(meaningful) < 10:
+            print('main() too short — likely a stub')
+            sys.exit(1)
+
+        # F2P gate: f-string bug must be fixed
+        for subnode in ast.walk(node):
+            if isinstance(subnode, ast.JoinedStr):
+                for val in subnode.values:
+                    if (isinstance(val, ast.FormattedValue)
+                            and isinstance(val.value, ast.Name)
+                            and val.value.id in ('weight', 'bias')):
+                        print('f-string bug not fixed — T11 gate fails')
+                        sys.exit(1)
+
+        source = ast.get_source_segment(open('$QF').read(), node)
+        if source is None:
+            with open('$QF') as f:
+                lines = f.readlines()
+            source = ''.join(lines[node.lineno - 1: node.end_lineno])
+
+        # 1. Block count: must iterate over 60 blocks
+        has_range_60 = 'range(60)' in source
+        if not has_range_60:
+            print('main() missing range(60) — block count changed')
+            sys.exit(1)
+
+        # 2. AWQ layers should be exactly img_mod.1 and txt_mod.1
+        if 'img_mlp.net.2' in source or 'txt_mlp.net.2' in source:
+            print('main() has incorrect layer additions (net.2)')
+            sys.exit(1)
+
+        # 3. Check awq_layers list: should have exactly 2 entries
+        for subnode in ast.walk(node):
+            if isinstance(subnode, ast.Assign):
+                for target in subnode.targets:
+                    if isinstance(target, ast.Name) and target.id == 'awq_layers':
+                        if isinstance(subnode.value, ast.List):
+                            n_entries = len(subnode.value.elts)
+                            if n_entries != 2:
+                                print(f'awq_layers has {n_entries} entries, expected 2')
+                                sys.exit(1)
+
+        # 4. svdq_layers should have exactly 6 entries
+        for subnode in ast.walk(node):
+            if isinstance(subnode, ast.Assign):
+                for target in subnode.targets:
+                    if isinstance(target, ast.Name) and target.id == 'svdq_layers':
+                        if isinstance(subnode.value, ast.List):
+                            n_entries = len(subnode.value.elts)
+                            if n_entries != 6:
+                                print(f'svdq_layers has {n_entries} entries, expected 6')
+                                sys.exit(1)
+
+        sys.exit(0)
+sys.exit(1)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    add_reward 0.08 11 "main() structural integrity preserved"
+else
+    echo "Test 11 FAIL: main() over-modified (wrong block count, extra layers, etc.)"
+fi
+
+# ── P2P (0.01): Upstream NunchakuWeightPacker functional test on CPU ──────
 python3 -c "
 import sys, types, importlib.util
 import torch
@@ -585,15 +651,12 @@ print('P2P PASS: NunchakuWeightPacker pack/unpack round-trips correct on CPU')
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.05 P2P "upstream NunchakuWeightPacker functional test on CPU"
+    add_reward 0.01 P2P "upstream NunchakuWeightPacker functional test on CPU"
 else
     echo "Test P2P FAIL: upstream NunchakuWeightPacker broken or corrupted"
 fi
 
-# ── P2P-2 (0.03): modified quantize.py parses + key structures intact ────
-# Pass-to-pass: the agent edits quantize.py to fix bugs. Verify the file
-# still parses and retains all expected top-level functions and imports
-# (guards against accidental deletion or corruption during editing).
+# ── P2P-2 (0.01): modified quantize.py parses + key structures intact ────
 python3 -c "
 import ast, sys
 
@@ -637,7 +700,7 @@ print(f'P2P-2 PASS: quantize.py parses, {len(found_funcs & required_funcs)} requ
 sys.exit(0)
 " 2>/dev/null
 if [ $? -eq 0 ]; then
-    add_reward 0.03 P2P-2 "modified quantize.py parses + key structures intact"
+    add_reward 0.01 P2P-2 "modified quantize.py parses + key structures intact"
 else
     echo "Test P2P-2 FAIL: quantize.py corrupted or missing key structures"
 fi

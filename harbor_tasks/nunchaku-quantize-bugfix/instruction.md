@@ -6,3 +6,4 @@ Focus areas:
 - Do the quantization functions (`quantize_residual`, `quantize_awq_layer`) run correctly on sample tensors?
 - Does `main()` correctly construct tensor key names when loading weights?
 - Are the pack functions (`pack_svdq_qweight`, `pack_awq_qweight`) producing correct output?
+- The nested loops in `pack_awq_qweight` can be simplified to a single loop using bitwise `|=` operations (not `sum()`). Please simplify the loop structure while keeping the output identical to the original.

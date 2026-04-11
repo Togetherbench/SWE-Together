@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     git \
     ca-certificates \
+    curl \
     tmux \
     asciinema \
     && rm -rf /var/lib/apt/lists/*
@@ -42,6 +43,9 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir \
 # Install dev/test tooling
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
         pytest==8.3.4
+
+# Remove any AGENTS.md / CLAUDE.md that could block or confuse agents
+RUN rm -f /workspace/desloppify/AGENTS.md /workspace/desloppify/CLAUDE.md /workspace/desloppify/.claude*
 
 # Commit the initial state so git diff can measure the agent's changes
 RUN cd /workspace/desloppify && \

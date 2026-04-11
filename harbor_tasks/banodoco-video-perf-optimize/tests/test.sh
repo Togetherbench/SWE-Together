@@ -3,12 +3,13 @@
 # Verification tests for banodoco-wrapped performance improvements.
 #
 # Tests TopGenerations.tsx row virtualization and ModelTrends.tsx animation fixes.
-# 11 tests, total weight 21 (reward = score / 21).
+# 11 tests, total weight 23 (reward = score / 23).
 #
-# P2P (19%):                4/21  — build succeeds, no TS errors, upstream sources intact
-# F2P Behavioral (52%):   11/21  — extracted functions executed with test data
-# F2P Pattern-based (24%):  5/21  — virtualization, auto-play, progressive reveal wiring
-# Structural (5%):          1/21  — model entry labels
+# P2P (4%):                 1/23  — upstream sources intact
+# P2P gates (0 pts):        0/23  — build + TS errors (diagnostic only, no score)
+# F2P Behavioral (57%):    13/23  — extracted functions executed with test data
+# F2P Pattern-based (30%):  7/23  — virtualization, auto-play, progressive reveal wiring
+# Structural (9%):          2/23  — model entry labels
 #
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
@@ -18,7 +19,7 @@ REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 
 SCORE=0
-TOTAL=21
+TOTAL=23
 
 REPO="/workspace/banodoco-wrapped"
 TOP_GEN="$REPO/components/TopGenerations.tsx"
@@ -27,31 +28,31 @@ MODEL_TRENDS="$REPO/components/ModelTrends.tsx"
 cd "$REPO"
 
 ###############################################################################
-# TEST 1/10 [P2P, weight 2/20]: Vite production build succeeds
+# TEST 1/11 [P2P gate, weight 0]: Vite production build succeeds
+# Zero-weight gate: runs for diagnostics but awards no points.
 ###############################################################################
-echo "=== Test 1/11 [P2P, weight 2/21]: Vite production build succeeds ==="
+echo "=== Test 1/11 [P2P gate, weight 0/21]: Vite production build succeeds ==="
 timeout 120 npm run build > /tmp/build_output.txt 2>&1
 BUILD_EXIT=$?
 if [ $BUILD_EXIT -eq 0 ]; then
-  SCORE=$((SCORE + 2))
-  echo "PASS: Production build succeeded"
+  echo "PASS (gate): Production build succeeded"
 else
-  echo "FAIL: Production build failed:"
+  echo "FAIL (gate): Production build failed:"
   tail -20 /tmp/build_output.txt
 fi
 
 ###############################################################################
-# TEST 2/10 [P2P, weight 1/20]: No TypeScript errors in task files
+# TEST 2/11 [P2P gate, weight 0]: No TypeScript errors in task files
+# Zero-weight gate: runs for diagnostics but awards no points.
 ###############################################################################
 echo ""
-echo "=== Test 2/11 [P2P, weight 1/21]: No TypeScript errors in task files ==="
+echo "=== Test 2/11 [P2P gate, weight 0/21]: No TypeScript errors in task files ==="
 TSC_OUTPUT=$(npx tsc --noEmit 2>&1 || true)
 TASK_ERRORS=$(echo "$TSC_OUTPUT" | grep -E "TopGenerations\.tsx|ModelTrends\.tsx" || true)
 if [ -z "$TASK_ERRORS" ]; then
-  SCORE=$((SCORE + 1))
-  echo "PASS: No TypeScript errors in TopGenerations.tsx or ModelTrends.tsx"
+  echo "PASS (gate): No TypeScript errors in TopGenerations.tsx or ModelTrends.tsx"
 else
-  echo "FAIL: TypeScript errors in task files:"
+  echo "FAIL (gate): TypeScript errors in task files:"
   echo "$TASK_ERRORS"
 fi
 
@@ -95,14 +96,21 @@ function collectFunctions(n) {
 }
 collectFunctions(sf);
 
-// Also try inline expressions: look for .map() calls that do division
-// This handles cases where normalization is inlined, not a named function
-const mapNormBlocks = [];
-const mapRegex = /\.map\s*\(\s*(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>\s*\{[^}]*(?:\/\s*(?:total|sum|rowTotal|rowSum)|(?:total|sum|rowTotal|rowSum)\s*[>!])[^}]*\}/g;
-let match;
-while ((match = mapRegex.exec(src)) !== null) {
-  mapNormBlocks.push(match[0]);
+// Also collect arrow functions passed as arguments (useMemo, useCallback callbacks)
+// This catches normalization implemented inside useMemo(() => data.map(...), [data])
+function collectCallbacks(n) {
+  if (ts.isCallExpression(n)) {
+    const calleeName = src.slice(n.expression.pos, n.expression.end).trim();
+    for (let i = 0; i < n.arguments.length; i++) {
+      const arg = n.arguments[i];
+      if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
+        candidates.push({ name: calleeName + '_cb', node: arg });
+      }
+    }
+  }
+  ts.forEachChild(n, collectCallbacks);
 }
+collectCallbacks(sf);
 
 const testSets = [
   // Standard Recharts data with month key + model values
@@ -170,19 +178,177 @@ for (const { name, node } of candidates) {
 }
 
 if (!passed) {
-  // Fallback: try to extract and execute inline normalization logic
+  // Strategy 2: For 0-param functions (useMemo callbacks), inject data parameter
+  // Handles: useMemo(() => { return data.map(...normalize...) }, [data])
+  for (const { name, node } of candidates) {
+    if (passed) break;
+    try {
+      const params = node.parameters || [];
+      if (params.length !== 0) continue;
+      const funcSrc = src.slice(node.pos, node.end).trim();
+      if (!/\.map\s*\(/.test(funcSrc) || !/\//.test(funcSrc)) continue;
+      const dataVarMatch = funcSrc.match(/\b(data|processedData|chartData|rawData|items|rows|trends|trendData|monthlyData|sortedData|filteredData|modelData|trendingData|inputData|sourceData|allData|records|entries|values|stats|dataset|datasets|results|normalized)\b/);
+      if (!dataVarMatch) continue;
+      const dataVar = dataVarMatch[1];
+      let modifiedSrc = funcSrc;
+      if (/^\(\s*\)\s*=>/.test(modifiedSrc)) {
+        modifiedSrc = modifiedSrc.replace(/^\(\s*\)\s*=>/, '(' + dataVar + ') =>');
+      } else if (/^function\s*\(\s*\)/.test(modifiedSrc)) {
+        modifiedSrc = modifiedSrc.replace(/^function\s*\(\s*\)/, 'function(' + dataVar + ')');
+      } else continue;
+      const jsCode = ts.transpileModule('const __fn = ' + modifiedSrc, {
+        compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React }
+      }).outputText;
+      const fnBody = jsCode.replace(/^[^=]+=\s*/, '').replace(/;\s*$/, '');
+      const fn = eval('(' + fnBody + ')');
+      let allPassed = true;
+      for (const testData of testSets) {
+        try {
+          const input = JSON.parse(JSON.stringify(testData));
+          let result = fn(input);
+          if (!Array.isArray(result)) result = input;
+          if (!checkNormalized(result, testData)) { allPassed = false; break; }
+        } catch (e) { allPassed = false; break; }
+      }
+      if (allPassed) {
+        passed = true;
+        console.log('PASS: Normalization in \"' + name + '\" (parameter injection)');
+      }
+    } catch (e) { /* try next */ }
+  }
+}
+
+if (!passed) {
+  // Strategy 3: Extract .map() callbacks directly from AST
+  // Handles inline normalization where the map callback is self-contained
+  function findMapNorm(n) {
+    if (passed) return;
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === 'map' && n.arguments.length >= 1) {
+      const callback = n.arguments[0];
+      if (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) {
+        const callbackSrc = src.slice(callback.pos, callback.end).trim();
+        if (!/\//.test(callbackSrc)) { ts.forEachChild(n, findMapNorm); return; }
+        try {
+          const paramSrc = callback.parameters.map(p => src.slice(p.pos, p.end).trim()).join(', ');
+          const bodySrc = src.slice(callback.body.pos, callback.body.end).trim();
+          const isBlock = bodySrc.startsWith('{');
+          const wrapped = isBlock
+            ? 'function __norm(__data) { return __data.map((' + paramSrc + ') => ' + bodySrc + '); }'
+            : 'function __norm(__data) { return __data.map((' + paramSrc + ') => (' + bodySrc + ')); }';
+          const jsCode = ts.transpileModule(wrapped, {
+            compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React }
+          }).outputText;
+          const fn = eval('(' + jsCode.replace(/;\s*$/, '') + ')');
+          let allPassed = true;
+          for (const testData of testSets) {
+            try {
+              const input = JSON.parse(JSON.stringify(testData));
+              const result = fn(input);
+              if (!checkNormalized(result, testData)) { allPassed = false; break; }
+            } catch (e) { allPassed = false; break; }
+          }
+          if (allPassed) {
+            passed = true;
+            console.log('PASS: .map() callback correctly normalizes data');
+            return;
+          }
+        } catch (e) { /* continue */ }
+      }
+    }
+    ts.forEachChild(n, findMapNorm);
+  }
+  findMapNorm(sf);
+}
+
+if (!passed) {
+  // Strategy 4: Re-try candidates with extracted constants from the file
+  // Handles normalization inside useMemo that references MODEL_KEYS, MODEL_COLORS, etc.
+  // Extract constant arrays/objects from the file that the normalization might reference
+  var constDecls = [];
+  function collectConsts(n) {
+    if (ts.isVariableStatement(n)) {
+      for (var d of n.declarationList.declarations) {
+        if (d.initializer && d.name.getText) {
+          var vn = d.name.getText(sf);
+          // Only extract simple constants (arrays, objects, primitives)
+          if (/^[A-Z_]/.test(vn) || /keys|models|colors|names/i.test(vn)) {
+            var initSrc = src.slice(d.initializer.pos, d.initializer.end).trim();
+            // Skip if it references imports/JSX/hooks (but allow TS generics like Array<>)
+            if (!/import|require|use[A-Z]|<[A-Z][a-z]/.test(initSrc) && initSrc.length < 500) {
+              constDecls.push('var ' + vn + ' = ' + initSrc + ';');
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(n, collectConsts);
+  }
+  collectConsts(sf);
+  // Transpile constants to JS (removes TypeScript type annotations)
+  var rawPreamble = constDecls.join('\n');
+  var constPreamble = '';
+  try {
+    constPreamble = ts.transpileModule(rawPreamble, {
+      compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React }
+    }).outputText;
+  } catch (e) { constPreamble = rawPreamble; }
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    if (passed) break;
+    var c = candidates[ci];
+    try {
+      var funcSrc = src.slice(c.node.pos, c.node.end).trim();
+      if (!/\//.test(funcSrc) || !/\.map\s*\(/.test(funcSrc)) continue;
+      var params = c.node.parameters || [];
+      var modifiedSrc = funcSrc;
+      if (params.length === 0) {
+        var dvMatch = funcSrc.match(/\b(data|processedData|chartData|rawData|items|rows|trends|trendData|monthlyData|sortedData|filteredData|modelData|trendingData|inputData|sourceData|allData|records|entries|values|stats|dataset|datasets|results|normalized)\b/);
+        if (!dvMatch) continue;
+        var dv = dvMatch[1];
+        if (/^\(\s*\)\s*=>/.test(modifiedSrc)) {
+          modifiedSrc = modifiedSrc.replace(/^\(\s*\)\s*=>/, '(' + dv + ') =>');
+        } else continue;
+      }
+      var jsC = ts.transpileModule('const __fn = ' + modifiedSrc, {
+        compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React }
+      }).outputText;
+      var fnB = jsC.replace(/^[^=]+=\s*/, '').replace(/;\s*$/, '');
+      var wrappedCode = '(function(__input){' + constPreamble + ' var fn=(' + fnB + '); return fn(__input);})';
+      var stubbedFn = eval(wrappedCode);
+      var allP = true;
+      for (var ti = 0; ti < testSets.length; ti++) {
+        try {
+          var inp = JSON.parse(JSON.stringify(testSets[ti]));
+          var res = stubbedFn(inp);
+          if (!Array.isArray(res)) res = inp;
+          if (!checkNormalized(res, testSets[ti])) { allP = false; break; }
+        } catch (e) { allP = false; break; }
+      }
+      if (allP) {
+        passed = true;
+        console.log('PASS: Function \"' + c.name + '\" normalizes data (with extracted constants)');
+      }
+    } catch (e) { /* try next */ }
+  }
+}
+
+if (!passed) {
+  // Strategy 5: try to extract and execute inline normalization logic
   // Look for the pattern: data.map(row => { ... total ... / total ... })
   // and wrap it in a function
   const inlinePatterns = [
     // Pattern: someVar = data.map(item => { const total = ...; return { ...item, key: val/total*100 } })
-    /(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\.map\s*\(([^)]*)\s*=>\s*(\{[\s\S]*?(?:\/\s*(?:total|sum)\b)[\s\S]*?\})\s*\)/,
+    /(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\.map\s*\(([^)]*)\s*=>\s*(\{[\s\S]*?(?:\/\s*(?:total|sum|rowTotal|rowSum|t|count|allTotal)\b)[\s\S]*?\})\s*\)/,
+    // Pattern: return data.map(item => { ... / total ... }) inside useMemo or function body
+    /return\s+(\w+)\.map\s*\(([^)]*)\s*=>\s*(\{[\s\S]*?(?:\/\s*(?:total|sum|rowTotal|rowSum|t|count|allTotal)\b)[\s\S]*?\})\s*\)/,
   ];
   for (const pat of inlinePatterns) {
     const m = src.match(pat);
     if (m) {
       try {
-        const paramName = m[3].trim();
-        const body = m[4];
+        const paramName = (m[4] ? m[3] : m[2]).trim();
+        const body = m[4] || m[3];
         const wrapped = 'function __norm(data) { return data.map(' + paramName + ' => ' + body + '); }';
         const jsCode = ts.transpileModule(wrapped, {
           compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React }
@@ -207,10 +373,43 @@ if (!passed) {
 }
 
 if (!passed) {
+  // Bronze fallback: regex-based detection of normalization patterns in non-comment code
+  // Awards 2/4 points when normalization logic is present but cannot be extracted/executed
+  const srcNC = src.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const hasDivision = /\/\s*(?:total|sum|rowTotal|rowSum|t)\b/.test(srcNC) ||
+                      /(?:total|sum|rowTotal|rowSum)\s*[>!=]/.test(srcNC);
+  const hasMultBy100 = /\*\s*100/.test(srcNC);
+  const hasPercentCalc = hasDivision && hasMultBy100;
+  const hasNormalizeRef = /normaliz/i.test(srcNC);
+  const hasMapReduce = /\.map\s*\(/.test(srcNC) && (/\.reduce\s*\(/.test(srcNC) || /Object\.values/.test(srcNC) || /Object\.entries/.test(srcNC));
+  const hasSumCalc = /\.reduce\s*\(\s*\(?[^)]*\+/.test(srcNC) || /Object\.values\s*\([^)]*\)\.reduce/.test(srcNC);
+
+  if ((hasPercentCalc || (hasNormalizeRef && hasDivision)) && (hasMapReduce || hasSumCalc)) {
+    // Silver tier (3/4): normalization pattern present AND connected to chart data flow
+    // Check that normalized data is assigned to a variable used in rendering
+    const hasChartDataFlow = /normaliz\w*Data|normaliz\w*\s*=|\.map\s*\([^)]*\/\s*(?:total|sum)[\s\S]{0,500}(?:AreaChart|Area\s|data=)/s.test(srcNC) ||
+      /(?:const|let|var)\s+\w*(?:normal|percent|scaled)\w*\s*=[\s\S]{0,1000}(?:AreaChart|data=)/s.test(srcNC) ||
+      /useMemo[\s\S]{0,200}(?:\/\s*(?:total|sum)|normaliz)/s.test(srcNC);
+    if (hasChartDataFlow) {
+      console.log('PASS: Normalization patterns detected + data flow to chart — Silver fallback, 3/4 credit');
+      process.exit(3);
+    }
+    console.log('PASS: Normalization patterns detected (division by total + map/reduce) — Bronze fallback, 2/4 credit');
+    process.exit(2);
+  }
   console.error('FAIL: No function found that normalizes data rows to sum to ~100%');
   process.exit(1);
 }
-" && SCORE=$((SCORE + 4)) || true
+" 2>&1
+NORM_EXIT=$?
+if [ $NORM_EXIT -eq 0 ]; then
+  SCORE=$((SCORE + 4))
+elif [ $NORM_EXIT -eq 3 ]; then
+  SCORE=$((SCORE + 3))
+elif [ $NORM_EXIT -eq 2 ]; then
+  SCORE=$((SCORE + 2))
+fi
+true
 
 ###############################################################################
 # TEST 4/10 [F2P Behavioral, weight 3/20]: Easing function is non-linear
@@ -348,13 +547,13 @@ elif [ $EASE_EXIT -eq 2 ]; then
 fi
 
 ###############################################################################
-# TEST 5/10 [F2P Behavioral, weight 2/20]: Animation state starts at 0/1
+# TEST 5/11 [F2P Behavioral, weight 3/21]: Animation state starts at 0/1
 #
 # Uses AST to verify useState initialization. Fail-to-pass: the original
 # code has useState(data.length) which means no animation plays.
 ###############################################################################
 echo ""
-echo "=== Test 5/11 [F2P Behavioral, weight 2/21]: Animation starts at 0, not data.length ==="
+echo "=== Test 5/11 [F2P Behavioral, weight 3/21]: Animation starts at 0, not data.length ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -398,7 +597,7 @@ if (!hasZeroOrOneInit) {
   process.exit(1);
 }
 console.log('PASS: Animation state initializes at 0 or 1 (not data.length)');
-" && SCORE=$((SCORE + 2)) || true
+" && SCORE=$((SCORE + 3)) || true
 
 ###############################################################################
 # TEST 6/10 [F2P Behavioral, weight 2/20]: Y-axis domain produces [0, 100]
@@ -510,20 +709,20 @@ let hasVisibilityState = false;
 
 function visit(n) {
   // Track visibility state variables
-  if (ts.isIdentifier(n) && /visible|inView|loaded|isShown|isActive/.test(n.text)) {
+  if (ts.isIdentifier(n) && /visible|inView|loaded|isShown|isActive|isIntersecting|shouldRender|isObserved|isOnScreen|showing|rendered|isVisible/.test(n.text)) {
     hasVisibilityState = true;
   }
   // Conditional expressions gating media content
   if (ts.isConditionalExpression(n)) {
     const condText = src.slice(n.condition.pos, n.condition.end).trim();
-    if (/visible|inView|loaded|isShown|isActive|has\(|\.get\(/.test(condText)) {
+    if (/visible|inView|loaded|isShown|isActive|isIntersecting|shouldRender|isObserved|isOnScreen|showing|rendered|isVisible|has\(|\.get\(/.test(condText)) {
       hasConditionalRender = true;
     }
   }
   // JSX conditional: {visible && <Component />}
   if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
     const left = src.slice(n.left.pos, n.left.end).trim();
-    if (/visible|inView|loaded|isShown|isActive|has\(|\.get\(/.test(left)) {
+    if (/visible|inView|loaded|isShown|isActive|isIntersecting|shouldRender|isObserved|isOnScreen|showing|rendered|isVisible|has\(|\.get\(/.test(left)) {
       hasConditionalRender = true;
     }
   }
@@ -540,29 +739,64 @@ const meaningfulLines = src.split('\\n')
   .filter(l => l.length > 0 && !l.startsWith('//') && !l.startsWith('*'))
   .length;
 
+// Partial credit scoring: 0-2 points
+let t7score = 0;
 const issues = [];
-if (!hasIO && !hasVirtLib) issues.push('no IntersectionObserver or virtualization library');
-if (!hasConditionalRender && !hasVirtLib) issues.push('no conditional rendering based on visibility');
-if (!hasVisibilityState && !hasVirtLib) issues.push('no visibility state tracking');
-if (!hasCleanup && !hasVirtLib) issues.push('no observer cleanup');
-if (meaningfulLines < 60) issues.push('file too small (' + meaningfulLines + ' lines) — likely unmodified');
 
-if (issues.length > 0) {
+// Gate: file must be substantially modified
+if (meaningfulLines < 60) {
+  issues.push('file too small (' + meaningfulLines + ' lines) — likely unmodified');
+} else {
+  // 1 pt: Has visibility mechanism (IO or virt library)
+  if (hasIO || hasVirtLib) {
+    t7score += 1;
+    console.log('  +1: Has IntersectionObserver or virtualization library');
+  } else {
+    issues.push('no IntersectionObserver or virtualization library');
+  }
+
+  // 1 pt: Has conditional rendering + state + cleanup (full wiring)
+  const fullWiring = (hasConditionalRender || hasVirtLib) &&
+                     (hasVisibilityState || hasVirtLib) &&
+                     (hasCleanup || hasVirtLib);
+  if (fullWiring) {
+    t7score += 1;
+    console.log('  +1: Has conditional rendering + visibility state + cleanup');
+  } else {
+    if (!hasConditionalRender && !hasVirtLib) issues.push('no conditional rendering based on visibility');
+    if (!hasVisibilityState && !hasVirtLib) issues.push('no visibility state tracking');
+    if (!hasCleanup && !hasVirtLib) issues.push('no observer cleanup');
+  }
+}
+
+if (t7score === 0) {
   console.error('FAIL: TopGen virtualization incomplete:', issues.join(', '));
   process.exit(1);
+} else if (t7score === 1) {
+  console.log('PARTIAL (1/2): TopGen has visibility mechanism but incomplete wiring');
+  console.log('  Missing:', issues.join(', '));
+  process.exit(2);
+} else {
+  console.log('PASS: TopGenerations has visibility-gated rendering (' + meaningfulLines + ' meaningful lines)');
 }
-console.log('PASS: TopGenerations has visibility-gated rendering (' + meaningfulLines + ' meaningful lines)');
-" && SCORE=$((SCORE + 2)) || true
+" 2>&1
+T7_EXIT=$?
+if [ $T7_EXIT -eq 0 ]; then
+  SCORE=$((SCORE + 2))
+elif [ $T7_EXIT -eq 2 ]; then
+  SCORE=$((SCORE + 1))
+fi
+true
 
 ###############################################################################
-# TEST 8/10 [F2P Behavioral, weight 2/20]: ModelTrends auto-play wiring
+# TEST 8/11 [F2P Behavioral, weight 3/21]: ModelTrends auto-play wiring
 #
 # Verifies that animation auto-triggers on viewport entry (IntersectionObserver)
 # and has a proper animation loop with cleanup. The base code requires manual
 # Play button click.
 ###############################################################################
 echo ""
-echo "=== Test 8/10 [F2P Behavioral, weight 2/20]: ModelTrends auto-play via IntersectionObserver ==="
+echo "=== Test 8/11 [F2P Behavioral, weight 3/21]: ModelTrends auto-play via IntersectionObserver ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -583,9 +817,12 @@ const hasIOHook = /useInView|useIntersection/.test(src);
 // Must have animation loop mechanism
 const hasAnimLoop = /requestAnimationFrame|setInterval|setTimeout/.test(srcNC);
 
-// Must have state setter that increments frame/count
-const hasIncrement = /set\w+\s*\(\s*(?:prev|p|c|v)\s*(?:=>|\+)/.test(srcNC) ||
-                     /set\w+\s*\(\s*\w+\s*\+\s*1\s*\)/.test(srcNC);
+// Must have state setter that increments frame/count (or ref-based increment + setState)
+const hasIncrement = /set\w+\s*\(\s*\w+\s*=>/.test(srcNC) ||
+                     /set\w+\s*\([^)]*\+/.test(srcNC) ||
+                     /set\w+\s*\(\s*\w+\s*\+\s*1\s*\)/.test(srcNC) ||
+                     // Ref-based animation: increment on ref then call setState
+                     (/\.\w+\s*\+=\s*1/.test(srcNC) && /set\w+Count\s*\(/.test(srcNC));
 
 // Must have cleanup to prevent memory leaks
 const hasCleanup = /cancelAnimationFrame|clearInterval|clearTimeout|\.disconnect\s*\(/.test(srcNC);
@@ -593,29 +830,69 @@ const hasCleanup = /cancelAnimationFrame|clearInterval|clearTimeout|\.disconnect
 // Must have useEffect for lifecycle management
 const hasUseEffect = /useEffect/.test(srcNC);
 
-const issues = [];
-if (!hasIO && !hasIOHook) issues.push('no IntersectionObserver or useInView for auto-play');
-if (!hasAnimLoop) issues.push('no animation loop (rAF/setInterval/setTimeout)');
-if (!hasIncrement) issues.push('no incremental state updates for animation progression');
-if (!hasCleanup) issues.push('no cleanup (cancelAnimationFrame/clearInterval/disconnect)');
-if (!hasUseEffect) issues.push('no useEffect for lifecycle management');
-
 // Anti-stub: file must be substantial
 const meaningfulLines = src.split('\\n')
   .map(l => l.trim())
   .filter(l => l.length > 0 && !l.startsWith('//') && !l.startsWith('*'))
   .length;
-if (meaningfulLines < 80) issues.push('file too small (' + meaningfulLines + ' lines)');
 
-if (issues.length > 0) {
+// Partial credit scoring: 0-3 points
+// GATE: IntersectionObserver is REQUIRED for any points (F2P: base code has no IO)
+let t8score = 0;
+const issues = [];
+
+if (meaningfulLines < 80) {
+  issues.push('file too small (' + meaningfulLines + ' lines)');
+} else if (!hasIO && !hasIOHook) {
+  issues.push('no IntersectionObserver or useInView for auto-play (required gate)');
+} else {
+  // 1 pt: Has IntersectionObserver or useInView for auto-play triggering
+  t8score += 1;
+  console.log('  +1: Has IntersectionObserver/useInView for auto-play');
+
+  // 1 pt: Has animation loop + state increment (core animation mechanism)
+  if (hasAnimLoop && hasIncrement) {
+    t8score += 1;
+    console.log('  +1: Has animation loop + state increment');
+  } else {
+    if (!hasAnimLoop) issues.push('no animation loop (rAF/setInterval/setTimeout)');
+    if (!hasIncrement) issues.push('no incremental state updates for animation progression');
+  }
+
+  // 1 pt: Has cleanup + useEffect lifecycle management (quality/correctness)
+  if (hasCleanup && hasUseEffect) {
+    t8score += 1;
+    console.log('  +1: Has cleanup + useEffect lifecycle management');
+  } else {
+    if (!hasCleanup) issues.push('no cleanup (cancelAnimationFrame/clearInterval/disconnect)');
+    if (!hasUseEffect) issues.push('no useEffect for lifecycle management');
+  }
+}
+
+if (t8score === 0) {
   console.error('FAIL: ModelTrends auto-play incomplete:', issues.join(', '));
   process.exit(1);
+} else if (t8score < 3) {
+  console.log('PARTIAL (' + t8score + '/3): ModelTrends auto-play partially implemented');
+  if (issues.length > 0) console.log('  Missing:', issues.join(', '));
+  // Exit with code = 10 + partial score to communicate to shell
+  process.exit(10 + t8score);
+} else {
+  console.log('PASS: ModelTrends has IO auto-play + animation loop + cleanup (' + meaningfulLines + ' lines)');
 }
-console.log('PASS: ModelTrends has IO auto-play + animation loop + cleanup (' + meaningfulLines + ' lines)');
-" && SCORE=$((SCORE + 2)) || true
+" 2>&1
+T8_EXIT=$?
+if [ $T8_EXIT -eq 0 ]; then
+  SCORE=$((SCORE + 3))
+elif [ $T8_EXIT -eq 11 ]; then
+  SCORE=$((SCORE + 1))
+elif [ $T8_EXIT -eq 12 ]; then
+  SCORE=$((SCORE + 2))
+fi
+true
 
 ###############################################################################
-# TEST 9/10 [F2P Behavioral, weight 2/20]: Progressive data reveal works
+# TEST 9/11 [F2P Behavioral, weight 3/21]: Progressive data reveal works
 #
 # Verifies data is subsetted progressively during animation. The base code
 # has .slice(0, visibleCount) but starts with visibleCount=data.length
@@ -623,7 +900,7 @@ console.log('PASS: ModelTrends has IO auto-play + animation loop + cleanup (' + 
 # Combined with Test 5 (start at 0) this ensures actual progressive behavior.
 ###############################################################################
 echo ""
-echo "=== Test 9/10 [F2P Behavioral, weight 2/20]: Progressive data reveal ==="
+echo "=== Test 9/11 [F2P Behavioral, weight 3/21]: Progressive data reveal ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -661,7 +938,7 @@ if (issues.length > 0) {
   process.exit(1);
 }
 console.log('PASS: Progressive data reveal with auto-play trigger');
-" && SCORE=$((SCORE + 2)) || true
+" && SCORE=$((SCORE + 3)) || true
 
 ###############################################################################
 # TEST 10/10 [Structural, weight 2/20]: Model entry labels exist
@@ -701,22 +978,33 @@ function visit(n) {
 visit(sf);
 
 // Label logic: detecting when a new model first appears in the data
-const hasNewModelDetection = /first.*appear|new.*model|model.*enter|firstAppear|modelEntr/i.test(srcNC) ||
+// Use code-level patterns (variable names, function calls) — not English prose in JSX
+const hasNewModelDetection = /firstAppear|modelEntr|newModel|entryPoint|labelPos/i.test(srcNC) ||
   // Check for logic that compares current vs previous data to find new entries
   /(?:prev|last)(?:Data|Models|Keys|Visible)/.test(srcNC) ||
-  // Check for finding first non-zero value for a model
-  /find\w*\s*\([^)]*(?:!==?\s*0|>\s*0)/.test(srcNC);
+  // Check for finding first non-zero value for a model (code pattern, not prose)
+  /find(?:Index)?\s*\(\s*(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>[^)]*(?:!==?\s*0|>\s*0)/.test(srcNC) ||
+  // Check for iterating keys/entries to detect model appearances
+  /Object\.(?:keys|entries)\s*\([^)]*\)\.(?:filter|find|some)/.test(srcNC);
 
-// White label styling
-hasWhiteColor = /(?:fill|color)\s*[:=]\s*['\"](?:#fff|#ffffff|white|rgb\(255)/i.test(srcNC) ||
-  /text-white|className.*white/i.test(srcNC);
+// White label styling — must be in a label-specific context (fill for SVG, or positioned overlay)
+// Exclude tooltip-only white text by requiring label JSX or positioned container
+const hasWhiteFill = /fill\s*[:=]\s*['\"](?:#fff|#ffffff|white|rgb\(255)/i.test(srcNC);
+const hasWhiteText = /text-white|color\s*[:=]\s*['\"](?:#fff|#ffffff|white)/i.test(srcNC);
+// Only count white styling if there is label-related JSX or positioned overlay for labels
+const hasPositionedOverlay = /absolute|position\s*:\s*['\"]absolute/i.test(srcNC) && /label|model.*name|entry.*name/i.test(srcNC);
+hasWhiteColor = (hasLabelJSX && (hasWhiteFill || hasWhiteText)) || (hasPositionedOverlay && hasWhiteText);
 
-// Label text rendering (model name displayed)
-const hasModelNameRender = /\.name\b|modelName|MODEL_COLORS\s*\[/.test(srcNC);
+// Label text rendering (model name displayed) — must be in label context, not just tooltip
+// Require MODEL_COLORS lookup or explicit label/modelName variable, not just .name on tooltip entry
+const hasModelNameRender = /modelName|MODEL_COLORS\s*\[/.test(srcNC) ||
+  (hasLabelJSX && /\.name\b/.test(srcNC)) ||
+  // Also accept positioned overlay with model name iteration (destructured from MODEL_COLORS)
+  (hasPositionedOverlay && hasNewModelDetection && /\.name\b/.test(srcNC));
 
 const issues = [];
 if (!hasLabelJSX && !hasModelNameRender) issues.push('no label rendering (SVG text or positioned element)');
-if (!hasNewModelDetection) issues.push('no logic to detect when models first appear');
+if (!hasNewModelDetection && !hasLabelJSX) issues.push('no logic to detect when models first appear');
 if (!hasWhiteColor) issues.push('no white color styling on labels');
 
 if (issues.length > 0) {

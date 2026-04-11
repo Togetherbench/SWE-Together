@@ -52,6 +52,7 @@ RUN pip install --no-cache-dir \
     numpy \
     toml==0.10.2 \
     huggingface-hub==0.26.5 \
+    "diffusers[torch]==0.32.1" \
     tokenizers \
     pytest \
     pytest-timeout

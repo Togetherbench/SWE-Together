@@ -21,12 +21,7 @@ RUN mkdir -p /workspace /logs/verifier
 
 WORKDIR /workspace
 
-# Clone xliry/banodoco-wrapped at commit 13a06f8 — the last commit before the
-# user's session. At this commit:
-# - TopGenerations.tsx renders ALL month rows at once (no virtualization)
-# - ModelTrends.tsx starts with visibleCount=data.length (all data visible, no animation)
-# - ModelTrends.tsx has constant STEP_MS=180 (no ease-out)
-# - ModelTrends.tsx has no IntersectionObserver auto-play (requires manual Play click)
+# Clone xliry/banodoco-wrapped at commit 13a06f8
 RUN git init /workspace/banodoco-wrapped && \
     cd /workspace/banodoco-wrapped && \
     git remote add origin https://github.com/xliry/banodoco-wrapped.git && \
@@ -36,13 +31,21 @@ RUN git init /workspace/banodoco-wrapped && \
 # Install npm dependencies (includes typescript, tsx, vite, recharts, framer-motion)
 RUN cd /workspace/banodoco-wrapped && npm install
 
+# Remove any AGENTS.md / CLAUDE.md that could interfere with agent behavior
+RUN rm -f /workspace/banodoco-wrapped/AGENTS.md /workspace/banodoco-wrapped/CLAUDE.md
+
 # Configure git for agent use
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+# Create non-root user for Claude Code (refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash agent && \
+    chown -R agent:agent /workspace /logs && \
+    mkdir -p /tests && chown agent:agent /tests
 
+# Pre-install Claude Code CLI as non-root user
+USER agent
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /workspace/banodoco-wrapped

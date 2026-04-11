@@ -17,32 +17,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     asciinema \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user early so everything is owned by them
+RUN useradd -m -s /bin/bash agent
+
 # Create workspace
-RUN mkdir -p /workspace /logs/verifier
+RUN mkdir -p /workspace /logs/verifier && chown agent:agent /workspace /logs /logs/verifier
 
 WORKDIR /workspace
 
-# Clone ComfyUI at commit da2bfb5b (Dec 12 2025) — "Basic implementation of z image fun control union 2.0"
-# This is the state where comfy/ldm/lumina/model.py stores self.axes_lens in NextDiT but
-# passes only axes_dims (NOT axes_lens) to EmbedND, effectively ignoring axes_lens in RoPE.
-# The agent must implement axes_lens support by creating a LuminaEmbedND class or equivalent.
+# Clone ComfyUI (as agent to avoid needing chown later)
+USER agent
 RUN git init /workspace/ComfyUI && \
     cd /workspace/ComfyUI && \
     git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
     git fetch --depth=1 origin da2bfb5b0af26c7a1c44ec951dbd0fffe413c793 && \
     git checkout FETCH_HEAD
 
-# Set up Python virtual environment
+# Set up Python virtual environment (as agent)
 RUN python3 -m venv /workspace/venv
 ENV PATH="/workspace/venv/bin:$PATH"
 ENV VIRTUAL_ENV="/workspace/venv"
 
-# Install CPU-only PyTorch (no GPU needed for structural verification)
+# Install CPU-only PyTorch
 RUN pip install --no-cache-dir \
     torch==2.6.0+cpu \
     --index-url https://download.pytorch.org/whl/cpu
 
-# Install ComfyUI Python dependencies (CPU-sufficient subset)
+# Install ComfyUI Python dependencies
 RUN pip install --no-cache-dir \
     torchvision \
     einops \
@@ -58,19 +59,24 @@ RUN pip install --no-cache-dir \
     sentencepiece \
     spandrel
 
-# Install pytest for upstream P2P regression tests
-RUN pip install --no-cache-dir pytest pytest-timeout
+# Install pytest and test dependencies
+RUN pip install --no-cache-dir pytest pytest-timeout opencv-python-headless scikit-image
 
-# Set PYTHONPATH so comfy modules are importable
-ENV PYTHONPATH="/workspace/ComfyUI:$PYTHONPATH"
+ENV PYTHONPATH="/workspace/ComfyUI"
+
+# Patch model_management.py for CPU-only torch
+RUN sed -i 's/if args\.cpu:/if args.cpu or not torch.cuda.is_available():/' \
+    /workspace/ComfyUI/comfy/model_management.py
 
 # Configure git for agent use
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
+# Pre-install Claude Code CLI as agent user
 RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:$PATH"
+ENV PATH="/home/agent/.local/bin:$PATH"
 
+# Remove AGENTS.md / CLAUDE.md that might interfere
+RUN rm -f /workspace/ComfyUI/AGENTS.md /workspace/ComfyUI/CLAUDE.md
 
 WORKDIR /workspace/ComfyUI

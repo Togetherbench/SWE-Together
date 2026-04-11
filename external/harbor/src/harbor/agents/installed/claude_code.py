@@ -879,7 +879,7 @@ class ClaudeCode(BaseInstalledAgent):
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", None),
             "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),
             "CLAUDE_CODE_MAX_OUTPUT_TOKENS": os.environ.get(
-                "CLAUDE_CODE_MAX_OUTPUT_TOKENS", None
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "128000"
             ),
             "FORCE_AUTO_BACKGROUND_TASKS": "1",
             "ENABLE_BACKGROUND_TASKS": "1",

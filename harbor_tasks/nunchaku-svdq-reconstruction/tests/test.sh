@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Verifier for nunchaku-svdq-reconstruction
 #
-# 26 micro-tests, total 1.05 (capped at 1.0):
+# 37 micro-tests, total ~1.14 (capped at 1.0):
 #   P2P1-P2P3 (0.05) pass-to-pass  upstream sanity (parse, imports, source)
 #   S1-S3   (0.06)  structural  file + functions + anti-stub
-#   Q1-Q3   (0.15)  behavioral  qweight unpack per shape
-#   SC1-SC3 (0.09)  behavioral  scale unpack per shape
-#   LR1-LR4 (0.12)  behavioral  lowrank unpack per case
-#   R1-R6   (0.30)  behavioral  full reconstruction per param (diff<0.05)
-#   TT      (0.10)  behavioral  tight threshold all 6 (diff<0.01)
+#   Q1-Q3   (0.12)  behavioral  qweight unpack per shape
+#   SC1-SC3 (0.06)  behavioral  scale unpack per shape
+#   QS1-QS3 (0.12)  behavioral  qweight+scale integration (no lowrank needed)
+#   LR1-LR8 (0.32)  behavioral  lowrank unpack per case (expanded)
+#   R1-R6   (0.18)  behavioral  full reconstruction per param (diff<0.05)
+#   TT      (0.05)  behavioral  tight threshold all 6 (diff<0.01)
 #   F1-F3   (0.18)  behavioral  fresh synthetic data, 3 sizes
 #
 # Scoring: 0.0 to 1.0 written to /logs/verifier/reward.txt
@@ -137,22 +138,27 @@ except Exception:
     wr("S1", False); wr("S2", False); wr("S3", False)
     sys.exit(0)
 
-# S1: file exists + parseable
-wr("S1", True)
-
-# S2: reconstruct_weight fn with >=5 meaningful nodes
+# S1: file defines >=3 functions (excluding main) -- agent must add scale + lowrank unpack
 fns = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+non_main = fns - {"main"}
+wr("S1", len(non_main) >= 3)
+
+# S2: reconstruct_weight fn with >=5 meaningful nodes AND calls >=2 user-defined fns
 s2 = False
 if "reconstruct_weight" in fns:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "reconstruct_weight":
             count = 0
+            called = set()
             for child in ast.walk(node):
                 if isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Return)):
                     count += 1
                 elif isinstance(child, ast.Expr) and isinstance(child.value, ast.Call):
                     count += 1
-            s2 = count >= 5
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+                    if child.func.id in fns:
+                        called.add(child.func.id)
+            s2 = count >= 5 and len(called) >= 2
             break
 wr("S2", s2)
 
@@ -277,7 +283,7 @@ fn_lr = find_fn(rw, ['unpack_svdq_lowrank', 'unpack_lowrank', 'unpack_proj',
                        'unpack_low_rank', 'decode_lowrank',
                        'dequantize_lowrank']) if MOD else None
 
-# ── Q1-Q3: qweight unpack per shape (0.05 each) ─────────────────────
+# ── Q1-Q3: qweight unpack per shape (0.04 each) ─────────────────────
 # Tests the core permutation inverse on 3 different (N,K) combos.
 
 for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
@@ -300,7 +306,7 @@ for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
     except Exception:
         wr(name, False)
 
-# ── SC1-SC3: scale unpack per shape (0.03 each) ─────────────────────
+# ── SC1-SC3: scale unpack per shape (0.02 each) ─────────────────────
 # Tests the scale permutation inverse on 3 shapes.
 
 for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
@@ -320,15 +326,70 @@ for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
     except Exception:
         wr(name, False)
 
-# ── LR1-LR4: lowrank unpack per case (0.03 each) ────────────────────
+# ── QS1-QS3: qweight+scale integration (0.04 each) ─────────────────
+# Tests that qweight and scale unpacking combine correctly into the
+# quantized residual. Does NOT require lowrank -- uses only the
+# qweight*scale portion compared against the known residual.
+# This rewards agents who get both qweight and scale right but
+# haven't solved lowrank yet.
+
+params = ["attn.to_out.0", "attn.to_add_out",
+          "img_mlp.net.0.proj", "img_mlp.net.2",
+          "txt_mlp.net.0.proj", "txt_mlp.net.2"]
+
+qs_shapes = [
+    ("QS1", "attn.to_out.0"),      # square 256x256
+    ("QS2", "img_mlp.net.0.proj"), # N>K 512x256
+    ("QS3", "img_mlp.net.2"),      # N<K 256x512
+]
+for tname, pname in qs_shapes:
+    try:
+        if fn_qw is None or fn_sc is None:
+            wr(tname, False); continue
+        wa = torch.load(f"pt/{pname}.weight_approx.pt", weights_only=True)
+        qw_p = torch.load(f"pt/{pname}.qweight.pt", weights_only=True)
+        ws_p = torch.load(f"pt/{pname}.wscales.pt", weights_only=True)
+        sm = torch.load(f"pt/{pname}.smooth_factor.pt", weights_only=True)
+        pu_p = torch.load(f"pt/{pname}.proj_up.pt", weights_only=True)
+        pd_p = torch.load(f"pt/{pname}.proj_down.pt", weights_only=True)
+        N, K = wa.shape
+
+        qw = call_qw(fn_qw, qw_p, N, K)
+        ws = call_sc(fn_sc, ws_p, N, K)
+
+        if qw is not None and ws is not None:
+            qw_f = qw.float()
+            qw_f[qw_f >= 8] -= 16
+            residual = qw_f * ws.float().repeat_interleave(64, dim=1)
+            # Compare the residual/smooth against weight_approx.
+            # The diff will be the lowrank contribution (pu@pd.T / smooth),
+            # which is bounded. We accept a relaxed threshold that still
+            # proves the qw+scale pipeline is correct.
+            recon_partial = residual / sm.float().unsqueeze(0)
+            diff = (recon_partial - wa.float()).abs().max().item()
+            # With correct qw+sc, the diff is ~3.1-3.5 (the lowrank contribution).
+            # With buggy qw, the diff is ~6.9+. Threshold 5.0 separates cleanly.
+            print(f"    QS {pname}: partial diff={diff:.4f}", file=sys.stderr)
+            wr(tname, diff < 5.0)
+        else:
+            wr(tname, False)
+    except Exception as e:
+        print(f"    QS {pname}: exception {e}", file=sys.stderr)
+        wr(tname, False)
+
+# ── LR1-LR6: lowrank unpack per case (0.04 each) ────────────────────
 # Tests both directions (proj_up=down=False, proj_down=down=True)
-# on square and non-square base shapes.
+# on square, non-square, and additional shape combinations.
 
 lr_cases = [
-    ("LR1", False, (256, 16), 301),   # proj_up, square weight
-    ("LR2", True,  (256, 16), 302),   # proj_down, square weight
+    ("LR1", False, (256, 16), 301),   # proj_up, square weight base
+    ("LR2", True,  (256, 16), 302),   # proj_down, square weight base
     ("LR3", False, (512, 16), 303),   # proj_up, N>K weight
     ("LR4", True,  (512, 16), 304),   # proj_down, N<K weight
+    ("LR5", False, (384, 16), 305),   # proj_up, novel N (128-aligned)
+    ("LR6", True,  (384, 16), 306),   # proj_down, novel shape
+    ("LR7", False, (256, 32), 307),   # proj_up, wider rank
+    ("LR8", True,  (256, 32), 308),   # proj_down, wider rank
 ]
 for tname, down, shape, seed in lr_cases:
     try:
@@ -345,13 +406,10 @@ for tname, down, shape, seed in lr_cases:
     except Exception:
         wr(tname, False)
 
-# ── R1-R6: per-param reconstruction (0.05 each) + TT ────────────────
+# ── R1-R6: per-param reconstruction (0.03 each) + TT ────────────────
 # Verifier-side reconstruction using agent's 3 unpack functions.
 # Each param tested independently; no conditional gates between params.
 
-params = ["attn.to_out.0", "attn.to_add_out",
-          "img_mlp.net.0.proj", "img_mlp.net.2",
-          "txt_mlp.net.0.proj", "txt_mlp.net.2"]
 tight_count = 0
 have_fns = fn_qw is not None and fn_sc is not None and fn_lr is not None
 
@@ -457,12 +515,14 @@ PYEOF
 declare -A WEIGHTS
 WEIGHTS[P2P1]=0.02; WEIGHTS[P2P2]=0.02; WEIGHTS[P2P3]=0.01
 WEIGHTS[S1]=0.02;  WEIGHTS[S2]=0.02;  WEIGHTS[S3]=0.02
-WEIGHTS[Q1]=0.05;  WEIGHTS[Q2]=0.05;  WEIGHTS[Q3]=0.05
-WEIGHTS[SC1]=0.03; WEIGHTS[SC2]=0.03; WEIGHTS[SC3]=0.03
-WEIGHTS[LR1]=0.03; WEIGHTS[LR2]=0.03; WEIGHTS[LR3]=0.03; WEIGHTS[LR4]=0.03
-WEIGHTS[R1]=0.05;  WEIGHTS[R2]=0.05;  WEIGHTS[R3]=0.05
-WEIGHTS[R4]=0.05;  WEIGHTS[R5]=0.05;  WEIGHTS[R6]=0.05
-WEIGHTS[TT]=0.10
+WEIGHTS[Q1]=0.04;  WEIGHTS[Q2]=0.04;  WEIGHTS[Q3]=0.04
+WEIGHTS[SC1]=0.02; WEIGHTS[SC2]=0.02; WEIGHTS[SC3]=0.02
+WEIGHTS[QS1]=0.04; WEIGHTS[QS2]=0.04; WEIGHTS[QS3]=0.04
+WEIGHTS[LR1]=0.04; WEIGHTS[LR2]=0.04; WEIGHTS[LR3]=0.04; WEIGHTS[LR4]=0.04
+WEIGHTS[LR5]=0.04; WEIGHTS[LR6]=0.04; WEIGHTS[LR7]=0.04; WEIGHTS[LR8]=0.04
+WEIGHTS[R1]=0.03;  WEIGHTS[R2]=0.03;  WEIGHTS[R3]=0.03
+WEIGHTS[R4]=0.03;  WEIGHTS[R5]=0.03;  WEIGHTS[R6]=0.03
+WEIGHTS[TT]=0.05
 WEIGHTS[F1]=0.07;  WEIGHTS[F2]=0.06;  WEIGHTS[F3]=0.05
 
 while IFS=' ' read -r NAME PASS; do

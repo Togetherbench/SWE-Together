@@ -1,4 +1,4 @@
-I'm trying to reimplement Nunchaku SVDQ in `quantize_nunchaku_borrow.py` but currently it gives wrong result. I've verified that the AWQ part is correct.
+I'm trying to reimplement Nunchaku SVDQ weight reconstruction but currently it gives wrong result. I've verified that the AWQ part is correct.
 
 The tensor shapes before and after quantization are documented in `keys_bf16.txt` and `keys_svdq_r128.txt`.
 
@@ -14,7 +14,8 @@ The data in the folder `pt` are the groundtruth for the parameters:
 - `txt_mlp.net.2`
 
 For each parameter `<name>`, the `pt/` directory contains:
-- `pt/<name>.weight.pt` — the original BF16 weight (groundtruth)
+- `pt/<name>.weight.pt` — the original BF16 weight (before quantization)
+- `pt/<name>.weight_approx.pt` — the exact reconstruction from quantized tensors (this is the reference for verifying correctness)
 - `pt/<name>.proj_down.pt` — the packed low-rank proj_down tensor
 - `pt/<name>.proj_up.pt` — the packed low-rank proj_up tensor
 - `pt/<name>.qweight.pt` — the packed quantized weight (int8, 2 nibbles per byte)
@@ -49,6 +50,6 @@ img_mlp.net.2.wscales    [192, 3072] BF16
 The packing was done using `NunchakuWeightPacker(bits=4, warp_n=128)` from `nunchaku/lora/flux/packer.py`.
 Read that file to understand the packing layout and implement the correct inverse.
 
-`quantize_nunchaku_borrow.py` contains the quantization functions used to produce the packed data. It already has a (broken) initial attempt at `reconstruct_weight.py` in the workspace — your job is to fix it.
+There is already a (broken) initial attempt at `reconstruct_weight.py` in the workspace — your job is to fix it.
 
-Run `python reconstruct_weight.py` to test your implementation. All 6 parameters must pass with max diff < 0.1.
+Run `python reconstruct_weight.py` to test your implementation. Your reconstruction should match `weight_approx.pt` (the exact reconstruction from quantized tensors). All 6 parameters must pass with max diff < 0.1.

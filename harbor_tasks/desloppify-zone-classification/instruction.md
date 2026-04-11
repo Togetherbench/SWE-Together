@@ -54,11 +54,16 @@ COMMON_ZONE_RULES = [
 ]
 ```
 
-Language-specific rules prepend (higher priority, first-match wins):
+Language-specific rules prepend (higher priority, first-match wins). Define these as **module-level variables** in the respective language modules (`desloppify/lang/python/__init__.py` and `desloppify/lang/typescript/__init__.py`):
 ```python
+# In desloppify/lang/python/__init__.py:
 PY_ZONE_RULES = [<python-specific>] + COMMON_ZONE_RULES
+
+# In desloppify/lang/typescript/__init__.py:
 TS_ZONE_RULES = [<ts-specific>] + COMMON_ZONE_RULES
 ```
+
+Each language's rules list should include at least one language-specific `ZoneRule` before the common rules. Python-specific rules should include patterns like `test_` for test file prefixes. TypeScript-specific rules should include patterns like `.test.`, `.spec.`, or `__tests__` for test file conventions.
 
 ### 3. Potentials adjustment — `desloppify/zones.py` + all phase runners
 
@@ -69,6 +74,12 @@ def adjust_potential(zone_map, files: list[str], total: int) -> int:
 ```
 
 Add `production_count()` method to `FileZoneMap`.
+
+Add `counts()` method to `FileZoneMap` that returns a `dict` mapping zone values to the number of files in each zone:
+```python
+def counts(self) -> dict:
+    """Return {zone_value: count} for all zones in this map."""
+```
 
 Apply in **every phase runner** that returns potentials:
 
@@ -139,6 +150,8 @@ Same pattern for: `single_use`, `orphaned`, `facade`, `coupling`, `cycles` (filt
 
 **FileZoneMap changes** (`zones.py`): Add `overrides: dict[str, str] | None` param to `__init__`. Overrides take priority over rule-based classification.
 
+**LangConfig changes** (`lang/base.py`): Add a `zone_rules` field (type `list`, default empty list `[]`) to the `LangConfig` dataclass so each language config can carry its zone rules.
+
 **Pipeline threading** (`plan.py`): `generate_findings()` and `_generate_findings_from_lang()` accept `zone_overrides` param. `cmd_scan` reads overrides from state and passes them through.
 
 **New CLI subcommand** — `desloppify zone`:
@@ -165,9 +178,10 @@ Only show on first scan or when zone distribution changes.
 
 | File | Changes |
 |------|--------|
-| `desloppify/zones.py` | `_match_pattern()`, `COMMON_ZONE_RULES`, `adjust_potential()`, `should_skip_finding()`, `FileZoneMap.production_count()`, `FileZoneMap.__init__` overrides param |
-| `desloppify/lang/python/__init__.py` | Adjust potentials in `_phase_unused`, `_phase_structural`, `_phase_coupling`, `_phase_smells`; filter entries in `_phase_coupling`; use `COMMON_ZONE_RULES` |
-| `desloppify/lang/typescript/__init__.py` | Same potentials adjustment + entry filtering for all TS phase runners; use `COMMON_ZONE_RULES` |
+| `desloppify/zones.py` | `_match_pattern()`, `COMMON_ZONE_RULES`, `adjust_potential()`, `should_skip_finding()`, `FileZoneMap.production_count()`, `FileZoneMap.counts()`, `FileZoneMap.__init__` overrides param |
+| `desloppify/lang/python/__init__.py` | Define `PY_ZONE_RULES` module-level variable; adjust potentials in `_phase_unused`, `_phase_structural`, `_phase_coupling`, `_phase_smells`; filter entries in `_phase_coupling`; import from zones |
+| `desloppify/lang/typescript/__init__.py` | Define `TS_ZONE_RULES` module-level variable; same potentials adjustment + entry filtering for all TS phase runners; import from zones |
+| `desloppify/lang/base.py` | Add `zone_rules` field to `LangConfig` dataclass (default `[]`) |
 | `desloppify/plan.py` | Thread `zone_overrides` through `generate_findings` → `_generate_findings_from_lang` |
 | `desloppify/commands/scan.py` | Pass `zone_overrides` from state to `generate_findings` |
 | `desloppify/cli.py` | Add `zone` subcommand parser, wire `cmd_zone` |

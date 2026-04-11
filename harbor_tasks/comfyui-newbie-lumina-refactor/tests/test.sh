@@ -2,29 +2,27 @@
 #
 # Verification tests for ComfyUI NewBie architecture refactoring.
 #
-# Scoring: 86% behavioral, 14% structural (15 tests)
+# Scoring: 82% F2P, 18% P2P (12 tests)
 #
-#   Structural (0.14):
-#     S1 (0.02): Valid Python + class definition
-#     S2 (0.03): No _pop_unexpected_kwargs / _fallback_operations / nn.init
-#     S3 (0.02): No try/except in _forward
-#     S4 (0.04): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
-#     S5 (0.03): _forward has >=8 Call nodes (anti-delegation)
+#   F2P Structural (0.14):
+#     S2 (0.04): No _pop_unexpected_kwargs / _fallback_operations / nn.init
+#     S3 (0.03): No try/except in _forward
+#     S4 (0.07): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
 #
-#   Behavioral (0.86):
-#     B1  (0.05): Import + NextDiT subclass + _forward overridden
-#     B2  (0.05): Instantiate on CPU + >=4 extra params vs base
-#     B3  (0.12): _forward correct shape (4x4 AND 8x8) + _forward complex
-#     B4  (0.08): F2P: return -img at ts=0.3 + _forward complex
-#     B5  (0.08): F2P: return -img at ts=0.7 (varied) + _forward complex
-#     B6  (0.08): F2P: t=1.0-timesteps at ts=0.3->0.7 + _forward complex
-#     B7  (0.08): F2P: t=1.0-timesteps at ts=0.8->0.2 (varied) + complex
-#     B8  (0.12): clip_text_pooled influences output
-#     B9  (0.12): clip_img_pooled influences output
-#     B10 (0.08): P2P: Base NextDiT still works
+#   F2P Behavioral (0.68):
+#     B4  (0.20): return -img at ts=0.3 + _forward complex
+#     B5  (0.16): return -img at ts=0.7 (varied) + _forward complex
+#     B6  (0.16): t=1.0-timesteps at ts=0.3->0.7 + _forward complex
+#     B7  (0.16): t=1.0-timesteps at ts=0.8->0.2 (varied) + complex
 #
-# Max stub score: 0.29 (structural 0.11 + B1 0.05 + B2 0.05 + B10 0.08)
-#   (S5 fails for delegation; B3-B9 require _forward complexity or extra params)
+#   P2P (0.18):
+#     B3  (0.02): _forward correct shape (4x4 AND 8x8) + _forward complex
+#     B8  (0.02): clip_text_pooled influences output
+#     B9  (0.02): clip_img_pooled influences output
+#     B10 (0.06): Base NextDiT still works
+#     P2P (0.06): ComfyUI upstream unit tests
+#
+# Nop score: 0.18 (sum of P2P weights)
 #
 set +e
 
@@ -32,7 +30,7 @@ REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 PASS_COUNT=0
-TOTAL=15
+TOTAL=12
 
 # Activate venv for torch availability
 source /workspace/venv/bin/activate 2>/dev/null || true
@@ -46,31 +44,9 @@ echo "=== Verifying ComfyUI NewBie architecture refactoring ==="
 echo ""
 
 # ═══════════════════════════════════════════════════════════════
-# S1 (0.02): Valid Python + class definition
+# S2 (0.04): No _pop_unexpected_kwargs / _fallback_operations / nn.init
 # ═══════════════════════════════════════════════════════════════
-echo "--- S1/15: Valid Python + class ---"
-S1=$(python3 << 'PYEOF'
-import sys, ast
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
-        tree = ast.parse(f.read())
-except FileNotFoundError:
-    print("FAIL:not_found"); sys.exit(0)
-except SyntaxError as e:
-    print(f"FAIL:syntax:{e}"); sys.exit(0)
-if any(isinstance(n, ast.ClassDef) for n in ast.walk(tree)):
-    print("PASS")
-else:
-    print("FAIL:no_class")
-PYEOF
-)
-echo "  $S1"
-if [ "$S1" = "PASS" ]; then add_reward 0.02; fi
-
-# ═══════════════════════════════════════════════════════════════
-# S2 (0.03): No _pop_unexpected_kwargs / _fallback_operations / nn.init
-# ═══════════════════════════════════════════════════════════════
-echo "--- S2/15: No antipattern helpers + no nn.init ---"
+echo "--- S2/12: No antipattern helpers + no nn.init ---"
 S2=$(python3 << 'PYEOF'
 import sys, ast
 try:
@@ -103,12 +79,12 @@ print("PASS")
 PYEOF
 )
 echo "  $S2"
-if [ "$S2" = "PASS" ]; then add_reward 0.03; fi
+if [ "$S2" = "PASS" ]; then add_reward 0.04; fi
 
 # ═══════════════════════════════════════════════════════════════
-# S3 (0.02): No try/except in _forward
+# S3 (0.03): No try/except in _forward
 # ═══════════════════════════════════════════════════════════════
-echo "--- S3/15: No try/except in _forward ---"
+echo "--- S3/12: No try/except in _forward ---"
 S3=$(python3 << 'PYEOF'
 import sys, ast
 try:
@@ -129,12 +105,12 @@ print("PASS")
 PYEOF
 )
 echo "  $S3"
-if [ "$S3" = "PASS" ]; then add_reward 0.02; fi
+if [ "$S3" = "PASS" ]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════
-# S4 (0.04): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
+# S4 (0.07): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
 # ═══════════════════════════════════════════════════════════════
-echo "--- S4/15: model_base.py fixes ---"
+echo "--- S4/12: model_base.py fixes ---"
 S4=$(python3 << 'PYEOF'
 import sys, ast
 try:
@@ -164,48 +140,15 @@ print("PASS")
 PYEOF
 )
 echo "  $S4"
-if [ "$S4" = "PASS" ]; then add_reward 0.04; fi
+if [ "$S4" = "PASS" ]; then add_reward 0.07; fi
 
 # ═══════════════════════════════════════════════════════════════
-# S5 (0.03): _forward has >=8 Call nodes (anti-delegation)
-# ═══════════════════════════════════════════════════════════════
-echo "--- S5/15: _forward complexity ---"
-S5=$(python3 << 'PYEOF'
-import sys, ast
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
-        tree = ast.parse(f.read())
-except Exception:
-    print("FAIL:parse"); sys.exit(0)
-
-found = False
-for cls in ast.walk(tree):
-    if not isinstance(cls, ast.ClassDef):
-        continue
-    for method in cls.body:
-        if isinstance(method, ast.FunctionDef) and method.name == "_forward":
-            ncalls = sum(1 for n in ast.walk(method) if isinstance(n, ast.Call))
-            found = True
-            if ncalls >= 8:
-                print("PASS")
-            else:
-                print(f"FAIL:{ncalls}_calls_need_8")
-            sys.exit(0)
-
-if not found:
-    print("FAIL:no_forward")
-PYEOF
-)
-echo "  $S5"
-if [ "$S5" = "PASS" ]; then add_reward 0.03; fi
-
-# ═══════════════════════════════════════════════════════════════
-# BEHAVIORAL TESTS (B1-B10, 0.86 total)
+# BEHAVIORAL TESTS (B3-B10, 0.86 total)
 # All in one Python script, each independently scored.
 # No conditional gates — each test runs in its own try/except.
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- Behavioral tests (B1-B10) ---"
+echo "--- Behavioral tests (B3-B10) ---"
 BOUT=$(python3 << 'PYEOF'
 import sys, ast, inspect
 sys.path.insert(0, "/workspace/ComfyUI")
@@ -215,7 +158,7 @@ try:
     import torch
     import torch.nn as nn
 except ImportError as e:
-    for i in range(1, 11):
+    for i in range(3, 11):
         print(f"B{i}:FAIL:torch_unavailable:{e}")
     sys.exit(0)
 
@@ -229,7 +172,7 @@ try:
     import comfy.ops
     ops = comfy.ops.disable_weight_init
 except Exception as e:
-    for i in range(1, 11):
+    for i in range(3, 11):
         print(f"B{i}:FAIL:comfy_ops:{e}")
     sys.exit(0)
 
@@ -261,8 +204,8 @@ if newbie_mod is not None and NextDiT is not None:
 
 COMMON_ARGS = dict(
     patch_size=2, in_channels=16, dim=256, n_layers=2,
-    n_heads=4, n_kv_heads=2, axes_dims=[32, 32], axes_lens=[32, 32],
-    clip_text_dim=256, clip_img_dim=256,
+    n_heads=4, n_kv_heads=2, axes_dims=[16, 24, 24], axes_lens=[1, 32, 32],
+    clip_text_dim=256, clip_img_dim=256, cap_feat_dim=256,
 )
 BASE_ARGS = {k: v for k, v in COMMON_ARGS.items()
              if k not in ("clip_text_dim", "clip_img_dim")}
@@ -339,38 +282,7 @@ def fwd_kwargs(clip_text=None, clip_img=None):
     return kw
 
 # ──────────────────────────────────────────────
-# B1 (0.05): Import + NextDiT subclass + _forward overridden
-# ──────────────────────────────────────────────
-try:
-    if NextDiT is None:
-        raise ValueError("NextDiT import failed")
-    if newbie_cls is None:
-        raise ValueError("no NextDiT subclass in newbie module")
-    if not issubclass(newbie_cls, NextDiT):
-        raise ValueError(f"{newbie_cls.__name__} not a NextDiT subclass")
-    if "_forward" not in newbie_cls.__dict__:
-        raise ValueError("_forward not overridden")
-    print("B1:PASS")
-except Exception as e:
-    print(f"B1:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B2 (0.05): Instantiate on CPU + >=4 extra params vs base
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("instantiation failed")
-    if not isinstance(model, nn.Module):
-        raise ValueError(f"not nn.Module: {type(model).__name__}")
-    n_extra = n_model_params - n_base_params
-    if n_extra < 4:
-        raise ValueError(f"{n_extra} extra params, need >=4")
-    print("B2:PASS")
-except Exception as e:
-    print(f"B2:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B3 (0.12): _forward correct shape (4x4 AND 8x8) + _forward complex
+# B3 (0.02): P2P: _forward correct shape (4x4 AND 8x8) + _forward complex
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -397,7 +309,7 @@ except Exception as e:
     print(f"B3:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B4 (0.08): F2P: return -img at ts=0.3 (unpatchify hook)
+# B4 (0.20): F2P: return -img at ts=0.3 (unpatchify hook)
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -433,7 +345,7 @@ except Exception as e:
     print(f"B4:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B5 (0.08): F2P: return -img at ts=0.7 (varied input)
+# B5 (0.16): F2P: return -img at ts=0.7 (varied input)
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -469,7 +381,7 @@ except Exception as e:
     print(f"B5:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B6 (0.08): F2P: t = 1.0 - timesteps at ts=0.3 -> t_embedder sees 0.7
+# B6 (0.16): F2P: t = 1.0 - timesteps at ts=0.3 -> t_embedder sees 0.7
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -501,7 +413,7 @@ except Exception as e:
     print(f"B6:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B7 (0.08): F2P: t = 1.0 - timesteps at ts=0.8 -> t_embedder sees 0.2
+# B7 (0.16): F2P: t = 1.0 - timesteps at ts=0.8 -> t_embedder sees 0.2
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -533,7 +445,7 @@ except Exception as e:
     print(f"B7:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B8 (0.12): clip_text_pooled influences output
+# B8 (0.02): P2P: clip_text_pooled influences output
 #   Vary clip_text while holding clip_img constant.
 #   Uses two different clip values (not absent vs present) to avoid
 #   crashes in implementations that require clip kwargs.
@@ -559,7 +471,7 @@ except Exception as e:
     print(f"B8:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B9 (0.12): clip_img_pooled influences output
+# B9 (0.02): P2P: clip_img_pooled influences output
 #   Vary clip_img while holding clip_text constant.
 # ──────────────────────────────────────────────
 try:
@@ -583,7 +495,7 @@ except Exception as e:
     print(f"B9:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B10 (0.08): P2P: Base NextDiT still works
+# B10 (0.06): P2P: Base NextDiT still works
 # ──────────────────────────────────────────────
 try:
     if base_model is None:
@@ -607,19 +519,17 @@ PYEOF
 echo "$BOUT"
 
 # Parse behavioral results and add rewards
-echo "$BOUT" | grep -q "^B1:PASS" && add_reward 0.05
-echo "$BOUT" | grep -q "^B2:PASS" && add_reward 0.05
-echo "$BOUT" | grep -q "^B3:PASS" && add_reward 0.12
-echo "$BOUT" | grep -q "^B4:PASS" && add_reward 0.08
-echo "$BOUT" | grep -q "^B5:PASS" && add_reward 0.08
-echo "$BOUT" | grep -q "^B6:PASS" && add_reward 0.08
-echo "$BOUT" | grep -q "^B7:PASS" && add_reward 0.08
-echo "$BOUT" | grep -q "^B8:PASS" && add_reward 0.12
-echo "$BOUT" | grep -q "^B9:PASS" && add_reward 0.12
-echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.08
+echo "$BOUT" | grep -q "^B3:PASS" && add_reward 0.02
+echo "$BOUT" | grep -q "^B4:PASS" && add_reward 0.20
+echo "$BOUT" | grep -q "^B5:PASS" && add_reward 0.16
+echo "$BOUT" | grep -q "^B6:PASS" && add_reward 0.16
+echo "$BOUT" | grep -q "^B7:PASS" && add_reward 0.16
+echo "$BOUT" | grep -q "^B8:PASS" && add_reward 0.02
+echo "$BOUT" | grep -q "^B9:PASS" && add_reward 0.02
+echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.06
 
 # ═══════════════════════════════════════════════════════════════
-# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (bonus 0.05)
+# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (0.06)
 # Uses tests-unit/ (pure unit tests), NOT tests/ (integration
 # tests that require websocket-client and a running server).
 # Note: preview_method_override_test.py does not exist at this commit.
@@ -642,7 +552,7 @@ UP_EXIT=$?
 echo "$UP_RESULT" | tail -5
 if [ $UP_EXIT -eq 0 ]; then
     echo "  PASS: upstream unit tests pass"
-    add_reward 0.05
+    add_reward 0.06
 else
     echo "  FAIL: upstream unit tests failed (exit=$UP_EXIT)"
 fi

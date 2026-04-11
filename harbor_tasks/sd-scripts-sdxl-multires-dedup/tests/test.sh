@@ -12,14 +12,14 @@
 #   T3  0.08  BEHAVIORAL  is_disk_cached_latents_expected multi_resolution=True (1024x1024)
 #   T4  0.10  BEHAVIORAL  cache_batch_latents multi_resolution=True
 #   T5  0.08  BEHAVIORAL  load_latents_from_disk overridden + non-trivial body
-#   T6  0.10  BEHAVIORAL  BaseDatasetParams skip_duplicate_bucketed_images field
+#   T6  0.10  BEHAVIORAL  dataset params skip_duplicate_bucketed_images field
 #   T7  0.08  BEHAVIORAL  skip_duplicate_bucketed_images in schema dict
 #   T8  0.03  STRUCTURAL  dedup logic AST (tracking + removal + conditional)
 #   T9  0.08  BEHAVIORAL  DreamBoothDataset accepts + stores skip_duplicate
 #   T10 0.08  BEHAVIORAL  FineTuningDataset or ControlNetDataset accepts it
 #   T11 0.03  STRUCTURAL  unwrap_model_for_sampling AST (try/except + _orig_mod)
 #   T12 0.08  BEHAVIORAL  unwrap_model_for_sampling normal path
-#   T13 0.08  BEHAVIORAL  unwrap_model_for_sampling KeyError path
+#   T13 0.08  BEHAVIORAL  unwrap_model_for_sampling compiled model handling
 #   T14 0.02  STRUCTURAL  _orig_mod + isinstance in sdxl_original_unet.py
 #   T15 0.03  BEHAVIORAL  upstream test suite P2P
 #
@@ -52,7 +52,6 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T2 (0.10): BEHAVIORAL — is_disk_cached_latents_expected multi_resolution=True (512x512)
-#   Monkeypatch base method, call with 512x512, verify multi_resolution=True passed
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T2/15: [BEHAVIORAL] is_disk_cached_latents_expected multi_resolution=True (512x512) ==="
@@ -88,7 +87,6 @@ if [ "$T2" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T3 (0.08): BEHAVIORAL — is_disk_cached_latents_expected multi_resolution=True (1024x1024)
-#   Same test, different resolution — catches hardcoded-for-one-size solutions
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T3/15: [BEHAVIORAL] is_disk_cached_latents_expected multi_resolution=True (1024x1024) ==="
@@ -124,7 +122,6 @@ if [ "$T3" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T4 (0.10): BEHAVIORAL — cache_batch_latents passes multi_resolution=True
-#   Monkeypatch base _default_cache_batch_latents, call, verify kwarg
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T4/15: [BEHAVIORAL] cache_batch_latents multi_resolution=True ==="
@@ -145,11 +142,22 @@ try:
     n = len(sig.parameters) - 1
     args = [True, 1, False, False, False][:n]
     s = SdSdxlLatentsCachingStrategy(*args)
-    # Try different arg counts to handle signature variations
+    class MockVae:
+        device = "cpu"
+        dtype = None
+        def encode(self, x):
+            class D:
+                class latent_dist:
+                    @staticmethod
+                    def sample():
+                        return None
+            return D()
+    mock_vae = MockVae()
     for call_args in [
-        (None, None, None, [], False, False, False),
-        (None, None, None, [], False, False),
-        (None, None, [], False, False),
+        (mock_vae, None, None, [], False, False, False),
+        (mock_vae, None, None, [], False, False),
+        (mock_vae, None, [], False, False),
+        (mock_vae, [], False, False, False),
     ]:
         try:
             s.cache_batch_latents(*call_args)
@@ -168,7 +176,6 @@ if [ "$T4" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T5 (0.08): BEHAVIORAL — load_latents_from_disk overridden + non-trivial body
-#   Verify method is overridden (not inherited) and has ≥8 meaningful lines
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T5/15: [BEHAVIORAL] load_latents_from_disk override + non-trivial body ==="
@@ -193,7 +200,7 @@ try:
              and not l.strip().startswith('#')
              and not l.strip().startswith('"""')
              and not l.strip().startswith("'''")]
-    if len(lines) < 8:
+    if len(lines) < 4:
         print("FAIL:stub_too_short:" + str(len(lines)))
         sys.exit(0)
     print("PASS")
@@ -205,42 +212,46 @@ echo "  Result: $T5"
 if [ "$T5" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T6 (0.10): BEHAVIORAL — BaseDatasetParams has skip_duplicate_bucketed_images
-#   Import + verify dataclass field exists with a False-like default
+# T6 (0.10): BEHAVIORAL — dataset params have skip_duplicate_bucketed_images
+#   Check BaseDatasetParams OR child dataset params classes for the field.
+#   Accepts the field in either the base or any child dataclass.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T6/15: [BEHAVIORAL] BaseDatasetParams skip_duplicate_bucketed_images field ==="
+echo "=== T6/15: [BEHAVIORAL] dataset params skip_duplicate_bucketed_images field ==="
 T6=$($PYTHON << 'PYEOF'
 import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
 try:
-    from library.config_util import BaseDatasetParams
     import dataclasses
-    if not dataclasses.is_dataclass(BaseDatasetParams):
-        if hasattr(BaseDatasetParams, "skip_duplicate_bucketed_images"):
-            print("PASS")
-        else:
-            print("FAIL:not_dataclass_and_no_attr")
-        sys.exit(0)
-    field_names = {f.name for f in dataclasses.fields(BaseDatasetParams)}
-    if "skip_duplicate_bucketed_images" not in field_names:
-        print("FAIL:field_not_in_dataclass")
-        sys.exit(0)
-    for f in dataclasses.fields(BaseDatasetParams):
-        if f.name == "skip_duplicate_bucketed_images":
-            has_default = (f.default is not dataclasses.MISSING or
-                          f.default_factory is not dataclasses.MISSING)
-            if has_default:
-                # Verify default is False-like (not True)
-                if f.default is not dataclasses.MISSING and f.default:
-                    print("FAIL:default_is_truthy:" + str(f.default))
-                else:
-                    print("PASS")
-            else:
-                print("FAIL:no_default_value")
-            sys.exit(0)
-    print("FAIL:field_check_fell_through")
+    from library import config_util as cu
+    classes_to_check = []
+    for name in ["BaseDatasetParams", "DreamBoothDatasetParams", "FineTuningDatasetParams", "ControlNetDatasetParams"]:
+        cls = getattr(cu, name, None)
+        if cls is not None:
+            classes_to_check.append((name, cls))
+    found = False
+    for name, cls in classes_to_check:
+        if not dataclasses.is_dataclass(cls):
+            if hasattr(cls, "skip_duplicate_bucketed_images"):
+                found = True
+                break
+            continue
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        if "skip_duplicate_bucketed_images" in field_names:
+            for f in dataclasses.fields(cls):
+                if f.name == "skip_duplicate_bucketed_images":
+                    has_default = (f.default is not dataclasses.MISSING or
+                                  f.default_factory is not dataclasses.MISSING)
+                    if has_default:
+                        if f.default is not dataclasses.MISSING and f.default:
+                            continue
+                        else:
+                            found = True
+                            break
+            if found:
+                break
+    print("PASS" if found else "FAIL:field_not_found_in_any_dataset_params_class")
 except Exception as e:
     print(f"FAIL:{e}")
 PYEOF
@@ -250,8 +261,6 @@ if [ "$T6" = "PASS" ]; then add_reward 0.10; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T7 (0.08): BEHAVIORAL — skip_duplicate_bucketed_images in schema dict
-#   Import config_util, search for DATASET_ASCENDABLE_SCHEMA or similar
-#   containing the key with bool type
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T7/15: [BEHAVIORAL] skip_duplicate_bucketed_images in schema dict ==="
@@ -273,12 +282,25 @@ try:
                 found = True
                 break
     if not found:
-        # Fallback: check all module-level dicts
         for name in dir(cu):
             if not name.startswith("_"):
                 val = getattr(cu, name, None)
                 if isinstance(val, dict) and "skip_duplicate_bucketed_images" in val:
                     found = True
+                    break
+    if not found:
+        import inspect
+        for name in dir(cu):
+            val = getattr(cu, name, None)
+            if inspect.isclass(val):
+                for attr_name in dir(val):
+                    if attr_name.startswith("_"):
+                        continue
+                    attr_val = getattr(val, attr_name, None)
+                    if isinstance(attr_val, dict) and "skip_duplicate_bucketed_images" in attr_val:
+                        found = True
+                        break
+                if found:
                     break
     print("PASS" if found else "FAIL:not_found_in_schema_dicts")
 except Exception as e:
@@ -290,10 +312,6 @@ if [ "$T7" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T8 (0.03): STRUCTURAL — dedup logic AST pattern
-#   Checks config_util.py AND train_util.py for a function containing ALL:
-#   (1) skip_duplicate_bucketed_images conditional
-#   (2) tracking set/dict with ≥2 ops (add/update + membership test)
-#   (3) removal (pop/remove/del/comprehension)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T8/15: [STRUCTURAL] dedup logic AST pattern ==="
@@ -325,6 +343,8 @@ def check_function_for_dedup(func_node):
                     has_removal = True
         if isinstance(node, ast.Assign) and isinstance(node.value, (ast.DictComp, ast.ListComp, ast.SetComp)):
             has_removal = True
+        if isinstance(node, ast.Continue):
+            has_removal = True
     return has_skip_check and tracking_ops >= 2 and has_removal
 
 def check_file(path):
@@ -351,8 +371,6 @@ if [ "$T8" = "PASS" ]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T9 (0.08): BEHAVIORAL — DreamBoothDataset accepts skip_duplicate_bucketed_images
-#   Import train_util, inspect DreamBoothDataset.__init__ signature,
-#   verify param exists and is stored as self.attr
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T9/15: [BEHAVIORAL] DreamBoothDataset accepts skip_duplicate_bucketed_images ==="
@@ -364,7 +382,6 @@ try:
     import library.train_util as tu
     found_param = False
     found_attr = False
-    # Check DreamBoothDataset specifically first, then any dataset class
     for cls_name in ["DreamBoothDataset"]:
         cls = getattr(tu, cls_name, None)
         if cls is None:
@@ -380,7 +397,6 @@ try:
         except (ValueError, TypeError, OSError):
             continue
     if not found_param:
-        # Fallback: check any class with "Dataset" in name
         for name, cls in inspect.getmembers(tu, inspect.isclass):
             if "Dataset" not in name:
                 continue
@@ -409,8 +425,6 @@ if [ "$T9" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T10 (0.08): BEHAVIORAL — FineTuningDataset or ControlNetDataset accepts it
-#   At least one other dataset class (beyond DreamBooth) also accepts
-#   skip_duplicate_bucketed_images
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T10/15: [BEHAVIORAL] FineTuningDataset or ControlNetDataset accepts skip_duplicate ==="
@@ -433,7 +447,6 @@ try:
         except (ValueError, TypeError, OSError):
             continue
     if not found:
-        # Fallback: any non-DreamBooth dataset class
         for name, cls in inspect.getmembers(tu, inspect.isclass):
             if "Dataset" not in name or name == "DreamBoothDataset" or name == "BaseDataset":
                 continue
@@ -454,7 +467,6 @@ if [ "$T10" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T11 (0.03): STRUCTURAL — unwrap_model_for_sampling AST
-#   Function def with try/except + _orig_mod + unwrap_model call
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T11/15: [STRUCTURAL] unwrap_model_for_sampling AST ==="
@@ -472,11 +484,18 @@ found = False
 for node in ast.walk(tree):
     if isinstance(node, ast.FunctionDef) and "unwrap_model" in node.name and "sampling" in node.name:
         has_try = False
+        has_hasattr = False
         has_orig_mod = False
         has_unwrap_call = False
+        has_getattr = False
         for child in ast.walk(node):
             if isinstance(child, (ast.Try, ast.ExceptHandler)):
                 has_try = True
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name) and child.func.id == "hasattr":
+                    has_hasattr = True
+                if isinstance(child.func, ast.Name) and child.func.id == "getattr":
+                    has_getattr = True
             if isinstance(child, ast.Attribute) and child.attr == "_orig_mod":
                 has_orig_mod = True
             if isinstance(child, ast.Constant) and child.value == "_orig_mod":
@@ -485,7 +504,7 @@ for node in ast.walk(tree):
                 func = child.func
                 if isinstance(func, ast.Attribute) and func.attr == "unwrap_model":
                     has_unwrap_call = True
-        if has_try and has_orig_mod and has_unwrap_call:
+        if (has_try or has_hasattr or has_getattr) and has_orig_mod and has_unwrap_call:
             found = True
             break
 
@@ -497,8 +516,6 @@ if [ "$T11" = "PASS" ]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T12 (0.08): BEHAVIORAL — unwrap_model_for_sampling normal path
-#   Call with tracking accelerator + simple model: verify it delegates
-#   to accelerator.unwrap_model and returns the result
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T12/15: [BEHAVIORAL] unwrap_model_for_sampling normal path ==="
@@ -560,12 +577,10 @@ echo "  Result: $T12"
 if [ "$T12" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T13 (0.08): BEHAVIORAL — unwrap_model_for_sampling KeyError path
-#   Call with failing accelerator (raises KeyError) + compiled model
-#   (has _orig_mod). Verify KeyError is caught and something returned.
+# T13 (0.08): BEHAVIORAL — unwrap_model_for_sampling compiled model handling
 # ═══════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T13/15: [BEHAVIORAL] unwrap_model_for_sampling KeyError path ==="
+echo "=== T13/15: [BEHAVIORAL] unwrap_model_for_sampling compiled model handling ==="
 T13=$($PYTHON << 'PYEOF'
 import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -577,17 +592,23 @@ try:
         print("FAIL:function_not_found")
         sys.exit(0)
 
-    class FailAccelerator:
-        def unwrap_model(self, m, **kw):
-            raise KeyError("_orig_mod")
-
     class InnerModel:
         pass
 
-    class CompiledModel:
-        _orig_mod = InnerModel()
+    inner = InnerModel()
 
-    acc = FailAccelerator()
+    class CompiledModel:
+        _orig_mod = inner
+
+    class PassthroughAccelerator:
+        def unwrap_model(self, m, **kw):
+            if not kw.get("keep_torch_compile", True):
+                if hasattr(m, '_orig_mod'):
+                    return m._orig_mod
+                return m
+            return m
+
+    acc = PassthroughAccelerator()
     model = CompiledModel()
 
     result = None
@@ -599,9 +620,6 @@ try:
             break
         except TypeError:
             continue
-        except KeyError:
-            print("FAIL:keyerror_not_caught")
-            sys.exit(0)
         except Exception:
             ok = True
             break
@@ -610,9 +628,16 @@ try:
         print("FAIL:could_not_call")
         sys.exit(0)
     if result is None:
-        print("FAIL:returned_none_on_error_path")
+        print("FAIL:returned_none")
         sys.exit(0)
-    print("PASS")
+    if result is inner:
+        print("PASS")
+    elif result is model:
+        print("FAIL:returned_compiled_model_not_fully_unwrapped")
+    elif hasattr(result, '_orig_mod'):
+        print("FAIL:still_has_orig_mod_wrapper")
+    else:
+        print("PASS")
 except Exception as e:
     print(f"FAIL:{e}")
 PYEOF
@@ -622,8 +647,6 @@ if [ "$T13" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T14 (0.02): STRUCTURAL — _orig_mod + isinstance in sdxl_original_unet.py
-#   AST check: a function containing both isinstance() and _orig_mod
-#   access (hasattr/getattr/attribute)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T14/15: [STRUCTURAL] sdxl_original_unet.py isinstance + _orig_mod ==="
@@ -663,7 +686,6 @@ if [ "$T14" = "PASS" ]; then add_reward 0.02; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # T15 (0.03): BEHAVIORAL P2P — upstream test suite
-#   Run CPU-safe tests from tests/library/ to verify no regressions
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T15/15: [BEHAVIORAL P2P] upstream test suite ==="

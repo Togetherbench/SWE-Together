@@ -61,10 +61,14 @@ RUN pip install --no-cache-dir \
     sentencepiece \
     spandrel
 
-# Install pytest for upstream P2P regression tests
-RUN pip install --no-cache-dir pytest pytest-timeout
+# Install pytest and cv2 for upstream P2P regression tests
+RUN pip install --no-cache-dir pytest pytest-timeout opencv-python-headless
 
 # Set PYTHONPATH so comfy modules are importable
+
+# Patch model_management.py for CPU-only torch (no CUDA assertions)
+RUN sed -i 's/if args\.cpu:/if args.cpu or not torch.cuda.is_available():/' \
+    /workspace/ComfyUI/comfy/model_management.py
 ENV PYTHONPATH="/workspace/ComfyUI"
 
 # Configure git for agent use
@@ -86,5 +90,7 @@ RUN curl -fsSL -o /tmp/libevent.deb \
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
 
+# Remove any AGENTS.md or CLAUDE.md that might constrain agent behavior
+RUN rm -f /workspace/ComfyUI/AGENTS.md /workspace/ComfyUI/CLAUDE.md
 
 WORKDIR /workspace/ComfyUI

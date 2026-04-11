@@ -60,7 +60,14 @@ RUN pip install --no-cache-dir \
 # Install pytest for upstream P2P regression tests
 RUN pip install --no-cache-dir pytest pytest-timeout
 
+# Install av for ComfyUI upstream tests (comfy_api imports)
+RUN pip install --no-cache-dir av
+
 # Set PYTHONPATH so comfy modules are importable
+
+# Patch model_management.py for CPU-only torch (no CUDA assertions)
+RUN sed -i 's/if args\.cpu:/if args.cpu or not torch.cuda.is_available():/' \
+    /workspace/ComfyUI/comfy/model_management.py
 ENV PYTHONPATH="/workspace/ComfyUI:$PYTHONPATH"
 
 # Configure git for agent use
@@ -89,6 +96,5 @@ RUN cd /workspace/ComfyUI && \
 # Pre-install Claude Code CLI (standalone binary, no Node.js needed)
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
-
 
 WORKDIR /workspace/ComfyUI

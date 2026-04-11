@@ -2,23 +2,11 @@
 #
 # Verification tests for reigh TimelineModeContent refactor.
 #
-# 15 tests, 100 points total → reward = PASS/100
+# 16 tests, 100 points total -> reward = PASS/100
 #
-#   Structural (10%):  T1-T4   (2+2+3+3 = 10 pts)
-#   Behavioral (90%):  T5-T15  (10+7+7+7+6+6+10+15+12+5+5 = 90 pts)
-#
-# Prop mapping tests (T6-T10) check that ShotImagesEditor passes the
-# correctly-renamed props to <Timeline> — each checks a different prop name
-# to catch partial or hardcoded solutions.
-#
-# Gaming analysis (stub scores):
-#   No changes:             T5(10)+T14(5)              = 0.15
-#   Delete TMC only:        T1(2)+T14(5)               = 0.07
-#   Trivial SIE edit+commit: T5(10)+T14(5)+T15(5)      = 0.20
-#   All structural hacks:   T1-T4(10)+T14(5)           = 0.15
-#   Core refactor only:     10+10+40+10+5+5            = 0.80
-#   Core + partial cleanup: 80+15                      = 0.95
-#   Full solution:          100                        = 1.00
+#   P2P        ( 5%):  T5       (5 pts)   -- tsc must pass (baseline & post-refactor)
+#   Structural (10%):  T1-T4    (2+2+3+3 = 10 pts)
+#   Behavioral (85%):  T6-T16   (6+6+8+7+7+10+10+8+3+5+3+5+5 = 85 pts)
 #
 set +e
 
@@ -59,10 +47,11 @@ else
 fi
 
 ###############################################################################
-# Pre-check: Extract <Timeline> JSX props from ShotImagesEditor (used by T6-T10)
+# Pre-check: Extract <Timeline> JSX props from ShotImagesEditor (used by T6-T16)
 ###############################################################################
 
 TIMELINE_PROPS=""
+TIMELINE_PROP_VALUES=""
 if [ -f "$SHOT_EDITOR" ] && [ -d "$TS_MOD" ]; then
     TIMELINE_PROPS=$(node -e "
 const ts = require('$TS_MOD');
@@ -84,7 +73,37 @@ function visit(node) {
 ts.forEachChild(sf, visit);
 for (const p of props) console.log(p);
 " 2>/dev/null)
-    echo "Extracted $(echo "$TIMELINE_PROPS" | grep -c .) Timeline props from ShotImagesEditor"
+    PROP_COUNT=$(echo "$TIMELINE_PROPS" | grep -c .)
+    echo "Extracted $PROP_COUNT Timeline props from ShotImagesEditor"
+
+    # Also extract prop name=value pairs for value checks
+    TIMELINE_PROP_VALUES=$(node -e "
+const ts = require('$TS_MOD');
+const fs = require('fs');
+const src = fs.readFileSync('$SHOT_EDITOR', 'utf8');
+const sf = ts.createSourceFile('f.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function visit(node) {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+        ts.isIdentifier(node.tagName) && node.tagName.escapedText === 'Timeline') {
+        for (const attr of node.attributes.properties) {
+            if (ts.isJsxAttribute(attr) && ts.isIdentifier(attr.name)) {
+                const name = attr.name.escapedText;
+                let value = '';
+                if (attr.initializer) {
+                    if (ts.isJsxExpression(attr.initializer) && attr.initializer.expression) {
+                        value = attr.initializer.expression.getText(sf);
+                    } else if (ts.isStringLiteral(attr.initializer)) {
+                        value = attr.initializer.text;
+                    }
+                }
+                console.log(name + '=' + value);
+            }
+        }
+    }
+    ts.forEachChild(node, visit);
+}
+ts.forEachChild(sf, visit);
+" 2>/dev/null)
 fi
 
 ###############################################################################
@@ -117,17 +136,17 @@ else
 fi
 
 ###############################################################################
-# T3 (3 pts, structural): No file in src/ imports/exports TimelineModeContent
+# T3 (3 pts, structural): No file in src/ imports/exports/uses TimelineModeContent
 ###############################################################################
 
 echo ""
-echo "=== T3: No TMC imports in codebase (3 pts) ==="
-TMC_REFS=$(grep -rl 'TimelineModeContent' "$SRC" --include='*.ts' --include='*.tsx' 2>/dev/null | head -5)
+echo "=== T3: No TMC code references in codebase (3 pts) ==="
+TMC_REFS=$(grep -rlE "(import|export)\b.*TimelineModeContent|<\/?TimelineModeContent" "$SRC" --include='*.ts' --include='*.tsx' 2>/dev/null | head -5)
 if [ -z "$TMC_REFS" ]; then
     echo "PASS"
     PASS=$((PASS + 3))
 else
-    echo "FAIL: references found in:"
+    echo "FAIL: code references found in:"
     echo "$TMC_REFS"
 fi
 
@@ -156,14 +175,14 @@ else
 fi
 
 ###############################################################################
-# T5 (10 pts, behavioral): tsc --noEmit passes
+# T5 (5 pts, P2P): tsc --noEmit passes
 ###############################################################################
 
 echo ""
-echo "=== T5: TSC compilation passes (10 pts) ==="
+echo "=== T5: TSC compilation passes (5 pts, P2P) ==="
 if [ "$TSC_PASSED" -eq 1 ]; then
     echo "PASS"
-    PASS=$((PASS + 10))
+    PASS=$((PASS + 5))
 else
     echo "FAIL: TypeScript compilation did not pass"
 fi
@@ -194,34 +213,34 @@ check_prop() {
 }
 
 ###############################################################################
-# T6 (7 pts, behavioral): frameSpacing prop (renamed from batchVideoFrames)
+# T6 (6 pts, behavioral): frameSpacing prop (renamed from batchVideoFrames)
 ###############################################################################
 
-check_prop "frameSpacing" 7 "T6: frameSpacing prop"
+check_prop "frameSpacing" 6 "T6: frameSpacing prop"
 
 ###############################################################################
-# T7 (7 pts, behavioral): onTimelineChange prop (renamed from handleTimelineChange)
+# T7 (6 pts, behavioral): onTimelineChange prop (renamed from handleTimelineChange)
 ###############################################################################
 
-check_prop "onTimelineChange" 7 "T7: onTimelineChange prop"
+check_prop "onTimelineChange" 6 "T7: onTimelineChange prop"
 
 ###############################################################################
-# T8 (7 pts, behavioral): onSegmentFrameCountChange prop (renamed from updatePairFrameCount)
+# T8 (8 pts, behavioral): onSegmentFrameCountChange prop (renamed from updatePairFrameCount)
 ###############################################################################
 
-check_prop "onSegmentFrameCountChange" 7 "T8: onSegmentFrameCountChange prop"
+check_prop "onSegmentFrameCountChange" 8 "T8: onSegmentFrameCountChange prop"
 
 ###############################################################################
-# T9 (6 pts, behavioral): onClearEnhancedPrompt + onDragStateChange (3 pts each)
+# T9 (7 pts, behavioral): onClearEnhancedPrompt (4) + onDragStateChange (3)
 ###############################################################################
 
 echo ""
-echo "=== T9: onClearEnhancedPrompt + onDragStateChange (6 pts) ==="
+echo "=== T9: onClearEnhancedPrompt + onDragStateChange (7 pts) ==="
 T9=0
 if [ "$TSC_PASSED" -eq 1 ]; then
     if echo "$TIMELINE_PROPS" | grep -q "^onClearEnhancedPrompt$"; then
-        echo "  +3: onClearEnhancedPrompt found"
-        T9=$((T9 + 3))
+        echo "  +4: onClearEnhancedPrompt found"
+        T9=$((T9 + 4))
     else
         echo "  -0: onClearEnhancedPrompt not found"
     fi
@@ -234,20 +253,20 @@ if [ "$TSC_PASSED" -eq 1 ]; then
 else
     echo "FAIL: tsc did not pass"
 fi
-echo "  $T9/6 pts"
+echo "  $T9/7 pts"
 PASS=$((PASS + T9))
 
 ###############################################################################
-# T10 (6 pts, behavioral): onPairClick + onRegisterTrailingUpdater (3 pts each)
+# T10 (7 pts, behavioral): onPairClick (4) + onRegisterTrailingUpdater (3)
 ###############################################################################
 
 echo ""
-echo "=== T10: onPairClick + onRegisterTrailingUpdater (6 pts) ==="
+echo "=== T10: onPairClick + onRegisterTrailingUpdater (7 pts) ==="
 T10=0
 if [ "$TSC_PASSED" -eq 1 ]; then
     if echo "$TIMELINE_PROPS" | grep -q "^onPairClick$"; then
-        echo "  +3: onPairClick found"
-        T10=$((T10 + 3))
+        echo "  +4: onPairClick found"
+        T10=$((T10 + 4))
     else
         echo "  -0: onPairClick not found"
     fi
@@ -260,13 +279,11 @@ if [ "$TSC_PASSED" -eq 1 ]; then
 else
     echo "FAIL: tsc did not pass"
 fi
-echo "  $T10/6 pts"
+echo "  $T10/7 pts"
 PASS=$((PASS + T10))
 
 ###############################################################################
 # T11 (10 pts, behavioral): Unpositioned generations div inlined into ShotImagesEditor
-#   Sub-checks target content that only exists in TimelineModeContent.tsx
-#   at the base commit — NOT in ShotImagesEditor.tsx originally.
 ###############################################################################
 
 echo ""
@@ -274,7 +291,6 @@ echo "=== T11: Unpositioned div inlined (10 pts) ==="
 T11=0
 if [ "$TSC_PASSED" -eq 1 ] && [ -f "$SHOT_EDITOR" ]; then
     # Sub-check a (4 pts): "unpositioned generation" text literal
-    # At base commit this text is ONLY in TimelineModeContent.tsx, not ShotImagesEditor
     if grep -q 'unpositioned generation' "$SHOT_EDITOR"; then
         echo "  +4: 'unpositioned generation' text found"
         T11=$((T11 + 4))
@@ -283,8 +299,6 @@ if [ "$TSC_PASSED" -eq 1 ] && [ -f "$SHOT_EDITOR" ]; then
     fi
 
     # Sub-check b (3 pts): Conditional rendering on count
-    # Original ShotImagesEditor only passes count as a prop; the conditional
-    # (count > 0, count &&, etc.) is in TimelineModeContent
     if grep -qE 'unpositionedGenerationsCount\s*(>|&&|!==|\?)' "$SHOT_EDITOR"; then
         echo "  +3: conditional rendering on count"
         T11=$((T11 + 3))
@@ -293,7 +307,6 @@ if [ "$TSC_PASSED" -eq 1 ] && [ -f "$SHOT_EDITOR" ]; then
     fi
 
     # Sub-check c (3 pts): "View & Position" or "View" button text
-    # At base commit this text is ONLY in TimelineModeContent.tsx
     if grep -qE 'View.*Position' "$SHOT_EDITOR"; then
         echo "  +3: 'View & Position' text found"
         T11=$((T11 + 3))
@@ -307,16 +320,16 @@ echo "  $T11/10 pts"
 PASS=$((PASS + T11))
 
 ###############################################################################
-# T12 (15 pts, behavioral): hookData + pairPrompts removed from Timeline.tsx
+# T12 (10 pts, behavioral): hookData + pairPrompts removed from Timeline.tsx
 #   These are dead props that were only passed from TimelineModeContent.
 #   After deleting TMC, they serve no purpose in Timeline's interface.
 ###############################################################################
 
 echo ""
-echo "=== T12: hookData + pairPrompts cleanup (15 pts) ==="
+echo "=== T12: hookData + pairPrompts cleanup (10 pts) ==="
 T12=0
 if [ "$TSC_PASSED" -eq 1 ] && [ -f "$TIMELINE" ]; then
-    # Sub-check a (8 pts): hookData removed from interface
+    # Sub-check a (5 pts): hookData removed from interface
     HOOK_FOUND=$(node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -339,13 +352,13 @@ console.log(found ? 'PRESENT' : 'REMOVED');
 " 2>/dev/null)
 
     if [ "$HOOK_FOUND" = "REMOVED" ]; then
-        echo "  +8: hookData removed from Timeline interface"
-        T12=$((T12 + 8))
+        echo "  +5: hookData removed from Timeline interface"
+        T12=$((T12 + 5))
     else
         echo "  -0: hookData still in Timeline interface"
     fi
 
-    # Sub-check b (7 pts): pairPrompts removed from interface
+    # Sub-check b (5 pts): pairPrompts removed from interface
     PAIR_FOUND=$(node -e "
 const ts = require('$TS_MOD');
 const fs = require('fs');
@@ -368,27 +381,27 @@ console.log(found ? 'PRESENT' : 'REMOVED');
 " 2>/dev/null)
 
     if [ "$PAIR_FOUND" = "REMOVED" ]; then
-        echo "  +7: pairPrompts removed from Timeline interface"
-        T12=$((T12 + 7))
+        echo "  +5: pairPrompts removed from Timeline interface"
+        T12=$((T12 + 5))
     else
         echo "  -0: pairPrompts still in Timeline interface"
     fi
 else
     echo "FAIL: tsc did not pass or Timeline.tsx not found"
 fi
-echo "  $T12/15 pts"
+echo "  $T12/10 pts"
 PASS=$((PASS + T12))
 
 ###############################################################################
-# T13 (12 pts, behavioral): enhancedPrompts + EMPTY_ENHANCED_PROMPTS removed
+# T13 (8 pts, behavioral): enhancedPrompts + EMPTY_ENHANCED_PROMPTS removed
 #   Checks Timeline.tsx (const + interface) and TimelineContainer (types + usage)
 ###############################################################################
 
 echo ""
-echo "=== T13: enhancedPrompts + EMPTY_ENHANCED_PROMPTS cleanup (12 pts) ==="
+echo "=== T13: enhancedPrompts + EMPTY_ENHANCED_PROMPTS cleanup (8 pts) ==="
 T13=0
 if [ "$TSC_PASSED" -eq 1 ]; then
-    # Sub-check a (4 pts): EMPTY_ENHANCED_PROMPTS const removed from Timeline.tsx
+    # Sub-check a (3 pts): EMPTY_ENHANCED_PROMPTS const removed from Timeline.tsx
     if [ -f "$TIMELINE" ]; then
         CONST_FOUND=$(node -e "
 const ts = require('$TS_MOD');
@@ -406,14 +419,14 @@ console.log(found ? 'PRESENT' : 'REMOVED');
 " 2>/dev/null)
 
         if [ "$CONST_FOUND" = "REMOVED" ]; then
-            echo "  +4: EMPTY_ENHANCED_PROMPTS removed from Timeline.tsx"
-            T13=$((T13 + 4))
+            echo "  +3: EMPTY_ENHANCED_PROMPTS removed from Timeline.tsx"
+            T13=$((T13 + 3))
         else
             echo "  -0: EMPTY_ENHANCED_PROMPTS still in Timeline.tsx"
         fi
     fi
 
-    # Sub-check b (4 pts): enhancedPrompts removed from Timeline.tsx interface
+    # Sub-check b (3 pts): enhancedPrompts removed from Timeline.tsx interface
     if [ -f "$TIMELINE" ]; then
         EP_FOUND=$(node -e "
 const ts = require('$TS_MOD');
@@ -435,14 +448,14 @@ console.log(found ? 'PRESENT' : 'REMOVED');
 " 2>/dev/null)
 
         if [ "$EP_FOUND" = "REMOVED" ]; then
-            echo "  +4: enhancedPrompts removed from Timeline.tsx interface"
-            T13=$((T13 + 4))
+            echo "  +3: enhancedPrompts removed from Timeline.tsx interface"
+            T13=$((T13 + 3))
         else
             echo "  -0: enhancedPrompts still in Timeline.tsx interface"
         fi
     fi
 
-    # Sub-check c (4 pts): enhancedPrompts + enhancedPromptFromProps from TimelineContainer
+    # Sub-check c (2 pts): enhancedPrompts + enhancedPromptFromProps from TimelineContainer
     TC_CLEAN=1
     if [ -f "$TC_TYPES" ] && grep -q 'enhancedPrompts' "$TC_TYPES" 2>/dev/null; then
         echo "  -0: enhancedPrompts still in TimelineContainer types"
@@ -453,64 +466,168 @@ console.log(found ? 'PRESENT' : 'REMOVED');
         TC_CLEAN=0
     fi
     if [ "$TC_CLEAN" -eq 1 ]; then
-        echo "  +4: TimelineContainer cleaned of enhancedPrompts"
-        T13=$((T13 + 4))
+        echo "  +2: TimelineContainer cleaned of enhancedPrompts"
+        T13=$((T13 + 2))
     fi
 else
     echo "FAIL: tsc did not pass"
 fi
-echo "  $T13/12 pts"
+echo "  $T13/8 pts"
 PASS=$((PASS + T13))
 
 ###############################################################################
-# T14 (5 pts, behavioral): Pass-to-Pass upstream vitest tests
+# T14 (3 pts, behavioral): onOpenSegmentSlot adapter present on <Timeline>
 ###############################################################################
 
 echo ""
-echo "=== T14: P2P upstream vitest (5 pts) ==="
-cd "$REPO"
-if [ -f "$REPO/node_modules/.bin/vitest" ]; then
-    VITEST_OUT=$(timeout 60 npx vitest run src/test/supabaseAuth.test.ts src/test/systemLogger.test.ts --reporter=verbose 2>&1)
-    VITEST_EXIT=$?
-    if [ $VITEST_EXIT -eq 0 ]; then
-        echo "PASS: upstream vitest tests pass"
-        PASS=$((PASS + 5))
-    elif echo "$VITEST_OUT" | grep -qiE "Cannot find module|ERR_MODULE_NOT_FOUND|Error: Failed to collect|Config error|no test file|ENOENT|Cannot read config"; then
-        echo "SKIP: vitest infra issue (not agent's fault), awarding P2P"
-        PASS=$((PASS + 5))
+echo "=== T14: onOpenSegmentSlot adapter (3 pts) ==="
+if [ "$TSC_PASSED" -eq 1 ]; then
+    if echo "$TIMELINE_PROPS" | grep -q "^onOpenSegmentSlot$"; then
+        echo "PASS: onOpenSegmentSlot found on <Timeline>"
+        PASS=$((PASS + 3))
     else
-        echo "FAIL: upstream vitest tests failed"
-        echo "$VITEST_OUT" | tail -10
+        echo "FAIL: onOpenSegmentSlot not found -- TMC's inline adapter not migrated"
     fi
 else
-    echo "SKIP: vitest not installed, awarding P2P"
-    PASS=$((PASS + 5))
+    echo "FAIL: tsc did not pass"
 fi
 
 ###############################################################################
-# T15 (5 pts, behavioral): Changes committed (ShotImagesEditor modified in git)
+# T15 (5 pts, behavioral): Changes applied (committed OR uncommitted)
+#   In single-turn mode, agents may not commit. Credit for the work done.
 ###############################################################################
 
 echo ""
-echo "=== T15: Changes committed (5 pts) ==="
+echo "=== T15: Changes applied (5 pts) ==="
 cd "$REPO"
+T15_PASS=0
 FIRST_COMMIT=$(git rev-list --max-parents=0 HEAD 2>/dev/null)
 if [ -n "$FIRST_COMMIT" ] && [ "$(git rev-parse HEAD 2>/dev/null)" != "$FIRST_COMMIT" ]; then
     DIFF_FILES=$(git diff "$FIRST_COMMIT" HEAD --name-only 2>/dev/null)
     if echo "$DIFF_FILES" | grep -q 'ShotImagesEditor'; then
         echo "PASS: ShotImagesEditor changes committed"
-        PASS=$((PASS + 5))
-    else
-        echo "FAIL: commits exist but ShotImagesEditor not in diff"
-    fi
-else
-    # Check for uncommitted changes as fallback
-    if git diff --name-only 2>/dev/null | grep -q 'ShotImagesEditor'; then
-        echo "FAIL: ShotImagesEditor modified but not committed"
-    else
-        echo "FAIL: no changes detected"
+        T15_PASS=1
     fi
 fi
+if [ "$T15_PASS" -eq 0 ]; then
+    # Check for uncommitted changes as fallback (single-turn agents may not commit)
+    UNCOMMITTED=$(git diff --name-only 2>/dev/null)
+    if echo "$UNCOMMITTED" | grep -q 'ShotImagesEditor'; then
+        echo "PASS: ShotImagesEditor modified (uncommitted)"
+        T15_PASS=1
+    fi
+fi
+if [ "$T15_PASS" -eq 1 ]; then
+    PASS=$((PASS + 5))
+else
+    echo "FAIL: no changes detected"
+fi
+
+###############################################################################
+# T16 (3 pts, behavioral): allGenerations + shotGenerations props present
+###############################################################################
+
+echo ""
+echo "=== T16: allGenerations + shotGenerations mapping (3 pts) ==="
+T16=0
+if [ "$TSC_PASSED" -eq 1 ]; then
+    if echo "$TIMELINE_PROPS" | grep -q "^allGenerations$"; then
+        echo "  +2: allGenerations found on <Timeline>"
+        T16=$((T16 + 2))
+    else
+        echo "  -0: allGenerations not found -- preloadedImages not forwarded"
+    fi
+    if echo "$TIMELINE_PROPS" | grep -q "^shotGenerations$"; then
+        echo "  +1: shotGenerations found on <Timeline>"
+        T16=$((T16 + 1))
+    else
+        echo "  -0: shotGenerations not found -- memoizedShotGenerations not forwarded"
+    fi
+else
+    echo "FAIL: tsc did not pass"
+fi
+echo "  $T16/3 pts"
+PASS=$((PASS + T16))
+
+###############################################################################
+# T17 (5 pts, behavioral): Prop value correctness -- verify specific mappings
+#   Checks that renamed props receive the correct value expressions, not just
+#   that the prop name exists. Uses AST to inspect the value side of each JSX
+#   attribute assignment.
+###############################################################################
+
+echo ""
+echo "=== T17: Prop value correctness (6 pts) ==="
+T17=0
+if [ "$TSC_PASSED" -eq 1 ] && [ -n "$TIMELINE_PROP_VALUES" ]; then
+    # Check frameSpacing=batchVideoFrames (2 pts)
+    if echo "$TIMELINE_PROP_VALUES" | grep -q '^frameSpacing=batchVideoFrames$'; then
+        echo "  +2: frameSpacing correctly maps to batchVideoFrames"
+        T17=$((T17 + 2))
+    else
+        echo "  -0: frameSpacing value incorrect"
+    fi
+
+    # Check onSegmentFrameCountChange=updatePairFrameCount (2 pts)
+    if echo "$TIMELINE_PROP_VALUES" | grep -q '^onSegmentFrameCountChange=updatePairFrameCount$'; then
+        echo "  +2: onSegmentFrameCountChange correctly maps to updatePairFrameCount"
+        T17=$((T17 + 2))
+    else
+        echo "  -0: onSegmentFrameCountChange value incorrect"
+    fi
+
+    # Check onRegisterTrailingUpdater=registerTrailingUpdater (2 pts)
+    if echo "$TIMELINE_PROP_VALUES" | grep -q '^onRegisterTrailingUpdater=registerTrailingUpdater$'; then
+        echo "  +2: onRegisterTrailingUpdater correctly maps to registerTrailingUpdater"
+        T17=$((T17 + 2))
+    else
+        echo "  -0: onRegisterTrailingUpdater value incorrect"
+    fi
+else
+    echo "FAIL: tsc did not pass or prop values not extracted"
+fi
+echo "  $T17/6 pts"
+PASS=$((PASS + T17))
+
+###############################################################################
+# T18 (5 pts, behavioral): Conditional adapter patterns preserved
+#   ShotImagesEditor passes onAddToShot/onAddToShotWithoutPosition/onCreateShot
+#   through conditional adapters: e.g. onAddToShot ? handleAddToShotAdapter : undefined
+#   After TMC elimination, these conditionals must be preserved on <Timeline>.
+###############################################################################
+
+echo ""
+echo "=== T18: Conditional adapter patterns (6 pts) ==="
+T18=0
+if [ "$TSC_PASSED" -eq 1 ] && [ -f "$SHOT_EDITOR" ]; then
+    # Check for conditional adapter pattern on onAddToShot (2 pts)
+    if echo "$TIMELINE_PROP_VALUES" | grep -q '^onAddToShot=.*handleAddToShotAdapter.*undefined'; then
+        echo "  +2: onAddToShot conditional adapter preserved"
+        T18=$((T18 + 2))
+    else
+        echo "  -0: onAddToShot conditional adapter not found"
+    fi
+
+    # Check for conditional adapter pattern on onCreateShot (2 pts)
+    if echo "$TIMELINE_PROP_VALUES" | grep -q '^onCreateShot=.*handleCreateShotAdapter.*undefined'; then
+        echo "  +2: onCreateShot conditional adapter preserved"
+        T18=$((T18 + 2))
+    else
+        echo "  -0: onCreateShot conditional adapter not found"
+    fi
+
+    # Check for conditional adapter pattern on onAddToShotWithoutPosition (2 pts)
+    if echo "$TIMELINE_PROP_VALUES" | grep -q '^onAddToShotWithoutPosition=.*handleAddToShotWithoutPositionAdapter.*undefined'; then
+        echo "  +2: onAddToShotWithoutPosition conditional adapter preserved"
+        T18=$((T18 + 2))
+    else
+        echo "  -0: onAddToShotWithoutPosition conditional adapter not found"
+    fi
+else
+    echo "FAIL: tsc did not pass or ShotImagesEditor not found"
+fi
+echo "  $T18/6 pts"
+PASS=$((PASS + T18))
 
 ###############################################################################
 # Results

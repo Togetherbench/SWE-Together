@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    curl \
     ca-certificates \
     tmux \
     && rm -rf /var/lib/apt/lists/* && \
@@ -49,11 +50,33 @@ RUN pip install --no-cache-dir \
 # CPU compat: patch unsloth_zoo's get_device_type to return "cpu" instead of
 # raising NotImplementedError on CPU-only Docker.  The function checks for CUDA,
 # ROCm, XPU etc. and raises if none found.  We make it fall back to "cpu".
+# Patch ALL NotImplementedError raises (there are two: "You need a GPU" and
+# "Unsloth currently only works on NVIDIA, AMD and Intel GPUs").
 RUN SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
     DT="$SITE/unsloth_zoo/device_type.py" && \
     if [ -f "$DT" ]; then \
-      sed -i 's/raise NotImplementedError.*You need a GPU.*/return "cpu"/' "$DT" && \
+      sed -i 's/raise NotImplementedError.*/return "cpu"/' "$DT" && \
       echo "Patched unsloth_zoo device_type.py for CPU compat"; \
+    fi
+
+# Set UNSLOTH_IS_PRESENT so unsloth_zoo submodule imports don't fail.
+# Normally set by `import unsloth`, but we need it available at all times.
+ENV UNSLOTH_IS_PRESENT=1
+
+# Patch unsloth_zoo/temporary_patches for CPU-only environments:
+# 1. gpt_oss.py: module-level CUDA memory call crashes on CPU
+# 2. utils.py: re-raises ImportError from triton version mismatch
+RUN SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
+    GPT="$SITE/unsloth_zoo/temporary_patches/gpt_oss.py" && \
+    if [ -f "$GPT" ]; then \
+      sed -i 's/device_memory = torch\.cuda\.memory\.mem_get_info(0)\[-1\]/device_memory = 0  # patched for CPU/' "$GPT" && \
+      sed -i 's/device_memory = torch\.xpu\.memory\.mem_get_info(0)\[-1\]/device_memory = 0  # patched for CPU/' "$GPT" && \
+      echo "Patched gpt_oss.py for CPU compat"; \
+    fi && \
+    UTILS="$SITE/unsloth_zoo/temporary_patches/utils.py" && \
+    if [ -f "$UTILS" ]; then \
+      sed -i 's/    elif "Unpack" not in e:/    elif "Unpack" not in e and False:/' "$UTILS" && \
+      echo "Patched utils.py to not re-raise triton errors"; \
     fi
 
 # Install optional deps that may not be available on all architectures
@@ -67,6 +90,9 @@ RUN cd /workspace/unsloth && \
 
 # Set PYTHONPATH so unsloth modules are importable
 ENV PYTHONPATH="/workspace/unsloth:${PYTHONPATH}"
+
+# Remove AGENTS.md / CLAUDE.md if present — these can block or confuse agents
+RUN cd /workspace/unsloth && rm -f AGENTS.md CLAUDE.md
 
 # Commit the initial workspace state so git diff can measure agent changes
 RUN cd /workspace/unsloth && \

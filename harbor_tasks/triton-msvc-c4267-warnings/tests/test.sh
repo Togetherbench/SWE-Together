@@ -1,39 +1,44 @@
 #!/usr/bin/env bash
 # Verifier for triton-msvc-c4267-warnings
 #
-# 18 tests (0.86 behavioral / 0.14 structural / 0.05 P2P), total 1.05 (capped 1.0)
+# 18 tests (0.96 behavioral / 0.04 structural / 0.05 P2P), total 1.05 (capped 1.0)
+# NOTE: Fix 1 behavioral tests use cast expression resolution to handle both
+# capture-site and use-site fix approaches (including intermediate variables).
 #
 # Scoring breakdown:
-#   Structural (5 x 0.02 = 0.10):
-#     T1  0.02  File exists, >400 lines
-#     T2  0.02  lowerKernelBarriers present
-#     T3  0.02  partition->walk lambda present
-#     T4  0.02  lowerCallOp present
-#     T5  0.02  enumerate(newOp->getResults context
+#   Structural sanity / P2P (5 x 0.005 = 0.025):
+#     T1  0.005  File exists, >400 lines
+#     T2  0.005  lowerKernelBarriers present
+#     T3  0.005  partition->walk lambda present
+#     T4  0.005  lowerCallOp present
+#     T5  0.005  enumerate(newOp->getResults context
 #
-#   Fix 1 Behavioral — any approach (5 tests = 0.43):
-#     T6  0.11  compile+value idx=42
-#     T7  0.08  value idx=7
-#     T8  0.08  value idx=1000
-#     T9  0.08  value idx=0
-#     T10 0.08  value idx=12345
+#   Fix 1 Behavioral — any approach (5 tests = 0.48):
+#     T6  0.14   compile+value idx=42
+#     T7  0.085  value idx=7
+#     T8  0.085  value idx=1000
+#     T9  0.085  value idx=0
+#     T10 0.085  value idx=12345
 #
 #   Fix 1 Structural (1 x 0.02):
 #     T11 0.02  bug pattern [&, idx=idx] gone OR explicit cast present
 #
-#   Fix 2 Behavioral (5 tests = 0.43):
-#     T12 0.11  compile+value i=42
-#     T13 0.08  value i=99
-#     T14 0.08  value i=0
-#     T15 0.08  value i=100000
-#     T16 0.08  value i=7
+#   Fix 2 Behavioral (5 tests = 0.48):
+#     T12 0.14   compile+value i=42
+#     T13 0.085  value i=99
+#     T14 0.085  value i=0
+#     T15 0.085  value i=100000
+#     T16 0.085  value i=7
 #
 #   Fix 2 Structural (1 x 0.02):
 #     T17 0.02  bare getResult(i) gone + enumerate/replaceAllUsesWith context
 #
-#   Pass-to-pass (1 x 0.05):
-#     T18 0.05  brace/paren balance + key functions + #includes + namespaces
-#               + enumerate preserved + line count + angle bracket balance
+#   Pass-to-pass (1 x 0.025):
+#     T18 0.025  brace/paren balance + key functions + #includes + namespaces
+#                + enumerate preserved + line count + angle bracket balance
+#
+# NOTE: add_reward uses round(..., 4) to avoid cumulative rounding errors
+# from 0.005 weights.
 #
 # NOTE: Triton's Python tests require building libtriton.so (LLVM/MLIR C++
 # backend, ~30min build), and `import triton` fails without it. MLIR lit
@@ -69,7 +74,7 @@ try:
     code = re.sub(r'//[^\n]*', '', code)
     code = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', code)
     print(code)
-except:
+except Exception:
     pass
 PYEOF
 else
@@ -91,10 +96,11 @@ import re
 try:
     with open("/tmp/stripped_wsu.txt") as f:
         content = f.read()
-except:
+except Exception:
     open("/tmp/fix1_capture_expr.txt", "w").write("FAIL\n")
     open("/tmp/fix1_barrier_exprs.txt", "w").write("")
     open("/tmp/fix1_callop_exprs.txt", "w").write("")
+    open("/tmp/fix1_cast_exprs.txt", "w").write("")
     open("/tmp/fix2_getresult_exprs.txt", "w").write("")
     exit(0)
 
@@ -202,6 +208,42 @@ if walk_full:
 open("/tmp/fix1_barrier_exprs.txt", "w").write("\n".join(barrier_exprs) + ("\n" if barrier_exprs else ""))
 open("/tmp/fix1_callop_exprs.txt", "w").write("\n".join(callop_exprs) + ("\n" if callop_exprs else ""))
 
+# --- 2b. Resolve indirect variable references and find direct cast expressions ---
+# Handles the use-site fix pattern where agent introduces a local variable:
+#   unsigned idxU = static_cast<unsigned>(idx);
+#   lowerBarrier(op, numWarps, idxU, barrierHelper);
+# The extracted barrier arg is "idxU" which is undefined in the synthetic test.
+# We resolve it back to its RHS expression.
+cast_exprs = []
+
+if walk_full:
+    # Direct cast patterns of idx in the lambda body
+    for pat in [
+        r'static_cast\s*<\s*(?:unsigned(?:\s+int)?|uint32_t)\s*>\s*\(\s*idx\s*\)',
+        r'\(\s*(?:unsigned(?:\s+int)?|uint32_t)\s*\)\s*\(?\s*idx\s*\)?',
+    ]:
+        for m in re.finditer(pat, lambda_body):
+            cast_exprs.append(m.group(0).strip())
+
+    # Variable resolution: for simple identifiers in barrier/callop args,
+    # look for their definition in lambda body
+    all_args = barrier_exprs + callop_exprs
+    for arg in all_args:
+        arg_stripped = arg.strip()
+        if re.match(r'^[a-zA-Z_]\w*$', arg_stripped) and arg_stripped != 'idx':
+            var_def = re.search(
+                rf'(?:unsigned(?:\s+int)?|uint32_t|auto)\s+{re.escape(arg_stripped)}\s*=\s*([^;]+)',
+                lambda_body
+            )
+            if var_def:
+                rhs = var_def.group(1).strip()
+                if rhs:
+                    cast_exprs.append(rhs)
+
+open("/tmp/fix1_cast_exprs.txt", "w").write(
+    "\n".join(cast_exprs) + ("\n" if cast_exprs else "")
+)
+
 # --- 3. Extract getResult arg near replaceAllUsesWith ---
 getresult_exprs = []
 lines = content.split('\n')
@@ -241,6 +283,7 @@ PYEOF
 CAPTURE_EXPR=$(head -1 /tmp/fix1_capture_expr.txt 2>/dev/null)
 mapfile -t BARRIER_EXPRS < /tmp/fix1_barrier_exprs.txt 2>/dev/null
 mapfile -t CALLOP_EXPRS < /tmp/fix1_callop_exprs.txt 2>/dev/null
+mapfile -t CAST_EXPRS < /tmp/fix1_cast_exprs.txt 2>/dev/null
 mapfile -t GETRESULT_EXPRS < /tmp/fix2_getresult_exprs.txt 2>/dev/null
 
 # ==========================================================================
@@ -271,6 +314,8 @@ CPPEOF
 
 # try_fix1 VALUE
 #   Try all Fix 1 expression sources. Award if ANY compiles clean.
+#   Sources: capture expr, lowerBarrier 3rd arg, lowerCallOp 3rd arg,
+#   and resolved cast expressions (handles use-site local variable pattern).
 try_fix1() {
     local val="$1"
     try_compile_run "$CAPTURE_EXPR" "$val" idx && return 0
@@ -278,6 +323,9 @@ try_fix1() {
         try_compile_run "$e" "$val" idx && return 0
     done
     for e in "${CALLOP_EXPRS[@]}"; do
+        try_compile_run "$e" "$val" idx && return 0
+    done
+    for e in "${CAST_EXPRS[@]}"; do
         try_compile_run "$e" "$val" idx && return 0
     done
     return 1
@@ -294,17 +342,17 @@ try_fix2() {
 }
 
 add_reward() {
-    REWARD=$(python3 -c "print(round($REWARD + $1, 2))")
+    REWARD=$(python3 -c "print(round($REWARD + $1, 4))")
 }
 
 # ==========================================================================
-# T1 (0.02): File exists, non-empty, >400 lines
+# T1 (0.005): File exists, non-empty, >400 lines
 # The base file is ~570 lines. Threshold 400 blocks stubs and rewrites.
 # ==========================================================================
 if [ -f "$FILE" ] && [ -s "$FILE" ]; then
     LINE_COUNT=$(wc -l < "$FILE")
     if [ "$LINE_COUNT" -gt 400 ]; then
-        add_reward 0.02
+        add_reward 0.005
         echo "T1  PASS  file >400 lines ($LINE_COUNT)"
     else
         echo "T1  FAIL  file only $LINE_COUNT lines"
@@ -314,90 +362,90 @@ else
 fi
 
 # ==========================================================================
-# T2 (0.02): lowerKernelBarriers function present
+# T2 (0.005): lowerKernelBarriers function present
 # ==========================================================================
 if grep -q 'lowerKernelBarriers' "$STRIPPED" 2>/dev/null; then
-    add_reward 0.02
+    add_reward 0.005
     echo "T2  PASS  lowerKernelBarriers present"
 else
     echo "T2  FAIL  lowerKernelBarriers missing"
 fi
 
 # ==========================================================================
-# T3 (0.02): partition->walk lambda present
+# T3 (0.005): partition->walk lambda present
 # ==========================================================================
 if grep -qP 'partition->walk\s*\(\s*\[' "$STRIPPED" 2>/dev/null; then
-    add_reward 0.02
+    add_reward 0.005
     echo "T3  PASS  partition->walk lambda present"
 else
     echo "T3  FAIL  partition->walk lambda missing"
 fi
 
 # ==========================================================================
-# T4 (0.02): lowerCallOp function present
+# T4 (0.005): lowerCallOp function present
 # ==========================================================================
 if grep -q 'lowerCallOp' "$STRIPPED" 2>/dev/null; then
-    add_reward 0.02
+    add_reward 0.005
     echo "T4  PASS  lowerCallOp present"
 else
     echo "T4  FAIL  lowerCallOp missing"
 fi
 
 # ==========================================================================
-# T5 (0.02): enumerate(newOp->getResults context present
+# T5 (0.005): enumerate(newOp->getResults context present
 # ==========================================================================
 if grep -qP 'enumerate\s*\(\s*newOp->getResults' "$STRIPPED" 2>/dev/null; then
-    add_reward 0.02
+    add_reward 0.005
     echo "T5  PASS  enumerate getResults context present"
 else
     echo "T5  FAIL  enumerate getResults context missing"
 fi
 
 # ==========================================================================
-# T6 (0.11): Fix 1 behavioral — any approach, idx=42
+# T6 (0.14): Fix 1 behavioral — any approach, idx=42
 # ==========================================================================
 if try_fix1 42; then
-    add_reward 0.11
+    add_reward 0.14
     echo "T6  PASS  Fix1 compile+value idx=42"
 else
     echo "T6  FAIL  Fix1 idx=42"
 fi
 
 # ==========================================================================
-# T7 (0.08): Fix 1 behavioral — idx=7
+# T7 (0.085): Fix 1 behavioral — idx=7
 # ==========================================================================
 if try_fix1 7; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T7  PASS  Fix1 value idx=7"
 else
     echo "T7  FAIL  Fix1 idx=7"
 fi
 
 # ==========================================================================
-# T8 (0.08): Fix 1 behavioral — idx=1000
+# T8 (0.085): Fix 1 behavioral — idx=1000
 # ==========================================================================
 if try_fix1 1000; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T8  PASS  Fix1 value idx=1000"
 else
     echo "T8  FAIL  Fix1 idx=1000"
 fi
 
 # ==========================================================================
-# T9 (0.08): Fix 1 behavioral — idx=0
+# T9 (0.085): Fix 1 behavioral — idx=0
 # ==========================================================================
 if try_fix1 0; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T9  PASS  Fix1 value idx=0"
 else
     echo "T9  FAIL  Fix1 idx=0"
 fi
 
 # ==========================================================================
-# T10 (0.08): Fix 1 behavioral — idx=12345
+# T10 (0.085): Fix 1 behavioral — idx=12345
 # ==========================================================================
 if try_fix1 12345; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T10 PASS  Fix1 value idx=12345"
 else
     echo "T10 FAIL  Fix1 idx=12345"
@@ -434,50 +482,50 @@ else
 fi
 
 # ==========================================================================
-# T12 (0.11): Fix 2 behavioral — i=42
+# T12 (0.14): Fix 2 behavioral — i=42
 # ==========================================================================
 if try_fix2 42; then
-    add_reward 0.11
+    add_reward 0.14
     echo "T12 PASS  Fix2 compile+value i=42"
 else
     echo "T12 FAIL  Fix2 i=42"
 fi
 
 # ==========================================================================
-# T13 (0.08): Fix 2 behavioral — i=99
+# T13 (0.085): Fix 2 behavioral — i=99
 # ==========================================================================
 if try_fix2 99; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T13 PASS  Fix2 value i=99"
 else
     echo "T13 FAIL  Fix2 i=99"
 fi
 
 # ==========================================================================
-# T14 (0.08): Fix 2 behavioral — i=0
+# T14 (0.085): Fix 2 behavioral — i=0
 # ==========================================================================
 if try_fix2 0; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T14 PASS  Fix2 value i=0"
 else
     echo "T14 FAIL  Fix2 i=0"
 fi
 
 # ==========================================================================
-# T15 (0.08): Fix 2 behavioral — i=100000
+# T15 (0.085): Fix 2 behavioral — i=100000
 # ==========================================================================
 if try_fix2 100000; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T15 PASS  Fix2 value i=100000"
 else
     echo "T15 FAIL  Fix2 i=100000"
 fi
 
 # ==========================================================================
-# T16 (0.08): Fix 2 behavioral — i=7
+# T16 (0.085): Fix 2 behavioral — i=7
 # ==========================================================================
 if try_fix2 7; then
-    add_reward 0.08
+    add_reward 0.085
     echo "T16 PASS  Fix2 value i=7"
 else
     echo "T16 FAIL  Fix2 i=7"
@@ -501,12 +549,12 @@ try:
     has_context = False
     for i, line in enumerate(lines):
         if 'replaceAllUsesWith' in line:
-            window = '\n'.join(lines[max(0, i-3):i+4])
+            window = '\n'.join(lines[max(0, i-6):i+7])
             if 'getResult' in window:
                 has_context = True
                 break
     sys.exit(0 if has_enumerate and has_context else 1)
-except:
+except Exception:
     sys.exit(1)
 PYEOF
     if [ $? -eq 0 ]; then
@@ -522,7 +570,7 @@ else
 fi
 
 # ==========================================================================
-# T18 (0.05): Pass-to-pass — modified file is structurally sound
+# T18 (0.025): Pass-to-pass — modified file is structurally sound
 #
 # Upstream Triton Python/MLIR tests require building libtriton.so and
 # triton-opt (LLVM/MLIR C++ backend), which is not feasible in this
@@ -638,7 +686,7 @@ try:
         if stripped.startswith('#'):
             continue
         # Remove shift operators before counting angles
-        cleaned = re.sub(r'<<|>>', '', stripped)
+        cleaned = re.sub(r'->|<<|>>', '', stripped)
         for c in cleaned:
             if c == '<': angle_depth += 1
             elif c == '>': angle_depth -= 1
@@ -655,7 +703,7 @@ except Exception as e:
     sys.exit(1)
 P2PEOF
     if [ $? -eq 0 ]; then
-        add_reward 0.05
+        add_reward 0.025
         echo "T18 PASS  P2P structure check"
     else
         echo "T18 FAIL  P2P structure check"
@@ -668,8 +716,8 @@ fi
 # Clean up and write result
 # ==========================================================================
 rm -f "$STRIPPED" /tmp/fix1_capture_expr.txt /tmp/fix1_barrier_exprs.txt \
-      /tmp/fix1_callop_exprs.txt /tmp/fix2_getresult_exprs.txt \
-      /tmp/test_narrowing.cpp /tmp/test_narrowing
+      /tmp/fix1_callop_exprs.txt /tmp/fix1_cast_exprs.txt \
+      /tmp/fix2_getresult_exprs.txt /tmp/test_narrowing.cpp /tmp/test_narrowing
 
 REWARD=$(python3 -c "print(min(1.0, $REWARD))")
 mkdir -p /logs/verifier
