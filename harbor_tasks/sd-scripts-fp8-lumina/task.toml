@@ -5,10 +5,9 @@ author_name = "Alex Li"
 author_email = "alex@example.com"
 difficulty = "medium"
 category = "feature"
-tags =
+tags = ["sd-scripts", "fp8", "quantization", "lumina", "python"]
 session_resolution = "cut_off"
 session_resolution_confidence = 0.85
-["sd-scripts", "fp8", "quantization", "lumina", "python"]
 expert_time_estimate_min = 20.0
 junior_time_estimate_min = 60.0
 
