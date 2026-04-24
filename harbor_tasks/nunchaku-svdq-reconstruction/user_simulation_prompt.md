@@ -8,7 +8,7 @@
 - **Longest silence**: 16.6 min / 26 agent turns (turns 1–26, user set initial task then watched the agent explore and iterate without intervening)
 - **Second silence**: 8.8 min / 14 agent turns (turns 28–41, user let agent iterate after scope correction)
 - **Communication pattern**: Directive then hands-off. User sets the direction once, lets the agent work for many turns, then redirects.
-- **Target message count for simulator**: 4 messages over a ~30-minute session
+- **Target message count for simulator**: 3 conditional messages (Turn 1 is instruction.md, Turns 2-4 are sim-triggered)
 
 Default behavior: **SILENCE**. The user watches the agent work and only intervenes to refocus scope, add test coverage, or request a final fix.
 
@@ -16,19 +16,17 @@ Default behavior: **SILENCE**. The user watches the agent work and only interven
 
 ## User Turns
 
-### Turn 1 (start of session)
+### Turn 1 (start of session — delivered via instruction.md, NOT sent by simulator)
 
 **Timing**: Session start (10:35:46 UTC) — no preceding message
 **Gap**: N/A (opens session)
 **Classification**: N/A
 
-**Context**: Initial task framing.
+**Context**: Initial task framing. This turn is delivered as instruction.md (the first user message), NOT by the simulator. The original user message narrowed scope to `attn.to_out.0`, but instruction.md already lists all 6 parameters.
 
-**Said** (adapted — original narrowed scope to attn.to_out.0 but instruction.md already lists all 6 params): "I'm trying to reimplement Nunchaku SVDQ in quantize_nunchaku_borrow.py but currently it gives wrong result. I've verified that the AWQ part is correct. Your task is to read the original source code in the nunchaku folder to understand how the SVDQ layer works, then fix reconstruct_weight.py so it correctly reconstructs the weight from the packed tensors. The groundtruth tensors are in the `pt` folder."
+**Original message** (verbatim, trimmed): "I'm trying to reimplement Nunchaku SVDQ in @quantize_nunchaku_borrow.py but currently it gives wrong result. I've verified that the AWQ part is correct. See @keys_bf16.txt and @keys_svdq_r128.txt for the parameters, shapes, and dtypes before and after quantization. Your task is to read the original source code in the folders `nunchaku` and `ComfyUI-Nunchaku` to understand how the SVDQ layer works in the inference of Qwen-Image-Edit. Then write a new script that reconstructs `weight` given the groundtruth `proj_down, proj_up, qweight, wscales, smooth_factor`, and verify your result against the groundtruth `weight`. The data in the folder `pt` are the groundtruth for the parameters `attn.to_out.0, attn.to_add_out, img_mlp.net.0.proj, img_mlp.net.2, txt_mlp.net.0.proj, txt_mlp.net.2`. For now let's focus on `attn.to_out.0`."
 
-**Why**: Establishes the task context informally. Do NOT narrow scope — instruction.md already covers all 6 parameters and full task details.
-
-**Sim trigger**: Always send at session start. Keep it short and informal — the formal details are in instruction.md. Do NOT mention "focus on attn.to_out.0" since instruction.md already requires all 6 to pass.
+**Sim trigger**: NONE — this is the instruction.md turn. The simulator does NOT send this.
 
 ---
 
@@ -56,7 +54,7 @@ Default behavior: **SILENCE**. The user watches the agent work and only interven
 
 **Context**: Agent had been iterating on `reconstruct_weight.py` for the single parameter `attn.to_out.0`. It declared success (incorrectly) and stopped iterating.
 
-**Said**: "Make sure you test the weight reconstruction using all 6 parameters in the `pt` folder — `attn.to_out.0, attn.to_add_out, img_mlp.net.0.proj, img_mlp.net.2, txt_mlp.net.0.proj, txt_mlp.net.2`."
+**Said**: "Now test the weight reconstruction using all 6 parameters `attn.to_out.0, attn.to_add_out, img_mlp.net.0.proj, img_mlp.net.2, txt_mlp.net.0.proj, txt_mlp.net.2` in the folder `pt`."
 
 **Why**: Coverage expansion. User wants to ensure the implementation generalizes across all parameter shapes (square, N>K, N<K).
 

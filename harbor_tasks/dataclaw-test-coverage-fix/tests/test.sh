@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification script for dataclaw-test-coverage-fix (v3 — tuned for discrimination).
 #
@@ -224,7 +224,7 @@ print(f"\nFunction coverage: {n_funcs}/{total_known_funcs} known functions calle
 print(f"  Called: {sorted(all_called_funcs)}")
 
 # ====================================================================
-# STRUCTURAL CHECKS (0.10 total)
+# STRUCTURAL CHECKS (0.10 total) — F2P: fail on base (no tests exist)
 # ====================================================================
 
 print("\n--- Check 1: test file count ---")
@@ -272,8 +272,30 @@ elif len(all_assertion_types) >= 5:
 elif len(all_assertion_types) >= 3:
     add_reward(0.01, f">= 3 assertion types ({len(all_assertion_types)})")
 
+# ERROR-PATH COVERAGE (0.03) — T3 "error handling paths are well covered"
+# Counts pytest.raises usages directly; a dedicated signal beyond the
+# 1-of-8-types reward above so an agent that skips error paths is penalised.
+print("--- Check 4d: error-path coverage (pytest.raises count) ---")
+total_raises = 0
+for _fname in test_files:
+    _tree = parse_file(os.path.join(test_dir, _fname))
+    if _tree is None:
+        continue
+    for _node in ast.walk(_tree):
+        if isinstance(_node, ast.Call):
+            _fn = _node.func
+            if isinstance(_fn, ast.Attribute) and _fn.attr == "raises":
+                total_raises += 1
+print(f"  Total pytest.raises uses: {total_raises}")
+if total_raises >= 10:
+    add_reward(0.03, f"strong error-path coverage ({total_raises} pytest.raises)")
+elif total_raises >= 5:
+    add_reward(0.02, f"good error-path coverage ({total_raises} pytest.raises)")
+elif total_raises >= 2:
+    add_reward(0.01, f"some error-path coverage ({total_raises} pytest.raises)")
+
 # ====================================================================
-# BEHAVIORAL - GRADUATED PYTEST PASS TIERS (0.10 total)
+# BEHAVIORAL - GRADUATED PYTEST PASS TIERS (0.10 total) — F2P: fail on base (no tests)
 # ====================================================================
 
 print("\n--- Check 5: >= 80 tests pass ---")
@@ -295,7 +317,7 @@ if total_asserts >= 30 and total_pass >= 350:
     add_reward(0.02, f">= 350 tests pass ({total_pass})")
 
 # ====================================================================
-# SUITE HEALTH (0.05 total) — softened for near-clean suites
+# SUITE HEALTH (0.05 total) — F2P: fail on base (no tests)
 # ====================================================================
 
 print("--- Check 9: suite health ---")
@@ -313,7 +335,7 @@ if total_asserts >= 30:
         add_reward(0.02, f"acceptable: {total_pass} pass, {fail_rate:.1f}% fail")
 
 # ====================================================================
-# FUNCTION BREADTH (0.07 total)
+# FUNCTION BREADTH (0.07 total) — F2P: fail on base (no test files)
 # ====================================================================
 
 print(f"\n--- Check 9c: function breadth ({n_funcs} funcs) ---")
@@ -327,7 +349,7 @@ elif n_funcs >= 15:
     add_reward(0.02, f">= 15 unique functions ({n_funcs})")
 
 # ====================================================================
-# PER-MODULE QUALITY GATES (0.22 total)
+# PER-MODULE QUALITY GATES (0.22 total) — F2P: fail on base (no test files)
 # ====================================================================
 
 # test_secrets.py (0.08 — RAISED, key differentiator)
@@ -400,7 +422,7 @@ if best_13 > 0:
     add_reward(best_13, "cli/config tests")
 
 # ====================================================================
-# LINE COVERAGE (0.16 total)
+# LINE COVERAGE (0.16 total) — F2P: fail on base (no tests -> 0% coverage)
 # ====================================================================
 
 print("\n--- Coverage Analysis ---")
@@ -431,8 +453,26 @@ elif deep_modules >= 3:
 elif deep_modules >= 2:
     add_reward(0.02, f"{deep_modules}/4 core >= 90%")
 
+# Per-module coverage FLOOR (T2: "every module covered well")
+# Verifies the user's Turn 2 ask that no module is left weakly covered.
+print("--- Per-module coverage floor (T2) ---")
+floor_mods = ["secrets", "anonymizer", "parser", "config", "cli"]
+floor_cov = {m: per_mod_cov.get(m, 0) for m in floor_mods}
+print(f"  Per-module: {floor_cov}")
+if floor_cov and all(v > 0 for v in floor_cov.values()):
+    weakest = min(floor_cov.values())
+    print(f"  Weakest module coverage: {weakest}%")
+    if weakest >= 70:
+        add_reward(0.03, f"no weak module (min {weakest}%)")
+    elif weakest >= 50:
+        add_reward(0.02, f"modest floor (min {weakest}%)")
+    elif weakest >= 30:
+        add_reward(0.01, f"minimal floor (min {weakest}%)")
+else:
+    print("  FAIL: at least one dataclaw module has 0% or missing coverage")
+
 # ====================================================================
-# MUTATION TESTING (0.50 total — primary discriminator)
+# MUTATION TESTING (0.50 total — primary discriminator) — F2P: fail on base (no tests to detect mutations)
 # ====================================================================
 
 def clear_pycache():
@@ -551,7 +591,7 @@ if total_pass > 0:
         add_reward(0.05, f"entropy: {nf} detected (excellent)")
     elif nf >= 4:
         add_reward(0.03, f"entropy: {nf} detected (good)")
-    elif nf >= 1:
+    elif nf >= 3:
         add_reward(0.01, f"entropy: {nf} detected (basic)")
 
 # Check 23 (0.04): allowlist mutation
@@ -679,7 +719,7 @@ if total_pass > 0:
         add_reward(0.01, f"extract_assistant: {nf} detected (basic)")
 
 # ====================================================================
-# P2P (0.05) + F2P (0.05)
+# P2P (0.02: passes on base, dataclaw importable) + F2P (0.05: test suite passes)
 # ====================================================================
 
 print("\n--- P2P: dataclaw importable ---")

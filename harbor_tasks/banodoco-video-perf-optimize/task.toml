@@ -6,6 +6,9 @@ author_email = "alex@example.com"
 difficulty = "medium"
 category = "feature"
 tags = ["banodoco-wrapped", "react", "typescript", "virtualization", "animation", "performance", "frontend"]
+session_resolution = "cut_off"
+session_resolution_confidence = 0.90
+session_resolution_reasoning = "Session killed externally: last user msg was ReferenceError paste, assistant said 'Fixed. Labels now...', then task-notification killed + request interrupted. User never confirmed fix."
 expert_time_estimate_min = 20.0
 junior_time_estimate_min = 60.0
 
@@ -17,6 +20,7 @@ timeout_sec = 2400.0
 allow_internet = true
 
 [environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/banodoco-video-perf-optimize:48b4db9ae4e0"
 build_timeout_sec = 600.0
 cpus = 2
 memory = "4G"

@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -68,22 +68,28 @@ RUN cd /workspace/desloppify && python3 -m pytest desloppify/tests/ -x -q --tb=s
 # Verify the CLI is available
 RUN cd /workspace/desloppify && python3 -m desloppify --help > /dev/null 2>&1 || true
 
-# Create log directory for verifier output
-RUN mkdir -p /logs/verifier
+# Create log directories for verifier and agent output
+RUN mkdir -p /logs/verifier /logs/agent/sessions
 
 # Remove any AGENTS.md / CLAUDE.md that could block or confuse the agent
 RUN rm -f /workspace/desloppify/AGENTS.md /workspace/desloppify/CLAUDE.md \
          /workspace/desloppify/.claude/settings.json
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/bash agent && \
+# Use uid/gid 1002 to match the Harbor runner's host worker user for bind mounts
+RUN useradd -m -s /bin/bash -u 1002 agent && \
     chown -R agent:agent /workspace && \
-    mkdir -p /home/agent/.local/bin /logs/verifier && \
+    mkdir -p /home/agent/.local/bin /logs/verifier /logs/agent/sessions && \
     chown -R agent:agent /home/agent /logs
 
 # Pre-install Claude Code CLI as the non-root user
+# Harbor install.sh target dir (fix for mkdir-as-nonroot bug)
+RUN mkdir -p /installed-agent && chown agent:agent /installed-agent
 USER agent
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Configure git for agent user

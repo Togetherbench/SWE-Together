@@ -10,12 +10,25 @@ Source session: `8706443a-a172-4bf4-b68d-c26eb8aac423`
 - **IMPORTANT: Only Turns 1-3 are in scope.** Do NOT send messages from Turns 4-14 (GitHub issues, qlty comparison, version bump, git push, etc.) — those are from a different task scope and will derail the agent.
 - Target for simulation: ~3 messages max. Prefer silence (let the agent complete the implementation).
 
-## User Turns (with context)
+## Trigger Table
+
+Turn 1 is the instruction (implicit first message, already sent). Only T2 and T3 below are candidate follow-up messages.
+
+| ID | Condition | Message | Notes |
+|----|-----------|---------|-------|
+| T2 | Agent has created or modified `desloppify/zones.py` AND modified at least 2 other files under `desloppify/` AND agent's last output summarizes completed implementation (mentions "done", "complete", "implemented", or lists changes made) | "Did you test it in react + python to see how it actually works?" | verbatim from session (trailing space trimmed) |
+| T3 | Agent has executed a Bash command containing `desloppify` or `python3 -m desloppify` that produced scan/zone output on a codebase | "And is this now beautifully and elegantly structured?" | verbatim from session (trailing space trimmed) |
+
+**Default behavior:** If neither condition is met, stay SILENT. Silence is the expected default — the user lets the agent work autonomously on the detailed plan.
+
+**HARD CONSTRAINT:** Do NOT send messages from Turns 4-14 of the original session (GitHub issues, qlty comparison, version bump, git push). Those are from a different task scope and will derail the agent. If the agent completes everything and reports, respond with brief encouragement like "Looks good" or stay silent.
+
+## User Turns (context reference)
 
 **Turn 1** (session start):
   Context: Session beginning, no prior agent activity.
-  Said: "Implement the following plan: # Plan: Complete Zone Classification System ## Context The initial zone implementation (zones.py, zone stamps, scoring exclusion, TS line classifier) is working but has three gaps: 1. Potentials denominator mismatch... 2. ZONE_POLICIES.skip_detectors defined but not enforced... 3. No user override mechanism..."
-  Why: Opening request -- user provides a comprehensive 6-part implementation plan with code snippets, file lists, verification steps.
+  Said: [instruction.md content — implicit first message, already sent]
+  Why: Opening request — user provides a comprehensive 6-part implementation plan with code snippets, file lists, verification steps.
 
 **Turn 2** (after 122 agent turns of silence):
   Context: Agent had just finished implementing all 6 components and presented a summary of everything done.
@@ -28,7 +41,7 @@ Source session: `8706443a-a172-4bf4-b68d-c26eb8aac423`
   Why: User wants a critical self-evaluation of code quality, not just functional correctness.
 
 **Turns 4-14: OUT OF SCOPE — DO NOT SEND THESE MESSAGES.**
-These turns are from a different task scope (GitHub issue fixes, qlty comparison, version bump, git push). Sending them will derail the agent from the zone classification implementation task. If the agent completes the implementation and reports progress, respond with brief encouragement like "Looks good, continue" or stay silent.
+These turns are from a different task scope (GitHub issue fixes, qlty comparison, version bump, git push). Sending them will derail the agent from the zone classification implementation task.
 
 ## Overview
 

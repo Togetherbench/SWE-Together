@@ -1,0 +1,27 @@
+version = "1.0"
+
+[metadata]
+author_name = "Alex Li"
+author_email = "alex@example.com"
+difficulty = "hard"
+category = "bugfix"
+tags = ["pi-mono", "typescript", "openai", "tool-calls"]
+expert_time_estimate_min = 15.0
+junior_time_estimate_min = 60.0
+session_resolution = "resolved"
+session_resolution_confidence = 0.95
+session_resolution_reasoning = "Assistant committed/pushed and said 'Wrapped.' User replied 'exit' — task fully completed"
+
+[verifier]
+timeout_sec = 120.0
+
+[agent]
+timeout_sec = 2400.0
+
+[environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-foreign-toolcall-fix:cf99bb568f97"
+build_timeout_sec = 600.0
+cpus = 1
+memory = "4G"
+storage = "10G"
+allow_internet = true

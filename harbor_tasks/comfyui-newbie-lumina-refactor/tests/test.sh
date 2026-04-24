@@ -1,28 +1,29 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification tests for ComfyUI NewBie architecture refactoring.
 #
-# Scoring: 82% F2P, 18% P2P (12 tests)
+# Scoring: 90% F2P, 10% P2P (13 tests)
 #
-#   F2P Structural (0.14):
+#   F2P Structural (0.18):
 #     S2 (0.04): No _pop_unexpected_kwargs / _fallback_operations / nn.init
 #     S3 (0.03): No try/except in _forward
 #     S4 (0.07): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
+#     S5 (0.04): Uses operations.Linear + operations.RMSNorm; no vendored RMSNorm
 #
-#   F2P Behavioral (0.68):
-#     B4  (0.20): return -img at ts=0.3 + _forward complex
-#     B5  (0.16): return -img at ts=0.7 (varied) + _forward complex
-#     B6  (0.16): t=1.0-timesteps at ts=0.3->0.7 + _forward complex
-#     B7  (0.16): t=1.0-timesteps at ts=0.8->0.2 (varied) + complex
+#   F2P Behavioral (0.76):
+#     B4  (0.22): return -img at ts=0.3 + _forward complex
+#     B5  (0.18): return -img at ts=0.7 (varied) + _forward complex
+#     B6  (0.18): t=1.0-timesteps at ts=0.3->0.7 + _forward complex
+#     B7  (0.18): t=1.0-timesteps at ts=0.8->0.2 (varied) + complex
 #
-#   P2P (0.18):
-#     B3  (0.02): _forward correct shape (4x4 AND 8x8) + _forward complex
-#     B8  (0.02): clip_text_pooled influences output
-#     B9  (0.02): clip_img_pooled influences output
-#     B10 (0.06): Base NextDiT still works
-#     P2P (0.06): ComfyUI upstream unit tests
+#   P2P (0.10):
+#     B3  (0.01): _forward correct shape (4x4 AND 8x8) + _forward complex
+#     B8  (0.01): clip_text_pooled influences output
+#     B9  (0.01): clip_img_pooled influences output
+#     B10 (0.03): Base NextDiT still works
+#     P2P (0.04): ComfyUI upstream unit tests
 #
-# Nop score: 0.18 (sum of P2P weights)
+# Nop score: 0.10 (sum of P2P weights)
 #
 set +e
 
@@ -30,7 +31,7 @@ REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 PASS_COUNT=0
-TOTAL=12
+TOTAL=13
 
 # Activate venv for torch availability
 source /workspace/venv/bin/activate 2>/dev/null || true
@@ -141,6 +142,66 @@ PYEOF
 )
 echo "  $S4"
 if [ "$S4" = "PASS" ]; then add_reward 0.07; fi
+
+# ═══════════════════════════════════════════════════════════════
+# S5 (0.04): Uses operations.Linear + operations.RMSNorm; no
+#            vendored RMSNorm import.
+# Covers T1 "reuse existing ops" and T4 "use operation_settings
+# .get('operations').Linear" — the refactored NewBieNextDiT must
+# pull Linear and RMSNorm from ComfyUI's ops, not fall back to
+# nn.Linear or a standalone .components.RMSNorm.
+# ═══════════════════════════════════════════════════════════════
+echo "--- S5/13: operations.Linear + operations.RMSNorm reuse ---"
+S5=$(python3 << 'PYEOF'
+import sys, ast
+try:
+    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
+        tree = ast.parse(f.read())
+except Exception:
+    print("FAIL:parse"); sys.exit(0)
+
+def _is_ops_ref(node):
+    """True if node.value is `operations` or `operation_settings.get('operations')`."""
+    if not isinstance(node, ast.Attribute):
+        return False
+    v = node.value
+    if isinstance(v, ast.Name) and v.id == "operations":
+        return True
+    if (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute)
+            and v.func.attr == "get"
+            and isinstance(v.func.value, ast.Name)
+            and v.func.value.id == "operation_settings"):
+        return True
+    return False
+
+has_ops_linear = False
+has_ops_rmsnorm = False
+imports_vendored_rmsnorm = False
+
+for node in ast.walk(tree):
+    if isinstance(node, ast.Attribute):
+        if node.attr == "Linear" and _is_ops_ref(node):
+            has_ops_linear = True
+        if node.attr == "RMSNorm" and _is_ops_ref(node):
+            has_ops_rmsnorm = True
+    if isinstance(node, ast.ImportFrom):
+        mod = node.module or ""
+        if "components" in mod:
+            for n in node.names:
+                if n.name == "RMSNorm":
+                    imports_vendored_rmsnorm = True
+
+if not has_ops_linear:
+    print("FAIL:no_operations_Linear"); sys.exit(0)
+if not has_ops_rmsnorm:
+    print("FAIL:no_operations_RMSNorm"); sys.exit(0)
+if imports_vendored_rmsnorm:
+    print("FAIL:vendored_RMSNorm_imported"); sys.exit(0)
+print("PASS")
+PYEOF
+)
+echo "  $S5"
+if [ "$S5" = "PASS" ]; then add_reward 0.04; fi
 
 # ═══════════════════════════════════════════════════════════════
 # BEHAVIORAL TESTS (B3-B10, 0.86 total)
@@ -282,7 +343,7 @@ def fwd_kwargs(clip_text=None, clip_img=None):
     return kw
 
 # ──────────────────────────────────────────────
-# B3 (0.02): P2P: _forward correct shape (4x4 AND 8x8) + _forward complex
+# B3 (0.01): P2P: _forward correct shape (4x4 AND 8x8) + _forward complex
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -309,7 +370,7 @@ except Exception as e:
     print(f"B3:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B4 (0.20): F2P: return -img at ts=0.3 (unpatchify hook)
+# B4 (0.22): F2P: return -img at ts=0.3 (unpatchify hook)
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -345,7 +406,7 @@ except Exception as e:
     print(f"B4:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B5 (0.16): F2P: return -img at ts=0.7 (varied input)
+# B5 (0.18): F2P: return -img at ts=0.7 (varied input)
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -381,7 +442,7 @@ except Exception as e:
     print(f"B5:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B6 (0.16): F2P: t = 1.0 - timesteps at ts=0.3 -> t_embedder sees 0.7
+# B6 (0.18): F2P: t = 1.0 - timesteps at ts=0.3 -> t_embedder sees 0.7
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -413,7 +474,7 @@ except Exception as e:
     print(f"B6:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B7 (0.16): F2P: t = 1.0 - timesteps at ts=0.8 -> t_embedder sees 0.2
+# B7 (0.18): F2P: t = 1.0 - timesteps at ts=0.8 -> t_embedder sees 0.2
 # ──────────────────────────────────────────────
 try:
     if model is None:
@@ -445,7 +506,7 @@ except Exception as e:
     print(f"B7:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B8 (0.02): P2P: clip_text_pooled influences output
+# B8 (0.01): P2P: clip_text_pooled influences output
 #   Vary clip_text while holding clip_img constant.
 #   Uses two different clip values (not absent vs present) to avoid
 #   crashes in implementations that require clip kwargs.
@@ -471,7 +532,7 @@ except Exception as e:
     print(f"B8:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B9 (0.02): P2P: clip_img_pooled influences output
+# B9 (0.01): P2P: clip_img_pooled influences output
 #   Vary clip_img while holding clip_text constant.
 # ──────────────────────────────────────────────
 try:
@@ -495,7 +556,7 @@ except Exception as e:
     print(f"B9:FAIL:{e}")
 
 # ──────────────────────────────────────────────
-# B10 (0.06): P2P: Base NextDiT still works
+# B10 (0.03): P2P: Base NextDiT still works
 # ──────────────────────────────────────────────
 try:
     if base_model is None:
@@ -519,17 +580,17 @@ PYEOF
 echo "$BOUT"
 
 # Parse behavioral results and add rewards
-echo "$BOUT" | grep -q "^B3:PASS" && add_reward 0.02
-echo "$BOUT" | grep -q "^B4:PASS" && add_reward 0.20
-echo "$BOUT" | grep -q "^B5:PASS" && add_reward 0.16
-echo "$BOUT" | grep -q "^B6:PASS" && add_reward 0.16
-echo "$BOUT" | grep -q "^B7:PASS" && add_reward 0.16
-echo "$BOUT" | grep -q "^B8:PASS" && add_reward 0.02
-echo "$BOUT" | grep -q "^B9:PASS" && add_reward 0.02
-echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.06
+echo "$BOUT" | grep -q "^B3:PASS" && add_reward 0.01
+echo "$BOUT" | grep -q "^B4:PASS" && add_reward 0.22
+echo "$BOUT" | grep -q "^B5:PASS" && add_reward 0.18
+echo "$BOUT" | grep -q "^B6:PASS" && add_reward 0.18
+echo "$BOUT" | grep -q "^B7:PASS" && add_reward 0.18
+echo "$BOUT" | grep -q "^B8:PASS" && add_reward 0.01
+echo "$BOUT" | grep -q "^B9:PASS" && add_reward 0.01
+echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.03
 
 # ═══════════════════════════════════════════════════════════════
-# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (0.06)
+# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (0.04)
 # Uses tests-unit/ (pure unit tests), NOT tests/ (integration
 # tests that require websocket-client and a running server).
 # Note: preview_method_override_test.py does not exist at this commit.
@@ -552,7 +613,7 @@ UP_EXIT=$?
 echo "$UP_RESULT" | tail -5
 if [ $UP_EXIT -eq 0 ]; then
     echo "  PASS: upstream unit tests pass"
-    add_reward 0.06
+    add_reward 0.04
 else
     echo "  FAIL: upstream unit tests failed (exit=$UP_EXIT)"
 fi

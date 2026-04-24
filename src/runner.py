@@ -82,6 +82,9 @@ _PROVIDER_MAP = {
     "chutes":      ("CHUTES_API_KEY",      "ANTHROPIC_API_KEY"),
     "fireworks":   ("FIREWORKS_API_KEY",   "ANTHROPIC_API_KEY"),
     "glm":         ("GLM_API_KEY",         "ANTHROPIC_API_KEY"),
+    "glmd":        ("GLM_API_KEY",         "ANTHROPIC_API_KEY"),
+    "minimaxd":    ("MINIMAX_API_KEY",     "ANTHROPIC_API_KEY"),
+    "ark":         ("ARK_API_KEY",         "ANTHROPIC_API_KEY"),
 }
 
 # Proxy URLs for routing non-Anthropic models through Claude Code CLI.
@@ -93,6 +96,9 @@ _CHUTES_BASE_URL = "https://claude.chutes.ai"
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 _FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference"
 _GLM_BASE_URL = "https://api.z.ai/api/anthropic"
+_MINIMAX_BASE_URL = "https://api.minimaxi.chat/anthropic"
+_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding"
+_GLMD_BASE_URL = "https://api.z.ai/api/anthropic"
 
 
 def resolve_model(model_arg: str) -> tuple[str, str, str]:

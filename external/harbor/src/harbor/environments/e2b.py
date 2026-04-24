@@ -1,3 +1,4 @@
+import os
 from pathlib import Path, PurePosixPath
 
 from dirhash import dirhash
@@ -87,9 +88,17 @@ class E2BEnvironment(BaseEnvironment):
     )
     async def _create_template(self):
         if self.task_env_config.docker_image:
-            template = Template().from_image(
-                image=self.task_env_config.docker_image,
-            )
+            image = self.task_env_config.docker_image
+            # Auto-wire GHCR credentials for private ghcr.io/* images. Expects
+            # GHCR_USER + GHCR_TOKEN env vars (token needs read:packages scope).
+            kwargs: dict[str, str] = {}
+            if image.startswith("ghcr.io/"):
+                ghcr_user = os.environ.get("GHCR_USER", "").strip()
+                ghcr_token = os.environ.get("GHCR_TOKEN", "").strip()
+                if ghcr_user and ghcr_token:
+                    kwargs["username"] = ghcr_user
+                    kwargs["password"] = ghcr_token
+            template = Template().from_image(image=image, **kwargs)
         else:
             template = Template().from_dockerfile(
                 dockerfile_content_or_path=str(self._environment_definition_path),

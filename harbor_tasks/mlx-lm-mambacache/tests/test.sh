@@ -1,9 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification test for MambaCache/ArraysCache batching support in mlx-lm.
 #
 # Weighted scoring: accumulates points out of 100, normalized to 0.0-1.0.
-# ~84% behavioral (F2P + Silver), ~20% structural (Bronze AST), ~4% P2P.
+# ~82% behavioral (F2P + Silver), ~18% structural (Bronze AST), ~4% P2P.
+# Total raw points exceed 100 (capped at 1.0) to allow multi-turn coverage
+# checks without diluting the existing discriminating tests.
+#
+# F2P/P2P classification:
+#   F2P (fail-to-pass): Tests 1-18 — all test features absent at base commit
+#   P2P (pass-to-pass): P2P-1 (source files intact), P2P-2 (tool_parsers)
 #
 # mlx is macOS-only (no Linux wheels on PyPI). A numpy-backed shim enables
 # behavioral testing on Linux Docker by exec'ing cache.py directly, bypassing
@@ -158,7 +164,7 @@ import mlx.core as mx
 ENVEOF
 
 ###############################################################################
-# TEST 1/10 [F2P, 18pts]: _merge_caches works with ArraysCache
+# TEST 1 [F2P, 10pts]: _merge_caches works with ArraysCache
 #   Base commit: raises "ValueError: ... does not yet support batching with history"
 #   After fix: returns batched cache with correct batch dim and values
 ###############################################################################
@@ -216,7 +222,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 2/10 [F2P, 10pts]: _merge_caches works with CacheList
+# TEST 2 [F2P, 8pts]: _merge_caches works with CacheList
 #   Base commit: raises ValueError for CacheList (wrapping ArraysCache)
 #   After fix: recursively merges sub-caches inside CacheList
 ###############################################################################
@@ -281,7 +287,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 3/10 [Silver, 12pts]: ArraysCache.merge batches 3 caches correctly
+# TEST 3 [F2P, 8pts]: ArraysCache.merge batches 3 caches correctly
 ###############################################################################
 echo ""
 echo "=== Test 3: Silver -- ArraysCache.merge correct batched output (8pts) ==="
@@ -336,7 +342,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 4/10 [Silver, 10pts]: ArraysCache.extract recovers individual caches
+# TEST 4 [F2P, 8pts]: ArraysCache.extract recovers individual caches
 ###############################################################################
 echo ""
 echo "=== Test 4: Silver -- ArraysCache.extract recovers individual caches (8pts) ==="
@@ -380,7 +386,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 5/10 [Silver, 10pts]: CacheList.merge + extract round-trip
+# TEST 5 [F2P, 8pts]: CacheList.merge + extract round-trip
 ###############################################################################
 echo ""
 echo "=== Test 5: Silver -- CacheList.merge + extract round-trip (8pts) ==="
@@ -434,7 +440,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 6/10 [Silver, 8pts]: MambaCache inherits merge/extract from ArraysCache
+# TEST 6 [F2P, 8pts]: MambaCache inherits merge/extract from ArraysCache
 ###############################################################################
 echo ""
 echo "=== Test 6: Silver -- MambaCache inherits merge/extract (8pts) ==="
@@ -492,7 +498,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 7/10 [Silver, 10pts]: _lengths / make_mask right-padding
+# TEST 7 [F2P, 12pts]: _lengths / make_mask right-padding
 #   Base commit: make_mask ignores _lengths, returns all-True mask
 #   After fix: make_mask uses _lengths to create right-padding mask
 #
@@ -593,7 +599,7 @@ sys.exit(0)
 PYEOF
 
 ###############################################################################
-# TEST 8/10 [Silver, 5pts]: prepare() and finalize() work correctly
+# TEST 8 [F2P, 5pts]: prepare() and finalize() work correctly
 ###############################################################################
 echo ""
 echo "=== Test 8/11: Silver -- prepare() and finalize() functional (5pts) ==="
@@ -640,7 +646,7 @@ PYEOF
 ###############################################################################
 
 ###############################################################################
-# TEST 9/10 [Bronze, 10pts]: ArraysCache merge+extract AST non-trivial
+# TEST 9 [F2P/Bronze, 5pts]: ArraysCache merge+extract AST non-trivial
 # Justification: AST supplements behavioral Tests 3-4. Rejects stubs that
 # pass hasattr but have empty bodies.
 ###############################################################################
@@ -720,7 +726,7 @@ sys.exit(1)
 PYEOF
 
 ###############################################################################
-# TEST 10/10 [Bronze, 10pts]: CacheList merge+extract AST non-trivial
+# TEST 10 [F2P/Bronze, 5pts]: CacheList merge+extract AST non-trivial
 # Justification: AST supplements behavioral Test 5. Rejects stubs that
 # pass hasattr but have empty bodies.
 ###############################################################################
@@ -794,7 +800,7 @@ sys.exit(1)
 PYEOF
 
 ###############################################################################
-# TEST 11/11 [F2P, 10pts]: _merge_caches works with MambaCache
+# TEST 11 [F2P, 8pts]: _merge_caches works with MambaCache
 #   MambaCache inherits from ArraysCache. A correct _merge_caches that handles
 #   isinstance(_, ArraysCache) should also work for MambaCache.
 #   Also tests that ArraysCache.merge handles MambaCache subclass correctly
@@ -996,6 +1002,255 @@ if not has_arrays_cache_check:
     sys.exit(1)
 
 print("PASS: _merge_caches has proper isinstance checks for ArraysCache/CacheList")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 15 [Silver, 5pts]: _lengths propagates through merge+extract
+#   Turn 5 ask: "add the _lengths feature to our PR". Beyond make_mask (Test 7),
+#   _lengths must survive batched merge and be recoverable via extract so that
+#   right-padded batched decoding produces correct masks per sample.
+###############################################################################
+echo ""
+echo "=== Test 15: Silver -- _lengths survives merge+extract (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+exec(open('/tmp/mlx_test_env.py').read())
+import sys
+import numpy as _np
+
+def _set_lengths(c, lens):
+    # Try prepare() with full signature, then partial, then direct attr.
+    if hasattr(c, 'prepare') and callable(c.prepare):
+        try:
+            c.prepare(lengths=lens, right_padding=[0]*len(lens))
+            return True
+        except TypeError:
+            try:
+                c.prepare(lengths=lens)
+                return True
+            except TypeError:
+                pass
+    try:
+        c._lengths = mx.array(lens)
+        return True
+    except Exception:
+        pass
+    try:
+        c.lengths = mx.array(lens)
+        return True
+    except Exception:
+        return False
+
+ac1 = ArraysCache(size=1)
+ac1.cache[0] = mx.ones((1, 2, 4))
+ac2 = ArraysCache(size=1)
+ac2.cache[0] = mx.ones((1, 2, 4)) * 2.0
+
+if not _set_lengths(ac1, [3]) or not _set_lengths(ac2, [4]):
+    print("FAIL: cannot set _lengths on ArraysCache")
+    sys.exit(1)
+
+try:
+    merged = ArraysCache.merge([ac1, ac2])
+except Exception as e:
+    print(f"FAIL: merge raised: {e}")
+    sys.exit(1)
+
+# Merged cache must still expose _lengths (or lengths) as an attribute so
+# downstream make_mask can compute per-row right padding for the batch.
+lens_attr = getattr(merged, '_lengths', None)
+if lens_attr is None:
+    lens_attr = getattr(merged, 'lengths', None)
+if lens_attr is None:
+    print("FAIL: merged ArraysCache lost _lengths/lengths attribute")
+    sys.exit(1)
+
+# Verify lengths was batched across samples (shape[0] == 2) with correct values
+arr = _np.array(lens_attr.tolist()) if hasattr(lens_attr, 'tolist') else _np.array(lens_attr)
+if arr.ndim == 0 or arr.shape[0] != 2:
+    print(f"FAIL: merged lengths shape={arr.shape}, expected leading dim=2")
+    sys.exit(1)
+vals = sorted(int(x) for x in arr.reshape(-1)[:2])
+if vals != [3, 4]:
+    print(f"FAIL: merged lengths values={vals}, expected [3, 4]")
+    sys.exit(1)
+
+print("PASS: _lengths propagates through merge with correct batched values")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 16 [Bronze, 3pts]: Unit tests file written for batching feature
+#   T1/Turn3 explicit ask: "write unit tests". instruction.md point 4 names
+#   the target path tests/test_mamba_cache_batching.py. Verify the file exists
+#   and contains non-trivial test code (at least 2 test functions / classes).
+###############################################################################
+echo ""
+echo "=== Test 16: Bronze -- unit test file written for batching (3pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
+import ast, os, sys
+
+candidates = [
+    "/workspace/mlx-lm/tests/test_mamba_cache_batching.py",
+    "/workspace/mlx-lm/tests/test_cache_batching.py",
+    "/workspace/mlx-lm/tests/test_arrays_cache_batching.py",
+    "/workspace/mlx-lm/tests/test_batch_cache.py",
+]
+found = None
+for p in candidates:
+    if os.path.isfile(p):
+        found = p
+        break
+
+if found is None:
+    # Fallback: any test file under tests/ referencing ArraysCache/MambaCache merge/batch
+    tests_dir = "/workspace/mlx-lm/tests"
+    if os.path.isdir(tests_dir):
+        for name in os.listdir(tests_dir):
+            if not name.endswith(".py") or not name.startswith("test_"):
+                continue
+            try:
+                with open(os.path.join(tests_dir, name)) as f:
+                    src = f.read()
+            except Exception:
+                continue
+            if (("ArraysCache" in src or "MambaCache" in src) and
+                ("merge" in src or "batch" in src.lower())):
+                found = os.path.join(tests_dir, name)
+                break
+
+if found is None:
+    print("FAIL: no unit test file written for batching (expected tests/test_mamba_cache_batching.py or similar)")
+    sys.exit(1)
+
+try:
+    with open(found) as f:
+        src = f.read()
+    tree = ast.parse(src)
+except Exception as e:
+    print(f"FAIL: {found} not parseable: {e}")
+    sys.exit(1)
+
+test_fns = [n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+if len(test_fns) < 2:
+    print(f"FAIL: {found} has only {len(test_fns)} test_* functions (need >=2)")
+    sys.exit(1)
+
+print(f"PASS: {os.path.basename(found)} has {len(test_fns)} test functions")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 17 [Bronze, 3pts]: New ArraysCache methods have docstrings
+#   Turn 3 ask: "with clear documentation". Performance testing and live-model
+#   testing can't be verified on CPU/Linux, but docstrings on the public API
+#   additions (merge, extract, prepare, finalize) are a concrete documentation
+#   artifact. Require at least 2 of the 4 new methods to carry a docstring.
+###############################################################################
+echo ""
+echo "=== Test 17: Bronze -- docstrings on new ArraysCache methods (3pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
+import ast, sys
+
+with open("/workspace/mlx-lm/mlx_lm/models/cache.py") as f:
+    tree = ast.parse(f.read())
+
+target_methods = {"merge", "extract", "prepare", "finalize"}
+documented = []
+for node in ast.walk(tree):
+    if isinstance(node, ast.ClassDef) and node.name == "ArraysCache":
+        for sub in node.body:
+            if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub.name in target_methods:
+                doc = ast.get_docstring(sub)
+                if doc and len(doc.strip()) >= 10:
+                    documented.append(sub.name)
+        break
+
+if len(documented) < 2:
+    print(f"FAIL: only {len(documented)}/4 new ArraysCache methods have docstrings (documented: {documented})")
+    sys.exit(1)
+
+print(f"PASS: {len(documented)}/4 new ArraysCache methods documented: {documented}")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# TEST 18 [Silver, 4pts]: _lengths survives extract (per-sample recovery)
+#   Turn 5 ask: "add the _lengths feature to our PR". Test 15 verifies merge
+#   propagation; this test closes the gap on extract propagation — after a
+#   batched merge, extracting sample i must recover ac_i's original length so
+#   downstream right-padded per-sample decoding produces correct masks.
+###############################################################################
+echo ""
+echo "=== Test 18: Silver -- _lengths survives extract (4pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 4)) || true
+exec(open('/tmp/mlx_test_env.py').read())
+import sys
+import numpy as _np
+
+def _set_lengths(c, lens):
+    if hasattr(c, 'prepare') and callable(c.prepare):
+        try:
+            c.prepare(lengths=lens, right_padding=[0]*len(lens))
+            return True
+        except TypeError:
+            try:
+                c.prepare(lengths=lens)
+                return True
+            except TypeError:
+                pass
+    try:
+        c._lengths = mx.array(lens)
+        return True
+    except Exception:
+        pass
+    try:
+        c.lengths = mx.array(lens)
+        return True
+    except Exception:
+        return False
+
+def _get_lens(c):
+    v = getattr(c, '_lengths', None)
+    if v is None:
+        v = getattr(c, 'lengths', None)
+    if v is None:
+        return None
+    return _np.array(v.tolist()) if hasattr(v, 'tolist') else _np.array(v)
+
+ac1 = ArraysCache(size=1)
+ac1.cache[0] = mx.ones((1, 2, 4))
+ac2 = ArraysCache(size=1)
+ac2.cache[0] = mx.ones((1, 2, 4)) * 2.0
+
+if not _set_lengths(ac1, [3]) or not _set_lengths(ac2, [5]):
+    print("FAIL: cannot set lengths on ArraysCache")
+    sys.exit(1)
+
+try:
+    merged = ArraysCache.merge([ac1, ac2])
+    ex0 = merged.extract(0)
+    ex1 = merged.extract(1)
+except Exception as e:
+    print(f"FAIL: merge/extract raised: {e}")
+    sys.exit(1)
+
+l0 = _get_lens(ex0)
+l1 = _get_lens(ex1)
+if l0 is None or l1 is None:
+    print(f"FAIL: extracted caches lost _lengths (ex0={l0}, ex1={l1})")
+    sys.exit(1)
+
+# Each extracted cache's lengths should contain its original value (3 or 5).
+# Accept scalar, (1,), or broadcasted shapes — just check the value.
+v0 = int(_np.asarray(l0).reshape(-1)[0])
+v1 = int(_np.asarray(l1).reshape(-1)[0])
+if v0 != 3 or v1 != 5:
+    print(f"FAIL: extracted lengths [{v0}, {v1}], expected [3, 5]")
+    sys.exit(1)
+
+print(f"PASS: extract recovers per-sample _lengths [{v0}, {v1}]")
 sys.exit(0)
 PYEOF
 

@@ -1,16 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Verifier for nunchaku-svdq-reconstruction
 #
-# 37 micro-tests, total ~1.14 (capped at 1.0):
-#   P2P1-P2P3 (0.05) pass-to-pass  upstream sanity (parse, imports, source)
-#   S1-S3   (0.06)  structural  file + functions + anti-stub
-#   Q1-Q3   (0.12)  behavioral  qweight unpack per shape
-#   SC1-SC3 (0.06)  behavioral  scale unpack per shape
-#   QS1-QS3 (0.12)  behavioral  qweight+scale integration (no lowrank needed)
-#   LR1-LR8 (0.32)  behavioral  lowrank unpack per case (expanded)
-#   R1-R6   (0.18)  behavioral  full reconstruction per param (diff<0.05)
-#   TT      (0.05)  behavioral  tight threshold all 6 (diff<0.01)
-#   F1-F3   (0.18)  behavioral  fresh synthetic data, 3 sizes
+# Gate classification (F2P = fail-to-pass, P2P = pass-to-pass):
+#   [P2P] P2P1-P2P3 (0.05) pass-to-pass  upstream sanity (parse, imports, source)
+#   [F2P] S1-S3     (0.06)  structural  file + functions + anti-stub
+#   [F2P] Q1-Q3     (0.18)  behavioral  qweight unpack per shape
+#   [F2P] SC1-SC3   (0.06)  behavioral  scale unpack per shape
+#   [F2P] QS1-QS3   (0.06)  behavioral  qweight+scale integration (no lowrank needed)
+#   [F2P] LR1-LR8   (0.32)  behavioral  lowrank unpack per case (expanded)
+#   [F2P] R1-R6     (0.18)  behavioral  full reconstruction per param (diff<0.05)
+#   [F2P] TT        (0.05)  behavioral  tight threshold all 6 (diff<0.01)
+#   [F2P] RW1-RW3   (0.06)  behavioral  agent's reconstruct_weight fn end-to-end
+#   [F2P] F1-F3     (0.18)  behavioral  fresh synthetic data, 3 sizes
 #
 # Scoring: 0.0 to 1.0 written to /logs/verifier/reward.txt
 set +e
@@ -308,6 +309,7 @@ for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
 
 # ── SC1-SC3: scale unpack per shape (0.02 each) ─────────────────────
 # Tests the scale permutation inverse on 3 shapes.
+# Accepts both (N, K//G) compact output and (N, K) expanded output.
 
 for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
     name = f"SC{idx}"
@@ -321,6 +323,10 @@ for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
         unpacked = call_sc(fn_sc, packed, N, K)
         if unpacked is None:
             wr(name, False); continue
+        # Accept (N, K//G) compact or (N, K) expanded output
+        if unpacked.shape == (N, K):
+            # Agent returned expanded scales; reduce to (N, K//G) by sampling every G-th col
+            unpacked = unpacked[:, ::G]
         err = (orig.float() - unpacked.float()).abs().max().item()
         wr(name, err < 1e-4)
     except Exception:
@@ -360,7 +366,11 @@ for tname, pname in qs_shapes:
         if qw is not None and ws is not None:
             qw_f = qw.float()
             qw_f[qw_f >= 8] -= 16
-            residual = qw_f * ws.float().repeat_interleave(64, dim=1)
+            ws_f = ws.float()
+            # Accept both (N, K//G) compact and (N, K) expanded scale output
+            if ws_f.shape == (N, K // 64):
+                ws_f = ws_f.repeat_interleave(64, dim=1)
+            residual = qw_f * ws_f
             # Compare the residual/smooth against weight_approx.
             # The diff will be the lowrank contribution (pu@pd.T / smooth),
             # which is bounded. We accept a relaxed threshold that still
@@ -450,6 +460,66 @@ for idx, pname in enumerate(params, 1):
 # TT: tight threshold — all 6 params diff < 0.01
 wr("TT", tight_count == 6)
 
+# ── RW1-RW3: Agent's reconstruct_weight function end-to-end ─────────
+# Directly covers Turn 1 ("write reconstruct_weight that reconstructs
+# weight given proj_down, proj_up, qweight, wscales, smooth_factor")
+# and Turn 4 ("just fix the function to reconstruct the weight").
+# R1-R6 use the agent's unpack helpers plus verifier-side assembly; they
+# do NOT exercise the agent's own reconstruct_weight orchestration.
+# These three tests call the agent's reconstruct_weight directly on
+# square, N>K, and N<K parameters.
+
+fn_rw = getattr(rw, 'reconstruct_weight', None) if MOD else None
+
+def call_rw(fn, qw_p, ws_p, pu_p, pd_p, sm, N, K):
+    sigs = [
+        lambda: fn(pd_p, pu_p, qw_p, ws_p, sm),
+        lambda: fn(proj_down=pd_p, proj_up=pu_p, qweight=qw_p, wscales=ws_p, smooth_factor=sm),
+        lambda: fn(qw_p, ws_p, pu_p, pd_p, sm),
+        lambda: fn(qweight=qw_p, wscales=ws_p, proj_up=pu_p, proj_down=pd_p, smooth_factor=sm),
+        lambda: fn(pu_p, pd_p, qw_p, ws_p, sm),
+        lambda: fn(pd_p, pu_p, qw_p, ws_p, sm, N, K),
+        lambda: fn(qw_p, ws_p, pu_p, pd_p, sm, N, K),
+        lambda: fn(proj_down=pd_p, proj_up=pu_p, qweight=qw_p, wscales=ws_p,
+                   smooth_factor=sm, N=N, K=K),
+    ]
+    for c in sigs:
+        try:
+            r = c()
+            if r is not None and hasattr(r, 'shape'):
+                return r
+        except Exception:
+            continue
+    return None
+
+rw_cases = [
+    ("RW1", "attn.to_out.0"),       # square 3072x3072
+    ("RW2", "img_mlp.net.0.proj"),  # N>K 12288x3072
+    ("RW3", "img_mlp.net.2"),       # N<K 3072x12288
+]
+for tname, pname in rw_cases:
+    try:
+        if fn_rw is None:
+            print(f"    RW {pname}: reconstruct_weight not found", file=sys.stderr)
+            wr(tname, False); continue
+        wa = torch.load(f"pt/{pname}.weight_approx.pt", weights_only=True)
+        pd_p = torch.load(f"pt/{pname}.proj_down.pt", weights_only=True)
+        pu_p = torch.load(f"pt/{pname}.proj_up.pt", weights_only=True)
+        qw_p = torch.load(f"pt/{pname}.qweight.pt", weights_only=True)
+        sm = torch.load(f"pt/{pname}.smooth_factor.pt", weights_only=True)
+        ws_p = torch.load(f"pt/{pname}.wscales.pt", weights_only=True)
+        N, K = wa.shape
+        out = call_rw(fn_rw, qw_p, ws_p, pu_p, pd_p, sm, N, K)
+        if out is None or not hasattr(out, 'shape') or tuple(out.shape) != (N, K):
+            print(f"    RW {pname}: bad/missing output", file=sys.stderr)
+            wr(tname, False); continue
+        diff = (out.float() - wa.float()).abs().max().item()
+        print(f"    RW {pname}: diff={diff:.6f}", file=sys.stderr)
+        wr(tname, diff < 0.1)
+    except Exception as e:
+        print(f"    RW {pname}: exception {e}", file=sys.stderr)
+        wr(tname, False)
+
 # ── F1-F3: fresh synthetic data (0.07 + 0.06 + 0.05) ────────────────
 # 3 novel sizes to catch hardcoded solutions.
 
@@ -515,14 +585,15 @@ PYEOF
 declare -A WEIGHTS
 WEIGHTS[P2P1]=0.02; WEIGHTS[P2P2]=0.02; WEIGHTS[P2P3]=0.01
 WEIGHTS[S1]=0.02;  WEIGHTS[S2]=0.02;  WEIGHTS[S3]=0.02
-WEIGHTS[Q1]=0.04;  WEIGHTS[Q2]=0.04;  WEIGHTS[Q3]=0.04
+WEIGHTS[Q1]=0.06;  WEIGHTS[Q2]=0.06;  WEIGHTS[Q3]=0.06
 WEIGHTS[SC1]=0.02; WEIGHTS[SC2]=0.02; WEIGHTS[SC3]=0.02
-WEIGHTS[QS1]=0.04; WEIGHTS[QS2]=0.04; WEIGHTS[QS3]=0.04
+WEIGHTS[QS1]=0.02; WEIGHTS[QS2]=0.02; WEIGHTS[QS3]=0.02
 WEIGHTS[LR1]=0.04; WEIGHTS[LR2]=0.04; WEIGHTS[LR3]=0.04; WEIGHTS[LR4]=0.04
 WEIGHTS[LR5]=0.04; WEIGHTS[LR6]=0.04; WEIGHTS[LR7]=0.04; WEIGHTS[LR8]=0.04
 WEIGHTS[R1]=0.03;  WEIGHTS[R2]=0.03;  WEIGHTS[R3]=0.03
 WEIGHTS[R4]=0.03;  WEIGHTS[R5]=0.03;  WEIGHTS[R6]=0.03
 WEIGHTS[TT]=0.05
+WEIGHTS[RW1]=0.02; WEIGHTS[RW2]=0.02; WEIGHTS[RW3]=0.02
 WEIGHTS[F1]=0.07;  WEIGHTS[F2]=0.06;  WEIGHTS[F3]=0.05
 
 while IFS=' ' read -r NAME PASS; do

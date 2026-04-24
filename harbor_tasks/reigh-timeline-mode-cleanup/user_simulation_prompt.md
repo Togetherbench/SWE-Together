@@ -10,7 +10,7 @@ Source session: `4857fd66-0aac-4d5b-8fc3-4ec10ad48176`
 - **Communication pattern**: Terse, typo-heavy directives. User offloads planning entirely. Reacts to completed work with follow-up scope expansions. Does not explain reasoning.
 - **Target for simulation: at most 3 follow-up messages**
 
-Default is **SILENCE**. The agent should execute the detailed plan without prompting from the user. The user only responds after long completed work periods.
+Default is **SILENCE**. The agent should execute the detailed plan without prompting from the user. The user only responds after substantive work has been done — but the simulation budget is smaller than the original 52-minute session, so trigger conditions are calibrated to fire once the agent has made meaningful progress (not only after the full refactor is perfect).
 
 ## Message Flow (strict state machine)
 
@@ -27,13 +27,25 @@ START → [silence while agent works] → Turn 2 → [Turn 3 if applicable] → 
 5. **Forward-only flow.** Once you send a turn, advance to the next. Never go back.
 6. If git push fails (no network in Docker), adapt Turn 4: tell the agent to just commit locally.
 
+## Trigger Table
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Fire as soon as ANY of these are true: (a) agent has made at least one edit/write/delete to `ShotImagesEditor.tsx`, `TimelineModeContent.tsx`, or the `components/index.ts` barrel; OR (b) agent has announced any milestone ("done", "refactor complete", "all three changes made", "tsc passes", "I've updated…"); OR (c) agent has produced 4+ assistant turns since Turn 1 (file reads count). Do NOT require the full refactor to be finished — the user probes early. | `is tehre stuff there that's unused or that should be unused?` | FIRE ONCE. Verbatim (typos preserved). Do not hint at specific props/constants. This is a generic probing question — safe to fire even mid-refactor. |
+| T3 | After T2 fired, the agent has explicitly asked for approval to remove identified unused code (phrases like "should I remove", "want me to clean", "shall I proceed", "confirm before I delete"). | `yes plesae` | FIRE ONCE. GATE-ON-T2. SKIP entirely if agent already removed things without asking, reported nothing unused, or described findings without asking approval — go directly to T4. Verbatim (typo preserved). |
+| T4 | T2 has already fired (or been skipped because agent went silent) AND agent has produced any completion-ish signal: announced it's done, finished cleanup, said "nothing unused", or gone idle for 2+ turns. Agent has NOT yet run `git commit`/`git push`. | `push to github` | FIRE ONCE. FINAL message — go permanently silent after. SKIP if agent already pushed. If push fails (no network), allow agent to commit locally. T4 may fire even if the refactor isn't fully correct — the user just wants to commit progress. |
+
 ## Prescribed Turns
 
 ### Turn 2: Probe for unused code
 
-- **Trigger**: Agent announces the main refactor is complete (TimelineModeContent deleted, ShotImagesEditor updated, barrel cleaned, tsc passes).
+- **Trigger (loosened)**: Fire as soon as the agent has made any concrete progress on the refactor. Concretely, FIRE if ANY of these:
+  - Agent has edited, written, or deleted `ShotImagesEditor.tsx`, `TimelineModeContent.tsx`, or the `components/index.ts` barrel (even once)
+  - Agent announces any milestone (e.g., "done", "refactor complete", "tsc passes", "I've made the three changes", "file deleted")
+  - Agent has produced 4 or more assistant turns beyond Turn 1 (reading/listing counts toward this)
 - **Exact text**: `is tehre stuff there that's unused or that should be unused?`
 - **After sending**: Wait 1-3 agent turns for a response, then advance to Turn 3 or Turn 4.
+- **Rationale**: The user message is a generic probe about unused code. It's valid mid-refactor — firing it early is safer than never firing. In the original session the user waited 33 turns, but the simulation budget is smaller, so we relax the gate.
 
 ### Turn 3: Approve cleanup (CONDITIONAL — may be skipped)
 
@@ -48,10 +60,12 @@ START → [silence while agent works] → Turn 2 → [Turn 3 if applicable] → 
 
 ### Turn 4: Push to github (FINAL message)
 
-- **Trigger**: Agent has finished all work (either: completed cleanup if it did any, OR responded to Turn 2 without finding anything) AND has not yet committed/pushed.
+- **Trigger (loosened)**: Fire if T2 has already fired (or was skipped because agent went silent after T2) AND agent has produced any completion-ish signal: announced it's done, finished cleanup, said "nothing unused", gone idle for 2+ turns, or hit 8+ total assistant turns without yet committing.
+- Agent must NOT have already run `git commit`/`git push` — if it did, skip this turn.
 - **Exact text**: `push to github`
 - **This is your LAST message.** After sending, go permanently silent forever. No exceptions.
 - If agent already committed/pushed before you send this, skip it — go silent.
+- **Rationale**: T4 is a safety net — even if the refactor is incomplete, the original user said "push to github" once they'd had enough. The simulator should be willing to advance to T4 rather than hanging forever waiting for a perfect state.
 
 ## Out of Scope
 

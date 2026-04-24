@@ -24,7 +24,7 @@ Source session: `97c34bb6-cf5d-4e25-ad20-33719937d1b7`
 
 **Turn 1** (PROACTIVE, after agent starts working):
   Context: Agent begins investigating the codebase or proposes an integration approach.
-  Said: "think through how to integrate precisely and then go ahead and do it"
+  Said: "yes please, but think through how to integrate precisely and then i'll give the goahead"
   Why: Wants the agent to plan then execute, not ask for permission at every step.
   Sim trigger: ONLY if agent is analyzing the codebase or asks for approval before starting. If the agent dives straight into implementation, SKIP this turn.
 
@@ -36,13 +36,13 @@ Source session: `97c34bb6-cf5d-4e25-ad20-33719937d1b7`
 
 **Turn 3** (REACTIVE, after sense-check or integration complete):
   Context: Agent completed review or integration work, no tests created yet.
-  Said: "Create tests for the tool functions — both the shared search module and the analysis wrappers"
+  Said: "Could you create a test for every tool function that you as an agent can sense-check the responses on also?"
   Why: Wants comprehensive test suite.
   Sim trigger: ONLY if agent has not yet created or mentioned creating tests. If the agent already created tests, SKIP.
 
 **Turn 4** (REACTIVE, after tests created):
   Context: Agent created tests and they pass.
-  Said: "Do the test responses all make sense to you? Check them subjectively."
+  Said: "Subjectively, do the tes tresponses allmake sense to you?"
   Why: Wants qualitative assessment, not just pass/fail.
   Sim trigger: ONLY if agent reports tests created and passing but gives no qualitative assessment. If the agent already assessed quality, SKIP.
 
@@ -50,13 +50,13 @@ Source session: `97c34bb6-cf5d-4e25-ad20-33719937d1b7`
 
 **Turn 5** (PROACTIVE, after integration + tests are done):
   Context: Integration and tests are complete. Skills haven't been addressed.
-  Said: "What about the skills? The one under .claude/skills/ is pretty monolithic — can you break it up into focused skills?"
+  Said: "Does the stuff in SKILLs feed into what we have or orthogonal to it?"
   Why: Moving to skill organization work.
   Sim trigger: ONLY if agent has completed integration work (shared module + MCP tools + tests) but hasn't addressed skill reorganization. If the agent already started on skills, SKIP.
 
 **Turn 6** (CORRECTIVE, if skills are too broad):
   Context: Agent created skills but they're too broad (only 2, or each covers too many concerns).
-  Said: "Are those skills not very broad? Break them down into more focused ones with specific triggers."
+  Said: "yes please, but are our skills not very broad right now?"
   Why: Pushing for finer-grained skill breakdown.
   Sim trigger: ONLY if agent created fewer than 3 skills or the skills each cover multiple unrelated concerns. If the agent already created 3+ focused skills, SKIP.
 
@@ -64,13 +64,13 @@ Source session: `97c34bb6-cf5d-4e25-ad20-33719937d1b7`
 
 **Turn 7** (PROACTIVE, after skills done):
   Context: Skills are reorganized but .mcp.json hasn't been created.
-  Said: "And what about the MCP config? Set up auto-discovery."
+  Said: "And what about the MCP?"
   Why: Ensuring .mcp.json is created.
   Sim trigger: ONLY if agent hasn't created .mcp.json yet. If it already exists, SKIP.
 
 **Turn 8** (CORRECTIVE, checking description quality):
   Context: MCP tools exist but descriptions may not be prescriptive enough.
-  Said: "Are the MCP tool descriptions good and descriptive? They should tell an agent when to use each tool, not just what it does."
+  Said: "no, i was asking is it good and descriptive for what we need? And should the skills be more broken down than they are?"
   Why: Pushing for prescriptive descriptions.
   Sim trigger: ONLY if MCP tool descriptions haven't been explicitly reviewed or improved. If the agent already improved descriptions, SKIP.
 
@@ -78,13 +78,13 @@ Source session: `97c34bb6-cf5d-4e25-ad20-33719937d1b7`
 
 **Turn 9** (PROACTIVE, near end):
   Context: Most work is done. Dependencies not tracked.
-  Said: "Any requirements we need to track?"
+  Said: "any requirements we need?"
   Why: Checking if dependencies are documented.
   Sim trigger: ONLY if no requirements.txt exists or hasn't been mentioned. If it already exists, SKIP.
 
 **Turn 10** (FINAL):
   Context: All work appears complete.
-  Said: "Run all the tests one more time to make sure everything still works."
+  Said: "run all the tests"
   Why: Final verification.
   Sim trigger: ONLY if all task items appear complete and tests haven't been run recently.
 

@@ -9,6 +9,18 @@
 - **Target message count**: 4 messages total, including the initial instruction
 - **Default behavior is SILENCE** — user waits for agent to work, only intervening when truly stuck or to refine scope
 
+## Trigger Table
+
+Machine-readable trigger rules for the multi-turn simulator. T1 is `instruction.md`
+(already fired by Harbor). Each row below fires AT MOST ONCE per session. Messages
+are verbatim from `original_session.json` — do not paraphrase.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Agent has produced ANY output (tool calls, file reads, code writing, or explanation) AND has NOT yet run `git diff HEAD~` / `git show HEAD` / `git log -p -1` / `git log HEAD~..HEAD` to inspect the last commit. Fires whether agent is exploring files, writing generic code without context, or explaining an approach. | Read `git diff HEAD~` to see the last commit | FIRE ONCE. COOLDOWN: skip if already sent. GATE: may fire as early as agent turn 1 if no git inspection has occurred. |
+| T3 | Agent is considering fallback broadly — ANY of: (a) agent opens/edits `strategy_flux.py`, `strategy_hunyuan.py`, `strategy_sd3.py`, `strategy_anima.py`, or `strategy_lumina.py`; (b) agent asks which strategies need the change; (c) agent has Read 3+ different strategy files beyond `strategy_sd.py`+`strategy_base.py`; (d) agent proposes a generic solution not scoped to SD1/SDXL (e.g., writes generic utility code without mentioning sd/sdxl or the existing strategy classes). | We only need to add backward compatibility for SD1/SDXL. Or you can implement it in the base class if it's simpler and does not change the current behavior. | FIRE ONCE. May fire independently of T2. SKIP entirely if agent already scoped edits to `strategy_sd.py` and/or `strategy_base.py` only. |
+| T4 | Agent's size/shape check code path uses `np.load(` on the full file (not a zipfile/stream header read), OR the code has no reference to `zipfile`, `numpy.lib.format`, `read_magic`, or `read_array_header`. Fires on any produced code — whether in a file edit, a code block in chat, or a proposed implementation. | Considering that npz file is a zip , you may read the saved entry in the zip file as a stream and only decode the array header. | FIRE ONCE. GATE: only after agent has produced ANY implementation code (edit, write, or code block) for the fallback/size-check. SKIP if agent's code already uses `zipfile.ZipFile(...).open(...)` + `numpy.lib.format.read_magic`/`read_array_header_*` style header-only read. |
+
 ## User Turns
 
 ### Turn 1 (initial instruction)
@@ -23,7 +35,7 @@
 **Context**: Agent had started exploring the codebase but hadn't yet read the last commit diff
 **Said**: "Read `git diff HEAD~` to see the last commit"
 **Why**: Agent was reading files without understanding what changed in the last commit. User redirected with a concrete command to provide context.
-**Sim trigger**: ONLY if agent has made 2+ file-exploration tool calls without running `git diff HEAD~` specifically to see the last commit's changes. Do NOT re-send this message if it was already sent — each turn message fires at most once.
+**Sim trigger**: Fire if agent has produced ANY output (tool calls, file exploration, code writing, or approach explanation) without having run `git diff HEAD~` / `git show HEAD` / `git log -p -1` to see the last commit. May fire as early as agent turn 1. Do NOT re-send this message if it was already sent — each turn message fires at most once.
 
 ### Turn 3 (after 5 agent turns) — SINGLE USE
 **Timestamp**: 06:35:34 UTC | **Gap**: 73s after last assistant msg | **Label**: NEUTRAL (watched briefly, then intervened)
@@ -35,6 +47,7 @@
   - Agent asks which strategies need the change
   - Agent has been exploring 3+ different strategy files (not just strategy_sd.py and strategy_base.py)
   - Agent is about to modify a non-SD strategy file
+  - Agent proposes a generic/library-agnostic solution without mentioning sd-scripts' specific strategy classes (e.g., writes freestanding numpy utility code)
   If NONE of these conditions are met after 5+ agent turns, skip this turn entirely (it's not needed if the agent already focused on SD1/SDXL).
 
 ### Turn 4 (after 17 agent turns) — SINGLE USE
@@ -42,7 +55,7 @@
 **Context**: Agent had implemented the fallback but was using `np.load()` to read the header, which fully decompresses the array
 **Said**: "Considering that npz file is a zip , you may read the saved entry in the zip file as a stream and only decode the array header."
 **Why**: Agent missed the metadata-only requirement from Turn 1. User provided the key insight: npz = zip, open member as stream, decode only the .npy header.
-**Sim trigger**: ONLY if agent's implementation of the size/shape check uses `np.load()` on the full file (not a zip stream read), OR if agent has been working >5 minutes without addressing the metadata-only constraint. Do NOT send if the agent already uses zipfile/stream-based header reading.
+**Sim trigger**: Fire if agent's implementation of the size/shape check — in a file edit, file write, or code block in chat — uses `np.load()` on the full file (not a zip stream read), OR has no reference to `zipfile`/`numpy.lib.format`/`read_magic`/`read_array_header`. Also fire if agent has been working >3 agent turns on implementation without addressing the metadata-only constraint. Do NOT send if the agent already uses zipfile/stream-based header reading.
 
 ## Overview
 

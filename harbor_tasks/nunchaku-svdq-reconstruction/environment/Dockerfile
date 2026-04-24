@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -20,7 +20,7 @@ RUN git init /workspace/nunchaku && \
 # Install CPU-only PyTorch + minimal deps (no CUDA required)
 RUN pip install --no-cache-dir --break-system-packages \
     torch==2.6.0+cpu --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir --break-system-packages safetensors
+    pip install --no-cache-dir --break-system-packages safetensors==0.7.0
 
 # Set PYTHONPATH so nunchaku package is importable
 ENV PYTHONPATH=/workspace/nunchaku
@@ -47,8 +47,10 @@ RUN git config --global user.email "agent@test.com" && \
     cd /workspace && git init && git add -A && \
     git commit -m "initial workspace state"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/root/.local/bin:$PATH"
 
 

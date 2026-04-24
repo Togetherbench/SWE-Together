@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification test for GGUF IQ dequantization functions in PyTorch.
 #
@@ -11,29 +11,34 @@
 # with both numpy reference (gguf.quants) and agent's PyTorch code, compare.
 #
 # Weight structure (total = 1.00):
-#   P2P Q4_0:                           0.02
-#   P2P Q8_0:                           0.02
-#   IQ3_XXS shape/dtype:                0.02
-#   IQ3_XXS numerical (seed=42):        0.10
-#   IQ3_XXS no-embedding:               0.05
-#   IQ3_XXS stress (seed=142, 64blk):   0.04
-#   IQ3_S shape/dtype:                  0.01
-#   IQ3_S numerical (seed=43):          0.10
-#   IQ3_S stress (seed=143, 64blk):     0.03
-#   IQ1_S shape/dtype:                  0.01
-#   IQ1_S numerical (seed=44):          0.10
-#   IQ1_S stress (seed=144, 64blk):     0.03
-#   IQ2_S shape/dtype:                  0.01
-#   IQ2_S numerical (seed=45):          0.08
-#   IQ2_S stress (seed=145, 64blk):     0.04
-#   IQ2_XXS shape/dtype:                0.01
-#   IQ2_XXS numerical (seed=46):        0.08
-#   IQ2_XXS stress (seed=146, 64blk):   0.04
-#   IQ1_M shape/dtype:                  0.01
-#   IQ1_M numerical (seed=47):          0.10
-#   IQ1_M stress (seed=147, 64blk):     0.06
-#   Dispatch check:                     0.03
-#   Upstream P2P:                       0.01
+#   [P2P] Q4_0 numerical:               0.02
+#   [P2P] Q8_0 numerical:               0.02
+#   [F2P] IQ3_XXS shape/dtype:          0.02
+#   [F2P] IQ3_XXS numerical (seed=42):  0.10
+#   [F2P] IQ3_XXS no-embedding:         0.05
+#   [F2P] IQ3_XXS stress (seed=142):    0.02
+#   [F2P] IQ3_S shape/dtype:            0.01
+#   [F2P] IQ3_S numerical (seed=43):    0.10
+#   [F2P] IQ3_S stress (seed=143):      0.03
+#   [F2P] IQ1_S shape/dtype:            0.01
+#   [F2P] IQ1_S numerical (seed=44):    0.10
+#   [F2P] IQ1_S stress (seed=144):      0.03
+#   [F2P] IQ2_S shape/dtype:            0.01
+#   [F2P] IQ2_S numerical (seed=45):    0.08
+#   [F2P] IQ2_S stress (seed=145):      0.04
+#   [F2P] IQ2_XXS shape/dtype:          0.01
+#   [F2P] IQ2_XXS numerical (seed=46):  0.08
+#   [F2P] IQ2_XXS stress (seed=146):    0.04
+#   [F2P] IQ1_M shape/dtype:            0.01
+#   [F2P] IQ1_M numerical (seed=47):    0.10
+#   [F2P] IQ1_M stress (seed=147):      0.04
+#   [F2P] IQ3_S  no F.embedding:        0.01
+#   [F2P] IQ1_S  no F.embedding:        0.01
+#   [F2P] IQ2_S  no F.embedding:        0.01
+#   [F2P] IQ2_XXS no F.embedding:       0.01
+#   [F2P] IQ1_M  no F.embedding:        0.01
+#   [F2P] Dispatch check:               0.02
+#   [P2P] Upstream P2P:                 0.01
 #   Sum = 1.00
 #
 set +e
@@ -48,7 +53,7 @@ os.chdir('/workspace')
 
 reward = 0.0
 test_num = 0
-total_tests = 23
+total_tests = 28
 
 ###############################################################################
 # Helper: independent libggml-based numerical test
@@ -212,152 +217,238 @@ def test_iq3_xxs_no_embedding():
         return False
 
 
+###############################################################################
+# Helper: behavioral no-embedding check for an arbitrary IQ type
+###############################################################################
+def test_no_embedding(qtype_name):
+    try:
+        import torch
+        import torch.nn.functional as F
+        import gguf
+        from qwen3_moe_fused.quantize_gguf.dequant import dequantize, dequantize_functions
+
+        qtype = getattr(gguf.GGMLQuantizationType, qtype_name)
+        if qtype not in dequantize_functions:
+            print(f"  FAIL: {qtype_name} not registered in dequantize_functions")
+            return False
+
+        block_size, type_size = gguf.GGML_QUANT_SIZES[qtype]
+        n_blocks = 4
+        numel = n_blocks * block_size
+        n_bytes = n_blocks * type_size
+
+        original_embedding = F.embedding
+        embedding_called = [False]
+        def patched_embedding(*args, **kwargs):
+            embedding_called[0] = True
+            return original_embedding(*args, **kwargs)
+
+        F.embedding = patched_embedding
+        try:
+            dummy_input = torch.zeros(n_bytes, dtype=torch.uint8)
+            _ = dequantize(dummy_input, qtype, (numel,), torch.float32)
+        except Exception as inner_e:
+            # If the function crashes, it's broken — no credit for no-embedding
+            F.embedding = original_embedding
+            print(f"  FAIL: {qtype_name} raised {type(inner_e).__name__}: {inner_e}")
+            return False
+        finally:
+            F.embedding = original_embedding
+
+        if embedding_called[0]:
+            print(f"  FAIL: {qtype_name} calls F.embedding (should use elemental torch ops)")
+            return False
+        else:
+            print(f"  PASS: {qtype_name} does not call F.embedding")
+            return True
+    except Exception as e:
+        print(f"  FAIL: {qtype_name} no-embedding exception: {e}")
+        return False
+
+
 # ============================================================================
 # Run all tests
 # ============================================================================
 
 # --- P2P regression ---
 test_num += 1
-print(f"=== Test {test_num}/{total_tests}: P2P Q4_0 [weight=0.02] ===")
+print(f"=== Test {test_num}/{total_tests}: P2P Q4_0 [P2P, weight=0.02] ===")
 if test_numerical_independent("Q4_0", seed=100):
     reward += 0.02
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: P2P Q8_0 [weight=0.02] ===")
+print(f"\n=== Test {test_num}/{total_tests}: P2P Q8_0 [P2P, weight=0.02] ===")
 if test_numerical_independent("Q8_0", seed=101):
     reward += 0.02
 
 # --- IQ3_XXS (core bug fix) ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS shape/dtype [weight=0.02] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS shape/dtype [F2P, weight=0.02] ===")
 if test_shape_dtype("IQ3_XXS"):
     reward += 0.02
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS numerical seed=42 [weight=0.10] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS numerical seed=42 [F2P, weight=0.10] ===")
 if test_numerical_independent("IQ3_XXS", seed=42):
     reward += 0.10
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS no F.embedding [weight=0.05] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS no F.embedding [F2P, weight=0.05] ===")
 if test_iq3_xxs_no_embedding():
     reward += 0.05
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS stress seed=142, 64blk [weight=0.04] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_XXS stress seed=142, 64blk [F2P, weight=0.02] ===")
 if test_numerical_independent("IQ3_XXS", seed=142, n_blocks=64):
-    reward += 0.04
+    reward += 0.02
 
 # --- IQ3_S ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_S shape/dtype [weight=0.01] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S shape/dtype [F2P, weight=0.01] ===")
 if test_shape_dtype("IQ3_S"):
     reward += 0.01
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_S numerical seed=43 [weight=0.10] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S numerical seed=43 [F2P, weight=0.10] ===")
 if test_numerical_independent("IQ3_S", seed=43):
     reward += 0.10
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ3_S stress seed=143, 64blk [weight=0.03] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S stress seed=143, 64blk [F2P, weight=0.03] ===")
 if test_numerical_independent("IQ3_S", seed=143, n_blocks=64):
     reward += 0.03
 
 # --- IQ1_S ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ1_S shape/dtype [weight=0.01] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S shape/dtype [F2P, weight=0.01] ===")
 if test_shape_dtype("IQ1_S"):
     reward += 0.01
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ1_S numerical seed=44 [weight=0.10] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S numerical seed=44 [F2P, weight=0.10] ===")
 if test_numerical_independent("IQ1_S", seed=44):
     reward += 0.10
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ1_S stress seed=144, 64blk [weight=0.03] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S stress seed=144, 64blk [F2P, weight=0.03] ===")
 if test_numerical_independent("IQ1_S", seed=144, n_blocks=64):
     reward += 0.03
 
 # --- IQ2_S ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ2_S shape/dtype [weight=0.01] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S shape/dtype [F2P, weight=0.01] ===")
 if test_shape_dtype("IQ2_S"):
     reward += 0.01
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ2_S numerical seed=45 [weight=0.08] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S numerical seed=45 [F2P, weight=0.08] ===")
 if test_numerical_independent("IQ2_S", seed=45):
     reward += 0.08
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ2_S stress seed=145, 64blk [weight=0.04] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S stress seed=145, 64blk [F2P, weight=0.04] ===")
 if test_numerical_independent("IQ2_S", seed=145, n_blocks=64):
     reward += 0.04
 
 # --- IQ2_XXS ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS shape/dtype [weight=0.01] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS shape/dtype [F2P, weight=0.01] ===")
 if test_shape_dtype("IQ2_XXS"):
     reward += 0.01
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS numerical seed=46 [weight=0.08] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS numerical seed=46 [F2P, weight=0.08] ===")
 if test_numerical_independent("IQ2_XXS", seed=46):
     reward += 0.08
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS stress seed=146, 64blk [weight=0.04] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS stress seed=146, 64blk [F2P, weight=0.04] ===")
 if test_numerical_independent("IQ2_XXS", seed=146, n_blocks=64):
     reward += 0.04
 
 # --- IQ1_M ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ1_M shape/dtype [weight=0.01] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M shape/dtype [F2P, weight=0.01] ===")
 if test_shape_dtype("IQ1_M"):
     reward += 0.01
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ1_M numerical seed=47 [weight=0.10] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M numerical seed=47 [F2P, weight=0.10] ===")
 if test_numerical_independent("IQ1_M", seed=47):
     reward += 0.10
 
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: IQ1_M stress seed=147, 64blk [weight=0.06] ===")
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M stress seed=147, 64blk [F2P, weight=0.04] ===")
 if test_numerical_independent("IQ1_M", seed=147, n_blocks=64):
-    reward += 0.06
+    reward += 0.04
+
+# --- no-F.embedding: instruction says "use elemental torch operations (direct
+#     tensor indexing) instead of F.embedding" — applies to all IQ functions. ---
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ3_S no F.embedding [F2P, weight=0.01] ===")
+if test_no_embedding("IQ3_S"):
+    reward += 0.01
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_S no F.embedding [F2P, weight=0.01] ===")
+if test_no_embedding("IQ1_S"):
+    reward += 0.01
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_S no F.embedding [F2P, weight=0.01] ===")
+if test_no_embedding("IQ2_S"):
+    reward += 0.01
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ2_XXS no F.embedding [F2P, weight=0.01] ===")
+if test_no_embedding("IQ2_XXS"):
+    reward += 0.01
+
+test_num += 1
+print(f"\n=== Test {test_num}/{total_tests}: IQ1_M no F.embedding [F2P, weight=0.01] ===")
+if test_no_embedding("IQ1_M"):
+    reward += 0.01
 
 # --- Dispatch ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: dispatch check [weight=0.03] ===")
+print(f"\n=== Test {test_num}/{total_tests}: dispatch check [F2P, weight=0.02] ===")
 try:
     import gguf
     from qwen3_moe_fused.quantize_gguf.dequant import dequantize_functions
 
+    import torch
     required_types = ["IQ3_XXS", "IQ3_S", "IQ1_S", "IQ2_S", "IQ2_XXS", "IQ1_M"]
-    registered = []
-    missing = []
+    from qwen3_moe_fused.quantize_gguf.dequant import dequantize
+    working = []
+    broken = []
     for name in required_types:
         qtype = getattr(gguf.GGMLQuantizationType, name, None)
         if qtype is None:
-            missing.append(f"{name} (not in gguf enum)")
-        elif qtype in dequantize_functions:
-            registered.append(name)
-        else:
-            missing.append(name)
+            broken.append(f"{name} (not in gguf enum)")
+            continue
+        if qtype not in dequantize_functions:
+            broken.append(name)
+            continue
+        # Verify each function actually runs without crashing
+        try:
+            block_size, type_size = gguf.GGML_QUANT_SIZES[qtype]
+            dummy = torch.zeros(4 * type_size, dtype=torch.uint8)
+            _ = dequantize(dummy, qtype, (4 * block_size,), torch.float32)
+            working.append(name)
+        except Exception:
+            broken.append(f"{name} (crashes)")
 
-    if missing:
-        print(f"  FAIL: missing: {', '.join(missing)}")
+    if broken:
+        print(f"  FAIL: broken: {', '.join(broken)}")
     else:
-        print(f"  PASS: all {len(required_types)} IQ types registered")
-        reward += 0.03
+        print(f"  PASS: all {len(required_types)} IQ types working")
+        reward += 0.02
 except Exception as e:
     print(f"  FAIL: dispatch exception: {e}")
 
 # --- Upstream P2P ---
 test_num += 1
-print(f"\n=== Test {test_num}/{total_tests}: Upstream P2P [weight=0.01] ===")
+print(f"\n=== Test {test_num}/{total_tests}: Upstream P2P [P2P, weight=0.01] ===")
 try:
     p2p_checks = 0
     p2p_total = 8

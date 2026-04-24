@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification tests for sd-scripts multi-resolution dataset caching and
 # skip_duplicate_bucketed_images feature.
@@ -6,22 +6,27 @@
 # Critical fix: use venv python explicitly — bare 'python3' resolves to
 # /usr/bin/python3 (system) which lacks numpy/torch/accelerate/etc.
 #
-# Scoring (89% behavioral, 11% structural):
-#   T1  0.03  STRUCTURAL  multi_resolution kwarg in strategy_sd.py
-#   T2  0.10  BEHAVIORAL  is_disk_cached_latents_expected multi_resolution=True (512x512)
-#   T3  0.08  BEHAVIORAL  is_disk_cached_latents_expected multi_resolution=True (1024x1024)
-#   T4  0.10  BEHAVIORAL  cache_batch_latents multi_resolution=True
-#   T5  0.08  BEHAVIORAL  load_latents_from_disk overridden + non-trivial body
-#   T6  0.10  BEHAVIORAL  dataset params skip_duplicate_bucketed_images field
-#   T7  0.08  BEHAVIORAL  skip_duplicate_bucketed_images in schema dict
-#   T8  0.03  STRUCTURAL  dedup logic AST (tracking + removal + conditional)
-#   T9  0.08  BEHAVIORAL  DreamBoothDataset accepts + stores skip_duplicate
-#   T10 0.08  BEHAVIORAL  FineTuningDataset or ControlNetDataset accepts it
-#   T11 0.03  STRUCTURAL  unwrap_model_for_sampling AST (try/except + _orig_mod)
-#   T12 0.08  BEHAVIORAL  unwrap_model_for_sampling normal path
-#   T13 0.08  BEHAVIORAL  unwrap_model_for_sampling compiled model handling
-#   T14 0.02  STRUCTURAL  _orig_mod + isinstance in sdxl_original_unet.py
-#   T15 0.03  BEHAVIORAL  upstream test suite P2P
+# Scoring: 82% behavioral, 18% structural. Weights sum to 1.00.
+#
+#   Test Weight Type        F2P/P2P  Description
+#   T1   0.03  STRUCTURAL  F2P      multi_resolution kwarg in strategy_sd.py
+#   T2   0.08  BEHAVIORAL  F2P      is_disk_cached_latents_expected multi_resolution=True (512x512)
+#   T3   0.06  BEHAVIORAL  F2P      is_disk_cached_latents_expected multi_resolution=True (1024x1024)
+#   T4   0.08  BEHAVIORAL  F2P      cache_batch_latents multi_resolution=True
+#   T5   0.08  BEHAVIORAL  F2P      load_latents_from_disk overridden + non-trivial body
+#   T6   0.08  BEHAVIORAL  F2P      dataset params skip_duplicate_bucketed_images field
+#   T7   0.06  BEHAVIORAL  F2P      skip_duplicate_bucketed_images in schema dict
+#   T8   0.03  STRUCTURAL  F2P      dedup logic AST (tracking + removal + conditional)
+#   T9   0.08  BEHAVIORAL  F2P      DreamBoothDataset accepts + stores skip_duplicate
+#   T10  0.07  BEHAVIORAL  F2P      FineTuningDataset or ControlNetDataset accepts it
+#   T11  0.03  STRUCTURAL  F2P      unwrap_model_for_sampling AST (try/except + _orig_mod)
+#   T12  0.08  BEHAVIORAL  F2P      unwrap_model_for_sampling normal path
+#   T13  0.08  BEHAVIORAL  F2P      unwrap_model_for_sampling compiled model handling
+#   T14  0.02  STRUCTURAL  F2P      _orig_mod + isinstance in sdxl_original_unet.py
+#   T15  0.03  BEHAVIORAL  P2P      upstream test suite (passes on base and gold)
+#   T16  0.04  BEHAVIORAL  F2P      unwrap_model_for_sampling KeyError('_orig_mod') fallback (Sim T6)
+#   T17  0.03  STRUCTURAL  F2P      bucket_manager reset + explanatory comment (Sim T9)
+#   T18  0.04  STRUCTURAL  F2P      unwrap-before-isinstance pattern in sdxl_original_unet.py (Sim T7 strict)
 #
 set +e
 export PATH="/workspace/venv/bin:$PATH"
@@ -39,7 +44,7 @@ add_reward() {
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# T1 (0.03): STRUCTURAL — multi_resolution kwarg in strategy_sd.py
+# T1 (0.03): STRUCTURAL F2P — multi_resolution kwarg in strategy_sd.py
 #   Grep check: multi_resolution=True appears in strategy_sd.py
 # ═══════════════════════════════════════════════════════════════════
 echo "=== T1/15: [STRUCTURAL] multi_resolution kwarg in strategy_sd.py ==="
@@ -51,7 +56,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T2 (0.10): BEHAVIORAL — is_disk_cached_latents_expected multi_resolution=True (512x512)
+# T2 (0.08): BEHAVIORAL F2P — is_disk_cached_latents_expected multi_resolution=True (512x512)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T2/15: [BEHAVIORAL] is_disk_cached_latents_expected multi_resolution=True (512x512) ==="
@@ -83,10 +88,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T2"
-if [ "$T2" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T2" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T3 (0.08): BEHAVIORAL — is_disk_cached_latents_expected multi_resolution=True (1024x1024)
+# T3 (0.06): BEHAVIORAL F2P — is_disk_cached_latents_expected multi_resolution=True (1024x1024)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T3/15: [BEHAVIORAL] is_disk_cached_latents_expected multi_resolution=True (1024x1024) ==="
@@ -118,10 +123,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T3"
-if [ "$T3" = "PASS" ]; then add_reward 0.08; fi
+if [ "$T3" = "PASS" ]; then add_reward 0.06; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T4 (0.10): BEHAVIORAL — cache_batch_latents passes multi_resolution=True
+# T4 (0.08): BEHAVIORAL F2P — cache_batch_latents passes multi_resolution=True
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T4/15: [BEHAVIORAL] cache_batch_latents multi_resolution=True ==="
@@ -172,10 +177,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T4"
-if [ "$T4" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T4" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T5 (0.08): BEHAVIORAL — load_latents_from_disk overridden + non-trivial body
+# T5 (0.08): BEHAVIORAL F2P — load_latents_from_disk overridden + non-trivial body
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T5/15: [BEHAVIORAL] load_latents_from_disk override + non-trivial body ==="
@@ -212,7 +217,7 @@ echo "  Result: $T5"
 if [ "$T5" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T6 (0.10): BEHAVIORAL — dataset params have skip_duplicate_bucketed_images
+# T6 (0.08): BEHAVIORAL F2P — dataset params have skip_duplicate_bucketed_images
 #   Check BaseDatasetParams OR child dataset params classes for the field.
 #   Accepts the field in either the base or any child dataclass.
 # ═══════════════════════════════════════════════════════════════════
@@ -257,10 +262,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T6"
-if [ "$T6" = "PASS" ]; then add_reward 0.10; fi
+if [ "$T6" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T7 (0.08): BEHAVIORAL — skip_duplicate_bucketed_images in schema dict
+# T7 (0.06): BEHAVIORAL F2P — skip_duplicate_bucketed_images in schema dict
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T7/15: [BEHAVIORAL] skip_duplicate_bucketed_images in schema dict ==="
@@ -308,10 +313,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T7"
-if [ "$T7" = "PASS" ]; then add_reward 0.08; fi
+if [ "$T7" = "PASS" ]; then add_reward 0.06; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T8 (0.03): STRUCTURAL — dedup logic AST pattern
+# T8 (0.03): STRUCTURAL F2P — dedup logic AST pattern
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T8/15: [STRUCTURAL] dedup logic AST pattern ==="
@@ -370,7 +375,7 @@ echo "  Result: $T8"
 if [ "$T8" = "PASS" ]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T9 (0.08): BEHAVIORAL — DreamBoothDataset accepts skip_duplicate_bucketed_images
+# T9 (0.08): BEHAVIORAL F2P — DreamBoothDataset accepts skip_duplicate_bucketed_images
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T9/15: [BEHAVIORAL] DreamBoothDataset accepts skip_duplicate_bucketed_images ==="
@@ -424,7 +429,7 @@ echo "  Result: $T9"
 if [ "$T9" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T10 (0.08): BEHAVIORAL — FineTuningDataset or ControlNetDataset accepts it
+# T10 (0.07): BEHAVIORAL F2P — FineTuningDataset or ControlNetDataset accepts it
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T10/15: [BEHAVIORAL] FineTuningDataset or ControlNetDataset accepts skip_duplicate ==="
@@ -463,10 +468,10 @@ except Exception as e:
 PYEOF
 )
 echo "  Result: $T10"
-if [ "$T10" = "PASS" ]; then add_reward 0.08; fi
+if [ "$T10" = "PASS" ]; then add_reward 0.07; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T11 (0.03): STRUCTURAL — unwrap_model_for_sampling AST
+# T11 (0.03): STRUCTURAL F2P — unwrap_model_for_sampling AST
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T11/15: [STRUCTURAL] unwrap_model_for_sampling AST ==="
@@ -515,7 +520,7 @@ echo "  Result: $T11"
 if [ "$T11" = "PASS" ]; then add_reward 0.03; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T12 (0.08): BEHAVIORAL — unwrap_model_for_sampling normal path
+# T12 (0.08): BEHAVIORAL F2P — unwrap_model_for_sampling normal path
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T12/15: [BEHAVIORAL] unwrap_model_for_sampling normal path ==="
@@ -577,7 +582,7 @@ echo "  Result: $T12"
 if [ "$T12" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T13 (0.08): BEHAVIORAL — unwrap_model_for_sampling compiled model handling
+# T13 (0.08): BEHAVIORAL F2P — unwrap_model_for_sampling compiled model handling
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T13/15: [BEHAVIORAL] unwrap_model_for_sampling compiled model handling ==="
@@ -646,7 +651,7 @@ echo "  Result: $T13"
 if [ "$T13" = "PASS" ]; then add_reward 0.08; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T14 (0.02): STRUCTURAL — _orig_mod + isinstance in sdxl_original_unet.py
+# T14 (0.02): STRUCTURAL F2P — _orig_mod + isinstance in sdxl_original_unet.py
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T14/15: [STRUCTURAL] sdxl_original_unet.py isinstance + _orig_mod ==="
@@ -685,7 +690,7 @@ echo "  Result: $T14"
 if [ "$T14" = "PASS" ]; then add_reward 0.02; fi
 
 # ═══════════════════════════════════════════════════════════════════
-# T15 (0.03): BEHAVIORAL P2P — upstream test suite
+# T15 (0.03): BEHAVIORAL P2P — upstream test suite (passes on base and gold)
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T15/15: [BEHAVIORAL P2P] upstream test suite ==="
@@ -704,6 +709,220 @@ if [ -d "tests/library" ] && ls tests/library/test_*.py 1>/dev/null 2>&1; then
 else
     echo "  SKIP: no upstream tests found"
 fi
+
+# ═══════════════════════════════════════════════════════════════════
+# T16 (0.04): BEHAVIORAL — unwrap_model_for_sampling KeyError fallback (Sim T6)
+#   Sim T6 user reported that `accelerator.unwrap_model(model)` raises
+#   KeyError('_orig_mod') for torch.compile-wrapped models. The fix must
+#   handle this in the except branch — either by passing keep_torch_compile=False
+#   to unwrap_model OR by manually unwrapping the _orig_mod attribute.
+#   This test specifically exercises the KeyError path that earlier tests did
+#   not hit (T13's passthrough accelerator never raises).
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== T16/17: [BEHAVIORAL] unwrap_model_for_sampling KeyError('_orig_mod') fallback ==="
+T16=$($PYTHON << 'PYEOF'
+import sys, os
+sys.path.insert(0, "/workspace/sd-scripts")
+os.chdir("/workspace/sd-scripts")
+try:
+    import library.train_util as tu
+    func = getattr(tu, "unwrap_model_for_sampling", None)
+    if func is None:
+        print("FAIL:function_not_found")
+        sys.exit(0)
+
+    class InnerModel:
+        pass
+    inner = InnerModel()
+
+    class CompiledModel:
+        _orig_mod = inner
+
+    class KeyErrorThenFallbackAccelerator:
+        """Raises KeyError('_orig_mod') on the bare unwrap_model call.
+        When keep_torch_compile=False is passed, returns _orig_mod if present.
+        This simulates the failure mode that prompted Sim T6's fix."""
+        def __init__(self):
+            self.calls = []
+        def unwrap_model(self, m, **kw):
+            self.calls.append(dict(kw))
+            if not kw:
+                raise KeyError("'_orig_mod'")
+            if kw.get("keep_torch_compile", True) is False:
+                if hasattr(m, "_orig_mod"):
+                    return m._orig_mod
+                return m
+            return m
+
+    acc = KeyErrorThenFallbackAccelerator()
+    model = CompiledModel()
+
+    result = None
+    ok = False
+    for args in [(acc, model), (model, acc), (model,), (acc, model, False)]:
+        try:
+            result = func(*args)
+            ok = True
+            break
+        except TypeError:
+            continue
+        except KeyError:
+            print("FAIL:function_propagated_KeyError_instead_of_handling_it")
+            sys.exit(0)
+        except Exception:
+            ok = True
+            break
+
+    if not ok:
+        print("FAIL:could_not_call")
+        sys.exit(0)
+    if not acc.calls:
+        print("FAIL:never_called_unwrap_model")
+        sys.exit(0)
+    # First call must have been without keep_torch_compile (to trigger the KeyError path)
+    if acc.calls[0].get("keep_torch_compile", True) is False:
+        print("FAIL:first_call_already_used_keep_torch_compile_false_no_keyerror_exercised")
+        sys.exit(0)
+    if result is inner:
+        print("PASS")
+    elif result is model:
+        print("FAIL:returned_wrapper_not_inner")
+    elif hasattr(result, "_orig_mod"):
+        print("FAIL:still_has_orig_mod_wrapper")
+    else:
+        print(f"FAIL:unexpected_result_type={type(result).__name__}")
+except Exception as e:
+    print(f"FAIL:{e}")
+PYEOF
+)
+echo "  Result: $T16"
+if [ "$T16" = "PASS" ]; then add_reward 0.04; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# T17 (0.03): STRUCTURAL — bucket_manager reset + explanatory comment (Sim T9)
+#   Sim T9 user asked to add a comment explaining why bucket_manager is
+#   reset before re-use in dedup logic. Verify both the assignment
+#   (`bucket_manager = None` / `bucket_manager=None`) and a non-trivial
+#   comment within 3 lines above/on that line exist in config_util.py.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== T17/17: [STRUCTURAL] bucket_manager reset + explanatory comment ==="
+T17=$(python3 << 'PYEOF'
+import re, sys
+path = "/workspace/sd-scripts/library/config_util.py"
+try:
+    with open(path) as f:
+        lines = f.readlines()
+except FileNotFoundError:
+    print("FAIL:file_not_found")
+    sys.exit(0)
+
+reset_pat = re.compile(r'bucket_manager\s*=\s*None')
+reset_line_idxs = [i for i, l in enumerate(lines) if reset_pat.search(l)]
+
+if not reset_line_idxs:
+    print("FAIL:no_bucket_manager_reset_found")
+    sys.exit(0)
+
+def has_meaningful_comment(idx):
+    # Accept comment on the assignment line (trailing) OR within 3 lines above.
+    for off in range(-3, 1):
+        j = idx + off
+        if j < 0 or j >= len(lines):
+            continue
+        line = lines[j]
+        hash_pos = line.find('#')
+        if hash_pos < 0:
+            continue
+        # Skip shebang
+        if line.lstrip().startswith('#!'):
+            continue
+        comment_text = line[hash_pos + 1:].strip()
+        # Require a comment with actual explanatory content (>=10 chars).
+        if len(comment_text) >= 10:
+            return True
+    return False
+
+if any(has_meaningful_comment(i) for i in reset_line_idxs):
+    print("PASS")
+else:
+    print("FAIL:no_explanatory_comment_within_3_lines_of_bucket_manager_reset")
+PYEOF
+)
+echo "  Result: $T17"
+if [ "$T17" = "PASS" ]; then add_reward 0.03; fi
+
+# ═══════════════════════════════════════════════════════════════════
+# T18 (0.04): STRUCTURAL — unwrap-before-isinstance pattern in sdxl_original_unet.py
+#   Sim T7 user: "You need to unwrap _orig_mod before the isinstance check."
+#   T14 is a loose co-occurrence grep (both tokens anywhere in the same
+#   function) — an agent that never touched Turn 7 could pass T14 by
+#   accident. This stricter AST check requires the actual fix pattern:
+#     (a) some Assign whose RHS references `_orig_mod` (attribute access
+#         or string literal inside hasattr/getattr), producing a bound var,
+#     (b) `isinstance(<that_bound_var>, ...)` called in the same function.
+#   This rejects solutions that merely mention `_orig_mod` without
+#   routing the unwrapped object into the isinstance check.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== T18/18: [STRUCTURAL] unwrap-before-isinstance pattern in sdxl_original_unet.py ==="
+T18=$(python3 << 'PYEOF'
+import sys, ast
+
+try:
+    with open("/workspace/sd-scripts/library/sdxl_original_unet.py") as f:
+        tree = ast.parse(f.read())
+except FileNotFoundError:
+    print("FAIL:file_not_found")
+    sys.exit(0)
+except SyntaxError as e:
+    print(f"FAIL:syntax_error:{e}")
+    sys.exit(0)
+
+def value_references_orig_mod(value):
+    for sub in ast.walk(value):
+        if isinstance(sub, ast.Attribute) and sub.attr == "_orig_mod":
+            return True
+        if isinstance(sub, ast.Constant) and sub.value == "_orig_mod":
+            return True
+    return False
+
+found = False
+for node in ast.walk(tree):
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        continue
+    bound_names = set()
+    for child in ast.walk(node):
+        # X = ...._orig_mod... (covers ternary, attribute access, getattr, hasattr-branches)
+        if isinstance(child, ast.Assign) and value_references_orig_mod(child.value):
+            for tgt in child.targets:
+                if isinstance(tgt, ast.Name):
+                    bound_names.add(tgt.id)
+        # X: T = ...._orig_mod... (annotated assign, rare but possible)
+        if isinstance(child, ast.AnnAssign) and child.value is not None \
+                and value_references_orig_mod(child.value):
+            if isinstance(child.target, ast.Name):
+                bound_names.add(child.target.id)
+    if not bound_names:
+        continue
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) \
+                and isinstance(child.func, ast.Name) \
+                and child.func.id == "isinstance" \
+                and child.args \
+                and isinstance(child.args[0], ast.Name) \
+                and child.args[0].id in bound_names:
+            found = True
+            break
+    if found:
+        break
+
+print("PASS" if found else "FAIL:no_isinstance_on_unwrapped_var")
+PYEOF
+)
+echo "  Result: $T18"
+if [ "$T18" = "PASS" ]; then add_reward 0.04; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # FINAL SCORE

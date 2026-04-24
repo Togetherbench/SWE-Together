@@ -48,8 +48,10 @@ RUN corepack enable && \
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/root/.local/bin:$PATH"
 
 

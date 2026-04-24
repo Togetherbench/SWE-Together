@@ -1,0 +1,1 @@
+CAn you look at @src/shared/components/MediaLightbox/ and try to understand why the main component is so large? Can you think of any smart abstractions or ways to restructure it in such a way that it's less complicated and importantly less large?

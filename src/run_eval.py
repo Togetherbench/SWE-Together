@@ -60,6 +60,9 @@ from runner import (
     _OPENROUTER_BASE_URL,
     _FIREWORKS_BASE_URL,
     _GLM_BASE_URL,
+    _MINIMAX_BASE_URL,
+    _ARK_BASE_URL,
+    _GLMD_BASE_URL,
 )
 
 logging.basicConfig(
@@ -127,6 +130,7 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         env.update({
             "ANTHROPIC_API_KEY": "sk-litellm-local",
             "ANTHROPIC_AUTH_TOKEN": "sk-litellm-local",
+            "ANTHROPIC_BASE_URL": "http://localhost:4210",
             "ANTHROPIC_MODEL": "claude-sonnet-4-6",
             "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
             "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
@@ -152,6 +156,7 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         env.update({
             "ANTHROPIC_API_KEY": "sk-proxy-local",
             "ANTHROPIC_AUTH_TOKEN": "sk-proxy-local",
+            "ANTHROPIC_BASE_URL": "http://localhost:4210",
             "ANTHROPIC_MODEL": "claude-sonnet-4-6",
             "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
             "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
@@ -177,6 +182,7 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         env.update({
             "ANTHROPIC_API_KEY": "sk-proxy-local",
             "ANTHROPIC_AUTH_TOKEN": "sk-proxy-local",
+            "ANTHROPIC_BASE_URL": "http://localhost:4210",
             "ANTHROPIC_MODEL": "claude-sonnet-4-6",
             "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
             "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
@@ -196,6 +202,55 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         })
         return env
 
+    # Direct-provider proxy template. All three (ark, glmd, minimaxd) route via
+    # the in-sandbox LiteLLM-style proxy that user_enabled_claude_code.py
+    # launches on port 4210. CC sees `claude-sonnet-4-6` (passes client-side
+    # model-name validator). Proxy rewrites `model` in the POST body to the
+    # real target (e.g. `kimi-k2.6`, `glm-5.1`, `MiniMax-M2.5`) and forwards
+    # to the provider's Anthropic-compatible endpoint. No CC changes to auth
+    # flow needed — proxy injects `x-api-key: <provider-key>`.
+    def _proxy_env(target_url: str, real_model: str, api_key: str) -> dict[str, str]:
+        return {
+            "ANTHROPIC_API_KEY": "sk-proxy-local",
+            "ANTHROPIC_AUTH_TOKEN": "sk-proxy-local",
+            "ANTHROPIC_BASE_URL": "http://localhost:4210",
+            "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-4-6",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-6",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+            "API_TIMEOUT_MS": "6000000",
+            "LITELLM_PROXY_MODEL": real_model,
+            "LITELLM_PROXY_PORT": "4210",
+            "PROXY_TARGET_URL": target_url,
+            "PROXY_API_KEY": api_key,
+        }
+
+    if provider == "minimaxd":
+        # MiniMax direct — explicit model selection via proxy.
+        # Supported: MiniMax-M2, MiniMax-M2.5, MiniMax-M2.7.
+        mm_model = model_arg.split("/", 1)[1]
+        env.update(_proxy_env(_MINIMAX_BASE_URL, mm_model, action_key))
+        return env
+
+    if provider == "glmd":
+        # GLM direct via z.ai — explicit model selection via proxy.
+        # Supported: glm-4.5, glm-4.6, glm-4.7, glm-5, glm-5.1.
+        glm_model = model_arg.split("/", 1)[1]
+        env.update(_proxy_env(_GLMD_BASE_URL, glm_model, action_key))
+        return env
+
+    if provider == "ark":
+        # ARK (Volcengine) — explicit model selection via proxy.
+        # Supported: kimi-k2.5, kimi-k2.6, minimax-m2.5, minimax-m2.7,
+        # glm-4.7, glm-5.1, deepseek-v3.2, doubao-seed-code, doubao-seed-2.0-code, etc.
+        ark_model = model_arg.split("/", 1)[1]
+        env.update(_proxy_env(_ARK_BASE_URL, ark_model, action_key))
+        return env
+
     # Unknown provider — pass key directly
     env["ANTHROPIC_API_KEY"] = action_key
     return env
@@ -213,6 +268,7 @@ def build_trial_config(
     agent_timeout: float | None,
     user_context_chars: int,
     call_user_on_completion: bool,
+    force_build: bool = False,
 ) -> TrialConfig:
     """Build a TrialConfig with per-task user sim kwargs."""
     # Load per-task data
@@ -258,12 +314,27 @@ def build_trial_config(
         "max_messages": None,
         "user_context_chars": user_context_chars,
         "call_user_on_completion": call_user_on_completion,
+        # Pin Claude Code version at agent-setup time (flows through
+        # UserEnabledClaudeCode **kwargs to inner ClaudeCode, then into Harbor's
+        # install-claude-code.sh.j2 {% if version %} branch which hardcodes
+        # `curl install.sh | bash -s -- <version>`). Otherwise Harbor's runtime
+        # install pulls LATEST (currently 2.1.119), which has a client-side
+        # model-name validator that rejects non-Anthropic names like kimi-k2.6
+        # before any API call is made.
+        "version": "2.1.108",
     }
 
-    # For proxy providers, the model name sent to Harbor must be a Claude name
-    # (the proxy remaps it). For direct Anthropic, use the real model name.
+    # Model name sent to Harbor.self.model_name governs BOTH the ANTHROPIC_MODEL
+    # env var AND all the ANTHROPIC_DEFAULT_*_MODEL aliases Harbor sets when
+    # ANTHROPIC_BASE_URL is custom. If this is a real model name like kimi-k2.6,
+    # Claude Code's client-side validator rejects it before any API call.
+    # So: for every provider where we route through a non-Anthropic backend
+    # (LiteLLM proxy OR direct Anthropic-compatible endpoint), lie to Harbor
+    # and say "claude-sonnet-4-6" — the backend maps it to the real model.
     harbor_model = action_model
     if agent_env.get("LITELLM_PROXY_MODEL"):
+        harbor_model = "claude-sonnet-4-6"
+    elif agent_env.get("ANTHROPIC_BASE_URL") in (_ARK_BASE_URL, _MINIMAX_BASE_URL, _GLMD_BASE_URL):
         harbor_model = "claude-sonnet-4-6"
 
     agent_config = AgentConfig(
@@ -274,7 +345,7 @@ def build_trial_config(
         env=agent_env,
     )
 
-    env_config = EnvironmentConfig(delete=True)
+    env_config = EnvironmentConfig(delete=True, force_build=force_build)
     if env_type:
         env_config.type = EnvironmentType(env_type)
 
@@ -400,6 +471,7 @@ async def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--user-context-chars", type=int, default=3000)
     parser.add_argument("--call-user-on-completion", type=bool, default=True)
+    parser.add_argument("--force-build", action="store_true", help="Force E2B template rebuild (recovers from corrupted template aliases)")
     args = parser.parse_args()
 
     # Resolve model + key
@@ -500,6 +572,7 @@ async def main():
             agent_timeout=args.agent_timeout,
             user_context_chars=args.user_context_chars,
             call_user_on_completion=args.call_user_on_completion,
+            force_build=args.force_build,
         )
         trial_configs.append(tc)
 

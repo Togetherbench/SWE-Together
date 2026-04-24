@@ -1,0 +1,27 @@
+version = "1.0"
+
+[metadata]
+author_name = "Alex Li"
+author_email = "alex@example.com"
+difficulty = "medium"
+category = "bugfix"
+tags = ["pi-mono", "typescript"]
+session_resolution = "resolved"
+session_resolution_confidence = 0.85
+session_resolution_reasoning = "Main task (timing footer) completed and tested by Turn 6 ('oki, tested, worksa s intended, commit with closes #, push'). Remaining turns were a secondary unrelated commit request where agent refused."
+expert_time_estimate_min = 15.0
+junior_time_estimate_min = 60.0
+
+[verifier]
+timeout_sec = 120.0
+
+[agent]
+timeout_sec = 2400.0
+
+[environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-0fa6d7bd:cefe229c14ee"
+build_timeout_sec = 600.0
+cpus = 1
+memory = "4G"
+storage = "10G"
+allow_internet = true

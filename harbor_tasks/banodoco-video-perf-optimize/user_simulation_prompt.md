@@ -11,6 +11,8 @@
 
 **Default is SILENCE.** Do not simulate user turns when the agent is making reasonable progress. Silence means choosing `no-op`. When in doubt, choose silence.
 
+**Exception — one-shot responses:** If the agent replies to the initial instruction with a single long "drop-in solution" that covers virtualization in any form (code, pseudocode, file-level description), fire T2 on the next turn. T2 is a validation question (quality/mobile check), not a correction or status nudge, and the ground truth shows the user asked it immediately after the first virtualization milestone. Silence is NOT the right call on the first post-implementation turn when T2's looser condition is met.
+
 ### HARD CAP: Maximum 6 messages
 
 You may send **at most 6 messages** across the entire session. After sending 6 messages, you MUST choose `no-op` for every remaining turn regardless of agent behavior. Budget your messages carefully — spend them only on genuinely necessary corrections or new requirements that the agent cannot derive from instruction.md.
@@ -44,6 +46,23 @@ Many ground-truth messages from the original session are PRE-EMPTED because inst
 
 ---
 
+## Trigger Table (canonical)
+
+Verbatim ground-truth messages from the original session. Use these exact strings when firing — do not paraphrase. Detailed context for each turn is in the "User Turns" prose section below.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Agent has PROPOSED or WRITTEN any TopGenerations virtualization / lazy-load solution (any approach: react-window, IntersectionObserver, windowing, scroll-recycle, chunked rendering, etc.) and has not explicitly addressed mobile or responsive device behavior in the same response. Code snippets, file outlines, or verbal descriptions of the approach all count — do NOT require seeing specific API calls like `.observe()` or a compiled build. If the agent claims "virtualized" or "only N rows mounted" anywhere in the response, the condition is met. | `Is this well structured? Will it do this in a nice way? Will it work well on mobile and other devices?` | FIRE ONCE. Skip if already asked a well-structured question this session (anti-repetition rule applies to this AND T_well_structured_b). COOLDOWN 3 turns. This is the MOST LIKELY trigger on a one-shot implementation response — prefer firing it over no-op when the agent dumps all features at once. |
+| T3 | Agent has added IntersectionObserver auto-play for ModelTrends AND claims the animation plays correctly, but the interval/stop condition still cuts the animation before all data points are visible (e.g., ends at data.length-1 or a truncated index). | `also the animation doesn't run the whole way, it feels like it completes before it's completed` | FIRE ONCE. Requires agent to have touched ModelTrends.tsx animation state. |
+| T4 | After T3, agent re-runs and marks the animation as fixed, but the first load still starts with all data visible (useState(data.length) or equivalent) while subsequent loads animate from left. | `still happens, it feels like it completes too early. also why on the first load does it not 'play from the left' like it does on subsequent loads` | GATE-ON-T3. FIRE ONCE. |
+| T5 | Agent is iterating on ModelTrends animation timing (>=2 edits to animation state/interval) without identifying or disabling Recharts' internal `isAnimationActive` / built-in animation duration as the root cause. | `is there a max duration on the aniamtion or something?` | FIRE ONCE. COOLDOWN 3 turns. Note: verbatim typo preserved. |
+| T6 | Animation is playing left-to-right and data growth is working, but all X-axis time/month labels are visible from the start (timeline does not reveal progressively with data). | `that looks good but can you only show the times that actually have entries` | FIRE ONCE. Only after play-from-left is working. |
+| T7 | After progressive timeline reveal is implemented, the animation completes in under ~3 seconds (too fast to read). | `make it half the speed` | FIRE ONCE. GATE-ON-T6 (only after progressive reveal landed). |
+
+**Budget**: the existing HARD CAP of 6 messages caps simulator firings at 6 total including any skip-list entries that become live corrections. If the skip-list triggers fire (e.g., normalization broken, labels missing, ease-out not implemented), reduce the above set proportionally — do NOT exceed 6.
+
+---
+
 ## User Turns
 
 ### Turn 1 (Initial instruction — already in instruction.md)
@@ -66,7 +85,7 @@ Many ground-truth messages from the original session are PRE-EMPTED because inst
 
 **Why**: User wants to validate the implementation quality before moving on. Not correcting specific bugs — asking for a holistic review.
 
-**Sim trigger**: ONLY if agent has completed a virtualization/lazy-loading implementation and is not proactively reviewing mobile/responsiveness implications
+**Sim trigger**: FIRE when agent has proposed or written ANY virtualization/lazy-loading approach (code or description) and has not explicitly addressed mobile/responsive behavior. One-shot "drop-in" style responses that claim virtualization but skip mobile discussion are a strong match — do not require full code visibility or a compiled build. This is often the first fire opportunity on a session where the agent answers the whole instruction at once.
 
 ---
 

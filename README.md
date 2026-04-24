@@ -230,6 +230,7 @@ Benchmark results are only meaningful when tied to a specific version. Three thi
 | User simulator | `UserAgent.VERSION` (e.g., `"0.3.1"`) — logged in every `user_decision.json` |
 | Test scripts | Part of the task directory hash |
 | Harness (Harbor) | `harbor.__version__` in `config.json` |
+| **Claude Code CLI** | **Pinned to `2.1.108`**, baked into every task image (`base_images/*/Dockerfile` + 29 raw task Dockerfiles). Harness version is part of the image hash — eval runs across different days use the exact same CC binary. See `CLAUDE.md` §"Claude Code harness version — pinned to 2.1.108" for the bump procedure. |
 
 ### Release format
 

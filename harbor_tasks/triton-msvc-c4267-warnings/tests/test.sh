@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Verifier for triton-msvc-c4267-warnings
 #
-# 18 tests (0.96 behavioral / 0.04 structural / 0.05 P2P), total 1.05 (capped 1.0)
+# 18 tests (0.96 behavioral / 0.04 structural / 0.025 P2P), total 1.05 (capped 1.0)
+# Nop score: 0.05
 # NOTE: Fix 1 behavioral tests use cast expression resolution to handle both
 # capture-site and use-site fix approaches (including intermediate variables).
 #
@@ -346,7 +347,7 @@ add_reward() {
 }
 
 # ==========================================================================
-# T1 (0.005): File exists, non-empty, >400 lines
+# T1 (0.005): File exists, non-empty, >400 lines  [P2P]
 # The base file is ~570 lines. Threshold 400 blocks stubs and rewrites.
 # ==========================================================================
 if [ -f "$FILE" ] && [ -s "$FILE" ]; then
@@ -362,7 +363,7 @@ else
 fi
 
 # ==========================================================================
-# T2 (0.005): lowerKernelBarriers function present
+# T2 (0.005): lowerKernelBarriers function present  [P2P]
 # ==========================================================================
 if grep -q 'lowerKernelBarriers' "$STRIPPED" 2>/dev/null; then
     add_reward 0.005
@@ -372,7 +373,7 @@ else
 fi
 
 # ==========================================================================
-# T3 (0.005): partition->walk lambda present
+# T3 (0.005): partition->walk lambda present  [P2P]
 # ==========================================================================
 if grep -qP 'partition->walk\s*\(\s*\[' "$STRIPPED" 2>/dev/null; then
     add_reward 0.005
@@ -382,7 +383,7 @@ else
 fi
 
 # ==========================================================================
-# T4 (0.005): lowerCallOp function present
+# T4 (0.005): lowerCallOp function present  [P2P]
 # ==========================================================================
 if grep -q 'lowerCallOp' "$STRIPPED" 2>/dev/null; then
     add_reward 0.005
@@ -392,7 +393,7 @@ else
 fi
 
 # ==========================================================================
-# T5 (0.005): enumerate(newOp->getResults context present
+# T5 (0.005): enumerate(newOp->getResults context present  [P2P]
 # ==========================================================================
 if grep -qP 'enumerate\s*\(\s*newOp->getResults' "$STRIPPED" 2>/dev/null; then
     add_reward 0.005
@@ -402,7 +403,7 @@ else
 fi
 
 # ==========================================================================
-# T6 (0.14): Fix 1 behavioral — any approach, idx=42
+# T6 (0.14): Fix 1 behavioral — any approach, idx=42  [F2P]
 # ==========================================================================
 if try_fix1 42; then
     add_reward 0.14
@@ -412,7 +413,7 @@ else
 fi
 
 # ==========================================================================
-# T7 (0.085): Fix 1 behavioral — idx=7
+# T7 (0.085): Fix 1 behavioral — idx=7  [F2P]
 # ==========================================================================
 if try_fix1 7; then
     add_reward 0.085
@@ -422,7 +423,7 @@ else
 fi
 
 # ==========================================================================
-# T8 (0.085): Fix 1 behavioral — idx=1000
+# T8 (0.085): Fix 1 behavioral — idx=1000  [F2P]
 # ==========================================================================
 if try_fix1 1000; then
     add_reward 0.085
@@ -432,7 +433,7 @@ else
 fi
 
 # ==========================================================================
-# T9 (0.085): Fix 1 behavioral — idx=0
+# T9 (0.085): Fix 1 behavioral — idx=0  [F2P]
 # ==========================================================================
 if try_fix1 0; then
     add_reward 0.085
@@ -442,7 +443,7 @@ else
 fi
 
 # ==========================================================================
-# T10 (0.085): Fix 1 behavioral — idx=12345
+# T10 (0.085): Fix 1 behavioral — idx=12345  [F2P]
 # ==========================================================================
 if try_fix1 12345; then
     add_reward 0.085
@@ -452,7 +453,7 @@ else
 fi
 
 # ==========================================================================
-# T11 (0.02): Fix 1 structural — bug pattern gone OR explicit cast present
+# T11 (0.02): Fix 1 structural — bug pattern gone OR explicit cast present  [F2P]
 #
 # Passes if EITHER:
 #   A) The original [&, idx = idx] capture pattern is gone
@@ -482,7 +483,7 @@ else
 fi
 
 # ==========================================================================
-# T12 (0.14): Fix 2 behavioral — i=42
+# T12 (0.14): Fix 2 behavioral — i=42  [F2P]
 # ==========================================================================
 if try_fix2 42; then
     add_reward 0.14
@@ -492,7 +493,7 @@ else
 fi
 
 # ==========================================================================
-# T13 (0.085): Fix 2 behavioral — i=99
+# T13 (0.085): Fix 2 behavioral — i=99  [F2P]
 # ==========================================================================
 if try_fix2 99; then
     add_reward 0.085
@@ -502,7 +503,7 @@ else
 fi
 
 # ==========================================================================
-# T14 (0.085): Fix 2 behavioral — i=0
+# T14 (0.085): Fix 2 behavioral — i=0  [F2P]
 # ==========================================================================
 if try_fix2 0; then
     add_reward 0.085
@@ -512,7 +513,7 @@ else
 fi
 
 # ==========================================================================
-# T15 (0.085): Fix 2 behavioral — i=100000
+# T15 (0.085): Fix 2 behavioral — i=100000  [F2P]
 # ==========================================================================
 if try_fix2 100000; then
     add_reward 0.085
@@ -522,7 +523,7 @@ else
 fi
 
 # ==========================================================================
-# T16 (0.085): Fix 2 behavioral — i=7
+# T16 (0.085): Fix 2 behavioral — i=7  [F2P]
 # ==========================================================================
 if try_fix2 7; then
     add_reward 0.085
@@ -532,7 +533,7 @@ else
 fi
 
 # ==========================================================================
-# T17 (0.02): Fix 2 structural — bare getResult(i) gone + context preserved
+# T17 (0.02): Fix 2 structural — bare getResult(i) gone + context preserved  [F2P]
 #
 # Passes if bare getResult(i) is absent AND the enumerate loop +
 # replaceAllUsesWith context still exists (blocks simple deletion).
@@ -570,7 +571,7 @@ else
 fi
 
 # ==========================================================================
-# T18 (0.025): Pass-to-pass — modified file is structurally sound
+# T18 (0.025): Pass-to-pass — modified file is structurally sound  [P2P]
 #
 # Upstream Triton Python/MLIR tests require building libtriton.so and
 # triton-opt (LLVM/MLIR C++ backend), which is not feasible in this

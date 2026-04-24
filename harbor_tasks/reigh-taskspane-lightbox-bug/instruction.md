@@ -1,0 +1,3 @@
+See when I click into a travel segment from within the @src/shared/components/TasksPane/, I want it to open within the context of the shot it's a part of - similar to how it would when i open via @src/tools/travel-between-images/components/Timeline/SegmentOutputStrip.tsx. For example, so that i can click back/forth to previous segments, etc.
+
+It opens the lightbox but it doesn't show the chevron, the buttons/links to the constituent images don't show/work. It looks like it's opening it outside of the context of that shot. Fix this so the TasksPane lightbox opens with full shot context like SegmentOutputStrip does.

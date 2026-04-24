@@ -29,19 +29,19 @@ Each turn has a TRIGGER CONDITION. If the condition is not met, SKIP the turn (c
 **Turn 2** — "Is there any other issue in quantize.py?"
   TRIGGER: The agent has confirmed the pack functions are consistent with the dequantization kernels AND has NOT already started looking for other bugs.
   SKIP IF: The agent is already finding bugs on its own, OR the agent is still reading kernel files.
-  Content: "Is there any other issue in quantize.py?"
+  Content: "Is there any other issue in @quantize.py ?"
   After sending: Go silent. Wait for the agent to identify bugs.
 
 **Turn 3** — "Can we simplify the loop in pack_awq_qweight?"
   TRIGGER: The agent has identified the .values bug AND has either fixed it or described the fix. The agent has NOT proposed simplifying pack_awq_qweight on its own.
   SKIP IF: The agent already proposed simplifying pack_awq_qweight, OR the agent hasn't found any bugs yet (Turn 2 hasn't happened).
-  Content: "Can we simplify the loop in pack_awq_qweight?"
+  Content: "Can we simplify the loop in `pack_awq_qweight`?"
   After sending: Go silent. Wait for the agent to propose a simplification.
 
 **Turn 4** — "Keep using |=, just simplify the indexing"
   TRIGGER: The agent proposed replacing |= with sum() or torch.sum() in the simplification.
   SKIP IF: The agent's simplification already uses |= (not sum), OR the agent hasn't attempted simplification yet.
-  Content: "sum and |= may behave differently when int32 overflow happens. Can we keep using |= and just simplify the indexing?"
+  Content: "`sum` and `|=` may behave differently when int32 overflow happens, and torch does not have proper uint32. Can we keep using `|=` and simplify the weird indexing in the loop?"
   After sending: Go permanently silent.
 
 **After all turns:** Choose no-op for every remaining call. The session is over.

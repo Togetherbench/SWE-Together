@@ -1,22 +1,28 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification script for desloppify-treesitter-plugins task.
 # Tests the "Make Generic Language Plugins First-Class" implementation.
 # Writes a reward between 0.0 and 1.0 to /logs/verifier/reward.txt.
 #
-# Weight breakdown (total = 1.0):
-#   Check 1  (0.10)  register_detector() behavioral          [F2P]
-#   Check 2  (0.10)  register_scoring_policy() behavioral    [F2P]
-#   Check 3  (0.20)  E2E generic_lang creates working plugin [Silver]
-#   Check 4  (0.10)  fix_cmd creates working FixerConfig     [Silver]
-#   Check 5  (0.10)  Agent's test_generic_plugin.py passes   [Silver]
-#   Check 6  (0.10)  Shared phases present (behavioral)      [Silver]
-#   Check 7  (0.05)  DETECTOR_TOOLS refresh behavioral       [F2P]
-#   Check 8  (0.05)  Langs command or capability report      [Silver]
-#   Check 9  (0.10)  Existing tests pass (P2P regression)    [P2P]
-#   Check 10 (0.10)  >=3 language plugins load + register    [Silver]
+# Weight breakdown (sum of weights = 1.00):
+#   Check 1  (0.07)  register_detector() behavioral          [F2P] - fails at base (no register_detector), passes after implementation
+#   Check 2  (0.07)  register_scoring_policy() behavioral    [F2P] - fails at base (no register_scoring_policy), passes after implementation
+#   Check 3  (0.16)  E2E generic_lang creates working plugin [F2P] - fails at base (no generic.py), passes after implementation
+#   Check 4  (0.07)  fix_cmd creates working FixerConfig     [F2P] - fails at base (no generic fixers), passes after implementation
+#   Check 5  (0.07)  Agent's test_generic_plugin.py passes   [F2P] - fails at base (test file doesn't exist), passes after implementation
+#   Check 6  (0.07)  Shared phases present (behavioral)      [F2P] - fails at base (no shared phases in generic plugins), passes after implementation
+#   Check 7  (0.04)  DETECTOR_TOOLS refresh behavioral       [F2P] - fails at base (no refresh mechanism), passes after implementation
+#   Check 8  (0.08)  Langs command or capability report      [F2P] - fails at base (no langs command), passes after implementation
+#   Check 9  (0.10)  Existing tests pass (P2P regression)    [P2P] - passes at base and should pass after implementation
+#   Check 10 (0.07)  >=3 language plugins load + register    [F2P] - fails at base (no language plugins), passes after implementation
+#   Check 11 (0.04)  STRICT all-4 shared phases              [F2P] - fails at base, passes after implementation
+#   Check 12 (0.04)  >=3 real plugins produce fixers         [F2P] - fails at base, passes after implementation
+#   Check 13 (0.07)  Langs hides shared phases + auto-fix    [F2P] - fails at base, passes after implementation
+#   Check 14 (0.02)  Tool w/o fix_cmd produces no fixer      [F2P] - fails at base (no factory), passes after implementation
+#   Check 15 (0.03)  Fixer dash-naming + auto_fix action_type [F2P] - fails at base, passes after implementation
 #
 # Behavioral: 1.00 (100%) | Structural: 0.00 (0%)
+# F2P weight: 0.90 (90%) | P2P weight: 0.10 (10%)
 #
 set +e
 
@@ -32,13 +38,13 @@ add_reward() {
 cd "$WORKSPACE"
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 1 (0.10): register_detector() WORKS behaviorally       [F2P]
+# CHECK 1 (0.07): register_detector() WORKS behaviorally       [F2P]
 #   Must actually add a DetectorMeta to DETECTORS dict AND update
 #   display order (list or function).
 # ═══════════════════════════════════════════════════════════════════
 echo "=== Check 1: register_detector() behavioral test ==="
 
-python3 << 'PYEOF' && { echo "PASS: register_detector() works"; add_reward 0.10; } || echo "FAIL: register_detector() broken"
+python3 << 'PYEOF' && { echo "PASS: register_detector() works"; add_reward 0.07; } || echo "FAIL: register_detector() broken"
 import sys
 sys.path.insert(0, ".")
 
@@ -105,14 +111,14 @@ print("  All register_detector checks passed")
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 2 (0.10): register_scoring_policy() WORKS behaviorally [F2P]
+# CHECK 2 (0.07): register_scoring_policy() WORKS behaviorally [F2P]
 #   Must add to DETECTOR_SCORING_POLICIES AND rebuild DIMENSIONS
 #   so that the new detector appears in the correct dimension.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Check 2: register_scoring_policy() behavioral test ==="
 
-python3 << 'PYEOF' && { echo "PASS: register_scoring_policy() works"; add_reward 0.10; } || echo "FAIL: register_scoring_policy() broken"
+python3 << 'PYEOF' && { echo "PASS: register_scoring_policy() works"; add_reward 0.07; } || echo "FAIL: register_scoring_policy() broken"
 import sys
 sys.path.insert(0, ".")
 
@@ -164,7 +170,7 @@ print("  All register_scoring_policy checks passed")
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 3 (0.20): End-to-end: generic_lang creates WORKING plugin [Silver]
+# CHECK 3 (0.16): End-to-end: generic_lang creates WORKING plugin [F2P]
 #   Import generic_lang (or equivalent factory), create a plugin for
 #   a test language, and verify:
 #   a) LangConfig produced (0.04)
@@ -392,9 +398,9 @@ case "$E2E_OUTPUT" in
             E2E_POINTS=$((E2E_POINTS + 1))
         fi
 
-        # Proportional scoring: 0.04 per sub-check
+        # Proportional scoring: 0.032 per sub-check (5 * 0.032 = 0.16)
         if [ "$E2E_POINTS" -gt 0 ]; then
-            E2E_REWARD=$(python3 -c "print(round($E2E_POINTS * 0.04, 2))")
+            E2E_REWARD=$(python3 -c "print(round($E2E_POINTS * 0.032, 3))")
             echo "  Score: $E2E_POINTS/5 sub-checks = $E2E_REWARD"
             add_reward "$E2E_REWARD"
         else
@@ -404,14 +410,14 @@ case "$E2E_OUTPUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 4 (0.10): fix_cmd creates working FixerConfig objects   [Silver]
+# CHECK 4 (0.07): fix_cmd creates working FixerConfig objects   [F2P]
 #   Call generic_lang with a tool that has fix_cmd and verify the
 #   resulting config has FixerConfig entries with callable detect+fix.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Check 4: fix_cmd creates working FixerConfig ==="
 
-python3 << 'PYEOF' && { echo "PASS: FixerConfig creation works"; add_reward 0.10; } || echo "FAIL: FixerConfig creation broken"
+python3 << 'PYEOF' && { echo "PASS: FixerConfig creation works"; add_reward 0.07; } || echo "FAIL: FixerConfig creation broken"
 import sys, importlib, inspect
 sys.path.insert(0, ".")
 
@@ -559,7 +565,7 @@ if not found_working_fixer:
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 5 (0.10): Agent's test_generic_plugin.py PASSES pytest  [Silver]
+# CHECK 5 (0.07): Agent's test_generic_plugin.py PASSES pytest  [F2P]
 #   The agent must write tests that pass AND are real tests.
 #   Quality gate: >=10 functions, >=50% with assertions,
 #   >=2 desloppify imports, >=3 test names reference new features.
@@ -684,10 +690,10 @@ PYEOF
 
                 if python3 -c "exit(0 if $PASS_RATE >= 0.8 else 1)"; then
                     echo "PASS: >= 80% pass"
-                    add_reward 0.10
+                    add_reward 0.07
                 elif python3 -c "exit(0 if $PASS_RATE >= 0.5 else 1)"; then
                     echo "PARTIAL: >= 50% pass"
-                    add_reward 0.05
+                    add_reward 0.04
                 else
                     echo "FAIL: < 50% pass"
                 fi
@@ -697,7 +703,7 @@ PYEOF
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 6 (0.10): Shared phases present in generic plugins      [Silver]
+# CHECK 6 (0.07): Shared phases present in generic plugins      [F2P]
 #   Generic plugins must include shared phases (security + at least
 #   one of subjective review / duplicates / boilerplate).
 #   Tested by loading a real plugin or calling the factory.
@@ -705,7 +711,7 @@ fi
 echo ""
 echo "=== Check 6: Shared phases present in generic plugins ==="
 
-python3 << 'PYEOF' && { echo "PASS: Shared phases integrated"; add_reward 0.10; } || echo "FAIL: Shared phases missing"
+python3 << 'PYEOF' && { echo "PASS: Shared phases integrated"; add_reward 0.07; } || echo "FAIL: Shared phases missing"
 import sys, importlib, inspect
 sys.path.insert(0, ".")
 
@@ -824,14 +830,14 @@ if not found_shared:
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 7 (0.05): Narrative DETECTOR_TOOLS refresh behaviorally [F2P]
+# CHECK 7 (0.04): Narrative DETECTOR_TOOLS refresh behaviorally [F2P]
 #   After calling refresh, DETECTOR_TOOLS must reflect newly
 #   registered detectors.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Check 7: DETECTOR_TOOLS refresh behavioral ==="
 
-python3 << 'PYEOF' && { echo "PASS: DETECTOR_TOOLS refresh works"; add_reward 0.05; } || echo "FAIL: DETECTOR_TOOLS refresh broken"
+python3 << 'PYEOF' && { echo "PASS: DETECTOR_TOOLS refresh works"; add_reward 0.04; } || echo "FAIL: DETECTOR_TOOLS refresh broken"
 import sys
 sys.path.insert(0, ".")
 
@@ -893,7 +899,7 @@ print("  DETECTOR_TOOLS entry has correct structure")
 PYEOF
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 8 (0.05): Langs command or capability reporting          [Silver]
+# CHECK 8 (0.08): Langs command or capability reporting          [F2P]
 #   The langs command or capability_report must be callable and
 #   produce meaningful output (not just exist as dead code).
 # ═══════════════════════════════════════════════════════════════════
@@ -966,7 +972,7 @@ fi
 
 if [ "$CHECK8_PASS" = true ]; then
     echo "PASS: Langs command or capability report works"
-    add_reward 0.05
+    add_reward 0.08
 else
     echo "FAIL: No langs command or capability report found"
 fi
@@ -975,8 +981,6 @@ fi
 # CHECK 9 (0.10): Existing test suite still passes (P2P)        [P2P]
 #   Agent's changes must not break pre-existing tests.
 #   Known pre-existing failure excluded.
-#   Higher weight (0.10) — regressions in existing tests are a strong
-#   signal of implementation quality.
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo "=== Check 9: Existing tests pass (P2P regression) ==="
@@ -1002,7 +1006,7 @@ elif [ $PYTEST_EXIT -eq 1 ]; then
     echo "PARTIAL: $FAILED failed, $TOTAL passed"
     if [ "$TOTAL" -gt 0 ] 2>/dev/null && [ "$FAILED" -le 2 ] 2>/dev/null; then
         echo "  Minor regressions (<=2 failures)"
-        add_reward 0.05
+        add_reward 0.06
     elif [ "$TOTAL" -gt 0 ] 2>/dev/null && [ "$FAILED" -lt 10 ] 2>/dev/null; then
         echo "  Moderate regressions (<10 failures)"
         add_reward 0.03
@@ -1018,7 +1022,7 @@ elif [ $PYTEST_EXIT -eq 2 ]; then
         if [ "$FAILED" -eq 0 ] 2>/dev/null; then
             # Collection errors only (from new plugins), no test failures
             echo "  Collection errors from new plugins, no test failures"
-            add_reward 0.06
+            add_reward 0.05
         else
             add_reward 0.02
         fi
@@ -1039,7 +1043,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 10 (0.10): >=3 language plugins load and register       [Silver]
+# CHECK 10 (0.07): >=3 language plugins load and register       [F2P]
 #   Import language plugin modules (go, rust, ruby, swift, kotlin),
 #   verify each one registers detectors in the DETECTORS dict.
 #   Require >=3 of 5 to pass.
@@ -1145,12 +1149,430 @@ echo "  $LANGS_LOADED"
 LANG_COUNT=$(echo "$LANGS_LOADED" | grep -oP 'LOADED:\K\d+' || echo "0")
 if [ "$LANG_COUNT" -ge 3 ]; then
     echo "PASS: $LANG_COUNT/5 language plugins loaded with detectors"
-    add_reward 0.10
+    add_reward 0.07
 elif [ "$LANG_COUNT" -ge 1 ]; then
     echo "PARTIAL: $LANG_COUNT/5 language plugins loaded"
-    add_reward 0.04
+    add_reward 0.03
 else
     echo "FAIL: No language plugins loaded"
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 11 (0.04): STRICT all-4 shared phases present            [F2P]
+#   Step 3 of the plan REQUIRES all four: security + subjective
+#   review + duplicates + boilerplate duplication. Check 6 accepts
+#   partial (security-only); this harder check asserts all four are
+#   attached to at least one real generic language plugin.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Check 11: STRICT all-4 shared phases present ==="
+
+python3 << 'PYEOF' && { echo "PASS: All 4 shared phases present"; add_reward 0.04; } || echo "FAIL: Not all 4 shared phases present"
+import sys, importlib
+sys.path.insert(0, ".")
+
+need = {
+    "security": ("security",),
+    "subjective": ("subjective", "review"),
+    "duplicates": ("duplicat",),
+    "boilerplate": ("boilerplate",),
+}
+
+found_all = False
+for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
+    try:
+        for mp in [
+            f"desloppify.languages.{lang}",
+            f"desloppify.languages.plugin_{lang}",
+            f"desloppify.languages._framework.plugins.{lang}",
+        ]:
+            try:
+                importlib.import_module(mp)
+                break
+            except ImportError:
+                continue
+        from desloppify.languages.framework.resolution import get_lang
+        cfg = get_lang(lang)
+        if not cfg or not hasattr(cfg, "phases") or not cfg.phases:
+            continue
+        labels = [p.label.lower() for p in cfg.phases]
+        joined = " | ".join(labels)
+        hits = {
+            key: any(any(tok in l for tok in toks) for l in labels)
+            for key, toks in need.items()
+        }
+        if all(hits.values()):
+            print(f"  {lang}: all 4 shared phases present in {labels}")
+            found_all = True
+            break
+        else:
+            missing = [k for k, v in hits.items() if not v]
+            print(f"  {lang}: missing {missing} (have: {joined})")
+    except Exception as e:
+        print(f"  {lang}: error {type(e).__name__}: {e}")
+
+if not found_all:
+    sys.exit(1)
+PYEOF
+
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 12 (0.04): Real plugins produce working fixers           [F2P]
+#   Step 4 of the plan REQUIRES adding fix_cmd to 5 specific plugin
+#   files (go/rust/ruby/swift/kotlin). Check 4 only requires ONE
+#   working FixerConfig via any strategy (synthetic tool counts).
+#   This check asserts >=3 of the 5 real plugins yield FixerConfig
+#   objects, so an agent that forgot plugin-side edits is penalised.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Check 12: Real plugins produce fixers ==="
+
+FIXER_COUNT=$(python3 << 'PYEOF'
+import sys, importlib
+sys.path.insert(0, ".")
+
+from desloppify.languages.framework.base.types import FixerConfig
+
+working = 0
+for lang in ["go", "rust", "ruby", "swift", "kotlin"]:
+    try:
+        for mp in [
+            f"desloppify.languages.{lang}",
+            f"desloppify.languages.plugin_{lang}",
+            f"desloppify.languages._framework.plugins.{lang}",
+        ]:
+            try:
+                importlib.import_module(mp)
+                break
+            except ImportError:
+                continue
+        from desloppify.languages.framework.resolution import get_lang
+        cfg = get_lang(lang)
+        if not cfg or not hasattr(cfg, "fixers") or not cfg.fixers:
+            continue
+        for fname, fcfg in cfg.fixers.items():
+            if isinstance(fcfg, FixerConfig) and callable(fcfg.detect) and callable(fcfg.fix):
+                print(f"  {lang}: fixer '{fname}' OK")
+                working += 1
+                break
+    except Exception:
+        pass
+
+print(f"WORKING:{working}")
+PYEOF
+)
+echo "$FIXER_COUNT"
+COUNT=$(echo "$FIXER_COUNT" | grep -oP 'WORKING:\K\d+' || echo "0")
+if [ "$COUNT" -ge 3 ]; then
+    echo "PASS: $COUNT/5 real plugins have fixers"
+    add_reward 0.04
+elif [ "$COUNT" -ge 1 ]; then
+    echo "PARTIAL: $COUNT/5 real plugins have fixers"
+    add_reward 0.02
+else
+    echo "FAIL: No real plugins have fixers"
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 13 (0.07): Langs command hides shared phases + shows      [F2P]
+#                  auto-fix suffix
+#   Step 5 of the plan REQUIRES: (a) filter _SHARED_PHASE_LABELS from
+#   tool-labels output, (b) append " (auto-fix)" suffix when
+#   fixers are present. Check 8 only tests "some callable exists".
+#   This check calls the CLI and asserts observable output.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Check 13: langs output hides shared phases + shows auto-fix ==="
+
+timeout 30 python3 -m desloppify langs > "$LOG_DIR/langs_output_v2.txt" 2>&1
+L_EXIT=$?
+OUT_FILE="$LOG_DIR/langs_output_v2.txt"
+
+CHECK13_POINTS=0
+if [ $L_EXIT -eq 0 ] && [ -s "$OUT_FILE" ]; then
+    # (a) "(auto-fix)" suffix appears somewhere in langs output
+    if grep -qiE '\(auto[- ]?fix\)' "$OUT_FILE"; then
+        echo "  + auto-fix suffix present in langs output"
+        CHECK13_POINTS=$((CHECK13_POINTS + 1))
+    else
+        echo "  - auto-fix suffix missing"
+    fi
+    # (b) shared phase labels should NOT appear in the tool-labels portion.
+    # We accept pass if at most 1 of the 4 shared labels appears in the
+    # output (some plugins may still reference them contextually).
+    SHARED_HITS=0
+    for label in "Security" "Subjective review" "Boilerplate duplication" "Duplicates"; do
+        if grep -q "$label" "$OUT_FILE"; then
+            SHARED_HITS=$((SHARED_HITS + 1))
+        fi
+    done
+    if [ "$SHARED_HITS" -le 1 ]; then
+        echo "  + shared phase labels filtered (hits=$SHARED_HITS)"
+        CHECK13_POINTS=$((CHECK13_POINTS + 1))
+    else
+        echo "  - too many shared phase labels surface in langs output (hits=$SHARED_HITS)"
+    fi
+else
+    echo "  (langs command did not run cleanly; exit=$L_EXIT)"
+fi
+
+if [ "$CHECK13_POINTS" -eq 2 ]; then
+    echo "PASS: langs formatting correct"
+    add_reward 0.07
+elif [ "$CHECK13_POINTS" -eq 1 ]; then
+    echo "PARTIAL: one of two langs formatting rules met"
+    add_reward 0.03
+else
+    echo "FAIL: langs formatting not present"
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 14 (0.02): Tool without fix_cmd produces NO fixer         [F2P]
+#   Step 4 explicitly lists tools that must NOT get a fixer
+#   (elixir/php/cxx/bash/perl/lua credo/phpstan/cppcheck/shellcheck/
+#   perlcritic/luacheck). A correct implementation keys fixer
+#   creation on the presence of fix_cmd; a broken one creates a
+#   fixer for every tool. We assert the negative behaviourally.
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Check 14: tool without fix_cmd → no fixer ==="
+
+python3 << 'PYEOF' && { echo "PASS: no-fix_cmd tool produces no fixer"; add_reward 0.02; } || echo "FAIL: tool without fix_cmd still has a fixer"
+import sys, importlib, inspect
+sys.path.insert(0, ".")
+
+mod = None
+for mod_path in [
+    "desloppify.languages.framework.generic",
+    "desloppify.languages._framework.generic",
+]:
+    try:
+        mod = importlib.import_module(mod_path)
+        break
+    except ImportError:
+        continue
+
+if mod is None:
+    print("  generic module not importable", file=sys.stderr)
+    sys.exit(1)
+
+factory = None
+for name in ["generic_lang", "make_generic_lang", "create_generic_lang"]:
+    fn = getattr(mod, name, None)
+    if fn and callable(fn):
+        factory = fn
+        break
+
+if factory is None:
+    # Accept fallback: check a real plugin (e.g. bash) has empty fixers
+    try:
+        importlib.import_module("desloppify.languages.bash")
+    except ImportError:
+        try:
+            importlib.import_module("desloppify.languages.plugin_bash")
+        except ImportError:
+            pass
+    try:
+        from desloppify.languages.framework.resolution import get_lang
+        cfg = get_lang("bash")
+        if cfg is not None and hasattr(cfg, "fixers"):
+            if not cfg.fixers:
+                print("  bash plugin has no fixers (shellcheck has no fix_cmd)")
+                sys.exit(0)
+            else:
+                print(f"  bash plugin unexpectedly has fixers: {list(cfg.fixers)}", file=sys.stderr)
+                sys.exit(1)
+    except Exception:
+        pass
+    print("  no factory found and no real plugin to check", file=sys.stderr)
+    sys.exit(1)
+
+test_tool = {
+    "label": "verifier_nofix_tool",
+    "cmd": "echo '{}'",
+    "fmt": "json",
+    "id": "verifier_nofix_lint",
+    "tier": 3,
+    # deliberately no fix_cmd
+}
+
+sig_kwargs = {}
+try:
+    sig = inspect.signature(factory)
+    for p, param in sig.parameters.items():
+        if p in ("name", "lang_name", "language"):
+            sig_kwargs[p] = "__verifier_nofix_lang__"
+        elif p in ("extensions", "exts", "file_extensions"):
+            sig_kwargs[p] = [".vfy"]
+        elif p in ("tools",):
+            sig_kwargs[p] = [test_tool]
+        elif param.default is not inspect.Parameter.empty:
+            pass
+        elif p in ("integration_depth", "depth"):
+            sig_kwargs[p] = "generic"
+        elif p in ("file_finder",):
+            sig_kwargs[p] = lambda **kw: []
+        elif p in ("extract_functions", "noop_extract_functions"):
+            sig_kwargs[p] = lambda *a, **kw: []
+        elif p in ("dep_graph", "empty_dep_graph"):
+            sig_kwargs[p] = lambda *a, **kw: {}
+        elif p in ("quality_message", "quality_msg"):
+            sig_kwargs[p] = "Generic plugin"
+except (ValueError, TypeError):
+    pass
+
+result = None
+for attempt in [
+    lambda: factory(**sig_kwargs) if sig_kwargs else None,
+    lambda: factory(name="__verifier_nofix_lang__", extensions=[".vfy"], tools=[test_tool]),
+    lambda: factory("__verifier_nofix_lang__", [".vfy"], [test_tool]),
+]:
+    try:
+        r = attempt()
+        if r is not None:
+            result = r
+            break
+    except (TypeError, KeyError, ValueError, AttributeError, RuntimeError):
+        continue
+
+if result is None:
+    # Could not invoke factory directly; fall back to real plugin
+    try:
+        importlib.import_module("desloppify.languages.bash")
+    except ImportError:
+        try:
+            importlib.import_module("desloppify.languages.plugin_bash")
+        except ImportError:
+            pass
+    try:
+        from desloppify.languages.framework.resolution import get_lang
+        cfg = get_lang("bash")
+        if cfg is not None and hasattr(cfg, "fixers"):
+            if not cfg.fixers:
+                print("  fallback: bash plugin has no fixers")
+                sys.exit(0)
+            else:
+                print(f"  fallback: bash plugin has fixers: {list(cfg.fixers)}", file=sys.stderr)
+                sys.exit(1)
+    except Exception:
+        pass
+    print("  could not invoke factory to test no-fix_cmd tool", file=sys.stderr)
+    sys.exit(1)
+
+fixers = getattr(result, "fixers", None) or {}
+if fixers:
+    print(f"  FAIL: factory produced fixers for a tool without fix_cmd: {list(fixers)}", file=sys.stderr)
+    sys.exit(1)
+print("  factory produced no fixers for tool without fix_cmd")
+PYEOF
+
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 15 (0.03): fixer naming + detector action_type wiring      [F2P]
+#   Turn 1 plan explicitly states:
+#     fixer_name = tool["id"].replace("_", "-")
+#     register_detector(DetectorMeta(..., action_type="auto_fix", ...))
+#   Currently unverified. Load a real plugin with fix_cmd (ruby pref,
+#   else go/rust/swift/kotlin) and check both (proportional score).
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Check 15: fixer dash-naming + auto_fix action_type ==="
+
+CHK15_OUT=$(python3 << 'PYEOF'
+import sys, importlib
+sys.path.insert(0, ".")
+
+from desloppify.core.registry import DETECTORS
+
+# Known fix_cmd plugins and their tool ids from the instruction plan.
+PLUGINS = [
+    ("ruby", "rubocop_lint"),
+    ("go", "golangci_lint"),
+    ("rust", "clippy_lint"),
+    ("swift", "swiftlint_lint"),
+    ("kotlin", "ktlint_lint"),
+]
+
+dash_hit = False
+auto_fix_hit = False
+dash_detail = ""
+auto_detail = ""
+
+for lang, expected_id in PLUGINS:
+    try:
+        for mp in [f"desloppify.languages.{lang}",
+                   f"desloppify.languages.plugin_{lang}",
+                   f"desloppify.languages._framework.plugins.{lang}"]:
+            try:
+                importlib.import_module(mp)
+                break
+            except ImportError:
+                continue
+        from desloppify.languages.framework.resolution import get_lang
+        cfg = get_lang(lang)
+        if not cfg:
+            continue
+
+        # Check dash naming: some fixer key must contain "-" (the agent may
+        # have picked a different id but the replace("_","-") rule means no
+        # underscore should appear when a tool's id contained one).
+        fixers = getattr(cfg, "fixers", None) or {}
+        if not dash_hit and fixers:
+            for fname in fixers.keys():
+                if "-" in fname and "_" not in fname:
+                    dash_hit = True
+                    dash_detail = f"{lang}: fixer key '{fname}'"
+                    break
+
+        # Check detector action_type for any tool in this plugin that has a
+        # fix_cmd attached. We approximate by scanning detectors whose name
+        # matches expected_id OR a language-related token. Accept any value
+        # that is not "manual_fix" and references auto/fix semantics.
+        if not auto_fix_hit:
+            candidate_ids = [expected_id] + [
+                d for d in DETECTORS
+                if lang in d.lower()
+                or (lang == "go" and "golangci" in d.lower())
+                or (lang == "rust" and "clippy" in d.lower())
+                or (lang == "ruby" and "rubocop" in d.lower())
+                or (lang == "swift" and "swiftlint" in d.lower())
+                or (lang == "kotlin" and "ktlint" in d.lower())
+            ]
+            for det_id in candidate_ids:
+                meta = DETECTORS.get(det_id)
+                if meta is None:
+                    continue
+                at = getattr(meta, "action_type", None)
+                if isinstance(at, str) and at and at != "manual_fix" and "fix" in at.lower():
+                    auto_fix_hit = True
+                    auto_detail = f"{lang}: detector '{det_id}' action_type='{at}'"
+                    break
+    except Exception:
+        continue
+
+points = 0
+if dash_hit:
+    print(f"  + dash-naming: {dash_detail}")
+    points += 1
+else:
+    print("  - dash-naming: no fixer key used '-' replacement of tool id")
+if auto_fix_hit:
+    print(f"  + action_type: {auto_detail}")
+    points += 1
+else:
+    print("  - action_type: no fix_cmd plugin detector reports auto_fix")
+
+print(f"CHK15_POINTS:{points}")
+PYEOF
+)
+echo "$CHK15_OUT"
+CHK15_POINTS=$(echo "$CHK15_OUT" | grep -oP 'CHK15_POINTS:\K\d+' || echo "0")
+if [ "$CHK15_POINTS" -ge 2 ]; then
+    echo "PASS: dash-naming + auto_fix action_type"
+    add_reward 0.03
+elif [ "$CHK15_POINTS" -ge 1 ]; then
+    echo "PARTIAL: 1/2 fixer-wiring sub-checks"
+    add_reward 0.01
+else
+    echo "FAIL: neither dash-naming nor auto_fix action_type present"
 fi
 
 # ═══════════════════════════════════════════════════════════════════

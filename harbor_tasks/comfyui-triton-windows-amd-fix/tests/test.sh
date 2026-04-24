@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification test for ComfyUI-WanVideoWrapper Triton AMD GPU fix.
 #

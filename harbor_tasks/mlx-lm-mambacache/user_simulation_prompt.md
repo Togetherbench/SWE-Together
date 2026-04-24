@@ -1,4 +1,4 @@
-# Session Analysis: mlx-lm-mambacache
+# User Simulation Prompt: mlx-lm-mambacache
 
 Source session: `dae75777-77a5-4ba3-81fd-4e46fab3ded8`
 
@@ -6,9 +6,16 @@ Source session: `dae75777-77a5-4ba3-81fd-4e46fab3ded8`
 
 - **Total user messages (mlx-lm portion): ~15** across messages 931-1094 of a 2525-message session.
 - **Session context**: This is a long multi-project session. The mlx-lm work starts at message 931 when the user discovers that `batch_generate` fails with `MambaCache` (hybrid models like Qwen3-Next). The user tasks the agent with verifying the limitation, researching a fix, implementing it, and creating a PR.
-- **User style**: Delegates extensively via "deploy your subagent" pattern. Speaks in high-level directives. Expects comprehensive testing. Interrupts when unsatisfied with test coverage ("Wait test with actual model please").
+- **User style**: Delegates extensively via "deploy your subagent" pattern. Speaks in high-level directives. Expects comprehensive testing. Interrupts when unsatisfied with test coverage.
 - **Correction pattern**: User adds scope mid-stream (msg 1064: "add the _lengths feature to our PR" after seeing PR #690), and redirects testing approach (msg 1094: "Wait test with actual model please").
-- Target for simulation: 1 message (single-turn extraction from the core implementation request).
+- Target for simulation: 2 messages after Turn 1 (instruction.md = implicit first turn).
+
+## Trigger Table
+
+| ID | Condition | Message | Notes |
+|----|-----------|---------|-------|
+| T2 | Agent has modified both `mlx_lm/models/cache.py` AND `mlx_lm/generate.py` (git diff shows changes to both files) AND has NOT yet created a test file under `tests/` | "Does our PR the same as https://github.com/ml-explore/mlx-lm/pull/690?" | Verbatim from session msg 1057. User checks for duplication with existing community PR. Agent should explain the difference (PR #690 adds _lengths for right padding, theirs adds merge/extract batching). |
+| T3 | Agent has created or modified a test file matching `tests/test_*cache*.py` or `tests/test_*batch*.py` | "Wait test with actual model please" | Verbatim from session msg 1094. User wants real model testing. In Docker/Linux environment, MLX only runs on macOS/Apple Silicon so this is impossible. A good agent explains this limitation and proposes alternatives. |
 
 ## User Turns (with context)
 
@@ -122,11 +129,6 @@ AGENT: Runs integration test with Qwen3-Next-80B (all 4 scenarios pass)
 | Compare -> Add _lengths | Scope creep | User wants comprehensive solution |
 | _lengths -> Real model test | User redirects | Unit tests insufficient for user's confidence |
 
-## Agent Mistakes
-
-1. **Initially ran only unit tests** -- User had to explicitly request real model testing (msg 1094).
-2. **benchmark_mamba_batching.py has a bug** -- `batch_generate` expects list of lists, not mx.arrays. Agent had to fix this mid-stream (msg 984).
-
 ## User Preference Profile
 
 | Dimension | Preference | Evidence |
@@ -136,14 +138,3 @@ AGENT: Runs integration test with Qwen3-Next-80B (all 4 scenarios pass)
 | Communication | **Directive** | Short, action-oriented messages |
 | Testing | **Thorough** -- unit + integration | Insisted on real model testing |
 | Scope management | **Expansive** -- adds features mid-stream | Added _lengths from PR #690 |
-
-## Ground Truth Anchoring
-
-| PR | Commits | Description |
-|----|---------|-------------|
-| [#739](https://github.com/ml-explore/mlx-lm/pull/739) (CLOSED) | `035ea22`, `d5984bc` | Add batching support for ArraysCache/MambaCache with prompt caches |
-| [#690](https://github.com/ml-explore/mlx-lm/pull/690) | (referenced) | Make MambaCache compatible with batch generation for nemotron-h |
-
-## Harbor Conversion Notes
-
-Extracted as a single-turn task: "Add batching support for MambaCache/ArraysCache so that `batch_generate` works with prompt caches for hybrid models." This captures the core feature from messages 942-1094 without the multi-turn discovery/verification phase. The task is well-scoped: 3 files changed (cache.py, generate.py, tests), all structural/functional checks can run on CPU without a model. PR #739 was CLOSED (not merged) but the code changes are well-documented in the PR commits.

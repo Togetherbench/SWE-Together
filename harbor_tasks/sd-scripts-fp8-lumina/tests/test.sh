@@ -27,6 +27,12 @@
 #   T13: 0.08  fp8 forward: wide->narrow (32->4) + scale=128.0 [behavioral]
 #   T14: 0.07  fp8 forward: non-unit scale (24->12) + float32 [behavioral]
 #   T15: 0.08  P2P: upstream CPU-safe tests [behavioral]
+#   T16: 0.02  TARGET_KEYS grounded in real NextDiT self.<attr> [audit-T2 hardening]
+#   T17: 0.02  adaLN_modulation behaviorally excluded from fp8 quant [audit-T6 hardening]
+#
+# (T16+T17 add 0.04 above the original 1.00 ceiling; the add_reward min(1.0,...)
+# clamp keeps the final reward at 1.0 — these checks target audit-flagged
+# gameability gaps without changing the existing PASS/FAIL gates.)
 #
 set +e
 export PATH="/workspace/venv/bin:$PATH"
@@ -823,6 +829,147 @@ if [ "$P2P_RESULT" = "PASS" ]; then
 elif [ "$P2P_RESULT" = "PARTIAL" ]; then
     add_reward 0.04
 fi
+
+
+# ═══════════════════════════════════════════════════════════════════
+# T16 (0.02): Audit-T2 hardening — TARGET_KEYS must point to real
+# NextDiT self.<attr> names in lumina_models.py (not guessed strings).
+# Source: user turn 2 ("Do your added keys actually exist in Lumina2?").
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 16/17: TARGET_KEYS grounded in real NextDiT attrs [audit-T2] ==="
+T16=$(python3 << 'PYEOF' | tail -1
+import re
+
+# 1. Extract TARGET_KEYS literal from the agent's source.
+target_keys = []
+for path in ["/workspace/sd-scripts/library/lumina_util.py",
+             "/workspace/sd-scripts/library/lumina_models.py"]:
+    try:
+        with open(path) as f:
+            src = f.read()
+    except FileNotFoundError:
+        continue
+    m = re.search(r'FP8_OPTIMIZATION_TARGET_KEYS\s*=\s*\[([^\]]*)\]', src, re.DOTALL)
+    if m:
+        target_keys = re.findall(r'["\']([^"\']+)["\']', m.group(1))
+        break
+
+if not target_keys:
+    print("FAIL:no_target_keys")
+else:
+    try:
+        with open("/workspace/sd-scripts/library/lumina_models.py") as f:
+            models_src = f.read()
+    except FileNotFoundError:
+        print("FAIL:no_models_file")
+    else:
+        # All `self.<attr> =` names defined anywhere in lumina_models.py.
+        # These become the prefixes of state_dict keys consumed by
+        # optimize_state_dict_with_fp8 — pattern matching is substring-based.
+        real_attrs = set(re.findall(r'self\.(\w+)\s*=', models_src))
+        if not real_attrs:
+            print("FAIL:no_real_attrs")
+        else:
+            unmatched = [
+                tk for tk in target_keys
+                if not any(tk in attr or attr in tk for attr in real_attrs)
+            ]
+            if unmatched:
+                print("FAIL:unmatched:" + ",".join(unmatched[:3]))
+            else:
+                print("PASS")
+PYEOF
+)
+echo "  Result: $T16"
+if [ "$T16" = "PASS" ]; then add_reward 0.02; fi
+
+
+# ═══════════════════════════════════════════════════════════════════
+# T17 (0.02): Audit-T6 hardening — behavioral verification that
+# adaLN_modulation weights are NOT quantized to fp8 when the agent's
+# EXCLUDE_KEYS are passed to optimize_state_dict_with_fp8.
+# Source: user turn 6 (loss regression: 5.0 vs 0.5).
+# ═══════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Test 17/17: adaLN_modulation excluded from fp8 quant [audit-T6] ==="
+T17=$(python3 2>/dev/null << 'PYEOF' | tail -1
+import sys, re
+sys.path.insert(0, "/tmp")
+import _vfp8mock
+import torch
+
+# Pull the agent's EXCLUDE_KEYS list from source.
+exclude_keys = []
+for path in ["/workspace/sd-scripts/library/lumina_util.py",
+             "/workspace/sd-scripts/library/lumina_models.py"]:
+    try:
+        with open(path) as f:
+            src = f.read()
+    except FileNotFoundError:
+        continue
+    m = re.search(r'FP8_OPTIMIZATION_EXCLUDE_KEYS\s*=\s*\[([^\]]*)\]', src, re.DOTALL)
+    if m:
+        exclude_keys = re.findall(r'["\']([^"\']+)["\']', m.group(1))
+        break
+
+if not exclude_keys:
+    print("FAIL:no_exclude_keys")
+    sys.exit(0)
+
+try:
+    from library.fp8_optimization_utils import optimize_state_dict_with_fp8
+except Exception as e:
+    print("FAIL:import:" + str(e)[:100])
+    sys.exit(0)
+
+# Mock state_dict: one regular layers.* weight (should be quantized) and
+# one adaLN_modulation weight (should be EXCLUDED so loss does not regress).
+torch.manual_seed(0)
+ada_key = "layers.0.adaLN_modulation.1.weight"
+reg_key = "layers.0.attention.wqkv.weight"
+state_dict = {
+    reg_key: torch.randn(64, 64, dtype=torch.float32),
+    ada_key: torch.randn(128, 64, dtype=torch.float32),
+}
+
+try:
+    optimize_state_dict_with_fp8(
+        state_dict,
+        calc_device="cpu",
+        target_layer_keys=["layers"],
+        exclude_layer_keys=exclude_keys,
+        move_to_device=False,
+    )
+except Exception as e:
+    print("FAIL:call:" + type(e).__name__ + ":" + str(e)[:80])
+    sys.exit(0)
+
+ada_w = state_dict.get(ada_key)
+reg_w = state_dict.get(reg_key)
+ada_scale_in_dict = (ada_key.replace(".weight", ".scale_weight") in state_dict)
+reg_scale_in_dict = (reg_key.replace(".weight", ".scale_weight") in state_dict)
+fp8_dtypes = (torch.float8_e4m3fn, torch.float8_e5m2)
+
+# adaLN_modulation must remain unquantized (no fp8 dtype, no scale buffer added).
+ada_excluded = (ada_w is not None
+                and ada_w.dtype not in fp8_dtypes
+                and not ada_scale_in_dict)
+# Sanity: the regular layers weight should have actually been quantized,
+# otherwise the EXCLUDE filter could be vacuously true (e.g., everything skipped).
+reg_quantized = (reg_w is not None
+                 and (reg_w.dtype in fp8_dtypes or reg_scale_in_dict))
+
+if ada_excluded and reg_quantized:
+    print("PASS")
+elif not reg_quantized:
+    print("FAIL:nothing_quantized")
+else:
+    print("FAIL:adaln_was_quantized:" + str(ada_w.dtype if ada_w is not None else None))
+PYEOF
+)
+echo "  Result: $T17"
+if [ "$T17" = "PASS" ]; then add_reward 0.02; fi
 
 
 # ═══════════════════════════════════════════════════════════════════

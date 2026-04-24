@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification tests for ComfyUI Lumina2 LoRA base_model.model key mapping.
 #
@@ -23,9 +23,13 @@
 #   Test 14: 0.08  behavioral F2P: keys span >=3 distinct component types
 #   Test 15: 0.08  behavioral F2P: diffusion_model.* target consistency
 #   Test 16: 0.01  behavioral P2P: upstream ComfyUI unit tests pass (CPU-safe)
+#   Test 17: 0.02  structural F2P: AST — base_model.model key_map RHS matches
+#                  sibling entries' RHS in the Lumina2 block (catches
+#                  "just added a string" shortcut; reward stays capped at 1.0)
 #
 # P2P: 0.05 (5%) | F2P: 0.95 (95%)
 # Nop score: 0.05 (P2P tests only)
+# Sum of weights: 1.02, reward capped at 1.0 by add_reward().
 #
 set +e
 
@@ -35,7 +39,7 @@ mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 LORA_PY="/workspace/ComfyUI/comfy/lora.py"
 PASS=0
-TOTAL=16
+TOTAL=17
 
 # Use venv Python for behavioral tests (has torch installed).
 # Fall back to python3 if venv doesn't exist.
@@ -569,6 +573,75 @@ if [ $PYTEST_EXIT -eq 0 ] || [ $PYTEST_EXIT -eq 5 ]; then
 else
     fail_check "upstream tests failed (exit code $PYTEST_EXIT)"
 fi
+
+# ═══════════════════════════════════════════════════════════════════
+# TEST 17 (0.02): F2P — AST — base_model.model assignment RHS matches a
+#   sibling key_map[...] assignment's RHS (e.g., same `to` variable used
+#   by transformer./diffusion_model./lycoris_ entries). Guards against a
+#   shallow "just added the string" fix that would satisfy Tests 2/3 but
+#   assign a wrong value (e.g., None, a literal, or the loop key k) that
+#   isn't consistent with the surrounding prefix-stripping pattern.
+# ═══════════════════════════════════════════════════════════════════
+echo "--- Test 17/$TOTAL: F2P — base_model.model RHS matches sibling key_map value ---"
+T=$(python3 << 'PYEOF'
+import ast, sys
+
+try:
+    with open("/workspace/ComfyUI/comfy/lora.py", "r") as f:
+        tree = ast.parse(f.read())
+except (SyntaxError, FileNotFoundError) as e:
+    print(f"FAIL:{e}"); sys.exit(0)
+
+func = None
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == "model_lora_keys_unet":
+        func = node; break
+if not func:
+    print("FAIL:no_func"); sys.exit(0)
+
+lumina2 = None
+for node in ast.walk(func):
+    if not isinstance(node, ast.If): continue
+    t = node.test
+    if isinstance(t, ast.Call) and isinstance(t.func, ast.Name) and t.func.id == "isinstance":
+        if len(t.args) >= 2 and "Lumina2" in ast.dump(t.args[1]):
+            lumina2 = node; break
+if not lumina2:
+    print("FAIL:no_lumina2_block"); sys.exit(0)
+
+# Collect key_map[...] = <val> assignments inside the Lumina2 block.
+# Split into the base_model.model.* subscript vs. the sibling prefixes.
+base_rhs = []
+sibling_rhs = []
+for node in ast.walk(lumina2):
+    if not isinstance(node, ast.Assign): continue
+    for target in node.targets:
+        if not isinstance(target, ast.Subscript): continue
+        if not (isinstance(target.value, ast.Name) and target.value.id == "key_map"): continue
+        sl_dump = ast.dump(target.slice)
+        rhs_dump = ast.dump(node.value)
+        if "base_model.model" in sl_dump:
+            base_rhs.append(rhs_dump)
+        elif any(p in sl_dump for p in ("transformer.", "diffusion_model.", "lycoris_")):
+            sibling_rhs.append(rhs_dump)
+
+if not base_rhs:
+    print("FAIL:no_base_model_assign"); sys.exit(0)
+if not sibling_rhs:
+    print("FAIL:no_sibling_assigns"); sys.exit(0)
+
+# Accept if any base RHS equals any sibling RHS (agent reused same value
+# pattern, e.g., `to`), or RHS is a bare Name referencing a mapped target
+# (names like to/k/v are all acceptable as long as they match siblings).
+for b in base_rhs:
+    if b in sibling_rhs:
+        print("PASS:rhs_matches_sibling"); sys.exit(0)
+
+print(f"FAIL:rhs_mismatch:base={base_rhs[:1]}:siblings={sibling_rhs[:2]}")
+PYEOF
+)
+echo "  Result: $T"
+if [[ "$T" == PASS* ]]; then add_reward 0.02 ; else fail_check "$T"; fi
 
 # ═══════════════════════════════════════════════════════════════════
 # Write final reward

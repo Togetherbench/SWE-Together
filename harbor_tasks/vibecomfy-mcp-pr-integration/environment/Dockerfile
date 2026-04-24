@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -11,8 +11,10 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     build-essential \
     tmux \
-    asciinema \
     && rm -rf /var/lib/apt/lists/*
+
+# asciinema is not in Ubuntu 24.04 apt repos by default; install via pip
+RUN pip3 install --no-cache-dir --break-system-packages asciinema==2.4.0
 
 # Configure git
 RUN git config --global user.email "agent@harbor.test" && \
@@ -34,12 +36,12 @@ RUN rm -f /workspace/VibeComfy/CLAUDE.md /workspace/VibeComfy/AGENTS.md
 # numpy: used by cli_tools/registry/embeddings.py
 RUN pip3 install --break-system-packages \
     mcp==1.3.0 \
-    numpy \
-    pytest \
-    pytest-timeout
+    numpy==2.2.3 \
+    pytest==8.3.5 \
+    pytest-timeout==2.3.1
 
-# Set up workspace
-RUN mkdir -p /logs/verifier
+# Set up workspace and log directories
+RUN mkdir -p /logs/verifier /logs/agent/sessions
 
 ENV PYTHONPATH=/workspace/VibeComfy
 
@@ -47,9 +49,13 @@ ENV PYTHONPATH=/workspace/VibeComfy
 RUN useradd -m -s /bin/bash agent && \
     chown -R agent:agent /workspace /logs
 
-# Pre-install Claude Code CLI as non-root user
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+# Harbor install.sh target dir (fix for mkdir-as-nonroot bug)
+RUN mkdir -p /installed-agent && chown agent:agent /installed-agent
 USER agent
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/home/agent/.local/bin:$PATH"
 
 # Git config for non-root user

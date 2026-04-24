@@ -1,25 +1,30 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification script for vibecomfy-mcp-pr-integration task.
 #
 # Scoring (15 sub-checks, total exactly 1.00):
-#   Check 1      (0.05) Shared search module           BEHAVIORAL
-#   Check 2a     (0.04) MCP analysis tools exist        BEHAVIORAL (core)
-#   Check 2b-i   (0.06) MCP dispatch basic              BEHAVIORAL
-#   Check 2b-ii  (0.08) MCP dispatch correct results    BEHAVIORAL (harder)
-#   Check 2b-iii (0.08) MCP dispatch full correctness   BEHAVIORAL (hardest)
-#   Check 4      (0.08) Test suite                      BEHAVIORAL
-#   Check 5      (0.03) TASK_ALIASES extracted           STRUCTURAL
-#   Check 6a     (0.01) .mcp.json auto-config           STRUCTURAL
-#   Check 6b     (0.01) requirements.txt                STRUCTURAL
-#   Check 7      (0.03) Skills reorganized              STRUCTURAL
-#   Check 8      (0.02) Prescriptive descriptions       STRUCTURAL
-#   Check 9      (0.07) Analysis functions P2P          BEHAVIORAL (P2P)
-#   Check 10     (0.14) Knowledge integration           BEHAVIORAL
-#   Check 11-i   (0.07) Cross-module basic              BEHAVIORAL
-#   Check 11-ii  (0.09) Cross-module alias correctness  BEHAVIORAL
-#   Check 11-iii (0.08) Cross-module e2e chain          BEHAVIORAL
-#   Check 12     (0.06) Edge case handling              BEHAVIORAL
+#   Check 1      (0.05) Shared search module           BEHAVIORAL  [F2P]
+#   Check 2a     (0.04) MCP analysis tools exist        BEHAVIORAL  [F2P]
+#   Check 2b-i   (0.06) MCP dispatch basic              BEHAVIORAL  [F2P]
+#   Check 2b-ii  (0.08) MCP dispatch correct results    BEHAVIORAL  [F2P]
+#   Check 2b-iii (0.08) MCP dispatch full correctness   BEHAVIORAL  [F2P]
+#   Check 4      (0.08) Test suite                      BEHAVIORAL  [F2P]
+#   Check 4b     (0.01) Turn 3 coverage                 BEHAVIORAL  [F2P]
+#   Check 5      (0.03) TASK_ALIASES extracted           STRUCTURAL  [F2P]
+#   Check 6a     (0.01) .mcp.json auto-config           STRUCTURAL  [F2P]
+#   Check 6b     (0.01) requirements.txt                STRUCTURAL  [F2P]
+#   Check 7      (0.03) Skills reorganized              STRUCTURAL  [F2P]
+#   Check 8      (0.02) Prescriptive descriptions       STRUCTURAL  [F2P]
+#   Check 9      (0.07) Analysis functions P2P          BEHAVIORAL  [P2P]
+#   Check 10     (0.14) Knowledge integration           BEHAVIORAL  [F2P]
+#   Check 11-i   (0.07) Cross-module basic              BEHAVIORAL  [F2P]
+#   Check 11-ii  (0.09) Cross-module alias correctness  BEHAVIORAL  [F2P]
+#   Check 11-iii (0.08) Cross-module e2e chain          BEHAVIORAL  [F2P]
+#   Check 12     (0.05) Edge case handling              BEHAVIORAL  [F2P]
+#
+# Total weight: exactly 1.00 (no cap margin)
+# P2P weight: 0.07 (Check 9 only — passes on unmodified base commit)
+# F2P weight: 0.93 (all other checks — require agent modifications)
 #
 set +e
 
@@ -232,7 +237,8 @@ if acalls < 2:
 ok = 0
 # Approach 1: module-level dispatch function
 dispatch_fn = None
-for name in ['_handle_tool', 'call_tool', 'handle_call', 'dispatch', 'handle_tool_call']:
+for name in ['_handle_tool', 'call_tool', 'handle_call', 'dispatch', 'handle_tool_call',
+             '_dispatch', 'dispatch_tool', 'route_tool', '_route']:
     fn = getattr(mcp_mod, name, None)
     if fn and callable(fn): dispatch_fn = fn; break
 if dispatch_fn:
@@ -246,25 +252,53 @@ if dispatch_fn:
                 r = dispatch_fn(tn, {"workflow_json": wf_json, "node_id": test_nid})
             if r and len(str(r)) > 20: ok += 1
         except Exception: pass
-# Approach 2: module-level wrapper functions
+    # Dispatch may need a kb object -- try instantiating knowledge and passing
+    if ok < 1 and dispatch_fn:
+        try:
+            km = importlib.import_module("cli_tools.registry.knowledge")
+            CK = getattr(km, 'ComfyKnowledge', None)
+            if CK:
+                kb = CK()
+                for lm in ['load_nodes','_load_cache','load','init']:
+                    fn = getattr(kb, lm, None)
+                    if fn and callable(fn):
+                        try: fn(); break
+                        except: pass
+                for tn in ["comfy_upstream", "comfy_downstream", "trace_upstream", "trace_downstream",
+                           "find_upstream", "find_downstream"]:
+                    if ok >= 1: break
+                    try:
+                        if asyncio.iscoroutinefunction(dispatch_fn):
+                            r = asyncio.get_event_loop().run_until_complete(dispatch_fn(kb, tn, {"workflow_json": wf_json, "node_id": test_nid}))
+                        else:
+                            r = dispatch_fn(kb, tn, {"workflow_json": wf_json, "node_id": test_nid})
+                        if r and len(str(r)) > 20: ok += 1
+                    except Exception: pass
+        except Exception: pass
+# Approach 2: module-level wrapper functions (including _fmt_ variants)
 if ok < 1:
-    for fn_name in ['find_upstream', 'find_downstream', 'find_path']:
+    for fn_name in ['find_upstream', 'find_downstream', 'find_path',
+                    '_fmt_upstream', '_fmt_downstream', '_fmt_path',
+                    'trace_upstream', 'trace_downstream']:
         if ok >= 1: break
         fn = getattr(mcp_mod, fn_name, None)
         if not fn or not callable(fn): continue
         try:
-            r = fn(wf, test_nid) if fn_name != 'find_path' else fn(wf, node_ids[0], node_ids[-1])
+            r = fn(wf, test_nid) if 'path' not in fn_name else fn(wf, node_ids[0], node_ids[-1])
             if r and len(str(r)) > 20: ok += 1
         except Exception: pass
 # Approach 3: nested handlers (MCP SDK pattern -- call_tool inside main())
 # The handler may be a single if/elif chain (2 top-level stmts) with many branches
+# Accept functions referencing upstream AND downstream (directly or via helpers)
 if ok < 1:
     tree = ast.parse(mcp_src)
     nested_handler_found = False
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): continue
         bd = ast.dump(node)
-        if 'find_upstream' in bd and 'find_downstream' in bd:
+        has_up = 'upstream' in bd.lower()
+        has_down = 'downstream' in bd.lower()
+        if has_up and has_down:
             # Count effective branches (if/elif) not just top-level stmts
             branch_count = sum(1 for n in ast.walk(node) if isinstance(n, ast.If))
             stmts = [s for s in node.body if not isinstance(s, ast.Pass)
@@ -303,36 +337,60 @@ mcp_src = open(mcp_mod.__file__).read()
 
 ok = 0; results = []
 
+def _try_dispatch(fn, tool_name, args):
+    """Try calling a dispatch function with or without knowledge arg."""
+    import asyncio as _aio
+    # Try (tool_name, args) signature first
+    try:
+        if _aio.iscoroutinefunction(fn):
+            return _aio.get_event_loop().run_until_complete(fn(tool_name, args))
+        return fn(tool_name, args)
+    except TypeError:
+        pass
+    # Try (kb, tool_name, args) signature -- dispatch may need knowledge instance
+    try:
+        km = importlib.import_module("cli_tools.registry.knowledge")
+        CK = getattr(km, 'ComfyKnowledge', None)
+        if CK:
+            kb = CK()
+            for lm in ['load_nodes','_load_cache','load','init']:
+                lfn = getattr(kb, lm, None)
+                if lfn and callable(lfn):
+                    try: lfn(); break
+                    except: pass
+            if _aio.iscoroutinefunction(fn):
+                return _aio.get_event_loop().run_until_complete(fn(kb, tool_name, args))
+            return fn(kb, tool_name, args)
+    except Exception:
+        pass
+    return None
+
 # Approach 1: module-level dispatch function
 dispatch_fn = None
-for name in ['_handle_tool', 'call_tool', 'handle_call', 'dispatch', 'handle_tool_call']:
+for name in ['_handle_tool', 'call_tool', 'handle_call', 'dispatch', 'handle_tool_call',
+             '_dispatch', 'dispatch_tool', 'route_tool', '_route']:
     fn = getattr(mcp_mod, name, None)
     if fn and callable(fn): dispatch_fn = fn; break
 if dispatch_fn:
     for t in ["comfy_upstream", "trace_upstream", "find_upstream"]:
         if ok >= 1: break
         try:
-            if asyncio.iscoroutinefunction(dispatch_fn):
-                r = asyncio.get_event_loop().run_until_complete(dispatch_fn(t, {"workflow_json": wf_json, "node_id": test_nid}))
-            else:
-                r = dispatch_fn(t, {"workflow_json": wf_json, "node_id": test_nid})
-            rs = str(r)
+            r = _try_dispatch(dispatch_fn, t, {"workflow_json": wf_json, "node_id": test_nid})
+            rs = str(r) if r else ""
             if r and len(rs) > 20: ok += 1; results.append(rs)
         except Exception: pass
     for t in ["comfy_downstream", "trace_downstream", "find_downstream"]:
         if ok >= 2: break
         try:
-            if asyncio.iscoroutinefunction(dispatch_fn):
-                r = asyncio.get_event_loop().run_until_complete(dispatch_fn(t, {"workflow_json": wf_json, "node_id": test_nid}))
-            else:
-                r = dispatch_fn(t, {"workflow_json": wf_json, "node_id": test_nid})
-            rs = str(r)
+            r = _try_dispatch(dispatch_fn, t, {"workflow_json": wf_json, "node_id": test_nid})
+            rs = str(r) if r else ""
             if r and len(rs) > 20: ok += 1; results.append(rs)
         except Exception: pass
 
-# Approach 2: module-level wrappers
+# Approach 2: module-level wrappers (including _fmt_ variants)
 if ok < 2:
-    for fn_name in ['find_upstream', 'find_downstream']:
+    for fn_name in ['find_upstream', 'find_downstream', '_fmt_upstream', '_fmt_downstream',
+                    'trace_upstream', 'trace_downstream']:
         if ok >= 2: break
         fn = getattr(mcp_mod, fn_name, None)
         if not fn or not callable(fn): continue
@@ -342,13 +400,16 @@ if ok < 2:
         except Exception: pass
 
 # Approach 3: nested MCP SDK handlers -- verify via analysis module directly
+# Accept functions referencing upstream AND downstream (directly or via helpers)
 if ok < 2:
     tree = ast.parse(mcp_src)
     handler_has_both = False
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): continue
         bd = ast.dump(node)
-        if 'find_upstream' in bd and 'find_downstream' in bd:
+        has_up = 'upstream' in bd.lower()
+        has_down = 'downstream' in bd.lower()
+        if has_up and has_down:
             branch_count = sum(1 for n in ast.walk(node) if isinstance(n, ast.If))
             stmts = [s for s in node.body if not isinstance(s, ast.Pass)
                       and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
@@ -446,75 +507,129 @@ for root, dirs, files in os.walk("."):
             test_files.append(os.path.join(root, f))
 if not test_files:
     print("  No test files", file=sys.stderr); sys.exit(1)
-mx = 0; best = None
+# Count total tests across all files
+total_tests = 0
 for tf in test_files:
     with open(tf) as f: src = f.read()
-    c = len(re.findall(r'def\s+test_\w+', src))
-    if c > mx: mx = c; best = tf
-if mx < 7:
-    print(f"  Only {mx} tests (need 7+)", file=sys.stderr); sys.exit(1)
-with open(best) as f: tsrc = f.read()
-tree = ast.parse(tsrc)
-cli_imp = False
-for n in ast.walk(tree):
-    if isinstance(n, ast.ImportFrom) and n.module and 'cli_tools' in n.module: cli_imp = True; break
-    if isinstance(n, ast.Import):
-        for a in n.names:
-            if 'cli_tools' in a.name: cli_imp = True; break
-if not cli_imp:
-    print("  No cli_tools import", file=sys.stderr); sys.exit(1)
+    total_tests += len(re.findall(r'def\s+test_\w+', src))
+if total_tests < 7:
+    print(f"  Only {total_tests} tests across all files (need 7+)", file=sys.stderr); sys.exit(1)
+# Check substantive tests and module coverage across ALL test files
 refs = {'analysis','search','knowledge','mcp_server','expand_query','trace_node',
         'find_upstream','find_downstream','TASK_ALIASES','ComfyKnowledge',
-        'search_nodes','find_path','expand_aliases','resolve_query','expand_terms','expand'}
-sub = 0; mods = set()
-for n in ast.walk(tree):
-    if isinstance(n, ast.FunctionDef) and n.name.startswith('test_'):
-        bd = ast.dump(n)
-        has_ref = any(r in bd for r in refs)
-        stmts = [s for s in n.body if not isinstance(s, ast.Pass) and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
-        has_assert = False
-        for s in ast.walk(n):
-            if isinstance(s, ast.Assert):
-                t = s.test
-                if isinstance(t, (ast.Compare, ast.Call, ast.BoolOp)): has_assert = True
-                elif isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not): has_assert = True
-                elif isinstance(t, ast.Name): has_assert = True
-                if has_assert: break
-        has_call = any(isinstance(s, ast.Call) for s in ast.walk(n))
-        if has_ref and len(stmts) >= 4 and has_assert and has_call:
-            sub += 1
-            for r in refs:
-                if r in bd:
-                    if r in ('analysis','find_upstream','find_downstream','find_path','trace_node'): mods.add('analysis')
-                    elif r in ('search','expand_query','TASK_ALIASES','expand_aliases','expand_terms'): mods.add('search')
-                    elif r in ('knowledge','ComfyKnowledge','search_nodes'): mods.add('knowledge')
-                    elif r == 'mcp_server': mods.add('mcp_server')
+        'search_nodes','find_path','expand_aliases','resolve_query','expand_terms','expand',
+        '_fmt_upstream','_fmt_downstream','_fmt_path','_fmt_analyze',
+        'analyze_workflow','get_workflow_info','find_orphans','find_subgraph'}
+sub = 0; mods = set(); any_cli_imp = False
+for tf in test_files:
+    with open(tf) as f: tsrc = f.read()
+    try: tree = ast.parse(tsrc)
+    except Exception: continue
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module and 'cli_tools' in n.module: any_cli_imp = True
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                if 'cli_tools' in a.name: any_cli_imp = True
+    for n in ast.walk(tree):
+        if isinstance(n, ast.FunctionDef) and n.name.startswith('test_'):
+            bd = ast.dump(n)
+            has_ref = any(r in bd for r in refs)
+            stmts = [s for s in n.body if not isinstance(s, ast.Pass) and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+            has_assert = False
+            for s in ast.walk(n):
+                if isinstance(s, ast.Assert):
+                    t = s.test
+                    if isinstance(t, (ast.Compare, ast.Call, ast.BoolOp)): has_assert = True
+                    elif isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not): has_assert = True
+                    elif isinstance(t, ast.Name): has_assert = True
+                    if has_assert: break
+            has_call = any(isinstance(s, ast.Call) for s in ast.walk(n))
+            if has_ref and len(stmts) >= 2 and has_assert and has_call:
+                sub += 1
+                for r in refs:
+                    if r in bd:
+                        if r in ('analysis','find_upstream','find_downstream','find_path','trace_node',
+                                 '_fmt_upstream','_fmt_downstream','_fmt_path','_fmt_analyze',
+                                 'analyze_workflow','get_workflow_info','find_orphans','find_subgraph'): mods.add('analysis')
+                        elif r in ('search','expand_query','TASK_ALIASES','expand_aliases','expand_terms'): mods.add('search')
+                        elif r in ('knowledge','ComfyKnowledge','search_nodes'): mods.add('knowledge')
+                        elif r == 'mcp_server': mods.add('mcp_server')
+if not any_cli_imp:
+    print("  No cli_tools import in any test file", file=sys.stderr); sys.exit(1)
 if sub < 5:
     print(f"  Only {sub} substantive tests", file=sys.stderr); sys.exit(1)
-if len(mods) < 3:
-    print(f"  Covers {mods} (need >=3)", file=sys.stderr); sys.exit(1)
+if len(mods) < 2:
+    print(f"  Covers {mods} (need >=2)", file=sys.stderr); sys.exit(1)
+# Run pytest across all test directories
 env = os.environ.copy(); env["PYTHONPATH"] = "."
-res = subprocess.run(["python3","-m","pytest",best,"-v","--tb=short","-q"],
-    capture_output=True, text=True, timeout=60, cwd="/workspace/VibeComfy", env=env)
-out = res.stdout + res.stderr
-pm = re.search(r'(\d+)\s+passed', out)
-fm = re.search(r'(\d+)\s+failed', out)
-if pm:
-    passed = int(pm.group(1)); failed = int(fm.group(1)) if fm else 0
-else:
-    td = os.path.dirname(best) or "."
-    res = subprocess.run(["python3","-m","unittest","discover","-s",td,"-p","test_*.py","-v"],
+test_dirs = list(set(os.path.dirname(tf) or "." for tf in test_files))
+passed = 0; failed = 0
+for td in test_dirs:
+    res = subprocess.run(["python3","-m","pytest",td,"-v","--tb=short","-q"],
         capture_output=True, text=True, timeout=60, cwd="/workspace/VibeComfy", env=env)
     out = res.stdout + res.stderr
-    passed = len(re.findall(r'\.\.\. ok', out))
-    rm = re.search(r'Ran (\d+) test', out)
-    if rm and passed == 0 and res.returncode == 0: passed = int(rm.group(1))
-    failed = len(re.findall(r'\.\.\. (FAIL|ERROR)', out))
+    pm = re.search(r'(\d+)\s+passed', out)
+    fm = re.search(r'(\d+)\s+failed', out)
+    if pm: passed += int(pm.group(1))
+    if fm: failed += int(fm.group(1))
 if passed < 6:
     print(f"  {passed} passed ({failed} failed), need >=6", file=sys.stderr); sys.exit(1)
 if passed + failed > 0 and failed > passed:
     print(f"  More failures than passes", file=sys.stderr); sys.exit(1)
 print(f"  OK: {passed} passed, {sub} substantive, {mods}")
+PYEOF
+
+# ===========================================================================
+# Check 4b (0.02): Turn 3 -- tests MUST cover BOTH shared search AND analysis
+# Turn 3 asked explicitly: "Create tests for the tool functions -- both the
+# shared search module and the analysis wrappers". Check 4 only requires 3-of-4
+# module categories, so an agent could skip 'search' (the shared module).
+# This check enforces the specific two-module ask.
+# ===========================================================================
+echo ""
+echo "=== Check 4b: Turn 3 search+analysis coverage (0.01) ==="
+python3 << 'PYEOF' && { echo "PASS: Check 4b"; add_reward 0.01; } || echo "FAIL: Check 4b"
+import os, ast, sys
+test_files = []
+for root, dirs, files in os.walk("."):
+    if ".git" in root or "__pycache__" in root: continue
+    for f in files:
+        if f.startswith("test_") and f.endswith(".py"):
+            test_files.append(os.path.join(root, f))
+if not test_files:
+    print("  No test files", file=sys.stderr); sys.exit(1)
+
+search_refs = {'expand_query', 'expand_aliases', 'TASK_ALIASES',
+               'expand_terms', 'resolve_query', 'resolve_aliases', 'expand_search',
+               'get_search_terms'}
+analysis_refs = {'find_upstream', 'find_downstream', 'find_path',
+                 'trace_node', 'analyze_workflow', 'find_orphans', 'find_subgraph'}
+
+search_ok = False
+analysis_ok = False
+for tf in test_files:
+    try:
+        with open(tf) as f: src = f.read()
+        tree = ast.parse(src)
+    except Exception:
+        continue
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.FunctionDef) or not n.name.startswith('test_'):
+            continue
+        bd = ast.dump(n)
+        stmts = [s for s in n.body if not isinstance(s, ast.Pass)
+                 and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+        if len(stmts) < 2: continue
+        has_assert = any(isinstance(s, ast.Assert) for s in ast.walk(n))
+        has_call = any(isinstance(s, ast.Call) for s in ast.walk(n))
+        if not (has_assert and has_call): continue
+        if any(r in bd for r in search_refs): search_ok = True
+        if any(r in bd for r in analysis_refs): analysis_ok = True
+if not search_ok:
+    print("  No substantive test covers shared search module (Turn 3)", file=sys.stderr); sys.exit(1)
+if not analysis_ok:
+    print("  No substantive test covers analysis wrappers (Turn 3)", file=sys.stderr); sys.exit(1)
+print("  OK: both search and analysis covered in tests")
 PYEOF
 
 # ===========================================================================
@@ -555,37 +670,92 @@ print("  OK: extracted")
 PYEOF
 
 # ===========================================================================
-# Check 6a (0.01): .mcp.json -- STRUCTURAL
+# Check 6a (0.01): .mcp.json auto-discovery mechanism -- STRUCTURAL+BEHAVIORAL
+# Verifies the file exists AND the declared command would actually launch the
+# MCP server (auto-discovery mechanism works, not just a placeholder file).
 # ===========================================================================
 echo ""
-echo "=== Check 6a: .mcp.json (0.01) ==="
+echo "=== Check 6a: .mcp.json auto-discovery (0.01) ==="
 python3 << 'PYEOF' && { echo "PASS: Check 6a"; add_reward 0.01; } || echo "FAIL: Check 6a"
-import json, sys, os
-mp = None
-for c in [".mcp.json", "mcp.json"]:
-    if os.path.exists(c): mp = c; break
-if not mp: print("  Not found", file=sys.stderr); sys.exit(1)
-with open(mp) as f: cfg = json.load(f)
+import json, sys, os, importlib
+# Claude Code auto-discovers project-root .mcp.json (exact filename)
+if not os.path.exists(".mcp.json"):
+    print("  .mcp.json not at project root (auto-discovery requires exact name)", file=sys.stderr); sys.exit(1)
+with open(".mcp.json") as f:
+    try: cfg = json.load(f)
+    except Exception as e: print(f"  Invalid JSON: {e}", file=sys.stderr); sys.exit(1)
 srv = cfg.get("mcpServers", cfg.get("servers", {}))
-if not srv: print("  No servers", file=sys.stderr); sys.exit(1)
-found = any("mcp_server" in (s.get("command","")+" "+" ".join(str(a) for a in s.get("args",[])))
-            or "registry" in (s.get("command","")+" "+" ".join(str(a) for a in s.get("args",[])))
-            for s in srv.values())
-if not found: print("  No mcp_server ref", file=sys.stderr); sys.exit(1)
-print(f"  OK: {mp}")
+if not isinstance(srv, dict) or not srv:
+    print("  No mcpServers entry (auto-discovery needs dict)", file=sys.stderr); sys.exit(1)
+# Each entry must have a runnable command + args that point at the MCP server module
+valid_entry = None
+for name, s in srv.items():
+    if not isinstance(s, dict): continue
+    cmd = s.get("command", "")
+    args = s.get("args", []) or []
+    args_str = " ".join(str(a) for a in args)
+    full = cmd + " " + args_str
+    # Command must be a real launcher (python/uv/uvx/node, not empty or placeholder)
+    if not cmd or not isinstance(cmd, str):
+        continue
+    launcher_ok = any(l in cmd.lower() for l in ("python", "uv", "node"))
+    if not launcher_ok:
+        continue
+    # Args or command must reference the actual server module/file (not a stub string)
+    refs_module = (
+        "cli_tools.registry.mcp_server" in full or
+        "cli_tools/registry/mcp_server" in full or
+        "mcp_server.py" in full
+    )
+    if not refs_module:
+        continue
+    valid_entry = (name, s); break
+if not valid_entry:
+    print("  No server entry with runnable command referencing cli_tools.registry.mcp_server", file=sys.stderr); sys.exit(1)
+# Verify the referenced mcp_server module is actually importable (mechanism works end-to-end)
+sys.path.insert(0, ".")
+try:
+    importlib.import_module("cli_tools.registry.mcp_server")
+except Exception as e:
+    print(f"  Declared module not importable — auto-discovery would fail: {e}", file=sys.stderr); sys.exit(1)
+print(f"  OK: .mcp.json auto-discovery wired ({valid_entry[0]})")
 PYEOF
 
 # ===========================================================================
-# Check 6b (0.01): requirements.txt -- STRUCTURAL
+# Check 6b (0.01): requirements.txt lists real MCP deps -- STRUCTURAL+BEHAVIORAL
+# Verifies mcp appears as an actual pip requirement (not in a comment), and
+# matches the package actually imported by mcp_server.py.
 # ===========================================================================
 echo ""
-echo "=== Check 6b: requirements.txt (0.01) ==="
+echo "=== Check 6b: requirements.txt MCP deps (0.01) ==="
 python3 << 'PYEOF' && { echo "PASS: Check 6b"; add_reward 0.01; } || echo "FAIL: Check 6b"
-import sys, os
-if not os.path.exists("requirements.txt"): print("  Not found", file=sys.stderr); sys.exit(1)
-with open("requirements.txt") as f: c = f.read().lower()
-if "mcp" not in c: print("  Missing mcp", file=sys.stderr); sys.exit(1)
-print("  OK")
+import sys, os, re
+if not os.path.exists("requirements.txt"):
+    print("  Not found", file=sys.stderr); sys.exit(1)
+with open("requirements.txt") as f:
+    raw = f.read()
+# Parse pip requirements: skip blank lines, comments, and strip inline comments
+pkgs = []
+for line in raw.splitlines():
+    s = line.strip()
+    if not s or s.startswith("#") or s.startswith("-"):
+        continue
+    # Strip inline comment
+    s = s.split("#", 1)[0].strip()
+    # Extract package name (before ==, >=, <=, [extras], ;markers, etc.)
+    m = re.match(r"^([A-Za-z0-9_.\-]+)", s)
+    if m:
+        pkgs.append(m.group(1).lower())
+if "mcp" not in pkgs:
+    print(f"  'mcp' not listed as a pip requirement (found: {pkgs})", file=sys.stderr); sys.exit(1)
+# Cross-check: mcp_server.py must actually import from mcp (dependency not unused/mismatched)
+mcp_src_path = "cli_tools/registry/mcp_server.py"
+if os.path.exists(mcp_src_path):
+    with open(mcp_src_path) as f: src = f.read()
+    imports_mcp = bool(re.search(r"^\s*(?:from\s+mcp(?:\.[\w.]+)?\s+import|import\s+mcp(?:\.[\w.]+)?)", src, re.M))
+    if not imports_mcp:
+        print("  mcp_server.py does not import 'mcp' — requirement doesn't match actual usage", file=sys.stderr); sys.exit(1)
+print(f"  OK: mcp listed as requirement, matches mcp_server.py imports")
 PYEOF
 
 # ===========================================================================
@@ -985,8 +1155,8 @@ PYEOF
 # Check 12 (0.06): Edge case handling -- BEHAVIORAL
 # ===========================================================================
 echo ""
-echo "=== Check 12: Edge cases (0.06) ==="
-python3 << 'PYEOF' && { echo "PASS: Check 12"; add_reward 0.06; } || echo "FAIL: Check 12"
+echo "=== Check 12: Edge cases (0.05) ==="
+python3 << 'PYEOF' && { echo "PASS: Check 12"; add_reward 0.05; } || echo "FAIL: Check 12"
 import sys, importlib, json, glob, importlib.util
 sys.path.insert(0, ".")
 ok = 0; total = 5

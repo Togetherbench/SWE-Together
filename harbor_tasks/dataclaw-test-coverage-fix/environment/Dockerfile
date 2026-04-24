@@ -41,7 +41,7 @@ RUN pip install --break-system-packages --no-cache-dir \
 
 # Install huggingface_hub (optional dep referenced in the code)
 RUN pip install --break-system-packages --no-cache-dir \
-    huggingface_hub>=0.20.0 || true
+    huggingface_hub==0.27.1 || true
 
 # Configure git identity so commits work inside the container
 RUN git config --global user.email "harbor@benchmark" && \
@@ -52,8 +52,8 @@ RUN cd /workspace/dataclaw && \
     git add -A && \
     git commit --allow-empty -m "initial workspace state"
 
-# Create verifier log directory
-RUN mkdir -p /logs/verifier
+# Create log directories (verifier + agent sessions used by Harbor runner)
+RUN mkdir -p /logs/verifier /logs/agent/sessions
 
 # Set PYTHONPATH so dataclaw is importable
 ENV PYTHONPATH="/workspace/dataclaw"
@@ -64,9 +64,13 @@ RUN useradd -m -s /bin/bash agent && \
     cp /root/.gitconfig /home/agent/.gitconfig && \
     chown agent:agent /home/agent/.gitconfig
 
-# Pre-install Claude Code CLI as the non-root user
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+# Harbor install.sh target dir (fix for mkdir-as-nonroot bug)
+RUN mkdir -p /installed-agent && chown agent:agent /installed-agent
 USER agent
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /workspace/dataclaw

@@ -184,7 +184,7 @@ async def ensure_template() -> str:
 
 
 async def create_sandbox(
-    timeout: int = 7200,
+    timeout: int = 14400,
     test_agents: bool = False,
 ) -> AsyncSandbox:
     """Create sandbox with API keys for Opus + optional agent testing models."""
@@ -192,12 +192,17 @@ async def create_sandbox(
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
         "ANTHROPIC_AUTH_TOKEN": os.environ.get("ANTHROPIC_API_KEY", ""),
     }
-    # For agent testing: inject GLM and OpenRouter keys
+    # For agent testing + sim-fire validation: inject all model-proxy keys.
+    # Harbor's run_eval.py uses MiniMax agent + Gemini user-sim; the boss prompt
+    # also exercises Sonnet/Haiku. All models route through these keys.
     if test_agents or os.environ.get("_FIX_INJECT_MODEL_KEYS"):
         envs.update({
             "GLM_API_KEY": os.environ.get("GLM_API_KEY", ""),
             "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY", ""),
             "FIREWORKS_API_KEY": os.environ.get("FIREWORKS_API_KEY", ""),
+            "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+            "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY", ""),
+            "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY", ""),
         })
 
     for attempt in range(6):
@@ -206,6 +211,7 @@ async def create_sandbox(
                 template=TEMPLATE_ALIAS,
                 timeout=timeout,
                 envs=envs,
+                metadata={"owner": "fix_tasks", "pid": str(os.getpid())},
             )
             break
         except Exception as e:
@@ -302,6 +308,65 @@ async def download_changed_files(
         changed.append(rel)
 
     return changed
+
+
+# ---------------------------------------------------------------------------
+# Outer-repo tarball (for sim-fire validation — Harbor runner needs repo on disk)
+# ---------------------------------------------------------------------------
+
+REPO_TARBALL_PATH = Path("/tmp/multi_user_turn_codebench_repo.tar.gz")
+
+
+def build_repo_tarball(force: bool = False) -> Path:
+    """Build a gzipped tarball of the outer repo for sandbox upload.
+
+    Excludes .git, trials-*, pipeline_logs, session_collection (large + irrelevant).
+    Includes harbor_tasks, src, scripts, external/harbor, pyproject.toml, uv.lock, .env.
+    """
+    import subprocess
+    if not force and REPO_TARBALL_PATH.exists():
+        # Reuse if <30 min old (pipeline launches a batch — tarball fresh enough)
+        age = time.time() - REPO_TARBALL_PATH.stat().st_mtime
+        if age < 1800:
+            log.info("Reusing repo tarball at %s (%d KB, age %.0fs)",
+                     REPO_TARBALL_PATH, REPO_TARBALL_PATH.stat().st_size // 1024, age)
+            return REPO_TARBALL_PATH
+    log.info("Building repo tarball at %s", REPO_TARBALL_PATH)
+    # .env must exist — Harbor runner inside sandbox needs model keys
+    env_file = REPO_ROOT / ".env"
+    includes = [
+        "pyproject.toml", "uv.lock", "harbor_tasks", "src", "scripts",
+        "external/harbor",
+    ]
+    if env_file.exists():
+        includes.append(".env")
+    subprocess.run([
+        "tar", "czf", str(REPO_TARBALL_PATH),
+        "--exclude=.venv*", "--exclude=.git", "--exclude=trials-*",
+        "--exclude=trials", "--exclude=pipeline_logs",
+        "--exclude=session_collection", "--exclude=logs", "--exclude=jobs",
+        "--exclude=__pycache__", "--exclude=*.pyc", "--exclude=node_modules",
+        "--exclude=original_session.json",  # only needed for tasks being worked on; uploaded via task dir
+        *includes,
+    ], check=True, cwd=REPO_ROOT)
+    log.info("repo tarball built: %d KB", REPO_TARBALL_PATH.stat().st_size // 1024)
+    return REPO_TARBALL_PATH
+
+
+async def upload_repo_tarball(sandbox: AsyncSandbox, tarball_path: Path) -> None:
+    """Upload repo tarball and extract to /workspace/repo/. Worker user owns the extraction."""
+    data = tarball_path.read_bytes()
+    log.info("Uploading repo tarball (%d KB) to sandbox", len(data) // 1024)
+    await sandbox.files.write("/workspace/repo.tar.gz", data)
+    code, _, err = await run_cmd(
+        sandbox,
+        "rm -rf /workspace/repo && mkdir -p /workspace/repo && "
+        "tar xzf /workspace/repo.tar.gz -C /workspace/repo && "
+        "chown -R worker:worker /workspace/repo",
+        timeout=180,
+    )
+    if code != 0:
+        raise RuntimeError(f"tarball extract failed: {err[:300]}")
 
 
 # ---------------------------------------------------------------------------
@@ -538,200 +603,367 @@ No F2P test should contribute to the nop score.
 
 
 # ---------------------------------------------------------------------------
-# Full audit prompt: fix P2P + F2P + agent comparison
+# Full audit prompt: MERGED pipeline — test hardening + user-sim + rubrics + sim-fire
 # ---------------------------------------------------------------------------
 
-FULL_AUDIT_PROMPT = """# Full Task Audit: Fix + Agent Test + Iterative Refinement
+FULL_AUDIT_PROMPT = """# Full Task Audit: Unified Test + Sim-Prompt + Rubric Enforcement
 
-You are a senior QA engineer. Task files at `/workspace/task/`.
-You have Docker and API keys. Your goal: make this task produce
-**meaningfully different scores** for Sonnet 4.6 vs Haiku 4.5.
+You are a senior QA engineer. Task files at `/workspace/task/`. The outer
+benchmark repo (harbor + run_eval.py + other tasks) is at `/workspace/repo/`
+if the tarball was uploaded. You have Docker-in-docker, API keys for Anthropic,
+OpenRouter, Gemini, MiniMax. Sandbox lifetime is 6 hours.
 
-## Audit report
+## What this task owns (you edit these)
+- `/workspace/task/tests/test.sh` — verifier
+- `/workspace/task/environment/Dockerfile` — task env
+- `/workspace/task/user_simulation_prompt.md` — multi-turn sim trigger table
+- `/workspace/task/task.toml` — metadata (add session_resolution field)
+- `/workspace/task/fix_summary.md` — YOUR final report
+
+## What you DO NOT change (read-only source of truth)
+- `/workspace/task/instruction.md` — the first user message, kept verbatim per
+  `never_change_user_messages` rule. Only edit if the instruction is literally
+  broken (e.g. contains `<tool_result>` envelopes, references a dead link).
+  If you do edit, document the reason in fix_summary.md.
+- `/workspace/task/original_session.json` — the recorded session, evidence source.
+
+## Goal
+Produce a benchmark task that:
+1. Discriminates Sonnet 4.6 vs Haiku 4.5 with gap ≥ 0.15
+2. Passes ALL 7 Tier A rubrics + 4 Tier B rubrics (from audit report below)
+3. Has an accurate session_resolution tag and a verbatim user-sim trigger table
+4. Survives sim-fire validation (Harbor's real runner fires ≥1 sim turn)
+
+## Audit report (task-specific context + rubrics)
 {report}
 
-## PHASE 1: Build & Baseline (nop test)
+## THE 9 PHASES — execute in order, budget time per phase
 
-1. Read `tests/test.sh`, `environment/Dockerfile`, `instruction.md`
-2. Build Docker:
+═══════════════════════════════════════════════════════════════════════════
+PHASE 0 — Orient (budget: 5 min)
+═══════════════════════════════════════════════════════════════════════════
+
+Read these files into your head before doing anything:
 ```bash
-cd /workspace/task/environment && docker build -t task-env .
+cat /workspace/task/instruction.md
+cat /workspace/task/tests/test.sh
+cat /workspace/task/environment/Dockerfile
+head -200 /workspace/task/user_simulation_prompt.md
+cat /workspace/task/task.toml
+# Session: only check tail (full file can be huge)
+wc -l /workspace/task/original_session.json
+python3 -c "
+import json
+s = json.load(open('/workspace/task/original_session.json'))
+msgs = s.get('messages', [])
+users = [m for m in msgs if m.get('role')=='user']
+print(f'Total messages: {len(msgs)}, user turns: {len(users)}')
+for i,m in enumerate(users[:5]):
+    c = m.get('content','')
+    if isinstance(c, list): c = ' '.join(x.get('text','') for x in c if isinstance(x,dict))
+    print(f'  [U{i}] ({m.get(\"timestamp\",\"?\")[:19]}): {str(c)[:150]}')
+print('  ...')
+if len(users)>5:
+    for i,m in enumerate(users[-2:]):
+        c = m.get('content','')
+        if isinstance(c, list): c = ' '.join(x.get('text','') for x in c if isinstance(x,dict))
+        print(f'  [U{len(users)-2+i}] ({m.get(\"timestamp\",\"?\")[:19]}): {str(c)[:150]}')
+"
 ```
-3. Run nop test (unmodified base commit):
+
+═══════════════════════════════════════════════════════════════════════════
+PHASE 1 — Session-resolution tag (budget: 5 min)
+═══════════════════════════════════════════════════════════════════════════
+
+Classify how the recorded session ENDED (not how the agent performed):
+- `resolved` — user acknowledged done or final ask was satisfied
+- `cut_off` — conversation truncated mid-work (timeout/context/user disconnect)
+- `stuck` — agent was looping or error-bouncing; user gave up
+- `ambiguous` — too unclear to classify
+
+Look at:
+- Final 3-4 user messages (tone, content)
+- Final assistant message (did it announce completion?)
+- Any explicit "looks good" / "that works" / "thanks"
+
+Append to `/workspace/task/task.toml` under `[metadata]` (PRESERVE existing fields):
+```toml
+session_resolution = "resolved"              # one of above
+session_resolution_confidence = 0.9          # 0.0-1.0
+session_resolution_reasoning = "final user said 'perfect, thanks'"
+```
+
+═══════════════════════════════════════════════════════════════════════════
+PHASE 2 — User-sim prompt audit + backfill (budget: 15 min)
+═══════════════════════════════════════════════════════════════════════════
+
+The user_simulation_prompt.md drives multi-turn evaluation. Each row in the
+trigger table must:
+- Have a **Message** that is VERBATIM from original_session.json (exact text
+  of a real user message, optionally trimmed but never reworded).
+- Have a **Condition** that tests observable agent state (file counts, files
+  edited, outputs matching patterns) — NOT speculation about intent.
+- NOT fabricate user turns that never happened.
+
+### Check current state
+```bash
+head -200 /workspace/task/user_simulation_prompt.md
+```
+
+### Decide:
+- If the file has **0 trigger rows** OR contains garbage (tool_result envelopes,
+  fabricated messages) → **REBUILD** the trigger table from original_session.json
+- If rows exist but some messages look paraphrased/invented → **FIX** those rows
+- If rows look correct → **VERIFY** each against session, leave alone if clean
+
+### Rebuilding the trigger table
+Extract substantive user messages (skip `<tool_result>` content, skip acks like
+"ok", "yes", skip `<task-` auto-envelopes). Generate 1 row per substantive turn
+AFTER the first (Turn 1 = instruction.md = implicit first turn, not in table).
+
+Row schema:
+```
+| ID | Condition | Message | Notes |
+| T2 | agent has written tests/test_api.py but has not added edge-case coverage for empty input | "also make sure it handles an empty string — that was the bug we saw in prod" | verbatim from session |
+| T3 | agent declared task done after making X change | "looks good but the tests in ci are still red" | verbatim |
+```
+
+Preserve the **Simulator Calibration** section at the top (total msgs, session
+duration, intervention style).
+
+═══════════════════════════════════════════════════════════════════════════
+PHASE 3 — Build Docker + nop baseline (budget: 10 min, Rust up to 30 min)
+═══════════════════════════════════════════════════════════════════════════
+
+```bash
+cd /workspace/task/environment && docker build -t task-env . 2>&1 | tail -30
+```
+
+If build fails → fix Dockerfile (missing deps, wrong base), rebuild.
+
+Nop test (empty agent, just run verifier):
 ```bash
 rm -f /logs/verifier/reward.txt
-docker run --rm -v /workspace/task/tests:/tests:ro -v /logs/verifier:/logs/verifier task-env bash /tests/test.sh
+docker run --rm \
+  -v /workspace/task/tests:/tests:ro \
+  -v /logs/verifier:/logs/verifier \
+  task-env bash /tests/test.sh 2>&1 | tail -40
 cat /logs/verifier/reward.txt
 ```
-4. Nop should be ≤ 0.10. If higher, fix P2P weights or F2P bugs and rebuild.
 
-## PHASE 2: Run Claude Sonnet 4.6 agent (stronger model)
+Target: nop ≤ 0.10 (only P2P regression guards pass on unmodified code).
 
-**API key: `$ANTHROPIC_API_KEY` — direct Anthropic API, no proxy needed.**
-**Rate limits: Use exponential backoff if you see 429/overloaded:**
-```
-Attempt 1: try immediately
-Attempt 2: wait 10s
-Attempt 3: wait 30s
-Attempt 4: wait 60s
-Attempt 5: wait 180s
-```
+═══════════════════════════════════════════════════════════════════════════
+PHASE 4 — Run Sonnet 4.6 + Haiku 4.5 agents (budget: 30-60 min)
+═══════════════════════════════════════════════════════════════════════════
+
+Run each agent in its own fresh container copied from task-env. Use the
+following PATTERN for each model:
 
 ```bash
-docker rm -f agent-sonnet 2>/dev/null || true
-docker run -d --name agent-sonnet task-env sleep 3600
-
-# Install Claude Code
-docker exec agent-sonnet bash -c "curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null"
-
-# Copy instruction
-docker cp /workspace/task/instruction.md agent-sonnet:/workspace/instruction.md
-
-# Run agent — Sonnet 4.6 via direct Anthropic API
-docker exec \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+# Sonnet (use claude-sonnet-4-6); Haiku (use claude-haiku-4-5-20251001)
+MODEL=claude-sonnet-4-6
+NAME=agent-sonnet
+docker rm -f $NAME 2>/dev/null || true
+docker run -d --name $NAME task-env sleep 7200
+docker exec $NAME bash -c "curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null"
+docker cp /workspace/task/instruction.md $NAME:/workspace/instruction.md
+docker exec -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   -e PATH="/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-  agent-sonnet bash -c 'cd /workspace && cat instruction.md | claude -p --dangerously-skip-permissions --model claude-sonnet-4-6 --output-format json 2>/dev/null' \
-  > /workspace/trace_sonnet.json 2>&1
-
-# Save trace
-docker exec agent-sonnet bash -c "cd /workspace && git diff 2>/dev/null" > /workspace/trace_sonnet_diff.txt
-docker exec agent-sonnet bash -c "cd /workspace && git diff --stat 2>/dev/null" > /workspace/trace_sonnet_stat.txt
-
-# Run verifier
-rm -f /logs/verifier/reward.txt
-docker cp /workspace/task/tests/test.sh agent-sonnet:/tests/test.sh
-docker exec agent-sonnet bash -c "mkdir -p /logs/verifier && bash /tests/test.sh" > /workspace/trace_sonnet_verifier.txt 2>&1
-docker cp agent-sonnet:/logs/verifier/reward.txt /logs/verifier/reward.txt 2>/dev/null || true
-cat /logs/verifier/reward.txt
-
-# DO NOT remove yet — keep for trace analysis
+  $NAME bash -c 'cd /workspace && cat instruction.md | claude -p --dangerously-skip-permissions --model '"$MODEL"' --output-format json 2>/dev/null' \
+  > /workspace/trace_${MODEL}.json 2>&1
+docker exec $NAME bash -c "cd /workspace && git diff 2>/dev/null" > /workspace/trace_${MODEL}_diff.txt
+docker cp /workspace/task/tests/test.sh $NAME:/tests/test.sh
+docker exec $NAME bash -c "mkdir -p /logs/verifier && bash /tests/test.sh" > /workspace/trace_${MODEL}_verifier.txt 2>&1
+docker cp $NAME:/logs/verifier/reward.txt /workspace/reward_${MODEL}.txt 2>/dev/null
+cat /workspace/reward_${MODEL}.txt
 ```
 
-## PHASE 3: Run Claude Haiku 4.5 agent (weaker model)
+On rate limit (429): wait 60s and retry once; then continue with the data
+you have.
 
-```bash
-docker rm -f agent-haiku 2>/dev/null || true
-docker run -d --name agent-haiku task-env sleep 3600
+═══════════════════════════════════════════════════════════════════════════
+PHASE 5 — Rubric enforcement (budget: 15 min)
+═══════════════════════════════════════════════════════════════════════════
 
-docker exec agent-haiku bash -c "curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null"
-docker cp /workspace/task/instruction.md agent-haiku:/workspace/instruction.md
+Apply ALL 11 rubrics to `tests/test.sh`. The audit report above names them;
+here's the checklist. For each violation, FIX the test.sh (preserving intent):
 
-# Run agent — Haiku 4.5 via direct Anthropic API
-docker exec \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -e PATH="/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-  agent-haiku bash -c 'cd /workspace && cat instruction.md | claude -p --dangerously-skip-permissions --model claude-haiku-4-5-20251001 --output-format json 2>/dev/null' \
-  > /workspace/trace_haiku.json 2>&1
+### Tier A — reward-integrity killers (FIX if violated)
+1. **tests_verify_behavior_not_text** — tests INVOKE code (cargo check/test,
+   python3 -c, node -e, bun test). Grep-only checks don't count. At least
+   50% of reward weight must come from compilation/execution gates.
+2. **test_not_tautological** — no gate should pass on a `pass` / empty /
+   `return None` stub. Each F2P gate must test REAL behavior.
+3. **solution_uniqueness_guard** — accept ANY behaviorally-correct fix,
+   not just the gold patch's variable names. Broaden regexes if too narrow.
+4. **no_solution_leakage** — instruction.md must not reveal the exact patch.
+   If it does (rare, we kept verbatim), note in fix_summary but don't edit.
+5. **pass_to_pass_coverage** — include ≥1 P2P test (passes on unmodified
+   base AND on correct fix). Guards against regression / delete-to-pass.
+6. **behavior_in_task_description** — every literal string/file-path/SHA
+   the test asserts must be derivable from instruction.md. If instruction
+   names `.onnx` but tests check for `.safetensors`, the tests are wrong.
+7. **no_hidden_solution_artifacts** — Dockerfile must NOT `COPY solution/`
+   into the image. Test: `docker run --rm task-env find / -name 'solve*'
+   -type f 2>/dev/null | head`. Should return nothing task-specific.
 
-docker exec agent-haiku bash -c "cd /workspace && git diff 2>/dev/null" > /workspace/trace_haiku_diff.txt
-docker exec agent-haiku bash -c "cd /workspace && git diff --stat 2>/dev/null" > /workspace/trace_haiku_stat.txt
+### Tier B — important
+8. **dockerfile_determinism** — no `:latest` tags. Pin base image + deps.
+9. **no_network_during_tests** — test.sh must not `pip/npm/apt install` at
+   test time; deps must be baked into image at build time.
+10. **pinned_dependencies** — all pip deps version-pinned (`==X.Y.Z`).
+11. **f2p_p2p_classification_correct** — test.sh should label which gates
+    are F2P vs P2P in comments.
 
-rm -f /logs/verifier/reward.txt
-docker cp /workspace/task/tests/test.sh agent-haiku:/tests/test.sh
-docker exec agent-haiku bash -c "mkdir -p /logs/verifier && bash /tests/test.sh" > /workspace/trace_haiku_verifier.txt 2>&1
-docker cp agent-haiku:/logs/verifier/reward.txt /logs/verifier/reward.txt 2>/dev/null || true
-cat /logs/verifier/reward.txt
-```
+### Hard rules (from prior audits)
+- `set +e` (NEVER `set -e` — breaks partial scoring)
+- Write reward to `/logs/verifier/reward.txt`
+- ≥3 reward gates with partial credit
+- Shebang `#!/bin/bash`
+- Language-specific execution gates:
+  - Rust: `cargo check` or `cargo test` as a gate (≥0.2 weight)
+  - TypeScript: `npx tsc --noEmit` or `bun test`
+  - Python: `python3 -m pytest` or `python3 -c "import ..."`
 
-## PHASE 4: Deep trace analysis (CRITICAL — read both traces carefully)
+═══════════════════════════════════════════════════════════════════════════
+PHASE 6 — Iterate until discrimination (budget: 60-90 min, max 4 loops)
+═══════════════════════════════════════════════════════════════════════════
 
-Now read ALL the trace files you saved:
-1. `cat /workspace/trace_sonnet.json | head -200` — Sonnet 4.6's Claude Code output
-2. `cat /workspace/trace_haiku.json | head -200` — Haiku 4.5's Claude Code output
-3. `cat /workspace/trace_sonnet_diff.txt` — what Sonnet actually changed
-4. `cat /workspace/trace_haiku_diff.txt` — what Haiku actually changed
-5. `cat /workspace/trace_sonnet_verifier.txt` — verifier output for Sonnet
-6. `cat /workspace/trace_haiku_verifier.txt` — verifier output for Haiku
-
-Analyze:
-- Did both agents actually attempt the task? Or did they hit errors/refuse?
-- What approach did each take? Same or different?
-- Which specific tests did each pass/fail?
-- Is the score difference meaningful or accidental?
-
-## PHASE 5: Iterative test refinement loop (THIS IS YOUR MAIN JOB)
-
-**You MUST spend the majority of your time here.** The whole point of this audit
-is to produce tests that meaningfully differentiate model quality. Run the full
-loop (fix tests → rebuild → re-run both agents → analyze) until you're satisfied.
-
-### The loop:
 ```
 REPEAT up to 4 times:
-  1. Analyze traces from both agents
-  2. Identify WHY scores are the same or wrong
-  3. Fix tests/Dockerfile based on trace analysis
-  4. Rebuild Docker: docker build -t task-env .
-  5. Run nop test (must be ≤ 0.10)
-  6. Re-run Sonnet 4.6 agent (fresh container from new image)
-  7. Run verifier on Sonnet's work, save trace
-  8. Re-run Haiku 4.5 agent (fresh container from new image)
-  9. Run verifier on Haiku's work, save trace
-  10. Compare: is discrimination better?
-  11. If gap > 0.15 AND reflects real quality → STOP, you're done
-  12. Otherwise → continue loop
+  1. Analyze traces from Sonnet + Haiku
+  2. Identify WHY scores are same/wrong (see diagnosis below)
+  3. Fix tests/Dockerfile
+  4. docker build -t task-env .   (rebuild)
+  5. Re-run nop (must stay ≤ 0.10)
+  6. Re-run Sonnet + Haiku in fresh containers
+  7. Compare: is gap ≥ 0.15 AND reflective of real quality?
+     → yes: STOP, you're done
+     → no: continue
 ```
 
-### What to look for in traces:
-- If a BETTER implementation scored LOWER → test penalizes valid approach → broaden
-- If a WORSE implementation scored SAME → test doesn't check enough → add behavioral checks
-- If both scored 0 → task too hard for single-turn (no user sim) → note it, stop iterating
-- If both scored 1.0 → task too easy → tighten tests, add harder checks
-- If one agent hit errors/refused → check if AGENTS.md/CLAUDE.md blocks it, fix env
-- If scores differ but for WRONG reasons (lucky pattern match, etc.) → fix the test
+### Diagnostic patterns
+- BETTER impl scored LOWER → test too narrow, broaden
+- WORSE impl scored SAME → test doesn't check enough, add behavioral gates
+- Both 0 → task too hard single-turn (needs sim) → note "needs multi-turn"
+- Both 1.0 → task too easy → tighten
+- Scores differ for WRONG reason (lucky pattern) → fix test
 
-### What you can change:
-- `tests/test.sh` — the PRIMARY thing to iterate on
-- `environment/Dockerfile` — if deps are missing for tests
-- `task.toml` — timeout settings
-- **Do NOT change instruction.md** unless absolutely necessary — changing the
-  instruction changes the task itself. We take the first user message as-is.
+═══════════════════════════════════════════════════════════════════════════
+PHASE 7 — Sim-fire validation (budget: 30 min, OPTIONAL if repo not available)
+═══════════════════════════════════════════════════════════════════════════
 
-### When to stop:
-- Score gap ≥ 0.15 that reflects genuine quality difference → DONE
-- Both agents score 0 after fixes (task needs user sim) → DONE, note "needs multi-turn"
-- You've done 4 iterations with no improvement → DONE, note remaining issues
-- One model consistently rate-limited → DONE with data from the working model
+Only run this if `/workspace/repo/` exists AND the outer-repo tarball extracted
+successfully. Skip gracefully otherwise.
 
-## PHASE 6: Final report
+```bash
+if [ -d /workspace/repo/src ] && [ -f /workspace/repo/pyproject.toml ]; then
+  TASK_ID=$(basename /workspace/task)
+  # Sync current edited task files back into the repo's harbor_tasks/
+  mkdir -p /workspace/repo/harbor_tasks/${TASK_ID}
+  cp -r /workspace/task/* /workspace/repo/harbor_tasks/${TASK_ID}/
+
+  cd /workspace/repo
+  command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh -s -- -q
+  export PATH="/root/.local/bin:$PATH"
+
+  # Persist model keys to .env (run_eval uses dotenv)
+  python3 -c "
+import os, pathlib
+keys = ['ANTHROPIC_API_KEY','OPENROUTER_API_KEY','GEMINI_API_KEY','MINIMAX_API_KEY']
+pathlib.Path('.env').write_text('\\n'.join(f'{k}={os.environ.get(k,\"\")}' for k in keys if os.environ.get(k))+'\\n')
+"
+
+  uv sync --quiet 2>&1 | tail -5
+
+  TRIAL_DIR=/workspace/trials-${TASK_ID}
+  rm -rf "$TRIAL_DIR"; mkdir -p "$TRIAL_DIR"
+
+  set -a; source .env; set +a
+  timeout 1500 uv run python src/run_eval.py \
+    --model anthropic/claude-sonnet-4-6 \
+    --user-model openrouter/google/gemini-3.1-pro-preview \
+    --tag "probe-${TASK_ID}" \
+    --env-type docker \
+    --workers 1 \
+    --trials-dir "$TRIAL_DIR" \
+    --tasks "$TASK_ID" 2>&1 | tail -40
+
+  uv run python scripts/lint/turn_fire_report.py "$TRIAL_DIR" --json /tmp/tfr.json 2>&1 | tail -5
+  cat /tmp/tfr.json
+else
+  echo "sim-fire SKIPPED — repo tarball not available"
+fi
+```
+
+If sim-fire shows `sim_turns_fired == 0`, examine trial logs — check whether
+the sim CONDITIONS in user_simulation_prompt.md are too restrictive or reference
+state the agent never reaches. Edit one obvious condition, re-run once.
+
+═══════════════════════════════════════════════════════════════════════════
+PHASE 8 — Final report (budget: 5 min)
+═══════════════════════════════════════════════════════════════════════════
 
 Write `/workspace/task/fix_summary.md`:
+
 ```markdown
 # Fix Summary
 
 ## Nop Baseline
-- Nop reward: X.XX (P2P weight: X%)
-- All F2P tests fail on base: YES/NO
+- Nop reward: X.XX (target ≤ 0.10)
+- P2P-only weight: X%
 
-## Agent Results (Round 1)
-| Model | Reward | Files Changed | Key Approach |
-|-------|--------|---------------|-------------|
-| Sonnet 4.6 | X.XX | ... | ... |
-| Haiku 4.5 | X.XX | ... | ... |
+## Session Resolution (Phase 1)
+- Tag: resolved | cut_off | stuck | ambiguous
+- Confidence: 0.0-1.0
+- Evidence: <final user msg / assistant msg snippet>
 
-## Test Refinements (if any)
-- What was changed and why
-- Per-test pass/fail breakdown for each model
+## User-Sim Prompt Audit (Phase 2)
+- Before: X rows, Y verbatim
+- After: X rows, all verbatim
+- Rebuilt/fixed/verified: <which>
 
-## Agent Results (Final Round)
-| Model | Reward | Files Changed | Key Approach |
-|-------|--------|---------------|-------------|
-| Sonnet 4.6 | X.XX | ... | ... |
-| Haiku 4.5 | X.XX | ... | ... |
+## Rubric Compliance (Phase 5)
+| Rubric | Tier | Status | Notes |
+| tests_verify_behavior_not_text | A | PASS | calls python3 -m pytest |
+| test_not_tautological | A | PASS/FIX | ... |
+... (all 11)
 
-## Discrimination Analysis
-- Score gap: X.XX
-- Is this meaningful? Analysis of WHY scores differ
-- Confidence: HIGH/MEDIUM/LOW
+## Agent Discrimination (Phase 4+6)
+| Round | Sonnet 4.6 | Haiku 4.5 | Gap |
+| 1     | 0.XX       | 0.XX      | 0.XX |
+| final | 0.XX       | 0.XX      | 0.XX |
 
-## Task Health
-- Solvable without user sim: YES/PARTIAL/NO
-- Recommended difficulty: EASY/MEDIUM/HARD
+## Sim-Fire Validation (Phase 7)
+- Status: PASSED | SKIPPED | FAILED
+- sim_turns_fired: N
+- Notes: ...
+
+## Confidence
+- Overall: HIGH | MEDIUM | LOW
 - Remaining concerns: ...
 ```
 
-Then clean up: `docker rm -f agent-sonnet agent-haiku 2>/dev/null`
+Clean up:
+```bash
+docker rm -f agent-sonnet agent-haiku 2>/dev/null || true
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## If something goes catastrophically wrong
+- Sandbox running out of disk → `docker system prune -af`
+- Claude rate limit persists → record the data you have, write fix_summary,
+  stop early. Partial progress is still valuable.
+- A phase exceeds its budget by 2x → wrap it up and move on.
+
+## What "done" looks like
+- nop ≤ 0.10, discrimination gap ≥ 0.15
+- fix_summary.md committed to `/workspace/task/fix_summary.md`
+- All 11 rubrics addressed (PASS or documented exception)
+- session_resolution tag in task.toml
+- user_simulation_prompt.md rows all verbatim
 """
 
 
@@ -763,23 +995,37 @@ async def fix_one_task(
             inject_keys = test_agents or prompt_mode == "full_audit"
             if inject_keys:
                 os.environ["_FIX_INJECT_MODEL_KEYS"] = "1"
-            sandbox = await create_sandbox(timeout=7200, test_agents=inject_keys)
+            # Bump to 21600s (6hr) to give Rust + sim-fire room to finish
+            sandbox = await create_sandbox(timeout=21600, test_agents=inject_keys)
             result.sandbox_id = sandbox.sandbox_id
 
             # Upload task files
             log.info("[%s] Uploading task files...", task_name)
             await upload_task_files(sandbox, task_path)
 
+            # Upload outer-repo tarball for sim-fire validation phase.
+            # full_audit mode exercises Harbor's run_eval.py inside the sandbox.
+            if prompt_mode == "full_audit" and REPO_TARBALL_PATH.exists():
+                log.info("[%s] Uploading outer-repo tarball for sim-fire phase...", task_name)
+                try:
+                    await upload_repo_tarball(sandbox, REPO_TARBALL_PATH)
+                except Exception as e:
+                    log.warning("[%s] Tarball upload failed (sim-fire will be skipped): %s",
+                                task_name, str(e)[:200])
+
             # Refresh sandbox lifetime before long-running agent
             # E2B set_timeout resets the countdown from NOW. Without this,
             # the sandbox countdown started at creation time keeps ticking
             # during upload, and we lose precious seconds.
-            await refresh_sandbox_timeout(sandbox, 7200)
+            await refresh_sandbox_timeout(sandbox, 21600)
 
             # Build prompt
             agent_section = AGENT_TEST_SECTION if test_agents else NO_AGENT_TEST_SECTION
             if prompt_mode == "full_audit":
-                prompt = FULL_AUDIT_PROMPT.format(report=report_text)
+                # Use .replace() instead of .format() because the merged prompt
+                # contains bash heredocs with embedded Python f-strings ({expr})
+                # that would be misinterpreted as format placeholders.
+                prompt = FULL_AUDIT_PROMPT.replace("{report}", report_text)
             elif prompt_mode == "f2p":
                 prompt = F2P_P2P_PROMPT.format(
                     report=report_text,
@@ -799,7 +1045,7 @@ async def fix_one_task(
                 "cat /workspace/fix_prompt.md | claude -p "
                 "--dangerously-skip-permissions --model claude-opus-4-6 "
                 "--output-format json 2>/dev/null",
-                timeout=0,  # no command timeout — sandbox lifetime (7200s) is the limit
+                timeout=0,  # no command timeout — sandbox lifetime (14400s) is the limit
                 user="worker",
             )
 
@@ -978,6 +1224,8 @@ async def main():
                         help="Prompt mode: boss (full fix), f2p (F2P/P2P strictness), full_audit (fix + agent test)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-low", action="store_true", default=True)
+    parser.add_argument("--rebuild-tarball", action="store_true",
+                        help="Force rebuild the outer-repo tarball (otherwise reuse if <30min old)")
     args = parser.parse_args()
 
     reports = load_reports()
@@ -1021,31 +1269,42 @@ async def main():
 
     await ensure_template()
 
-    # Kill any stale sandboxes from prior crashed runs
-    log.info("Cleaning up stale sandboxes...")
+    # Build repo tarball ONCE for the whole batch (shared across workers).
+    # Only needed for full_audit mode (sim-fire phase).
+    if args.prompt == "full_audit":
+        try:
+            build_repo_tarball(force=args.rebuild_tarball)
+        except Exception as e:
+            log.warning("Repo tarball build failed (sim-fire phase will be skipped): %s", e)
+
+    # Kill any stale fix_tasks sandboxes from prior crashed runs.
+    # IMPORTANT: only kill sandboxes tagged metadata.owner == "fix_tasks" so
+    # we don't destroy other projects' concurrent E2B work on the same API key.
+    log.info("Cleaning up stale fix_tasks sandboxes...")
     try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "https://api.e2b.dev/sandboxes",
-                headers={"X-API-Key": os.environ.get("E2B_API_KEY", "")},
-            )
-            if resp.status_code == 200:
-                stale = resp.json()
-                if stale:
-                    log.warning("Found %d stale sandboxes, killing...", len(stale))
-                    for sb in stale:
-                        try:
-                            await client.delete(
-                                f"https://api.e2b.dev/sandboxes/{sb['sandboxID']}",
-                                headers={"X-API-Key": os.environ.get("E2B_API_KEY", "")},
-                            )
-                        except Exception:
-                            pass
-                    await asyncio.sleep(5)
-                    log.info("Stale sandbox cleanup done")
-                else:
-                    log.info("No stale sandboxes found")
+        p = AsyncSandbox.list()
+        all_sbs = []
+        while p.has_next:
+            items = await p.next_items()
+            all_sbs.extend(items)
+            if not items:
+                break
+        owned = [sb for sb in all_sbs
+                 if sb.metadata and sb.metadata.get("owner") == "fix_tasks"]
+        unowned_count = len(all_sbs) - len(owned)
+        if owned:
+            log.warning("Found %d stale fix_tasks sandboxes, killing... (%d unowned sandboxes from other projects preserved)",
+                        len(owned), unowned_count)
+            for sb in owned:
+                try:
+                    await AsyncSandbox.kill(sb.sandbox_id)
+                except Exception:
+                    pass
+            await asyncio.sleep(5)
+            log.info("Stale sandbox cleanup done")
+        else:
+            log.info("No stale fix_tasks sandboxes found (%d total active, all from other projects)",
+                     unowned_count)
     except Exception as e:
         log.warning("Sandbox cleanup failed (non-fatal): %s", e)
 

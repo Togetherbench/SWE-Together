@@ -1,15 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification tests for banodoco-wrapped performance improvements.
 #
 # Tests TopGenerations.tsx row virtualization and ModelTrends.tsx animation fixes.
-# 11 tests, total weight 23 (reward = score / 23).
+# 15 tests, total weight 35 (reward = score / 35).
 #
-# P2P (4%):                 1/23  — upstream sources intact
-# P2P gates (0 pts):        0/23  — build + TS errors (diagnostic only, no score)
-# F2P Behavioral (57%):    13/23  — extracted functions executed with test data
-# F2P Pattern-based (30%):  7/23  — virtualization, auto-play, progressive reveal wiring
-# Structural (9%):          2/23  — model entry labels
+# P2P Behavioral (3%):      1/35  — upstream sources intact + executable (Test 11)
+# P2P gates (0 pts):        0/35  — build diagnostic (Test 1), Test 5, Test 15
+# F2P Compilation (20%):    7/35  — tsc + build + core modifications (Test 2)
+# F2P Behavioral (29%):    10/35  — extracted functions executed (Tests 3, 4)
+# F2P Pattern-based (43%): 15/35  — virtualization, auto-play, progressive reveal,
+#                                    animation-completion, Recharts, label-follow
+# F2P Structural (6%):      2/35  — model entry labels (Test 10)
 #
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
@@ -19,7 +21,7 @@ REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 
 SCORE=0
-TOTAL=23
+TOTAL=35
 
 REPO="/workspace/banodoco-wrapped"
 TOP_GEN="$REPO/components/TopGenerations.tsx"
@@ -28,10 +30,10 @@ MODEL_TRENDS="$REPO/components/ModelTrends.tsx"
 cd "$REPO"
 
 ###############################################################################
-# TEST 1/11 [P2P gate, weight 0]: Vite production build succeeds
-# Zero-weight gate: runs for diagnostics but awards no points.
+# TEST 1/15 [P2P gate, weight 0/30]: Vite production build succeeds
+# Zero-weight diagnostic gate. Build result feeds Test 2 and Test 15.
 ###############################################################################
-echo "=== Test 1/11 [P2P gate, weight 0/21]: Vite production build succeeds ==="
+echo "=== Test 1/15 [P2P gate, weight 0/30]: Vite production build succeeds ==="
 timeout 120 npm run build > /tmp/build_output.txt 2>&1
 BUILD_EXIT=$?
 if [ $BUILD_EXIT -eq 0 ]; then
@@ -42,29 +44,60 @@ else
 fi
 
 ###############################################################################
-# TEST 2/11 [P2P gate, weight 0]: No TypeScript errors in task files
-# Zero-weight gate: runs for diagnostics but awards no points.
+# TEST 2/15 [F2P Compilation, weight 7/35]: TypeScript compiles + core modifications
+#
+# Gate: npx tsc --noEmit must succeed on task files. If it fails, 0/7 points.
+# Then checks three F2P conditions (base code fails all three):
+#   +3 pts: IntersectionObserver present in either task file (base has none)
+#   +2 pts: useState(data.length) removed from ModelTrends (base has it)
+#   +2 pts: const STEP_MS = 180 removed from ModelTrends (base has it)
 ###############################################################################
 echo ""
-echo "=== Test 2/11 [P2P gate, weight 0/21]: No TypeScript errors in task files ==="
+echo "=== Test 2/15 [F2P Compilation, weight 7/35]: TypeScript compiles + core modifications ==="
 TSC_OUTPUT=$(npx tsc --noEmit 2>&1 || true)
 TASK_ERRORS=$(echo "$TSC_OUTPUT" | grep -E "TopGenerations\.tsx|ModelTrends\.tsx" || true)
-if [ -z "$TASK_ERRORS" ]; then
-  echo "PASS (gate): No TypeScript errors in TopGenerations.tsx or ModelTrends.tsx"
-else
-  echo "FAIL (gate): TypeScript errors in task files:"
+T2_SCORE=0
+if [ -n "$TASK_ERRORS" ]; then
+  echo "FAIL (gate): TypeScript errors in task files — 0/6:"
   echo "$TASK_ERRORS"
+elif [ $BUILD_EXIT -ne 0 ]; then
+  echo "FAIL (gate): Production build failed — 0/6"
+else
+  echo "PASS (gate): tsc + build both succeed"
+  # F2P condition 1: IntersectionObserver present (base has none)
+  if grep -qE 'IntersectionObserver|useInView|useIntersection' "$TOP_GEN" "$MODEL_TRENDS" 2>/dev/null; then
+    T2_SCORE=$((T2_SCORE + 3))
+    echo "  +3: IntersectionObserver present"
+  else
+    echo "  +0: No IntersectionObserver in task files"
+  fi
+  # F2P condition 2: useState(data.length) removed (base has it)
+  if ! grep -qE 'useState\s*\(\s*data\.length' "$MODEL_TRENDS" 2>/dev/null; then
+    T2_SCORE=$((T2_SCORE + 2))
+    echo "  +2: useState(data.length) removed"
+  else
+    echo "  +0: Still has useState(data.length)"
+  fi
+  # F2P condition 3: STEP_MS = 180 removed (base has it)
+  if ! grep -qE 'const\s+STEP_MS\s*=\s*180' "$MODEL_TRENDS" 2>/dev/null; then
+    T2_SCORE=$((T2_SCORE + 2))
+    echo "  +2: const STEP_MS = 180 removed"
+  else
+    echo "  +0: Still has const STEP_MS = 180"
+  fi
 fi
+SCORE=$((SCORE + T2_SCORE))
+echo "  Test 2 subtotal: $T2_SCORE/7"
 
 ###############################################################################
-# TEST 3/10 [F2P Behavioral, weight 3/20]: Normalization function correctness
+# TEST 3/15 [F2P Behavioral, weight 4/30]: Normalization function correctness
 #
 # Extracts ANY function that takes array-of-objects and returns/mutates them
 # so numeric values per row sum to ~100. Executes with multiple test inputs.
 # NOT gameable by grep patterns — the function must actually compute correctly.
 ###############################################################################
 echo ""
-echo "=== Test 3/11 [F2P Behavioral, weight 4/21]: Normalization function correctness ==="
+echo "=== Test 3/15 [F2P Behavioral, weight 4/30]: Normalization function correctness ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -412,7 +445,7 @@ fi
 true
 
 ###############################################################################
-# TEST 4/10 [F2P Behavioral, weight 3/20]: Easing function is non-linear
+# TEST 4/15 [F2P Behavioral, weight 6/35]: Easing function is non-linear
 #
 # Extracts candidate easing/timing functions and EXECUTES them to verify
 # non-linear output. Checks: f(0.5) != 0.5 for [0,1]->[0,1] easing,
@@ -421,7 +454,7 @@ true
 # constant STEP_MS=180 is removed (fail-to-pass).
 ###############################################################################
 echo ""
-echo "=== Test 4/11 [F2P Behavioral, weight 3/21]: Easing function is non-linear ==="
+echo "=== Test 4/15 [F2P Behavioral, weight 6/35]: Easing function is non-linear ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -541,19 +574,19 @@ if (!passed) {
 " 2>&1
 EASE_EXIT=$?
 if [ $EASE_EXIT -eq 0 ]; then
-  SCORE=$((SCORE + 3))
+  SCORE=$((SCORE + 6))
 elif [ $EASE_EXIT -eq 2 ]; then
   SCORE=$((SCORE + 2))
 fi
 
 ###############################################################################
-# TEST 5/11 [F2P Behavioral, weight 3/21]: Animation state starts at 0/1
+# TEST 5/15 [F2P diagnostic, weight 0/30]: Animation state starts at 0/1
 #
-# Uses AST to verify useState initialization. Fail-to-pass: the original
-# code has useState(data.length) which means no animation plays.
+# Diagnostic only (core check moved to Test 2). Uses AST to verify useState
+# initialization. Fail-to-pass: the original code has useState(data.length).
 ###############################################################################
 echo ""
-echo "=== Test 5/11 [F2P Behavioral, weight 3/21]: Animation starts at 0, not data.length ==="
+echo "=== Test 5/15 [F2P diagnostic, weight 0/30]: Animation starts at 0, not data.length ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -597,16 +630,17 @@ if (!hasZeroOrOneInit) {
   process.exit(1);
 }
 console.log('PASS: Animation state initializes at 0 or 1 (not data.length)');
-" && SCORE=$((SCORE + 3)) || true
+" || true
+# Weight 0: diagnostic only, core check is in Test 2
 
 ###############################################################################
-# TEST 6/10 [F2P Behavioral, weight 2/20]: Y-axis domain produces [0, 100]
+# TEST 6/15 [F2P Behavioral, weight 2/30]: Y-axis domain produces [0, 100]
 #
 # Extracts the YAxis domain prop and evaluates it. The original code has
 # domain={[0, 'auto']} which rescales during animation. Must be [0, 100].
 ###############################################################################
 echo ""
-echo "=== Test 6/11 [F2P Behavioral, weight 2/21]: Y-axis domain is fixed [0, 100] ==="
+echo "=== Test 6/15 [F2P Behavioral, weight 2/30]: Y-axis domain is fixed [0, 100] ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -675,7 +709,7 @@ console.log('PASS: YAxis domain is fixed [0, 100]');
 " && SCORE=$((SCORE + 2)) || true
 
 ###############################################################################
-# TEST 7/10 [F2P Behavioral, weight 2/20]: TopGenerations conditionally
+# TEST 7/15 [F2P Pattern, weight 2/30]: TopGenerations conditionally
 # renders rows based on visibility state
 #
 # Verifies that the component tracks which rows are visible and conditionally
@@ -684,7 +718,7 @@ console.log('PASS: YAxis domain is fixed [0, 100]');
 # that gates rendering.
 ###############################################################################
 echo ""
-echo "=== Test 7/11 [F2P Pattern, weight 2/21]: TopGenerations has visibility-gated rendering ==="
+echo "=== Test 7/15 [F2P Pattern, weight 2/30]: TopGenerations has visibility-gated rendering ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -789,14 +823,14 @@ fi
 true
 
 ###############################################################################
-# TEST 8/11 [F2P Behavioral, weight 3/21]: ModelTrends auto-play wiring
+# TEST 8/15 [F2P Pattern, weight 3/30]: ModelTrends auto-play wiring
 #
 # Verifies that animation auto-triggers on viewport entry (IntersectionObserver)
 # and has a proper animation loop with cleanup. The base code requires manual
 # Play button click.
 ###############################################################################
 echo ""
-echo "=== Test 8/11 [F2P Behavioral, weight 3/21]: ModelTrends auto-play via IntersectionObserver ==="
+echo "=== Test 8/15 [F2P Pattern, weight 3/30]: ModelTrends auto-play via IntersectionObserver ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -822,7 +856,9 @@ const hasIncrement = /set\w+\s*\(\s*\w+\s*=>/.test(srcNC) ||
                      /set\w+\s*\([^)]*\+/.test(srcNC) ||
                      /set\w+\s*\(\s*\w+\s*\+\s*1\s*\)/.test(srcNC) ||
                      // Ref-based animation: increment on ref then call setState
-                     (/\.\w+\s*\+=\s*1/.test(srcNC) && /set\w+Count\s*\(/.test(srcNC));
+                     (/\.\w+\s*\+=\s*1/.test(srcNC) && /set\w+/.test(srcNC)) ||
+                     // Ref-based with separate variable: next = curr + 1; ref.current = next; setState(next)
+                     (/\+\s*1/.test(srcNC) && /\.current\s*=/.test(srcNC) && /set\w+/.test(srcNC));
 
 // Must have cleanup to prevent memory leaks
 const hasCleanup = /cancelAnimationFrame|clearInterval|clearTimeout|\.disconnect\s*\(/.test(srcNC);
@@ -892,7 +928,7 @@ fi
 true
 
 ###############################################################################
-# TEST 9/11 [F2P Behavioral, weight 3/21]: Progressive data reveal works
+# TEST 9/15 [F2P Pattern, weight 3/30]: Progressive data reveal works
 #
 # Verifies data is subsetted progressively during animation. The base code
 # has .slice(0, visibleCount) but starts with visibleCount=data.length
@@ -900,7 +936,7 @@ true
 # Combined with Test 5 (start at 0) this ensures actual progressive behavior.
 ###############################################################################
 echo ""
-echo "=== Test 9/11 [F2P Behavioral, weight 3/21]: Progressive data reveal ==="
+echo "=== Test 9/15 [F2P Pattern, weight 3/30]: Progressive data reveal ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -941,13 +977,13 @@ console.log('PASS: Progressive data reveal with auto-play trigger');
 " && SCORE=$((SCORE + 3)) || true
 
 ###############################################################################
-# TEST 10/10 [Structural, weight 2/20]: Model entry labels exist
+# TEST 10/15 [F2P Structural, weight 2/30]: Model entry labels exist
 #
 # Checks for label rendering when new models enter the chart. This is a
 # structural check since labels require DOM/SVG rendering to fully verify.
 ###############################################################################
 echo ""
-echo "=== Test 10/10 [Structural, weight 2/20]: Model entry labels ==="
+echo "=== Test 10/15 [F2P Structural, weight 2/30]: Model entry labels ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -981,11 +1017,15 @@ visit(sf);
 // Use code-level patterns (variable names, function calls) — not English prose in JSX
 const hasNewModelDetection = /firstAppear|modelEntr|newModel|entryPoint|labelPos/i.test(srcNC) ||
   // Check for logic that compares current vs previous data to find new entries
-  /(?:prev|last)(?:Data|Models|Keys|Visible)/.test(srcNC) ||
+  /(?:prev|last)(?:Data|Models|Keys|Visible|Val|Value|Item|Entry)/i.test(srcNC) ||
   // Check for finding first non-zero value for a model (code pattern, not prose)
   /find(?:Index)?\s*\(\s*(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>[^)]*(?:!==?\s*0|>\s*0)/.test(srcNC) ||
   // Check for iterating keys/entries to detect model appearances
-  /Object\.(?:keys|entries)\s*\([^)]*\)\.(?:filter|find|some)/.test(srcNC);
+  /Object\.(?:keys|entries)\s*\([^)]*\)\.(?:filter|find|some)/.test(srcNC) ||
+  // Check for curr/prev value comparison to detect model first appearance
+  /(?:curr|current)\w*\s*>\s*0\s*&&\s*(?:prev|last)\w*\s*(?:===?|!==?)\s*0/.test(srcNC) ||
+  // Check for for-of loop over model keys
+  /for\s*\(\s*(?:const|let|var)\s+\w+\s+of\s+(?:MODEL_KEYS|modelKeys|keys)/i.test(srcNC);
 
 // White label styling — must be in a label-specific context (fill for SVG, or positioned overlay)
 // Exclude tooltip-only white text by requiring label JSX or positioned container
@@ -1015,7 +1055,7 @@ console.log('PASS: ModelTrends has model entry labels with white styling');
 " && SCORE=$((SCORE + 2)) || true
 
 ###############################################################################
-# TEST 11/11 [P2P, weight 1/21]: Upstream source files intact + executable
+# TEST 11/15 [P2P Behavioral, weight 1/30]: Upstream source files intact + executable
 #
 # Goes beyond parse-checking: transpiles and executes dataProcessing.ts
 # functions with test data to verify they produce valid output. Also
@@ -1023,7 +1063,7 @@ console.log('PASS: ModelTrends has model entry labels with white styling');
 # interfaces have required fields, and component files have React exports.
 ###############################################################################
 echo ""
-echo "=== Test 11/11 [P2P, weight 1/21]: Upstream source files intact + executable ==="
+echo "=== Test 11/15 [P2P Behavioral, weight 1/30]: Upstream source files intact + executable ==="
 node -e "
 const ts = require('typescript');
 const fs = require('fs');
@@ -1151,6 +1191,222 @@ for (const f of components) {
 if (pass) console.log('PASS: Upstream files parse, transpile, and execute correctly');
 else process.exit(1);
 " && SCORE=$((SCORE + 1)) || true
+
+###############################################################################
+# TEST 12/15 [F2P Pattern, weight 1/30]: Animation loop reaches data.length
+#
+# Covers turn T3/T4 ("animation doesn't run the whole way / completes too early").
+# Gate: IntersectionObserver must be present (F2P: base code has none).
+# Then checks that animation stop condition uses data.length without truncation.
+###############################################################################
+echo ""
+echo "=== Test 12/15 [F2P Pattern, weight 1/30]: Animation loop reaches data.length ==="
+node -e "
+const fs = require('fs');
+if (!fs.existsSync('$MODEL_TRENDS')) {
+  console.error('FAIL: ModelTrends.tsx not found');
+  process.exit(1);
+}
+const src = fs.readFileSync('$MODEL_TRENDS', 'utf8');
+const srcNC = src.replace(/\/\/.*\$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+// F2P gate: IntersectionObserver must be present (base code has none)
+if (!/IntersectionObserver|useInView|useIntersection/.test(srcNC)) {
+  console.error('FAIL: no IntersectionObserver — animation infrastructure not added');
+  process.exit(1);
+}
+
+// Reject truncating comparison: anything like '<=? someData.length - 1' in conditions.
+// Broadened to accept any variable name (data, normalizedData, chartData, etc.)
+const truncatingPattern = /(?:<|<=|>=|>|===|!==|==|!=)\s*\w+\.length\s*-\s*1\b/;
+const hasTruncation = truncatingPattern.test(srcNC);
+
+// Require at least one comparison with anyVar.length that is NOT decremented.
+// Accepts: normalizedData.length, data.length, chartData.length, etc.
+const reachesFullPattern = /(?:<|<=|>=|>|===|!==)\s*\w+\.length(?!\s*-\s*1)/;
+const reachesFull = reachesFullPattern.test(srcNC);
+
+if (hasTruncation) {
+  console.error('FAIL: animation loop still truncates with data.length - 1');
+  process.exit(1);
+}
+if (!reachesFull) {
+  console.error('FAIL: no comparison with data.length found that would let the animation reach the end');
+  process.exit(1);
+}
+console.log('PASS: animation stop condition reaches data.length (no data.length-1 truncation)');
+" && SCORE=$((SCORE + 1)) || true
+
+###############################################################################
+# TEST 13/15 [F2P Pattern, weight 2/35]: Recharts internal animation mitigated
+#
+# Covers turn T5 ("is there a max duration on the animation?"). Root cause was
+# Recharts' default ~1500ms animation fighting the custom frame loop. The fix
+# disables internal animation (isAnimationActive={false}) or sets a short
+# animationDuration (so the per-frame updates are effectively instant).
+###############################################################################
+echo ""
+echo "=== Test 13/15 [F2P Pattern, weight 2/35]: Recharts internal animation disabled/minimized ==="
+node -e "
+const fs = require('fs');
+if (!fs.existsSync('$MODEL_TRENDS')) {
+  console.error('FAIL: ModelTrends.tsx not found');
+  process.exit(1);
+}
+const src = fs.readFileSync('$MODEL_TRENDS', 'utf8');
+const srcNC = src.replace(/\/\/.*\$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Accept any of: isAnimationActive={false}, isAnimationActive = false,
+// animationDuration={<short>} (anything <= 500ms counts as mitigated).
+const disabled = /isAnimationActive\s*=\s*\{?\s*false\s*\}?/.test(srcNC);
+const shortDurMatch = srcNC.match(/animationDuration\s*=\s*\{?\s*(\d+)\s*\}?/);
+let shortDur = false;
+if (shortDurMatch) {
+  const ms = parseInt(shortDurMatch[1], 10);
+  if (!isNaN(ms) && ms <= 500) shortDur = true;
+}
+
+if (!disabled && !shortDur) {
+  console.error('FAIL: Recharts internal animation not mitigated (no isAnimationActive={false} and no short animationDuration<=500ms)');
+  process.exit(1);
+}
+console.log('PASS: Recharts internal animation mitigated (' + (disabled ? 'isAnimationActive=false' : 'animationDuration<=500ms') + ')');
+" && SCORE=$((SCORE + 2)) || true
+
+###############################################################################
+# TEST 14/15 [F2P Pattern, weight 2/30]: Labels track animation frame (follow X-axis)
+#
+# Covers turn 16 ('make it last long and \"follow\" the centre of that model
+# along the X axis'). The fix computes per-label x positions that depend on the
+# current animation frame/step. This check requires that label position data
+# is computed from an animation state variable (not a static per-model value).
+###############################################################################
+echo ""
+echo "=== Test 14/15 [F2P Pattern, weight 2/30]: Label positions track animation frame ==="
+node -e "
+const ts = require('typescript');
+const fs = require('fs');
+if (!fs.existsSync('$MODEL_TRENDS')) {
+  console.error('FAIL: ModelTrends.tsx not found');
+  process.exit(1);
+}
+const src = fs.readFileSync('$MODEL_TRENDS', 'utf8');
+const srcNC = src.replace(/\/\/.*\$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Locate an activeLabels/modelLabels-style derivation. Common names used by
+// agents: activeLabels, visibleLabels, modelLabels, entryLabels, labels.
+const labelVarMatch = srcNC.match(/(?:const|let|var)\s+(activeLabels|visibleLabels|modelLabels|entryLabels|labelData|labels|labelPositions|displayLabels)\s*=/);
+const animStateVars = /(visibleCount|currentStep|currentFrame|animFrame|frameIndex|animStep|displayCount|step|frame)/;
+
+// Primary signal: the labels derivation (or a function that returns labels)
+// references an animation state variable. Robust to variable naming.
+let passed = false;
+let reason = '';
+
+if (labelVarMatch) {
+  // Grab the block containing the label variable's initializer (heuristic: next ~800 chars).
+  const idx = srcNC.indexOf(labelVarMatch[0]);
+  const snippet = srcNC.slice(idx, idx + 1200);
+  if (animStateVars.test(snippet)) {
+    passed = true;
+    reason = labelVarMatch[1] + ' references animation state (' + snippet.match(animStateVars)[1] + ')';
+  }
+}
+
+// Secondary signal: a useMemo/useEffect whose deps include an anim var AND
+// the body references 'label' or 'Label'. This catches inline label position
+// computation inside a memo hook.
+if (!passed) {
+  const memoRe = /useMemo\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]{0,2000}?\}\s*,\s*\[[^\]]*\b(visibleCount|currentStep|currentFrame|animFrame|frameIndex|animStep|displayCount)\b[^\]]*\]\s*\)/g;
+  let m;
+  while ((m = memoRe.exec(srcNC)) !== null) {
+    if (/label|Label/i.test(m[0])) {
+      passed = true;
+      reason = 'useMemo with anim-state deps computes labels';
+      break;
+    }
+  }
+}
+
+// Tertiary signal: JSX label element with an x prop whose value is a dynamic
+// expression referencing an anim var (e.g., <text x={visibleCount * width}>).
+if (!passed) {
+  const jsxRe = /<(?:text|Label|CustomLabel|CustomizedLabel|div|span)\b[^>]*\bx\s*=\s*\{([^}]+)\}/g;
+  let m;
+  while ((m = jsxRe.exec(src)) !== null) {
+    if (animStateVars.test(m[1])) {
+      passed = true;
+      reason = 'JSX label element has x prop driven by animation state';
+      break;
+    }
+  }
+}
+
+if (!passed) {
+  console.error('FAIL: no label positioning logic that tracks the animation frame (turn 16: labels should follow the centre along X)');
+  process.exit(1);
+}
+console.log('PASS: ' + reason);
+" && SCORE=$((SCORE + 2)) || true
+
+###############################################################################
+# TEST 15/15 [P2P diagnostic, weight 0/30]: No forward-reference runtime errors
+#
+# Diagnostic only (zero-weight). Covers turn 11/17 (ReferenceError: Cannot
+# access 'displayData' before initialization). Checks build success + no
+# forward references in hook declarations.
+###############################################################################
+echo ""
+echo "=== Test 15/15 [P2P diagnostic, weight 0/30]: No forward-reference runtime errors ==="
+if [ "$BUILD_EXIT" = "0" ] && [ -z "$TASK_ERRORS" ]; then
+  # Additionally scan the file for a known-bad ordering pattern: a useMemo/useState
+  # hook whose initializer references a variable declared later in the file.
+  node -e "
+const ts = require('typescript');
+const fs = require('fs');
+if (!fs.existsSync('$MODEL_TRENDS')) { process.exit(1); }
+const src = fs.readFileSync('$MODEL_TRENDS', 'utf8');
+const sf = ts.createSourceFile('f.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+// Collect top-level-in-component declarations (position → name).
+const declPos = {};
+function collect(n) {
+  if (ts.isVariableDeclaration(n) && n.name && n.name.getText) {
+    const nm = n.name.getText(sf);
+    if (/^[a-z_][\w]*\$/.test(nm) && !(nm in declPos)) declPos[nm] = n.pos;
+  }
+  ts.forEachChild(n, collect);
+}
+collect(sf);
+
+// Check: for hot candidate names used in session bugs, verify they're defined
+// before any identifier reference in the same function body.
+const candidates = ['displayData', 'normalizedData', 'activeLabels'];
+let bad = null;
+for (const name of candidates) {
+  if (!(name in declPos)) continue;
+  const declStart = declPos[name];
+  // Look for references to 'name' earlier in the source.
+  const re = new RegExp('\\\\b' + name + '\\\\b', 'g');
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    if (m.index < declStart - 5) {
+      // Ignore matches inside comments.
+      const before = src.slice(Math.max(0, m.index - 80), m.index);
+      if (/\\/\\/[^\\n]*\$/.test(before)) continue;
+      bad = name + ' referenced at ' + m.index + ' before declaration at ' + declStart;
+      break;
+    }
+  }
+  if (bad) break;
+}
+if (bad) { console.error('FAIL: forward reference: ' + bad); process.exit(1); }
+console.log('PASS (diag): production build succeeded and no forward-reference bugs detected');
+" || true
+  # Weight 0: diagnostic only
+else
+  echo "FAIL (diag): production build did not pass cleanly (BUILD_EXIT=$BUILD_EXIT, task TS errors: $([ -n "$TASK_ERRORS" ] && echo yes || echo no))"
+fi
 
 ###############################################################################
 # RESULTS

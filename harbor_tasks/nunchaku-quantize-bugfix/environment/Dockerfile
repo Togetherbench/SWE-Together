@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -44,9 +44,9 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu
 
 RUN pip install --no-cache-dir \
-    safetensors>=0.4.2 \
-    tqdm \
-    packaging
+    safetensors==0.5.3 \
+    tqdm==4.67.1 \
+    packaging==24.2
 
 # Write the buggy quantize.py that the agent must fix.
 # Bugs present:
@@ -71,8 +71,13 @@ RUN useradd -m -s /bin/bash agent && \
     chown -R agent:agent /workspace /logs
 
 # Pre-install Claude Code CLI as agent user
+# Harbor install.sh target dir (fix for mkdir-as-nonroot bug)
+RUN mkdir -p /installed-agent && chown agent:agent /installed-agent
 USER agent
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/home/agent/.local/bin:/workspace/venv/bin:$PATH"
 
 # Switch back to root for final setup

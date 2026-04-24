@@ -1,0 +1,1 @@
+can we search the npm registry for keywords specified in package.json of packages? i have a few packages published that have the keyword "pi" in them. can you try to search and tell me how that works and what packages come up?

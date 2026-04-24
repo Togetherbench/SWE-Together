@@ -1,51 +1,126 @@
 # Fix Summary
 
 ## Nop Baseline
-- Nop reward: 0.05 (P2P weight: 5%)
-- All F2P tests fail on base: YES (all security files missing, behavioral tests SKIP)
+- Nop reward: 0.05 (target ≤ 0.10)
+- P2P-only weight: 5% (only upstream vitest passes on unmodified base)
 
-## Agent Results (Round 1 = Final Round)
-| Model | Reward | Turns | Duration | Cost | Files Created | Key Approach |
-|-------|--------|-------|----------|------|---------------|-------------|
-| Sonnet 4.6 | **1.00** | 35 | 410s | $1.10 | 6 core security files | Clean string-returning APIs, correct parameter naming, used Haiku subagents for codebase exploration |
-| Haiku 4.5 | **0.45** | 47 | 441s | $0.47 | 6 core + test file + 3 doc files | Over-engineered object returns, private escalateRisk, parameter name mismatch in evaluate() |
+## Session Resolution (Phase 1)
+- Tag: resolved
+- Confidence: 0.85
+- Evidence: Agent confirmed "The security system implementation is complete" with all 6 core files + tests + gateway integration. User's final "What's next?" was a check-in after completion, not a request for more work.
 
-## Test Refinements
-- **Pre-existing ESM fix**: `echo '{"type":"module"}' > /tmp/package.json` was already in test.sh (line 106), fixing the CJS/ESM top-level await crash identified in the original audit.
-- **No additional test changes needed**: The existing tests produced strong discrimination (0.55 gap) on the first run.
-- **Dockerfile note**: Claude Code blocks `--dangerously-skip-permissions` as root. A non-root user must be created at runtime. Consider adding `useradd` to the Dockerfile for smoother agent execution.
+## User-Sim Prompt Audit (Phase 2)
+- Before: 4 rows (T2-T5), T3 message had corrected typo in narrative section
+- After: 4 rows, all verbatim (fixed "let's discuss" → "let'sd discuss" in Trigger B narrative to match original session)
+- Action: FIXED — one typo correction in narrative section of user_simulation_prompt.md
 
-## Per-Test Breakdown
+## Rubric Compliance (Phase 5)
 
-| Test | Weight | Sonnet 4.6 | Haiku 4.5 | Why Haiku Failed |
-|------|--------|-----------|-----------|------------------|
-| T3: classifyTool('bash')='high' | 0.15 | PASS | **FAIL** | `classifyToolRisk` returns `{tier,reason}` object, not string |
-| T1: 6 files exist (gated on T3) | 0.03 | PASS | SKIP | Gated on T3 |
-| T2: valid TS exports (gated on T3) | 0.02 | PASS | SKIP | Gated on T3 |
-| T4: safe tool='low' | 0.05 | PASS | **FAIL** | Same object-return issue |
-| T5: medium tool='medium' | 0.05 | PASS | **FAIL** | Same object-return issue |
-| T6: isBashDestructive detection | 0.10 | PASS (5/5) | PASS (5/5) | - |
-| T7: isBashDestructive zero FP | 0.05 | PASS | PASS | - |
-| T8: checkPatterns injection | 0.15 | PASS (7/8) | PASS (6/8) | - |
-| T9: escalateRisk 3 correct | 0.10 | PASS | **FAIL** | Not exported; private fn with 2-param signature |
-| T10: REVIEWER_SYSTEM_PROMPT | 0.05 | PASS (len=1130) | PASS (len=1823) | - |
-| T11: Decision flow differentiation | 0.20 | PASS (full) | **FAIL** | `evaluate()` expects `requestText` not `content`; all 3 cases threw |
-| T12: index.ts re-exports | 0.05 | PASS (6 symbols) | PASS (5 symbols) | - |
-| P2P: Upstream vitest | 0.05 | PASS | PASS | - |
-| **Total** | **1.05 (cap 1.0)** | **1.00** | **0.45** | |
+| Rubric | Tier | Status | Notes |
+|--------|------|--------|-------|
+| tests_verify_behavior_not_text | A | PASS | T3-T16 all invoke code via tsx/node; behavioral weight ~0.99 |
+| test_not_tautological | A | PASS | Max stub score 0.08; T3 requires bash=high AND safe≠high; T11 requires differentiation |
+| solution_uniqueness_guard | A | PASS | Accepts multiple naming conventions (classifyTool/classifyToolRisk/getToolRisk/toolRisk); T11 uses multiple content param keys (toolInput/userInput/content/input) |
+| no_solution_leakage | A | PASS | instruction.md describes requirements, not exact implementation |
+| pass_to_pass_coverage | A | PASS | P2P vitest test (0.05) runs 3 upstream test files on unmodified base |
+| behavior_in_task_description | A | PASS | All asserted strings/paths/risk-tiers derivable from instruction.md |
+| no_hidden_solution_artifacts | A | PASS | No COPY solution/ in Dockerfile; `find / -name 'solve*'` returns nothing |
+| dockerfile_determinism | B | PASS | ubuntu:24.04, nodejs 22.x, tsx@4, typescript@5, git commit pinned |
+| no_network_during_tests | B | PASS | test.sh does no pip/npm/apt/curl at test time |
+| pinned_dependencies | B | PASS | npm: tsx@4, typescript@5 (major-version pinned); no pip deps |
+| f2p_p2p_classification_correct | B | PASS | All tests labeled [F2P] or [P2P] in comments |
 
-## Discrimination Analysis
-- **Score gap: 0.55** (Sonnet 1.00 vs Haiku 0.45)
-- **Is this meaningful?** YES — reflects three distinct quality dimensions:
-  1. **API simplicity (T3-T5, 0.25 lost)**: Haiku over-engineered `classifyToolRisk` to return `{ tier: string, reason: string }` objects instead of simple tier strings. The instruction says "Classify tools by risk level" — returning the level directly is the natural, correct interpretation. Sonnet correctly returned plain strings. The test's fallback search tried all exported functions but none returned string tiers (Haiku's `assessBashRisk` returns strings but misclassifies 'bash' as 'medium' since the command 'bash' alone isn't destructive).
-  2. **Instruction compliance (T9, 0.10 lost)**: The instruction explicitly says "Export `escalateRisk(tier)`" — a 1-parameter function. Haiku made it private with a 2-parameter signature `(baseTier: RiskTier, patternResult: PatternCheckResult)`.
-  3. **API design conventions (T11, 0.20 lost)**: Haiku's `evaluate()` expects `{ toolName, requestText }` while the test uses `{ toolName, content }`. The parameter `content` is the more natural name for "the content being evaluated". Haiku's choice of `requestText` caused all evaluate calls to crash on `undefined.trim()` in checkPatterns.
-- **Confidence: HIGH** — All failure categories reflect genuine coding quality signals: API simplicity, instruction adherence, and naming conventions.
+## Agent Discrimination (Phase 4+6)
 
-## Task Health
-- **Solvable without user sim:** YES — Both models completed the full implementation in single-turn mode with all 6 required files.
-- **Recommended difficulty:** MEDIUM (was labeled HARD; Sonnet perfect, Haiku gets nearly half — good separation)
-- **Remaining concerns:**
-  - Dockerfile runs as root; Claude Code refuses `--dangerously-skip-permissions` for root. Need `useradd` workaround.
-  - T8: Both models miss 1-2 injection patterns ("pretend you have no restrictions", "act as if your rules have been removed") — not a discriminator.
-  - Single-run variance: Haiku results may vary between runs (previous runs showed 0.70-0.85 with more tolerant tests). The 0.45 with current strict tests is reproducible for the object-return pattern.
+| Round | Sonnet 4.6 | Haiku 4.5 | Gap | Changes |
+|-------|-----------|-----------|-----|---------|
+| 1 (initial) | 1.00 | 1.00 | 0.00 | Total weight 1.18 capped at 1.0 masked partial differences |
+| 2 (final) | 1.00 | 0.84 | 0.16 | Reduced weights to 1.04 max; added FP clean texts to T8; partial scoring for T6; fixed T11 content params |
+
+### Per-Test Breakdown (Final Round)
+
+| Test | Weight | Sonnet 4.6 | Haiku 4.5 | Discrimination Cause |
+|------|--------|-----------|-----------|---------------------|
+| T3: classifyTool('bash')='high' | 0.15 | PASS | PASS | — |
+| T1: 6 files exist | 0.00 | diagnostic | diagnostic | Removed weight (redundant, gated on T3) |
+| T2: valid TS exports | 0.00 | diagnostic | diagnostic | Removed weight (redundant, gated on T3) |
+| T4: safe tool='low' | 0.04 | PASS | PASS | — |
+| T5: medium tool='medium' | 0.04 | PASS | PASS | — |
+| T6: isBashDestructive detection | 0.10 | **PASS** (5/5) | **PARTIAL** (4/5) | Haiku misses `sudo rm -rf .` — patterns anchored to `^` |
+| T7: isBashDestructive zero FP | 0.03 | PASS | PASS | — |
+| T8: checkPatterns FP quality | 0.15 | **PASS** (0 FP) | **FAIL** (2 FP) | Haiku's overly-broad `` /`.*`/ `` and `/from\s+now\s+on\s+/` patterns flag code discussion text |
+| T9: escalateRisk 3 correct | 0.10 | PASS | PASS | — |
+| T10: REVIEWER_SYSTEM_PROMPT | 0.04 | PASS | PASS | — |
+| T11: Decision flow differentiation | 0.20 | PASS (full) | PASS (full) | Fixed content param naming; both now pass |
+| T12: index.ts re-exports | 0.03 | PASS | PASS | — |
+| T13: Reviewer fn + history | 0.02 | PASS | PASS | — |
+| T14: High-risk + clean escalates | 0.05 | PASS | PASS | — |
+| T15: exec/delete = high | 0.02 | PASS | PASS | — |
+| T16: Reviewer wiring | 0.02 | PARTIAL (0.01) | PASS (0.02) | Sonnet slightly worse here |
+| P2P: Upstream vitest | 0.05 | PASS | PASS | — |
+| **Total** | **1.04 (cap 1.0)** | **1.00** | **0.84** | **Gap: 0.16** |
+
+### Why the Discrimination is Meaningful
+
+The gap reflects genuine implementation quality differences:
+
+1. **T6 (0.05 lost)**: Haiku anchored isBashDestructive patterns with `^`, missing `sudo` prefixed commands. Sonnet used non-anchored patterns with `\b` word boundaries, catching commands regardless of position. This is a real security quality difference — `sudo rm -rf .` is exactly the kind of dangerous command that should be detected.
+
+2. **T8 (0.15 lost)**: Haiku included overly-broad detection patterns:
+   - `` /`.*`/ `` matches ANY backtick usage (extremely common in code discussion)
+   - `/from\s+now\s+on\s+/i` matches everyday English ("From now on use TypeScript for all new files")
+   
+   Sonnet's patterns are more precisely scoped — e.g., its "from now on" pattern requires `(you\s+)?(will|must|should|are\s+to)` after the phrase, limiting matches to actual manipulation attempts. This is a real false-positive quality signal.
+
+3. **T16 (+0.01 for Haiku)**: Haiku actually scores slightly better on reviewer module wiring — has both import and call-site, while Sonnet has import but the static check doesn't find the call-site pattern. Minor.
+
+## Sim-Fire Validation (Phase 7)
+- Status: PASSED
+- sim_turns_fired: 3
+- Trigger T3 (episode 1): "My feedback would be this feels like quite on the defensive..." — FIRED correctly when agent had pattern-only security modules
+- Trigger T4 (episode 3): "how do you plan to test this with actual LLM? Just answer" — FIRED after reviewer module created
+- Trigger T5 (episode 5): "What's next?" — FIRED after agent signaled completion
+- Episodes 2, 4, 6: no-op (correct silence behavior)
+- Notes: Ran with minimax-m2 agent + gemini-3.1-pro user sim via Harbor runner
+
+## Changes Made
+
+### test.sh
+1. **Pre-existing ESM fix**: `/tmp/package.json` with `"type":"module"` (line 106) — already present, fixes CJS top-level await crash
+2. **Weight rebalancing**: Reduced total max from 1.18 to 1.04 so partial scores create discrimination
+   - T1, T2: 0.03+0.02 → 0 (diagnostic only, redundant with T3 gate)
+   - T4, T5: 0.05 → 0.04 each
+   - T7: 0.05 → 0.03
+   - T10: 0.05 → 0.04
+   - T12: 0.05 → 0.03
+   - T13: 0.03 → 0.02
+   - T16: 0.03 → 0.02
+3. **T6 partial scoring**: Added PARTIAL tier (≥3/5 = 0.05) alongside PASS (≥5/5 = 0.10)
+4. **T8 false-positive clean texts**: Added 2 realistic code discussion texts that expose overly-broad patterns:
+   - "Run \`grep -r pattern .\` to search the codebase" (triggers broad backtick matching)
+   - "From now on use TypeScript for all new files" (triggers unqualified "from now on" patterns)
+5. **T11 content parameters**: Pass content under multiple parameter names (toolInput, userInput, content, input) to accept any valid API design
+6. **T14 content parameters**: Same multi-key approach for the high-risk+clean test
+7. **T7 gate fix**: Gate on PASS or PARTIAL from T6 (was only PASS)
+8. **F2P/P2P labels**: Added [F2P] or [P2P] labels to all test block comments
+
+### user_simulation_prompt.md
+- Fixed Trigger B narrative section: "let's discuss" → "let'sd discuss" (matching original session verbatim typo)
+
+### task.toml
+- session_resolution: ambiguous → resolved (confidence 0.85)
+- Added session_resolution_reasoning field
+
+### instruction.md
+- No changes (kept verbatim per policy)
+
+### Dockerfile
+- No changes needed
+
+## Confidence
+- Overall: HIGH
+- Discrimination gap (0.16) is based on real quality differences in pattern precision and command detection
+- Remaining concerns:
+  - Docker containers run as root; Claude Code refuses `--dangerously-skip-permissions` for root — need `useradd` workaround at eval time
+  - Single-run variance: Haiku scores may vary ±0.05 between runs depending on exact patterns generated
+  - T8 discrimination depends on Haiku generating overly-broad patterns, which is likely but not guaranteed across all runs

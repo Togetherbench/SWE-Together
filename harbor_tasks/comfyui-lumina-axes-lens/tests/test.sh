@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification tests for ComfyUI Lumina 2 axes_lens RoPE implementation.
 #
@@ -10,6 +10,7 @@
 #
 # All tests run on CPU — no GPU required.
 # Reward written to /logs/verifier/reward.txt (0.0 to 1.0).
+# Nop score: 0.05 (T1 + P2P only)
 #
 # Scoring (P2P 4%, F2P-structural 9%, F2P-behavioral 87%, total=1.00):
 #   T1:  0.01  model.py parses as valid Python (structural, P2P)

@@ -73,12 +73,12 @@
 
 **Why**: User wanted to understand the `getResult` return type/signature, possibly to verify the cast was appropriate or out of curiosity about the MLIR API.
 
-**Sim trigger**: ONLY ask this if ALL of these conditions are met:
-1. The agent has fixed BOTH narrowing sites (lambda capture AND getResult call)
-2. The agent has mentioned `getResult` or `static_cast` in its explanation
-3. The agent has declared the fix complete
+**Sim trigger**: Fire once the agent has given a substantive response to Turn 1 AND is no longer actively working. Specifically, fire when ANY of the following holds:
+1. Agent has made >=1 edit to `WarpSpecializeUtility.cpp`, OR
+2. Agent has declared the fix complete (with or without edits), OR
+3. Agent has produced a detailed analysis/plan and appears to be waiting for the user (asked a question, said "let me know", stopped generating tool calls).
 
-**CRITICAL**: This is an informational question, NOT a redirect. Do NOT send this turn if the agent has only fixed one bug — it would function as a hint about the unfixed second bug, violating the anti-leakage rules. If the agent has not fixed both bugs, skip this turn entirely and send `no-op`.
+**Leakage note**: The Turn-1 error log already references both bug sites (line 99 in the lambda and line 563 in the second template instantiation), so `getResult` is consistent with information the agent already has from the error message. Firing T2 even when only one site is fixed is acceptable — it functions as a natural next-turn question and still probes the agent's grasp of MLIR signatures.
 
 ---
 
@@ -91,7 +91,20 @@
 
 **Why**: The user wanted to shortcut the agent's fruitless header search. The original Windows path (`C:\llvm-project\`) doesn't exist in the Docker container, so we adapt the intent: confirm the signature and tell the agent to move on.
 
-**Sim trigger**: ONLY send if the agent is searching for LLVM/MLIR headers (grep/find in include directories) after being asked about the signature. Skip entirely if the agent answers the signature question confidently without searching.
+**Sim trigger**: After T2 has fired, send T3 if EITHER: (a) the agent runs >=1 grep/find in include directories looking for the `getResult` definition or MLIR headers, OR (b) the agent's answer is hedged ("not sure", "let me look", "I'd need to check the headers"). Skip if the agent answers the signature question confidently without searching or hedging.
+
+---
+
+## Trigger Table
+
+T1 is `instruction.md` (the verbatim error paste from the original session), fired implicitly by Harbor on session start. T2 and T3 below are the two real follow-up user messages from `original_session.json` (messages [10] and [12]), used verbatim.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | The agent has given a substantive response to Turn 1 (edits, plan, or explanation), AND one of: (a) agent has made >=1 edit to `WarpSpecializeUtility.cpp`, OR (b) agent has stopped/declared done/asked what's next, OR (c) agent has produced >=2 response turns and is no longer actively editing. | What's the signature of op->getResult ? | FIRE ONCE. COOLDOWN: do not repeat for 3 agent turns. Leakage note: the Turn-1 error log already references both lines 99 (lambda) and 563 (template instantiation from the second site), so mentioning `getResult` here is consistent with the error context the agent already has — this is acceptable. Prefer to fire even if agent has only fixed one site: firing T2 still tests whether the agent can answer the signature question and self-correct. |
+| T3 | T2 has already fired, AND either: (a) the agent spends >=1 tool call searching for MLIR/LLVM headers or the `getResult` definition (Grep/Read on include paths, `third_party/`, `include/mlir/`, `llvm/`, etc.), OR (b) the agent's reply to T2 is hedged/uncertain (says "not sure", "let me look", "I'll check"). | You may check C:\llvm-project\ | FIRE ONCE. GATE-ON-T2. If the agent answers the signature question confidently on its first reply without searching or hedging, skip T3. Do NOT fire if T2 never fired. |
+
+If neither T2's pre-conditions nor T3's pre-conditions are met, the simulator stays silent for the rest of the session. No other turns should be invented.
 
 ---
 

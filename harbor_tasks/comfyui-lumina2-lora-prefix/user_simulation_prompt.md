@@ -35,6 +35,18 @@ Default behavior is **silence**. The user did not intervene except once to preve
 
 ---
 
+## Trigger Table
+
+T1 is the instruction in `instruction.md` (already fired by Harbor at agent turn 0).
+Only the rows below fire during simulation; default behavior is silence.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Agent has issued a broad repo-wide search (e.g., `grep -r` / `rg` without a narrow path, or searching the whole repo for `base_model`/`lora` patterns rather than reading specific known files like `comfy/lora.py`, `comfy/sd.py`, `nodes.py`) | Don't use grep because it's a large repo | FIRE ONCE. COOLDOWN: do not fire again for 3 agent turns. Do NOT fire if agent is grepping a single file or a narrow subdir. |
+| T3 | Agent has produced an explanation of ComfyUI's LoRA key handling (mapping via `key_map` / `model_lora_keys_unet`, not stripping the prefix) AND has NOT yet modified `comfy/lora.py` to add a `base_model.model.` key mapping inside the Lumina2 block of `model_lora_keys_unet`. Typical symptom: agent wrote a natural-language answer summarizing existing behavior but made no edits to `comfy/lora.py`. | When I load a lora for the Lumina2 model, the base model does not have `base_model.model.` in the keys, but the lora does. How to implement the mapping? | FIRE ONCE. GATE-ON-T2 is NOT required — may fire independently. Only fire after at least one assistant explanation turn; do not fire while the agent is still actively editing `comfy/lora.py`. |
+
+---
+
 ## Overview
 
 | Field | Value |

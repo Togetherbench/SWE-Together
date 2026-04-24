@@ -9,8 +9,9 @@
 #     (Check 2 split: 2a=classification 0.08, 2b=counts 0.04)
 #   Checks 6-8:  Fail-to-pass behavioral silver (0.22)
 #   Checks 9-12: Structural (Bronze+)           (0.23)
-#   F2P behavioral: 77% | Structural: 23%
-#   P2P: 0% (no upstream tests at base commit eba4ad1c)
+#   Checks 13-16: Fail-to-pass structural/text  (0.16)
+#   Check P2P:    Pass-to-pass regression guard (0.03)
+#   F2P behavioral: ~77% | Structural: ~20% | P2P: ~3%
 #
 set +e
 
@@ -1009,6 +1010,303 @@ if [ "$PHASE_RESULT" = "PASS" ]; then
     add_reward 0.07
 else
     echo "  FAIL: ($PHASE_RESULT)"
+fi
+
+# ===================================================================
+# CHECK 13 (0.04): narrative.py zone-aware reminder — FAIL-TO-PASS
+#   Plan §6: narrative.py must surface non-production zone awareness and
+#   reference the override mechanism. Base commit's narrative.py has no
+#   zone references at all, so this is fail-to-pass.
+# ===================================================================
+echo "--- Check 13: narrative.py zone awareness (0.04) ---"
+
+NARRATIVE_RESULT=$(python3 -c "
+import sys, os
+sys.path.insert(0, '.')
+
+candidates = ['desloppify/narrative.py']
+found = None
+for p in candidates:
+    if os.path.exists(p):
+        found = p
+        break
+
+if not found:
+    print('FAIL:narrative_missing')
+    sys.exit(0)
+
+with open(found) as f:
+    src = f.read()
+
+errors = []
+
+# Must reference zones (keyword 'zone' — case-insensitive)
+has_zone_ref = 'zone' in src.lower()
+if not has_zone_ref:
+    errors.append('no_zone_reference')
+
+# Must mention either an override affordance or the classification concept
+has_override_or_classify = any(kw in src.lower() for kw in [
+    'override', 'zone set', 'classif', 'non-production',
+    'non_production', 'misclass',
+])
+if not has_override_or_classify:
+    errors.append('no_override_or_classification')
+
+if not errors:
+    print('PASS')
+else:
+    print(f'FAIL:{errors}')
+" 2>&1)
+
+echo "  Result: $NARRATIVE_RESULT"
+if [ "$NARRATIVE_RESULT" = "PASS" ]; then
+    echo "  PASS: narrative.py has zone-aware reminder"
+    add_reward 0.04
+else
+    echo "  FAIL: ($NARRATIVE_RESULT)"
+fi
+
+# ===================================================================
+# CHECK 14 (0.04): cmd_zone supports show/set/clear actions
+#   Plan §5: the zone subcommand exposes `show`, `set`, `clear` actions.
+#   Accept quoted string literals OR per-action function names (cmd_zone_show,
+#   zone_show, do_show, etc.). Searches both zone_cmd.py and cli.py because
+#   the subparser may live in either file.
+# ===================================================================
+echo "--- Check 14: cmd_zone show/set/clear actions (0.04) ---"
+
+CMDZONE_ACTIONS_RESULT=$(python3 -c "
+import sys, os, re
+sys.path.insert(0, '.')
+
+candidates = [
+    'desloppify/commands/zone_cmd.py',
+    'desloppify/zone_cmd.py',
+    'desloppify/commands/zone.py',
+    'desloppify/cli.py',
+]
+
+src_total = ''
+for p in candidates:
+    if os.path.exists(p):
+        with open(p) as f:
+            src_total += f.read() + '\n---\n'
+
+if not src_total:
+    print('FAIL:no_sources')
+    sys.exit(0)
+
+errors = []
+for action in ['show', 'set', 'clear']:
+    found = False
+    # Quoted string literal (argparse choice / if branch dispatch)
+    for q in ('\"', \"'\"):
+        if q + action + q in src_total:
+            found = True
+            break
+    # Function-name form (accept multiple common namings)
+    if not found:
+        fn_patterns = [
+            'cmd_zone_' + action,
+            'zone_' + action,
+            'do_' + action + '(',
+            'def ' + action + '(',
+            'handle_' + action,
+            '_' + action + '_zone',
+        ]
+        for fp in fn_patterns:
+            if fp in src_total:
+                found = True
+                break
+    if not found:
+        errors.append('missing:' + action)
+
+if not errors:
+    print('PASS')
+else:
+    print(f'FAIL:{errors}')
+" 2>&1)
+
+echo "  Result: $CMDZONE_ACTIONS_RESULT"
+if [ "$CMDZONE_ACTIONS_RESULT" = "PASS" ]; then
+    echo "  PASS: cmd_zone references show/set/clear actions"
+    add_reward 0.04
+else
+    echo "  FAIL: ($CMDZONE_ACTIONS_RESULT)"
+fi
+
+# ===================================================================
+# CHECK 15 (0.03): scan.py wires zone_overrides through generate_findings
+#   Plan §5: cmd_scan reads overrides from state and passes them through
+#   to generate_findings. AST check: scan.py source must reference
+#   'zone_overrides' (either reading state or passing as kwarg).
+# ===================================================================
+echo "--- Check 15: scan.py zone_overrides wiring (0.03) ---"
+
+SCAN_RESULT=$(python3 -c "
+import sys, os
+sys.path.insert(0, '.')
+
+candidates = ['desloppify/commands/scan.py', 'desloppify/scan.py']
+found = None
+for p in candidates:
+    if os.path.exists(p):
+        found = p
+        break
+
+if not found:
+    print('FAIL:scan_missing')
+    sys.exit(0)
+
+with open(found) as f:
+    src = f.read()
+
+if 'zone_overrides' in src:
+    print('PASS')
+else:
+    print('FAIL:no_zone_overrides_in_scan')
+" 2>&1)
+
+echo "  Result: $SCAN_RESULT"
+if [ "$SCAN_RESULT" = "PASS" ]; then
+    echo "  PASS: scan.py threads zone_overrides from state"
+    add_reward 0.03
+else
+    echo "  FAIL: ($SCAN_RESULT)"
+fi
+
+# ===================================================================
+# CHECK 16 (0.05): Phase-runner application depth — closes Check 12 gap
+#   Plan §3 requires `adjust_potential(...)` to be APPLIED inside every
+#   phase runner that returns potentials (4 Python + 5 TS). Plan §4
+#   requires `filter_entries` / `should_skip_finding` to be APPLIED
+#   inside coupling phase runners (wrap finding creation).
+#   Check 12 is satisfied by bare imports (`hasattr(mod, 'adjust_potential')`
+#   is True if imported at module top). This check counts actual CALL
+#   SITES in the lang modules, rejecting the import-but-never-call shortcut.
+#   Lenient thresholds: total call sites >=3 overall, and at least one
+#   entry-filter call. Plan gold has ~9 call sites, so the threshold is
+#   easily met by genuine integrations and won't reject valid variants.
+# ===================================================================
+echo "--- Check 16: phase-runner application depth (0.05) ---"
+
+APPLY_RESULT=$(python3 -c "
+import os, re
+
+lang_files = [
+    'desloppify/lang/python/__init__.py',
+    'desloppify/lang/typescript/__init__.py',
+]
+
+adjust_calls = 0
+filter_calls = 0
+
+def count_calls(src, name):
+    n = 0
+    for m in re.finditer(r'\b' + re.escape(name) + r'\s*\(', src):
+        line_start = src.rfind('\n', 0, m.start()) + 1
+        line_end = src.find('\n', m.start())
+        if line_end < 0:
+            line_end = len(src)
+        line = src[line_start:line_end]
+        stripped = line.lstrip()
+        # Skip import lines and function definitions (the def itself)
+        if stripped.startswith(('import ', 'from ')):
+            continue
+        if stripped.startswith('def ') and stripped.startswith('def ' + name):
+            continue
+        n += 1
+    return n
+
+for p in lang_files:
+    if not os.path.exists(p):
+        continue
+    with open(p) as f:
+        src = f.read()
+    adjust_calls += count_calls(src, 'adjust_potential')
+    filter_calls += count_calls(src, 'filter_entries')
+    filter_calls += count_calls(src, 'should_skip_finding')
+
+errors = []
+total = adjust_calls + filter_calls
+if adjust_calls < 2:
+    errors.append(f'adjust_calls={adjust_calls},expected>=2')
+if filter_calls < 1:
+    errors.append(f'filter_calls={filter_calls},expected>=1')
+if total < 3:
+    errors.append(f'total_calls={total},expected>=3')
+
+if not errors:
+    print('PASS')
+else:
+    print(f'FAIL:{errors}')
+" 2>&1)
+
+echo "  Result: $APPLY_RESULT"
+if [ "$APPLY_RESULT" = "PASS" ]; then
+    echo "  PASS: phase runners actually call adjust_potential + entry-filtering"
+    add_reward 0.05
+else
+    echo "  FAIL: ($APPLY_RESULT)"
+fi
+
+# ===================================================================
+# CHECK P2P (0.03): Regression guard — PASS-TO-PASS
+#   These tests pass on the UNMODIFIED base commit (eba4ad1c) and must
+#   still pass after the agent's changes. Guards against agents that
+#   break existing functionality while adding zone classification.
+# ===================================================================
+echo "--- Check P2P: regression guard (0.03) ---"
+
+P2P_RESULT=$(python3 -c "
+import sys, subprocess
+sys.path.insert(0, '.')
+
+errors = []
+
+# P2P-1: basic package import still works
+try:
+    import desloppify
+except Exception as e:
+    errors.append(f'import_fail={e}')
+
+# P2P-2: LangConfig still importable (field additions must not break it)
+try:
+    from desloppify.lang.base import LangConfig
+    lc = LangConfig
+except Exception as e:
+    errors.append(f'langconfig_fail={e}')
+
+# P2P-3: generate_findings still importable (param additions must not break it)
+try:
+    from desloppify.plan import generate_findings
+except Exception as e:
+    errors.append(f'plan_fail={e}')
+
+# P2P-4: CLI help still works
+try:
+    r = subprocess.run(
+        [sys.executable, '-m', 'desloppify', '--help'],
+        capture_output=True, text=True, timeout=10
+    )
+    if r.returncode != 0:
+        errors.append(f'cli_help_rc={r.returncode}')
+except Exception as e:
+    errors.append(f'cli_help_fail={e}')
+
+if not errors:
+    print('PASS')
+else:
+    print(f'FAIL:{errors}')
+" 2>&1)
+
+echo "  Result: $P2P_RESULT"
+if [ "$P2P_RESULT" = "PASS" ]; then
+    echo "  PASS: base imports and CLI still work after changes"
+    add_reward 0.03
+else
+    echo "  FAIL: ($P2P_RESULT)"
 fi
 
 # ===================================================================

@@ -8,51 +8,28 @@ Source session: `6cb0b2c4-dfff-4abc-867b-9387ef8242bf`
 - **Longest silence: 7 agent turns** (user waited while agent investigated the custom node and HuggingFace repo).
 - This user asks investigation questions first, then gives implementation requests, then corrects direction.
 - Does NOT interrupt mid-investigation — waits for agent to present findings before redirecting.
-- Target for simulation: **2–4 messages max** after the initial instruction. The instruction is intentionally less prescriptive, so the agent may need architecture guidance. Intervene only on clear mistakes, not to verify progress.
-- **CRITICAL anti-loop rule**: Never repeat a question the agent has already addressed. If you asked to see the file and the agent showed it (or explained it), that concern is resolved — move on or stay silent. Repeating "show me the file" is NOT what this user would do.
+- Target for simulation: **1–3 messages max** after the initial instruction. The instruction already specifies the file path and general approach. Intervene only on clear architectural mistakes, not to verify progress.
+- **CRITICAL anti-loop rule**: Never repeat a question the agent has already addressed. If you asked to see the file and the agent showed it (or explained it), that concern is resolved — move on or stay silent.
 - **Silence is the strongest signal**: If the agent is making reasonable progress, the correct action is silence. The user only intervenes on clear mistakes (wrong directory, wrong approach, wrong architecture), not to verify progress.
-- **Do NOT ask the agent to "show" or "cat" files** just to verify. The real user cared about correctness of approach, not displaying file contents. If concerned about implementation quality, ask a specific technical question (e.g., "does it use RoPE?" or "is it extending SDClipModel?"), not a generic "show me the file."
+- **Do NOT ask the agent to "show" or "cat" files** just to verify. The real user cared about correctness of approach, not displaying file contents. If concerned about implementation quality, ask a specific technical question, not a generic "show me the file."
 
-## When to Intervene
+## Trigger Table
 
-The instruction tells the agent to implement Jina CLIP v2 following ComfyUI patterns, but does NOT specify the exact class hierarchy or architecture parameters. The agent must research these. Intervene if:
+Each row uses a VERBATIM (trimmed) message from the original session. Only fire if the Condition is met.
 
-1. **Wrong location**: Agent implements in custom_nodes/ instead of `comfy/text_encoders/`. Say: "No, implement it in the ComfyUI main repo under comfy/text_encoders/, not as a custom node."
-2. **Wrong class hierarchy**: Agent doesn't subclass SDTokenizer/SDClipModel/SD1ClipModel. Say: "Look at how other text encoders like ace.py or sd3_clip.py are structured — they extend SDTokenizer, SDClipModel, and SD1ClipModel. Follow the same pattern."
-3. **Missing RoPE**: Agent uses standard learned position embeddings. Say: "Jina CLIP v2 uses rotary position embeddings (RoPE), not learned position embeddings. Make sure your implementation reflects that."
-4. **Wrong pooling**: Agent uses CLS token or last-token pooling instead of mean pooling. Say: "Jina CLIP v2 uses mean pooling over the sequence, not CLS token pooling."
-5. **Wrong vocab/tokenizer**: Agent uses a BERT-style tokenizer instead of SentencePiece. Say: "Jina CLIP v2 uses a SentencePiece tokenizer, not WordPiece/BPE. Check the HuggingFace model page."
+| ID | Condition | Message | Notes |
+|----|-----------|---------|-------|
+| T2 | Agent is researching but has not yet looked at the HuggingFace model page or the upstream architecture for Jina CLIP v2. Agent appears unsure about the model architecture. | "In https://huggingface.co/jinaai/jina-clip-v2/tree/main , how is the model implemented?" | Verbatim from session Turn 2. Nudges agent to research the upstream model. Only fire if agent is clearly stuck on architecture details. |
+| T3 | Agent has researched the HF model page but has not found a concrete reference implementation file to work from. Agent is struggling to understand the full architecture. | "Browse https://huggingface.co/NewBie-AI/NewBie-image-Exp0.1/tree/main/clip_model . Is there a Python file that implements the architecture of Jina CLIP v2?" | Verbatim from session Turn 3. Points agent to a reference implementation. Only fire if agent clearly needs a concrete code reference. |
+| T4 | Agent has written the file but used HuggingFace transformers AutoModel/AutoTokenizer wrappers instead of native ComfyUI model classes (SDTokenizer, SDClipModel). The implementation delegates to transformers library instead of implementing the architecture directly. | "Now properly implement it in this repo. You can refer to how other CLIP models are implemented, and you may fully rewrite the code in @modeling_clip.py to follow ComfyUI idioms." | Trimmed from session Turn 4. Fires when agent uses wrong idiom (wrapping HF models instead of native implementation). |
+| T5 | Agent has created or is writing a file in custom_nodes/ directory instead of comfy/text_encoders/. Or agent has created a file named something other than jina_clip_2.py in the wrong directory. | "No, implement it in the ComfyUI main repo, not a custom node. You may refer to @comfy\text_encoders\**" | Verbatim from session Turn 5 (trimmed). This is the most likely trigger — the original agent made this exact mistake. |
 
-Do NOT intervene if the agent is on the right track but has minor implementation details wrong. Only intervene on fundamental architectural mistakes.
+## When NOT to Intervene
 
-## User Turns (with context)
-
-**Turn 1** (session start):
-  Context: Session beginning, no prior agent activity.
-  Said: "In @custom_nodes/ComfyUI-Newbie-Nodes , how is the Jina CLIP model implemented?"
-  Why: Investigation question — user wants to understand the existing custom node implementation before deciding how to port it to the main repo.
-
-**Turn 2** (after 7 agent turns):
-  Context: Agent investigated custom nodes and reported on the Jina CLIP implementation there.
-  Said: "In https://huggingface.co/jinaai/jina-clip-v2/tree/main , how is the model implemented?"
-  Why: User wants to understand the upstream HuggingFace reference implementation, not just the custom node's version.
-
-**Turn 3** (after 3 agent turns):
-  Context: Agent browsed HuggingFace and explained the HF model structure.
-  Said: "Browse https://huggingface.co/NewBie-AI/NewBie-image-Exp0.1/tree/main/clip_model . Is there a Python file that implements the architecture of Jina CLIP v2?"
-  Why: User wants a concrete reference implementation file to work from.
-
-**Turn 4** (after 3 agent turns):
-  Context: Agent found and presented a modeling_clip.py reference implementation.
-  Said: "I've downloaded it to @@modeling_clip.py . Now properly implement it in this repo. You can refer to how other CLIP models are implemented, and you may fully rewrite the code in @modeling_clip.py to follow ComfyUI idioms." [+ modeling_clip.py content attached]
-  Why: User has the reference file and wants the agent to implement it in the repo, following ComfyUI patterns.
-
-**Turn 5** (after 2 agent turns):
-  Context: Agent implemented jina_clip.py but did so in a custom node, not in the main repo.
-  Said: "No, implement it in the ComfyUI main repo, not a custom node. You may refer to @comfy\text_encoders\**" [+ 54 reference files from comfy/text_encoders/]
-  Why: Agent went to the wrong location (custom node vs. main repo). User corrects with explicit path and provides all reference text encoders for idiom consistency.
-
-*(Session ended after agent response to Turn 5)*
+- Agent is reading reference files in comfy/text_encoders/ — this is expected research
+- Agent is studying the Jina CLIP v2 architecture — this is correct behavior
+- Agent's implementation has minor issues (slightly wrong parameter, imperfect class structure) — only intervene on fundamental architectural mistakes
+- Agent is implementing in comfy/text_encoders/jina_clip_2.py — correct location, stay silent
 
 ## Overview
 
@@ -100,23 +77,13 @@ USER: "I've downloaded it to @@modeling_clip.py. Now properly implement it in th
 USER: "No, implement it in the ComfyUI main repo, not a custom node."
   |  [+ 54 files from comfy/text_encoders/ attached as reference]
   |
-  |  User correction: 'not a custom node' — explicit redirect to main repo
-  |  User provides full text_encoders/ directory as pattern library
-  |
   v
 
-AGENT: Implements comfy/text_encoders/jina_clip.py (session ends)
-  |
-  |  Agent completed a version, but whether it follows correct ComfyUI patterns
-  |  is not verified — the ground truth is PR #11415's jina_clip_2.py
+AGENT: Implements comfy/text_encoders/jina_clip.py (session ends without user verification)
 ```
 
 ## Agent Mistakes
 
 1. **Wrong location** — Implemented in the custom node directory instead of `comfy/text_encoders/`
 2. **Wrong idiom** — Used HuggingFace `AutoModel` wrapper approach instead of native ComfyUI model classes
-3. **Investigation overhead** — Spent 13 turns investigating before implementing (real PR took a direct approach)
-
-## Harbor Conversion Notes
-
-The Harbor task instruction provides a high-level request to implement Jina CLIP v2 in `comfy/text_encoders/jina_clip_2.py` following ComfyUI patterns, but intentionally omits specific architecture parameters (hidden_size, layers, heads), class hierarchy names (SDTokenizer, SDClipModel, SD1ClipModel), and tokenizer configuration (pad_with_end, max_length). The agent must research these details by studying existing text encoders in the repo and the Jina CLIP v2 model on HuggingFace. This requires investigation and pattern-matching that distinguishes capable agents from those that need hand-holding.
+3. **Investigation overhead** — Spent 13 turns investigating before implementing

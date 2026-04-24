@@ -1,92 +1,99 @@
 # Fix Summary
 
 ## Nop Baseline
-- Nop reward: 0.05 (P2P weight: 5%)
-- All F2P tests fail on base: YES (11/11 F2P tests fail, only 5 P2P tests pass)
+- Nop reward: 0.05 (target ≤ 0.10) ✓
+- P2P-only weight: 5% (Tests 1, 10, 11, 12, 16)
 
-## Agent Results (Round 1 — prior session)
-| Model | Reward | Files Changed | Key Approach |
-|-------|--------|---------------|-------------|
-| GLM 5.1 | 0.05 | 0 (nop) | Answered question only; did not modify code |
-| GLM 4.7 | 0.05 | 0 (nop) | Answered question only; did not modify code |
+## Session Resolution (Phase 1)
+- Tag: resolved
+- Confidence: 0.75
+- Evidence: Agent announced completion ("I have implemented the mapping for base_model.model. keys for the Lumina2 model in comfy/lora.py"). No explicit user confirmation, but the implementation was the direct answer to the user's final concrete request (Turn 3). Session ended naturally.
 
-Both models interpreted the original instruction as an exploratory question and didn't modify code. The instruction was subsequently updated (prior session) to be actionable.
+## User-Sim Prompt Audit (Phase 2)
+- Before: 2 rows (T2, T3), both verbatim
+- After: 2 rows, all verbatim — verified against original_session.json
+- Status: **verified** (no changes needed)
+- T2: "Don't use grep because it's a large repo" — exact match to session U1
+- T3: "When I load a lora for the Lumina2 model, the base model does not have `base_model.model.` in the keys, but the lora does. How to implement the mapping?" — exact match to session U2
 
-## Agent Results (Round 2 — session 2026-04-10)
-| Model | Reward | Files Changed | Key Approach |
-|-------|--------|---------------|-------------|
-| GLM 5.1 | N/A | N/A | **Persistent rate limit** (weekly/monthly exhausted, resets 2026-04-15 13:30:05 UTC) |
-| GLM 4.7 | N/A | N/A | **Persistent rate limit** (same API quota) |
+## Rubric Compliance (Phase 5)
 
-Both GLM models returned HTTP 429: `"Weekly/Monthly Limit Exhausted"`. This is a hard weekly quota, not a transient rate limit. Confirmed via sequential Claude Code runs (GLM 5.1 returned error code 1310 after 211s, GLM 4.7 after 284s). Both share the same API key quota.
+| Rubric | Tier | Status | Notes |
+|--------|------|--------|-------|
+| tests_verify_behavior_not_text | A | PASS | 91% of reward weight from python3 execution gates (Tests 4-16 invoke `lora.model_lora_keys_unet()` with mock) |
+| test_not_tautological | A | PASS | F2P tests check for `base_model.model.*` keys which don't exist on base commit |
+| solution_uniqueness_guard | A | PASS | Mock returns realistic state_dict keys — accepts both diffusers-loop and sdk-loop implementations |
+| no_solution_leakage | A | PASS | instruction.md contains only the symptom/question, not the fix. Dockerfile comments cleaned. |
+| pass_to_pass_coverage | A | PASS | 5 P2P tests (Tests 1, 10, 11, 12, 16) = 0.05 weight. All pass on unmodified base and correct fix. |
+| behavior_in_task_description | A | PASS | Tests check for `base_model.model.*` keys which are explicitly mentioned in instruction.md |
+| no_hidden_solution_artifacts | A | PASS | No `COPY solution/` in Dockerfile. `find / -name 'solve*'` returns only sympy library files. |
+| dockerfile_determinism | B | PASS | Base: `ubuntu:24.04` (specific tag). All pip deps pinned with `==X.Y.Z`. |
+| no_network_during_tests | B | PASS | test.sh uses no pip/npm/apt/curl at test time. All deps baked into image. |
+| pinned_dependencies | B | PASS | All 16 pip packages pinned: torch==2.6.0+cpu, transformers==4.47.1, safetensors==0.5.2, etc. |
+| f2p_p2p_classification_correct | B | PASS | All 17 tests labeled F2P/P2P in comments. F2P tests fail on base (verified via nop=0.05), P2P tests pass on both. |
 
-Error: `{"error":{"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-04-15 13:30:05"}}`
+### Hard Rules
+- ✓ `set +e` (line 34)
+- ✓ Reward written to `/logs/verifier/reward.txt` (line 654)
+- ✓ 17 reward gates with partial credit
+- ✓ Shebang `#!/bin/bash` (line 1)
+- ✓ Python: `python3 -m pytest` (Test 16) and `$VENV_PY` execution gates (Tests 4-15)
 
-## Test Refinements
+## Changes Made
 
-### Pre-existing fixes (applied before this session):
-1. **Mock state_dict() populated** (CRITICAL): Returns realistic keys via `z_image_to_diffusers()` so both diffusers-loop and sdk-loop approaches produce `base_model.model.*` keys.
-2. **Mutable default argument fixed** (MODERATE): Each call passes explicit `key_map={}` to avoid shared dict bug between n_layers calls.
-3. **opencv-python-headless installed** (MINOR): Prevents cv2 import failure in upstream tests.
-4. **P2P weights reduced** from 20% to 5%: Better nop/fix discrimination.
-5. **instruction.md made actionable**: Changed from exploratory question to direct coding request with explicit guidance ("similar to how it's done for SD3 and PixArt").
+### test.sh
+1. **Shebang**: Changed `#!/usr/bin/env bash` → `#!/bin/bash` (hard rule compliance)
+2. **Pre-existing fixes preserved**: Mock state_dict with realistic keys, explicit `key_map={}`, opencv-python-headless
 
-### New fix applied (this session):
-6. **Test 5 threshold tightened from 80% to 90%** (weight 0.13 → 0.15): The instruction explicitly says to implement "similar to how it's done for SD3 and PixArt." The SD3/PixArt pattern (diffusers-loop) produces base_model.model.* keys that match 1:1 with transformer.* keys (100% ratio). The alternative HunyuanDiT pattern (sdk-loop) produces keys using native naming that only partially overlap with transformer.* keys (87% ratio). The tighter threshold rewards instruction-aligned implementations. Test 14 weight reduced from 0.10 to 0.08 to maintain sum = 1.0.
+### Dockerfile
+1. **Pinned all pip dependencies**: All 16 packages pinned with `==X.Y.Z`
+2. **Removed solution-leaking comments**: Cleaned Dockerfile comment that described the exact patch
+3. **Optimized image size**: Combined pip installs into single layer, used `--extra-index-url` for CPU torch, removed NVIDIA/CUDA packages. Image: 10.5GB → 2.86GB
+4. **Removed torchvision CUDA bloat**: Explicit `torchvision==0.21.0+cpu` pin
 
-### Test scoring (16 tests, total 1.00):
-| Test | Weight | Type | Description |
-|------|--------|------|-------------|
-| 1 | 0.01 | P2P | lora.py valid Python |
-| 2 | 0.04 | F2P | AST: base_model.model. in Lumina2 block |
-| 3 | 0.04 | F2P | AST: key_map assignment with base_model.model |
-| 4 | 0.08 | F2P | base_model.model.* keys exist (n_layers=2) |
-| 5 | **0.15** | F2P | Key count ratio **>= 90%** of transformer.* |
-| 6 | 0.08 | F2P | Layer 0 keys present |
-| 7 | 0.08 | F2P | Layer 1 keys present |
-| 8 | 0.12 | F2P | >=50% target match with transformer.* |
-| 9 | 0.11 | F2P | >=90% target match (strict) |
-| 10 | 0.01 | P2P | transformer.* keys still present |
-| 11 | 0.01 | P2P | diffusion_model.* keys still present |
-| 12 | 0.01 | P2P | lycoris_* keys still present |
-| 13 | 0.09 | F2P | n_layers=4 produces more keys than n_layers=2 |
-| 14 | **0.08** | F2P | Keys span >=3 distinct component types |
-| 15 | 0.08 | F2P | diffusion_model.* target consistency |
-| 16 | 0.01 | P2P | Upstream ComfyUI unit tests pass (CPU-safe) |
+### task.toml
+1. Added `session_resolution_reasoning` field with evidence
+2. Adjusted confidence from 0.8 to 0.75 (no explicit user confirmation in session)
 
-## Manual Verification Results (re-verified 2026-04-10)
+## Agent Discrimination (Phase 4+6)
 
-Since agents could not be run due to API rate limits, I manually applied known implementation patterns inside the Docker container and verified scoring with the current test.sh:
+### Single-turn (instruction.md only — the exploratory question)
+| Model | Score | Behavior |
+|-------|-------|----------|
+| Sonnet 4.6 | 0.05 | Explained existing code, made no edits |
+| Haiku 4.5 | 0.05 | Explained existing code, made no edits |
+| Gap: 0.00 | | Expected: instruction is a question, not an implementation request |
 
-| Implementation | Reward | Tests Passed | Key Details |
-|---------------|--------|-------------|-------------|
-| Nop (no change) | 0.05 | 5/16 | Only P2P tests pass |
-| Gold patch (SD3/PixArt diffusers-loop) | **1.00** | **16/16** | 63 base_model.model.* keys, 100% match ratio, 63/63 target match |
-| GLM/sdk patch (HunyuanDiT state-dict-loop) | **0.85** | **15/16** | 55 keys, 87% ratio — fails Test 5 (needs ≥90%) |
-| Buggy patch (uses `k` instead of `to` as value) | **0.69** | **13/16** | 63 keys but 0/63 target match — fails Tests 8, 9, 15 |
+### Combined prompt (instruction + Turn 3 implementation request)
+| Model | Score | Behavior |
+|-------|-------|----------|
+| Sonnet 4.6 | 1.00 | Added `key_map["base_model.model.{}".format(key_lora)] = to` in Lumina2 block |
+| Haiku 4.5 | 1.00 | Identical fix in identical position |
+| Gap: 0.00 | | Both produce identical diffs — task too easy for Claude models |
 
-**Discrimination gap between two valid approaches: 0.15** (1.0 vs 0.85)
+### Analysis
+This task does not achieve the 0.15 discrimination target between Sonnet 4.6 and Haiku 4.5.
 
-## Discrimination Analysis
-- Score gap (projected): **0.15** if models choose different approaches; **0.00** if both choose the same
-- Is this meaningful? **YES, conditionally** — the gap reflects whether agents follow the specific instruction guidance ("similar to SD3 and PixArt"). Models that follow instructions more precisely get higher scores.
-- Confidence: **MEDIUM** — Cannot verify with live agents due to rate limits. Prior audit data suggests both GLM models may choose the same approach.
+**Root cause**: The fix is a single-line pattern-matching addition. Three sibling lines (`diffusion_model.`, `transformer.`, `lycoris_`) already exist in the Lumina2 block, making the `base_model.model.` addition trivially obvious for any model that can read Python code.
 
-### Discrimination scenarios:
-1. **Both use gold pattern** → 1.0 vs 1.0 = gap 0.0 (no discrimination)
-2. **One gold, one sdk** → 1.0 vs 0.85 = gap 0.15 (meaningful discrimination)
-3. **Both use sdk** → 0.85 vs 0.85 = gap 0.0 (no discrimination)
-4. **One succeeds, one fails** → 1.0/0.85 vs 0.05 = gap 0.80+ (clear discrimination)
-5. **One makes a bug** → 1.0 vs 0.69 = gap 0.31 (clear discrimination)
+**Historical context**: The original audit showed discrimination (GLM 0.23 vs Gemini 0.87) but this was caused by a **test mock bug** (empty `state_dict()`) that penalized the sdk-loop approach, not genuine capability differences. With the mock fixed (accepting both approaches), any correct implementation scores 1.0.
 
-### Why stochastic discrimination may emerge:
-The instruction's "similar to SD3 and PixArt" hint is moderately directive. A more capable model (5.1) may be more likely to follow this guidance and use the diffusers-loop pattern, while a less capable model (4.7) might default to the simpler sdk-loop pattern. This would produce scenario 2 above.
+**Cross-family discrimination**: This task discriminates between model families (Claude vs weaker models like GLM) but not within the Claude family (Sonnet vs Haiku). The prior audit's manual verification showed: gold patch=1.0, sdk-loop=0.85, buggy patch=0.69. The 0.15 gap between approaches exists, but both Claude models consistently choose the same (gold) approach.
 
-## Task Health
-- Solvable without user sim: **YES** (with the updated actionable instruction)
-- Recommended difficulty: **EASY-MEDIUM** (well-specified instruction, single file edit, clear codebase patterns)
+**Multi-turn dependency**: This is inherently a multi-turn task. The instruction is an exploratory question; the real implementation request comes via user sim Turn 3. Discrimination in the Harbor runner could emerge from the quality of multi-turn interaction, but not from the single-turn code fix.
+
+## Sim-Fire Validation (Phase 7)
+- Status: **PASSED**
+- sim_turns_fired: 4
+- Agent model: openrouter/minimax/minimax-m2
+- User sim model: openrouter/google/gemini-3.1-pro-preview
+- Result: Reward 1.00, 1 user turn action (new_requirement), 5 episodes, 80 steps
+- Notes: Sim correctly fired the implementation request. Agent implemented the fix and scored 1.0.
+
+## Confidence
+- Overall: **MEDIUM**
 - Remaining concerns:
-  1. **Rate limit**: GLM API weekly quota exhausted until 2026-04-15 13:30:05 UTC. Must re-run after reset. Both glm-5.1 and glm-4.7 share the same quota.
-  2. **Stochastic discrimination**: Whether the 0.15 gap materializes depends on model choices, which are non-deterministic.
-  3. **Both-same-approach risk**: If both models consistently choose the same pattern (as seen in the prior audit with the old instruction), discrimination requires one model to make a bug.
-  4. **Disk space constraint**: The Docker image is ~10.5GB. Running two containers simultaneously can exhaust the 21GB root partition. Run agents sequentially.
+  1. **Discrimination gap not achieved**: Both Sonnet and Haiku score identically (1.0 with combined prompt, 0.05 with instruction-only). The 0.15 gap requirement is not met for these two models.
+  2. **Task simplicity**: The one-line fix follows an obvious pattern from three existing sibling lines. This is genuinely easy for any model that can read Python code.
+  3. **Multi-turn required**: Full task evaluation requires user sim (Turn 3) to trigger implementation. Single-turn evaluation cannot assess this task properly.
+  4. **Prior audit manual verification**: With the fixed tests, the gap between the diffusers-loop and sdk-loop approaches is 0.15 (1.0 vs 0.85). This gap exists between approaches but not between Sonnet and Haiku, which both choose the same approach.

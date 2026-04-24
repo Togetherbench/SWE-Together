@@ -1,16 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Verification for sd-scripts-reg-image-dedup
 #
 # Tests that the agent refactored the duplicate regularization-image balancing
 # loop into a shared helper method AND added the update_counts parameter to
 # avoid calling update_dataset_image_counts() twice.
 #
-# Weight budget (sums to 1.00):
-#   Structural  (0.10): tests 1-2   (helper exists, call sites)
-#   Behavioral  (0.81): tests 3-11  (functional correctness)
-#   Behavioral  (0.04): test 14    (update_counts removal from DreamBooth filter)
-#   P2P         (0.03): test 12     (upstream tests)
-#   Compile     (0.02): test 13     (file integrity)
+# Weight budget (R/100, max capped at 1.0):
+#   F2P Structural  (10pts): tests 1-2   (helper exists, call sites)
+#   F2P Behavioral  (81pts): tests 3-11, 14 (functional correctness)
+#   P2P             (3pts):  test 12     (upstream tests)
+#   P2P Compile     (2pts):  test 13     (file integrity)
 #
 # Max stub score: 0.12 (structural 0.10 + compile 0.02)
 # Nop score: 0.05 (P2P 0.03 + compile 0.02)
@@ -176,11 +175,11 @@ print("Pre-parse complete")
 PYEOF
 
 ###############################################################################
-# TEST 1 (Structural, 5pts): Helper method exists in DreamBoothDataset
+# TEST 1 (F2P Structural, 5pts): Helper method exists in DreamBoothDataset
 #         AND rebalance_regularization_images still exists.
 #         Anti-stub: helper body >= 3 non-trivial statements.
 ###############################################################################
-echo "--- Test 1/13: Helper method + rebalance exist ---"
+echo "--- Test 1/14: Helper method + rebalance exist ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 5)) || true
 import json, sys
 
@@ -198,9 +197,9 @@ print(f"PASS: Helper '{cache['helper_name']}' + rebalance both exist")
 PYEOF
 
 ###############################################################################
-# TEST 2 (Structural, 5pts): __init__ and rebalance both call the helper
+# TEST 2 (F2P Structural, 5pts): __init__ and rebalance both call the helper
 ###############################################################################
-echo "--- Test 2/13: __init__ and rebalance both call helper ---"
+echo "--- Test 2/14: __init__ and rebalance both call helper ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 5)) || true
 import json, sys
 
@@ -214,10 +213,10 @@ print(f"PASS: Both __init__ and rebalance call {cache['shared_helper']}")
 PYEOF
 
 ###############################################################################
-# TEST 3 (Behavioral, 8pts): Helper correctly balances 1 reg image
+# TEST 3 (F2P Behavioral, 8pts): Helper correctly balances 1 reg image
 #         1 reg with subset_repeats=1, 3 train -> repeats >= 3
 ###############################################################################
-echo "--- Test 3/13: Helper balances 1 reg image (1 reg, 3 train) ---"
+echo "--- Test 3/14: Helper balances 1 reg image (1 reg, 3 train) ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 8)) || true
 import json, sys, logging, math, typing
 
@@ -270,11 +269,11 @@ print(f"PASS: 1 reg balanced to {t.image_data['reg_0'].num_repeats} repeats (>= 
 PYEOF
 
 ###############################################################################
-# TEST 4 (Behavioral, 8pts): Helper balances 3 reg images with correct
+# TEST 4 (F2P Behavioral, 8pts): Helper balances 3 reg images with correct
 #         distribution (3 reg x subset_repeats=2, 10 train).
 #         Catches naive stubs that set repeats = num_train per image.
 ###############################################################################
-echo "--- Test 4/13: Helper balances 3 reg images (3 reg, 10 train) ---"
+echo "--- Test 4/14: Helper balances 3 reg images (3 reg, 10 train) ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 8)) || true
 import json, sys, logging, math, typing
 
@@ -336,10 +335,10 @@ print(f"PASS: 3 reg balanced, total={total}")
 PYEOF
 
 ###############################################################################
-# TEST 5 (Behavioral, 8pts): Helper calls register_image for each reg image.
+# TEST 5 (F2P Behavioral, 8pts): Helper calls register_image for each reg image.
 #         Uses a tracking mock to verify register_image is actually called.
 ###############################################################################
-echo "--- Test 5/13: Helper calls register_image for each reg image ---"
+echo "--- Test 5/14: Helper calls register_image for each reg image ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 8)) || true
 import json, sys, logging, math, typing
 
@@ -391,10 +390,10 @@ print(f"PASS: register_image called for all {len(expected)} reg images")
 PYEOF
 
 ###############################################################################
-# TEST 6 (Behavioral, 8pts): Helper with varied subset_repeats
+# TEST 6 (F2P Behavioral, 8pts): Helper with varied subset_repeats
 #         2 reg with subset_repeats 1 and 3, 7 train
 ###############################################################################
-echo "--- Test 6/13: Helper with varied subset_repeats (2 reg, 7 train) ---"
+echo "--- Test 6/14: Helper with varied subset_repeats (2 reg, 7 train) ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 8)) || true
 import json, sys, logging, math, typing
 
@@ -453,14 +452,14 @@ print(f"PASS: Varied repeats: r_a={t.image_data['r_a'].num_repeats}, r_b={t.imag
 PYEOF
 
 ###############################################################################
-# TEST 7 (Behavioral, 15pts): rebalance_regularization_images end-to-end.
+# TEST 7 (F2P Behavioral, 20pts): rebalance_regularization_images end-to-end.
 #         Sets up mock with train + reg images, calls rebalance, verifies
 #         reg images are removed and re-registered with balanced repeats.
 #         Accepts either: (a) helper+rebalance or (b) modified rebalance alone.
 #         Nop (unmodified rebalance with first_loop) is rejected.
 ###############################################################################
 echo "--- Test 7/14: rebalance_regularization_images end-to-end ---"
-timeout 15 python3 << 'PYEOF' && R=$((R + 15)) || true
+timeout 15 python3 << 'PYEOF' && R=$((R + 20)) || true
 import json, sys, logging, math, typing
 
 cache = json.load(open("/tmp/test_cache.json"))
@@ -558,7 +557,7 @@ print(f"PASS: rebalance end-to-end (train={train_total}, reg={reg_total})")
 PYEOF
 
 ###############################################################################
-# TEST 8 (Behavioral, 5pts): update_counts=False skips update_dataset_image_counts.
+# TEST 8 (F2P Behavioral, 5pts): update_counts=False skips update_dataset_image_counts.
 #         Finds the update_counts-like param on filter_registered_images_by_orig_resolution
 #         and calls with False to verify count update is skipped.
 ###############################################################################
@@ -617,7 +616,7 @@ print(f"PASS: {param}=False skips count update")
 PYEOF
 
 ###############################################################################
-# TEST 9 (Behavioral, 4pts): update_counts=True triggers update_dataset_image_counts
+# TEST 9 (F2P Behavioral, 4pts): update_counts=True triggers update_dataset_image_counts
 ###############################################################################
 echo "--- Test 9/14: update_counts=True triggers count update in base filter ---"
 timeout 15 python3 << 'PYEOF' && R=$((R + 4)) || true
@@ -671,12 +670,12 @@ print(f"PASS: {param}=True triggers count update")
 PYEOF
 
 ###############################################################################
-# TEST 10 (Behavioral, 15pts): Helper handles zero reg images gracefully
+# TEST 10 (F2P Behavioral, 5pts): Helper handles zero reg images gracefully
 #         Empty reg_infos list should not crash or hang (infinite loop).
 #         Uses threading with a short timeout to detect hangs.
 ###############################################################################
 echo "--- Test 10/14: Helper handles zero reg images ---"
-timeout 10 python3 << 'PYEOF' && R=$((R + 15)) || true
+timeout 10 python3 << 'PYEOF' && R=$((R + 5)) || true
 import json, sys, logging, math, typing, threading
 
 cache = json.load(open("/tmp/test_cache.json"))
@@ -729,7 +728,7 @@ print("PASS: Helper handles empty reg_infos gracefully")
 PYEOF
 
 ###############################################################################
-# TEST 11 (Behavioral, 10pts): Duplicate balancing loop is removed from __init__
+# TEST 11 (F2P Behavioral, 10pts): Duplicate balancing loop is removed from __init__
 #         Verify that __init__ no longer contains the inline while-loop for
 #         balancing (it should call the helper instead).
 ###############################################################################
@@ -787,7 +786,7 @@ echo "--- Test 12/14: P2P upstream library tests ---"
 ) && R=$((R + 3)) || true
 
 ###############################################################################
-# TEST 13 (Compile, 2pts): File compiles cleanly
+# TEST 13 (P2P Compile, 2pts): File compiles cleanly
 ###############################################################################
 echo "--- Test 13/14: train_util.py compiles ---"
 python3 -m py_compile /workspace/sd-scripts/library/train_util.py && \
@@ -795,27 +794,95 @@ python3 -m py_compile /workspace/sd-scripts/library/train_util.py && \
     echo "FAIL: py_compile failed"
 
 ###############################################################################
-# TEST 14 (Behavioral, 4pts): DreamBooth filter override does NOT redundantly
-#         call update_dataset_image_counts() after rebalancing.
-#         The base class already calls it; the override should not call it again.
+# TEST 14 (F2P Behavioral, 10pts): End-to-end DreamBooth filter override calls
+#         update_dataset_image_counts at most ONCE when is_training_dataset=True.
+#         Covers the instruction ask: "fix the redundant double call to
+#         update_dataset_image_counts()". Stitches base filter + DB override +
+#         rebalance (+helper) and asserts the count is not doubled.
+#         Accepts ANY approach: update_counts param, moving call into rebalance,
+#         or any other mechanism that eliminates the double call.
 ###############################################################################
-echo "--- Test 14/14: DreamBooth filter removed redundant update_dataset_image_counts ---"
-timeout 15 python3 << 'PYEOF' && R=$((R + 4)) || true
-import json, sys
+echo "--- Test 14/14: DreamBooth training filter calls update_dataset_image_counts <=1x ---"
+timeout 15 python3 << 'PYEOF' && R=$((R + 10)) || true
+import json, sys, logging, math, typing
 
 cache = json.load(open("/tmp/test_cache.json"))
 if not cache.get("parse_ok"):
     print("FAIL: Could not parse source"); sys.exit(1)
-if not cache.get("dreambooth_found"):
-    print("FAIL: DreamBoothDataset not found"); sys.exit(1)
-if "db_filter_source" not in cache:
-    print("FAIL: DreamBooth filter_registered_images_by_orig_resolution not found"); sys.exit(1)
+if "db_filter_source" not in cache or "filter_source" not in cache:
+    print("FAIL: Filter sources not found in cache"); sys.exit(1)
+if "rebalance_source" not in cache:
+    print("FAIL: rebalance_regularization_images not found"); sys.exit(1)
 
-if cache.get("db_filter_calls_update", True):
-    print("FAIL: DreamBooth filter override still calls update_dataset_image_counts()")
+helper_src = cache.get("helper_source", "")
+rebalance_src = cache["rebalance_source"]
+db_filter_src = cache["db_filter_source"]
+base_filter_src = cache["filter_source"]
+
+base_code = (
+    "class _Base:\n"
+    "    def has_orig_resolution_filter(self): return True\n"
+    "    def check_orig_resolution(self, size):\n"
+    "        return size[0] >= 50 and size[1] >= 50\n"
+    "    def update_dataset_image_counts(self):\n"
+    "        self._update_calls = getattr(self, '_update_calls', 0) + 1\n"
+    "    def register_image(self, info, subset):\n"
+    "        self.image_data[info.image_key] = info\n"
+    "        self.image_to_subset[info.image_key] = subset\n"
+    + "\n".join("    " + l for l in base_filter_src.splitlines()) + "\n"
+)
+
+db_code = "class _DB(_Base):\n"
+if helper_src:
+    db_code += "\n".join("    " + l for l in helper_src.splitlines()) + "\n"
+db_code += "\n".join("    " + l for l in rebalance_src.splitlines()) + "\n"
+db_code += "\n".join("    " + l for l in db_filter_src.splitlines()) + "\n"
+
+code = "from __future__ import annotations\n" + base_code + "\n" + db_code
+
+N = {"logger": logging.getLogger("test"), "logging": logging,
+     "math": math, "typing": typing,
+     "ImageInfo": object, "DreamBoothSubset": object}
+N.update({k: v for k, v in vars(typing).items() if not k.startswith('_')})
+
+try:
+    exec(code, N)
+except Exception as e:
+    print(f"FAIL: Could not compile stitched DreamBooth class: {e}"); sys.exit(1)
+
+class I:
+    def __init__(self, k, r, reg=False, size=(100, 100)):
+        self.image_key = k; self.num_repeats = r; self.is_reg = reg
+        self.image_size = size
+class S:
+    def __init__(self, r):
+        self.num_repeats = r
+
+db = N["_DB"]()
+db.is_training_dataset = True
+db._update_calls = 0
+db.image_data = {
+    "train_0": I("train_0", 2, False, (100, 100)),
+    "train_1": I("train_1", 2, False, (100, 100)),
+    "train_2": I("train_2", 2, False, (100, 100)),
+    "reg_0":   I("reg_0",   1, True,  (10, 10)),
+    "reg_1":   I("reg_1",   1, True,  (100, 100)),
+}
+db.image_to_subset = {k: S(v.num_repeats) for k, v in db.image_data.items()}
+
+try:
+    db.filter_registered_images_by_orig_resolution()
+except Exception as e:
+    print(f"FAIL: DreamBooth filter call failed: {e}"); sys.exit(1)
+
+if db._update_calls > 1:
+    print(f"FAIL: update_dataset_image_counts called {db._update_calls} times "
+          "(expected <=1; double-count not eliminated)")
     sys.exit(1)
-
-print("PASS: DreamBooth filter override does not redundantly call update_dataset_image_counts")
+if db._update_calls < 1:
+    print("FAIL: update_dataset_image_counts never called (counts never updated after filter)")
+    sys.exit(1)
+print(f"PASS: update_dataset_image_counts called exactly {db._update_calls}x after filter")
 PYEOF
 
 ###############################################################################

@@ -16,11 +16,27 @@ Source session: `b7594a27-0496-43a2-9696-44d14f2df71d`
 **BEFORE EVERY TURN, follow this checklist IN ORDER. Stop at the first YES:**
 
 1. Have I already sent 4 messages this session? → **SILENCE** (hard cap reached)
-2. Is the agent currently writing files, running commands, or mid-thought? → **SILENCE**
-3. Have I already sent this exact message before? → **SILENCE** (never repeat)
-4. Has the agent already addressed the concern I'm about to raise? → **SILENCE**
-5. Does one of the 3 triggers below apply? → Send that message
-6. Otherwise → **SILENCE**
+2. Have I already sent this exact message before? → **SILENCE** (never repeat)
+3. Has the agent already addressed the concern I'm about to raise? → **SILENCE**
+4. Does one of the triggers in the table below apply? → Send that message
+5. Otherwise → **SILENCE**
+
+**Note on "mid-thought":** An agent response that commits to an architectural approach (e.g. names files, writes code, lists a module plan) is EVALUABLE for triggers — even if the response appears truncated or the agent will clearly write more files. Architectural commitment triggers (T3 especially) fire off what the agent has ALREADY shown, not off whether the agent has "finished." Do NOT silence T3 just because the agent is still generating. Only silence if the agent is actively running a tool (bash, file write in flight) AND the trigger specifically requires post-completion state (T4/T5).
+
+## Trigger Table (canonical)
+
+T1 is `instruction.md` (already fired by Harbor as Turn 1). T2–T5 mirror the original session's substantive user interventions. Each row must pass its `DO NOT SEND IF` guard in the narrative below before firing — the current `instruction.md` already encodes some of these asks, so several triggers will be DEAD for a competent agent.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Agent has spent >=3 tool calls reading docs / discussing broad multi-agent architecture (HR, departments, workflow redesign) and has NOT yet opened or written any file under `src/security/`. | `security first, full architecture can come later` | FIRE ONCE. DEAD if agent went straight to `src/security/` (instruction.md already includes this clarification). COOLDOWN: do not re-fire even if agent briefly revisits architecture later. |
+| T3 | Agent has written, begun writing, outlined, or listed pattern/regex-based security files (e.g. `risk-tiers.ts`, `pattern-check.ts`, a `TOOL_RISK_MAP`, regex-based injection detector, static risk tables) AND the agent's visible response / plan / file set does NOT mention any LLM reviewer (keywords: `reviewer.ts`, `REVIEWER_SYSTEM_PROMPT`, `reviewWithLlm`, "LLM reviewer", "same endpoint different prompt", "LLM as security", "LLM-based review"). Even a single first-file commit (e.g. just `risk-tiers.ts`) is enough to fire — you do not need to wait for more files. | `My feedback would be this feels like quite on the defensive. Prompt injection is quite advanced, they could be leading the LLM with multiple back and forth prompts in order to break it. I was thinking of using LLM as security also to review, let'sd discuss` | FIRE ONCE. DEAD if `reviewer.ts` / LLM-review module is in agent's plan, code, or numbered outline. GATE: scan agent's full visible response text for the keyword list above; if none appear, FIRE. Do NOT wait for the agent to "finish" — the architectural commitment is visible as soon as pattern-only files are named or started. |
+| T4 | Agent has finished writing `reviewer.ts` (or equivalent LLM-review module) and has NOT described or sketched any plan for testing the reviewer against an actual LLM (no mention of integration tests, mock LLM responses, or real-endpoint dry-run). | `how do you plan to test this with actual LLM? Just answer` | FIRE ONCE. GATE-ON-T3: only fires after an LLM reviewer module is on disk. DEAD if agent already wrote tests or discussed a testing strategy for the reviewer. |
+| T5 | Agent has explicitly signaled completion of ALL deliverables (`risk-tiers.ts`, `pattern-check.ts`, `risk-classifier.ts`, `reviewer.ts`, `decision-flow.ts`, `index.ts`, plus any tests) AND is idle (not writing, not running commands, not exploring). Agent must have said something like "all done", "implementation complete", or equivalent. | `What's next?` | FIRE ONCE, EVER. NEVER send while agent is still working, fixing errors, or writing files. Brief pauses between tasks do NOT count as idle. |
+
+### Approval shortcut (not counted against cap)
+
+If the agent explicitly asks "should I proceed?" / "do you approve?" / "continue?", reply `yes, proceed` — but ONLY when asked. Do not volunteer.
 
 ---
 
@@ -30,10 +46,11 @@ Source session: `b7594a27-0496-43a2-9696-44d14f2df71d`
 **DO NOT SEND IF:** Agent has already started working on security files (risk-tiers.ts, pattern-check.ts, etc.) OR has already focused on prompt injection. If the agent went straight to security, this trigger never fires.
 
 ### Trigger B — Architecture Pivot: Use LLM for Review (send ONCE, max)
-**Message:** "My feedback would be this feels like quite on the defensive. Prompt injection is quite advanced, they could be leading the LLM with multiple back and forth prompts in order to break it. I was thinking of using LLM as security also to review, let's discuss"
-**SEND ONLY IF:** Agent's security design relies SOLELY on static regex/pattern-matching with NO LLM-based review layer.
-**DO NOT SEND IF:** Agent has already created or proposed an LLM reviewer (reviewer.ts, any mention of "LLM reviewer", "same endpoint different prompt", etc.). Check the agent's code — if it includes a reviewer module that uses LLM calls, this trigger is DEAD. Never fire it.
-**CRITICAL:** This is the most commonly misfired trigger. If the agent built `reviewer.ts` with `REVIEWER_SYSTEM_PROMPT`, `reviewWithLlm`, or any LLM-based review function, DO NOT SEND THIS.
+**Message:** "My feedback would be this feels like quite on the defensive. Prompt injection is quite advanced, they could be leading the LLM with multiple back and forth prompts in order to break it. I was thinking of using LLM as security also to review, let'sd discuss"
+**SEND ONLY IF:** Agent's visible security design so far relies on static regex/pattern-matching (e.g. `TOOL_RISK_MAP`, `risk-tiers.ts`, `pattern-check.ts`) with NO visible LLM-based review layer.
+**FIRE EARLY:** You do NOT need the agent to finish all files. As soon as the agent names, sketches, or starts writing pattern-only modules and has not mentioned an LLM reviewer in the same response, FIRE. The real user also pivoted the agent mid-design — they did not wait until all pattern files were written.
+**DO NOT SEND IF:** Agent has already created or proposed an LLM reviewer (reviewer.ts, any mention of "LLM reviewer", "same endpoint different prompt", "LLM as security reviewer", etc.). Check the agent's full response text — if it includes a reviewer module or plans one, this trigger is DEAD.
+**CRITICAL:** If the agent built/plans `reviewer.ts` with `REVIEWER_SYSTEM_PROMPT`, `reviewWithLlm`, or any LLM-based review function, DO NOT SEND THIS.
 
 ### Trigger C — Final Check-in (send ONCE, max)
 **Message:** "What's next?"

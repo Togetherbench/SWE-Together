@@ -20,13 +20,13 @@ Source session: `0908a276-c7d2-40c7-8b93-ea77595895da`
 
 **Turn 2** (conditional — only if agent's IQ3_XXS fix still uses F.embedding):
   Context: Agent has fixed IQ3_XXS and tests pass, but the implementation still uses `F.embedding` or `torch.nn.functional.embedding` for lookup tables.
-  Said: "Replace `F.embedding` by elemental torch operations."
+  Said: "Can we replace `F.embedding` by elemental torch operations?"
   Why: The instruction says to use elemental torch ops, but the agent may have missed this. This is a refinement correction.
   Condition: Only send if the agent's IQ3_XXS fix uses F.embedding AND the agent seems to have moved on to other work.
 
 **Turn 3** (conditional — only if IQ1_S edit silently failed):
   Context: Agent claimed to implement IQ1_S but the function doesn't actually work (file edit failure, wrong function signature, or test still fails for IQ1_S specifically).
-  Said: "The IQ1_S function doesn't seem to be working. Check that `dequantize_blocks_IQ1_S` is correctly saved in `dequant.py` and test it."
+  Said: "Implement `dequantize_blocks_IQ1_S` in @qwen3_moe_fused/quantize_gguf/dequant.py and test it using @test_gguf_dequant.py"
   Why: Re-state correction when agent believes it's done but the work wasn't actually saved/correct.
   Condition: Only send if agent reports IQ1_S is done but the test output shows IQ1_S is still failing.
 

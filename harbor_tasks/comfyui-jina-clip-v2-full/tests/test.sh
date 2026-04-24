@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification test for ComfyUI Jina CLIP v2 text encoder implementation.
 #
@@ -8,7 +8,7 @@
 # All tests run on CPU — no GPU required.
 # Writes reward to /logs/verifier/reward.txt (0.0 to 1.0).
 #
-# Scoring weights (21 tests, sum = 1.00, no slack):
+# Scoring weights (21 F2P tests + 1 P2P test; F2P sum = 1.00, P2P = 0.04 bonus capped at 1.0):
 #   Test 1:  0.02  File exists + valid Python                       [structural F2P]
 #   Test 2:  0.03  Anti-stub: classes, lines, forward(), RoPE       [structural F2P]
 #   Test 3:  0.02  Config references: 1024, 24, SentencePiece       [structural F2P]
@@ -29,6 +29,7 @@
 #   Test 18: 0.04  FFN intermediate dim = 4096                      [behavioral F2P]
 #   Test 19: 0.06  Layer norm epsilon close to 1e-5                 [behavioral F2P]
 #   Test 20: 0.06  State dict key compatibility                     [behavioral F2P]
+#   Test 21: 0.04  Mean pooling behavior (not CLS/last)             [behavioral F2P]
 #   UP:      0.04  Upstream ComfyUI unit tests                      [upstream P2P]
 #
 set +e
@@ -50,12 +51,6 @@ PYTHON="/workspace/venv/bin/python3"
 if ! "$PYTHON" -c "import torch" 2>/dev/null; then
     if python3 -c "import torch" 2>/dev/null; then
         PYTHON="python3"
-    else
-        /workspace/venv/bin/pip install --no-cache-dir \
-            torch==2.6.0+cpu --index-url https://download.pytorch.org/whl/cpu 2>/dev/null
-        /workspace/venv/bin/pip install --no-cache-dir \
-            transformers sentencepiece safetensors aiohttp einops 2>/dev/null
-        PYTHON="/workspace/venv/bin/python3"
     fi
 fi
 export PYTHONPATH="/workspace/ComfyUI:${PYTHONPATH:-}"
@@ -110,7 +105,13 @@ def encode(instance, tokens):
     keys_to_try = []
     if clip_name:
         keys_to_try.append(clip_name)
-    keys_to_try.extend(["jina_clip_2", "clip", "l"])
+    # Also discover attribute names on the wrapper that hold sub-models
+    for attr_name in dir(instance):
+        if "jina" in attr_name.lower() or "clip" in attr_name.lower():
+            attr = getattr(instance, attr_name, None)
+            if isinstance(attr, torch.nn.Module) and hasattr(attr, "encode_token_weights"):
+                keys_to_try.append(attr_name)
+    keys_to_try.extend(["jina_clip_2", "jina_clip_v2", "jina", "clip", "l"])
     for key in keys_to_try:
         try:
             r = instance.encode_token_weights({key: tokens})
@@ -849,6 +850,91 @@ PYEOF
 )
 echo "  Result: $T20"
 if [[ "$T20" == PASS* ]]; then add_reward 0.06; fi
+
+# ===================================================================
+# TEST 21 (0.04): Mean pooling behavior (not CLS/last) [behavioral]
+# Closes gap on the "output pooling strategy" requirement:
+# Test 2 only catches pooling structurally via regex; this verifies
+# the pooled output is actually the mean of the sequence, not a
+# first-token (CLS) or last-token pool.
+# ===================================================================
+echo ""
+echo "=== Test 21: Mean pooling behavior (not CLS/last) ==="
+T21=$("$PYTHON" << 'PYEOF'
+import sys
+sys.path.insert(0, "/tmp")
+try:
+    from _jina_test_helpers import find_wrapper_cls, make_instance, encode, jina_mod
+    import torch
+except Exception as e:
+    print(f"FAIL:{e}"); sys.exit(0)
+try:
+    wrapper_cls, style = find_wrapper_cls()
+    if wrapper_cls is None: print("FAIL:no_wrapper"); sys.exit(0)
+    instance = make_instance(wrapper_cls)
+    instance.eval()
+    tokens = [[(1, 1.0), (42, 1.0), (100, 1.0), (500, 1.0), (900, 1.0), (2, 1.0)]]
+    with torch.no_grad():
+        result = encode(instance, tokens)
+    if not isinstance(result, (tuple, list)) or len(result) < 2:
+        print(f"FAIL:no_tuple:{type(result).__name__}"); sys.exit(0)
+    cond = result[0]
+    pooled = result[1]
+    if isinstance(pooled, dict):
+        pooled_t = None
+        for v in pooled.values():
+            if isinstance(v, torch.Tensor) and v.ndim >= 1 and v.shape[-1] == 1024:
+                pooled_t = v; break
+        pooled = pooled_t
+    if not isinstance(cond, torch.Tensor) or not isinstance(pooled, torch.Tensor):
+        print(f"FAIL:not_tensor:cond={type(cond).__name__},pooled={type(pooled).__name__}"); sys.exit(0)
+    if cond.ndim < 2 or cond.shape[-1] != 1024:
+        print(f"FAIL:bad_cond_shape:{tuple(cond.shape)}"); sys.exit(0)
+    # Normalize cond to [B, T, H]
+    c = cond if cond.ndim == 3 else cond.unsqueeze(0)
+    # Normalize pooled to [B, H]
+    p = pooled if pooled.ndim == 2 else pooled.reshape(-1, pooled.shape[-1]) if pooled.ndim > 2 else pooled.unsqueeze(0)
+    if p.shape[-1] != 1024:
+        print(f"FAIL:pooled_dim={p.shape[-1]}"); sys.exit(0)
+    mean_pool = c.mean(dim=-2)
+    cls_pool = c[..., 0, :]
+    last_pool = c[..., -1, :]
+    def l2(a, b):
+        a = a.reshape(-1).float()
+        b = b.reshape(-1).float()
+        n = min(a.shape[0], b.shape[0])
+        return (a[:n] - b[:n]).pow(2).sum().sqrt().item()
+    d_mean = l2(p, mean_pool)
+    d_cls = l2(p, cls_pool)
+    d_last = l2(p, last_pool)
+    # Mean must be strictly closest (catches both CLS and last-token pooling).
+    # With random weights, all pooling strategies may produce near-identical outputs
+    # (all token embeddings converge), so accept if all distances are tiny.
+    nearest_wrong = min(d_cls, d_last)
+    all_tiny = (d_mean < 1e-3 and d_cls < 1e-3 and d_last < 1e-3)
+    if all_tiny:
+        # Random-weight regime: all token outputs converge, can't distinguish pooling
+        # Fall back to source code check across the whole module
+        import inspect as _insp, re as _re
+        try:
+            _src = _insp.getsource(jina_mod).lower()
+        except Exception:
+            _src = ""
+        has_mean = bool(_re.search(r'\.mean\s*\(|mean.pool|mean_pool|attention_mask.*sum', _src))
+        if has_mean:
+            print(f"PASS:random_weights_mean_src:mean={d_mean:.4f},cls={d_cls:.4f},last={d_last:.4f}")
+        else:
+            print(f"FAIL:no_mean_in_source:mean={d_mean:.4f},cls={d_cls:.4f},last={d_last:.4f}")
+    elif d_mean < nearest_wrong * 0.9 or (d_mean < 1e-3 and nearest_wrong > 1e-3):
+        print(f"PASS:mean={d_mean:.4f},cls={d_cls:.4f},last={d_last:.4f}")
+    else:
+        print(f"FAIL:mean={d_mean:.4f},cls={d_cls:.4f},last={d_last:.4f}")
+except Exception as e:
+    print(f"FAIL:{e}")
+PYEOF
+)
+echo "  Result: $T21"
+if [[ "$T21" == PASS* ]]; then add_reward 0.04; fi
 
 # ===================================================================
 # P2P UPSTREAM: ComfyUI's own CPU-safe unit tests (0.04)

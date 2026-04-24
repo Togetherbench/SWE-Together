@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12.8-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -33,10 +33,11 @@ RUN cd /workspace/mlx-lm && \
     pip install --no-cache-dir -e . || true
 
 # Ensure mlx is installed (CPU-only stub is sufficient for unit tests)
-RUN pip install --no-cache-dir mlx 2>/dev/null || true
+# mlx is macOS-only; install will fail on Linux, which is expected.
+RUN pip install --no-cache-dir mlx==0.22.2 2>/dev/null || true
 
 # Install regex package (used by tool_parsers: function_gemma, minimax_m2, qwen3_coder)
-RUN pip install --no-cache-dir regex 2>/dev/null || true
+RUN pip install --no-cache-dir regex==2024.11.6 2>/dev/null || true
 
 # Set PYTHONPATH so mlx_lm is importable
 ENV PYTHONPATH="/workspace/mlx-lm:$PYTHONPATH"
@@ -46,8 +47,10 @@ RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent" && \
     git config --global --add safe.directory /workspace/mlx-lm
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/root/.local/bin:$PATH"
 
 # Remove any AGENTS.md / CLAUDE.md that could interfere with agent behavior
@@ -56,7 +59,7 @@ RUN rm -f /workspace/mlx-lm/AGENTS.md /workspace/mlx-lm/CLAUDE.md
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent && \
     mkdir -p /home/agent/.local/share/claude/versions /home/agent/.local/bin && \
-    CLAUDE_VER=$(ls /root/.local/share/claude/versions/ | head -1) && \
+    CLAUDE_VER=2.1.108 && \
     cp /root/.local/share/claude/versions/$CLAUDE_VER /home/agent/.local/share/claude/versions/$CLAUDE_VER && \
     chmod +x /home/agent/.local/share/claude/versions/$CLAUDE_VER && \
     ln -sf /home/agent/.local/share/claude/versions/$CLAUDE_VER /home/agent/.local/bin/claude && \

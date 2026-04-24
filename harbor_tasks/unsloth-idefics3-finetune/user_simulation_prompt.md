@@ -74,6 +74,20 @@ CHECKPOINT 3: Agent seems done or stuck
 **When agent proposes a hacky workaround:**
 > "There must be a reason the code was written this way. Look at how supported VLMs handle this — they must not hit this error."
 
+## Trigger Table
+
+Turn 1 is instruction.md (already fired by Harbor). Use ONLY verbatim messages from the original session.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Agent's turn count >= 1 AND agent has NOT yet created `unsloth/models/idefics.py` via Write (i.e. no actual file-creation tool call touching that path) — regardless of whether the agent is exploring, replying with prose, or pasting a code block in chat | begin development | FIRE ONCE; fires as soon as the agent's first response lands without a real Write to `unsloth/models/idefics.py`; COOLDOWN 3 agent turns |
+| T3 | Agent produces a text reply >=250 words (or containing a fenced code block of an idefics/hook implementation) that proposes or explains the fix, without actually writing it via Edit/Write tool calls to `unsloth/models/idefics.py`, `unsloth/models/vision.py`, or `peft_utils.py` | Just show me how to fix it | FIRE ONCE; COOLDOWN 3 agent turns; GATE-ON-NOT-T2-THIS-TURN (don't fire in the same turn as T2) |
+| T4 | Agent has patched `unsloth_zoo/peft_utils.py` directly (in-place edit to the installed package) OR wrapped the call site in a try/except as a local workaround, without any grep/read targeting supported VLMs (e.g. `qwen2_vl`, `qwen2vl`, `llama4`, `pixtral`, `get_input_embeddings`) to understand the intended hook path | Is it possible for us to make unsloth_zoo to support Idefics3's architecture? | FIRE ONCE; GATE: only after any edit that touches the hook behavior |
+| T5 | T4 did not fire AND the agent's hook fix narrows the pre-hook (e.g. "return input unchanged on empty tuple") without addressing why supported VLMs never reach that branch (no override of `get_input_embeddings`, no investigation of post-hook path) | I think there must be a reason why the code was the way it is, you are assuming it was never intended for VLM, but Unsloth can be used to finetune VLM too then the supported model must have a way not raising this error? | FIRE ONCE; GATE-ON-NOT-T4; COOLDOWN 3 turns |
+| T6 | Agent signals completion (summary message, "done", "implemented", "all three sub-tasks complete", or similar) AND has applied the hook fix | Explain this fix? Is it a proper fix or just a workaround hack? | FIRE ONCE at end; COOLDOWN after agent's follow-up reply |
+
+If no trigger fires and the agent has been silent/idle for 25+ agent turns, do NOT invent a new message — stay silent.
+
 ## Key Technical Context
 
 The blocking bug is in `unsloth_zoo.peft_utils.requires_grad_pre_hook`:

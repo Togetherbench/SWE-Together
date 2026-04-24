@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11.12-slim@sha256:dbf1de478a55d6763afaa39c2f3d7b54b25230614980276de5cacdde79529d0c
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -37,16 +37,14 @@ RUN git init /tmp/llama.cpp && \
     ldconfig && \
     rm -rf /tmp/llama.cpp
 
-# Install Python dependencies (CPU-only PyTorch)
+# Install Python dependencies (CPU-only PyTorch) — all versions pinned
 RUN pip install --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir numpy gguf
+    torch==2.6.0+cpu --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir numpy==1.26.4 gguf==0.16.3
 
-# Modify test_gguf_dequant.py for Linux/CPU environment
-# 1. Replace Windows DLL path with Linux shared library path
-# 2. Change device from "cuda" to "cpu"
-RUN sed -i 's/device = "cuda"/device = "cpu"/' test_gguf_dequant.py && \
-    sed -i '/dll_path/c\    dll_path = "/usr/local/lib/libggml.so"' test_gguf_dequant.py
+# NOTE: test_gguf_dequant.py is NOT patched for this environment.
+# The original file references a Windows DLL path and CUDA device.
+# The agent must discover and fix these issues to use the test.
 
 # Synthesize buggy state: replace working IQ3_XXS with a buggy version
 # (alignment issues, uses F.embedding). Script is deleted after running.
@@ -61,20 +59,23 @@ RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent" && \
     cd /workspace && git add -A && git commit -m "initial workspace state"
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 
-# Create non-root user for Claude Code (--dangerously-skip-permissions requires non-root)
+# Create non-root user for Claude Code agent
 RUN useradd -m -s /bin/bash agent && \
     mkdir -p /home/agent/.local/bin /home/agent/.local/share/claude && \
     cp -rL /root/.local/share/claude/versions /home/agent/.local/share/claude/versions && \
     ln -sf /home/agent/.local/share/claude/versions/* /home/agent/.local/bin/claude && \
-    chown -R agent:agent /home/agent/.local /workspace /logs && \
+    mkdir -p /logs/agent/sessions /logs/verifier && \
+    chmod -R 777 /logs && \
+    chown -R agent:agent /home/agent/.local /workspace && \
     git config --global --add safe.directory /workspace
 
-ENV PATH="/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ENV HOME="/home/agent"
+ENV PATH="/root/.local/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000
-USER agent
+RUN mkdir -p /installed-agent && chmod 777 /installed-agent
 
 WORKDIR /workspace

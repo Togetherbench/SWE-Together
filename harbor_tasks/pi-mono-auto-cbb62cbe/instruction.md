@@ -1,0 +1,3 @@
+/var/folders/49/l4171l3n219_xwq30fmyzr8w0000gn/T/TemporaryItems/NSIRD_screencaptureui_eyEWqI/Screenshot\ 2026-01-30\ at\ 01.33.03.png
+
+i want to build an easteregg into the coding agent. when a user selects opencode provider and kimi k2.5, i want to add a component to the chat messages container in @packages/coding-agent/src/modes/interactive/interactive-mode.ts similar to the @packages/coding-agent/src/modes/interactive/components/armin.ts component that thanks opencode for the free access to that model. i want to make it over the top and hilarious, and it should include "powered by daxnuts" or whatever is in that screenshot

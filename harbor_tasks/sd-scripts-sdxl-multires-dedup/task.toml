@@ -8,6 +8,9 @@ category = "feature"
 tags = ["sd-scripts", "sdxl", "dataset", "multi-resolution", "caching", "training"]
 expert_time_estimate_min = 15.0
 junior_time_estimate_min = 60.0
+session_resolution = "cut_off"
+session_resolution_confidence = 0.85
+session_resolution_reasoning = "Session ended mid-discussion: user asked 'Why is it not a problem in musubi-tuner?' at 03:42 UTC; assistant gave a partial compile+LoRA explanation at 03:43 UTC with no user follow-up or acknowledgment. All core features were implemented but the final Prodigy LR investigation was unresolved."
 
 [verifier]
 timeout_sec = 120.0
@@ -16,6 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 2400.0
 
 [environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/sd-scripts-sdxl-multires-dedup:43223e89e63a"
 build_timeout_sec = 600.0
 cpus = 1
 memory = "4G"

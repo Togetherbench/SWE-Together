@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -16,8 +16,8 @@ RUN apt-get update -o Acquire::AllowInsecureRepositories=true \
     && apt-get install -y --allow-unauthenticated nodejs \
     && rm -rf /var/lib/apt/lists/* /tmp/nodesource_setup.sh
 
-# Create workspace
-RUN mkdir -p /workspace /logs/verifier
+# Create workspace and log directories
+RUN mkdir -p /workspace /logs/verifier /logs/agent/sessions
 
 WORKDIR /workspace
 
@@ -38,14 +38,10 @@ RUN rm -f /workspace/banodoco-wrapped/AGENTS.md /workspace/banodoco-wrapped/CLAU
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"
 
-# Create non-root user for Claude Code (refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/bash agent && \
-    chown -R agent:agent /workspace /logs && \
-    mkdir -p /tests && chown agent:agent /tests
-
-# Pre-install Claude Code CLI as non-root user
-USER agent
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/home/agent/.local/bin:$PATH"
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
+ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace/banodoco-wrapped

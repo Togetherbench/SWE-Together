@@ -2,10 +2,10 @@
 
 ## Simulator Calibration
 
-- **Total genuine user messages**: 3 across the session
-- **Longest silence**: 80-120 agent turns (user waits through the entire test implementation)
-- **Communication pattern**: User provides initial task, waits for implementation, then asks targeted follow-up questions about test quality
-- **Target message count**: 3 turns. Default behavior is long silence. Intervene only at the specific points listed below.
+- **Total genuine user messages**: 3 in-scope messages used for this scoped task (instruction + 2 verbatim follow-ups drawn from the original session)
+- **Longest silence**: User is willing to wait, but should intervene early if the agent shows ANY sign of progress on tests
+- **Communication pattern**: Terse, typo-prone follow-ups. User is a non-expert who asks about security coverage once tests exist, then accepts the answer
+- **Target message count**: 3 turns. Fire Turn 2 as soon as the agent has written at least one test file OR shown it is exploring source for tests. Fire Turn 3 once the agent answers the security question. Do NOT wait for completion.
 
 ## User Turns
 
@@ -14,22 +14,42 @@
 - **Said**: (The content from instruction.md is the initial message)
 - **Why**: User has identified missing tests as the biggest quality gap and wants them written from scratch.
 
-### Turn 2 (after agent completes initial test writing, ~60-100 agent turns)
-- **Context**: Agent has written test files and hopefully run them. User wants to verify coverage depth.
-- **Said**: "Run the full test suite and show me the results. Which modules have the weakest test coverage? I want every module covered well."
-- **Why**: User wants to verify that the agent didn't just test the easy modules and skip the hard ones. Pushes the agent to fill coverage gaps.
+### Turn 2 — FIRE EARLY (after agent has taken any concrete test-writing action, typically 2–15 agent turns)
 
-### Turn 3 (after agent responds to Turn 2, ~5-15 agent turns)
-- **Context**: Agent showed test results and may have identified gaps.
-- **Said**: "Make sure the edge cases and error handling paths are well covered. I want tests that would actually catch bugs if someone broke these functions."
-- **Why**: User wants mutation-resistant tests, not superficial happy-path-only tests. Pushes for deeper quality.
+**Trigger header (match ANY of these — be generous, fire on the earliest match):**
+- Agent has created `tests/` directory, `conftest.py`, or any `test_*.py` file
+- Agent has read `secrets.py`, `anonymizer.py`, or another dataclaw module to plan tests
+- Agent has produced an outline of test cases or written at least one test function
+- Agent has run `pytest` even once
+- Agent has made ≥ 3 tool calls exploring the package
+- You have been asked whether to fire and ≥ 2 agent turns have elapsed since Turn 1
+
+**Anti-repetition**: Only fire Turn 2 once. If already fired, skip to Turn 3 rules.
+
+- **Said (VERBATIM)**: "what are therecurity concerns? "
+- **Why**: In the original session, after the agent began the plan the user asked this exact (typo-laden) question about security concerns. In our scoped test-writing task it pushes the agent to verify that secret-detection and anonymization code paths are covered by tests — the highest-value modules in the package. Preserve the typo "therecurity" exactly.
+
+### Turn 3 — FIRE after Turn 2 (2–10 agent turns after Turn 2 was fired)
+
+**Trigger header (match ANY):**
+- Agent has answered Turn 2 with any description of security-sensitive code or tests
+- Agent has enumerated findings, risks, or test coverage for secrets/anonymizer
+- Agent has written or updated a test file after Turn 2
+- ≥ 3 agent turns have elapsed since Turn 2 was fired
+
+**Anti-repetition**: Only fire Turn 3 once. Do not fire if Turn 2 has not fired yet.
+
+- **Said (VERBATIM)**: "mark them all dealt with"
+- **Why**: In the original session this was the user's verbatim acknowledgement after hearing the security rundown. Here it signals the agent to treat the security-related test coverage as confirmed and finalize/finish the suite.
 
 ## Important Notes
 
-- Do NOT send messages about PyPI registration, package publishing, version management, or anything outside the scope of writing tests
-- Do NOT fabricate API tokens, credentials, or other sensitive-looking strings
-- Keep messages focused on test quality and coverage
-- If the agent finishes everything and there's nothing meaningful to add, stop sending messages
+- User messages MUST be verbatim from `original_session.json`. The only verbatim in-scope follow-ups are Turn 2 ("what are therecurity concerns? ") and Turn 3 ("mark them all dealt with"). Do not fabricate.
+- Do NOT send messages about PyPI registration, package publishing, tokens, version bumps, or repo auto-update — the instruction.md has scoped this task to tests only, so those original-session messages (idx 149, 165, 172, 174, 178, 189) are out of scope and must be skipped.
+- Do NOT invent new messages, even if Turn 2/3 feel slightly tangential — the typo and brevity are authentic.
+- Prefer firing EARLIER rather than later. The prior trial fired 0 follow-ups because triggers waited for ~60–100 agent turns; that was wrong.
+- If the agent fully finishes everything before Turn 3 conditions match, still fire Turn 3 once the agent has answered Turn 2.
+- If the agent gets stuck or the session clearly ends, stop sending messages.
 
 ## Overview Table
 

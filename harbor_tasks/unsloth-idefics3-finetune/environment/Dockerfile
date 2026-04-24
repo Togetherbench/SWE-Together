@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12.13-slim
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tmux \
     && rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir asciinema
+    pip install --no-cache-dir asciinema==2.4.0
 
 # Clone the unsloth repo at commit 8f0b57ae (2026-02-02)
 # "Use standard gradient checkpointing for small sequence lengths (#3867)"
@@ -22,8 +22,8 @@ RUN git init /workspace/unsloth && \
     git checkout FETCH_HEAD
 
 # Install CPU-only PyTorch (no CUDA needed for structural verification)
-RUN pip install --no-cache-dir \
-    torch==2.6.0+cpu --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir --retries 5 --timeout 300 \
+    torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
 
 # Install core dependencies needed for unsloth to be importable.
 # We pin unsloth_zoo to 2026.1.4 -- the version from the session era --
@@ -31,20 +31,20 @@ RUN pip install --no-cache-dir \
 # Split into separate commands so a failure in one doesn't block the rest.
 RUN pip install --no-cache-dir \
     "unsloth_zoo==2026.1.4" \
-    "transformers>=4.48.0,<5.0.0" \
-    "peft>=0.18.0" \
-    "accelerate>=0.34.1" \
-    "datasets>=3.4.1,<4.4.0" \
-    "trl>=0.15.0,<0.28.0" \
-    "sentencepiece>=0.2.0" \
-    "protobuf" \
-    "packaging" \
-    "numpy" \
-    "tqdm" \
-    "psutil" \
-    "tyro" \
-    "huggingface_hub>=0.34.0" \
-    "hf_transfer" \
+    "transformers==4.57.6" \
+    "peft==0.19.1" \
+    "accelerate==1.13.0" \
+    "datasets==4.3.0" \
+    "trl==0.24.0" \
+    "sentencepiece==0.2.1" \
+    "protobuf==7.34.1" \
+    "packaging==26.1" \
+    "numpy==2.4.4" \
+    "tqdm==4.67.3" \
+    "psutil==7.2.2" \
+    "tyro==1.0.13" \
+    "huggingface_hub==0.36.2" \
+    "hf_transfer==0.1.9" \
     "wheel"
 
 # CPU compat: patch unsloth_zoo's get_device_type to return "cpu" instead of
@@ -80,8 +80,8 @@ RUN SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
     fi
 
 # Install optional deps that may not be available on all architectures
-RUN pip install --no-cache-dir "bitsandbytes>=0.45.0" 2>&1 || true
-RUN pip install --no-cache-dir "torchvision" 2>&1 || true
+RUN pip install --no-cache-dir "bitsandbytes==0.49.2" 2>&1 || true
+RUN pip install --no-cache-dir --retries 5 --timeout 300 "torchvision==0.20.1+cpu" --index-url https://download.pytorch.org/whl/cpu 2>&1 || true
 
 # Install unsloth itself in editable mode so agent changes take effect
 RUN cd /workspace/unsloth && \
@@ -89,7 +89,7 @@ RUN cd /workspace/unsloth && \
     pip install --no-cache-dir -e ".[huggingfacenotorch]" 2>&1 || true
 
 # Set PYTHONPATH so unsloth modules are importable
-ENV PYTHONPATH="/workspace/unsloth:${PYTHONPATH}"
+ENV PYTHONPATH="/workspace/unsloth"
 
 # Remove AGENTS.md / CLAUDE.md if present — these can block or confuse agents
 RUN cd /workspace/unsloth && rm -f AGENTS.md CLAUDE.md
@@ -104,8 +104,10 @@ RUN cd /workspace/unsloth && \
 # Create log directory for verifier output
 RUN mkdir -p /logs/verifier
 
-# Pre-install Claude Code CLI (standalone binary, no Node.js needed)
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Pre-install Claude Code CLI v2.1.108 (pinned for reproducibility — harness
+# version is part of the image hash). Harbor's install-claude-code.sh detects
+# `claude` in PATH and skips runtime install when this is present.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/root/.local/bin:$PATH"
 
 

@@ -37,37 +37,33 @@ Each row is one possible message. Conditions must be met for you to send it. Onc
 | T8 | _forward contains a try...except block. | (see below) | Skip if no try/except present. |
 | T9 | _forward has `t = timesteps` (not `1.0 - timesteps`) OR `return img` (not `-img`). | (see below) | Send ONCE if EITHER bug remains. |
 | T10 | Agent wrote multi-paragraph explanation after T9 but made no code edit. | (see below) | Only if T9 was sent AND agent just explained without editing. |
-| T11 | Agent has stalled — apply_model override still in NewBieImage or CONDCrossAttn not fixed, and agent isn't making progress. | (see below) | Rephrase as cleanup prompt (see below). |
 | T12 | NewBieImage in model_base.py uses CONDCrossAttn (not CONDRegular) and agent hasn't addressed this. | (see below) | Send at most once. Skip if already using CONDRegular. |
 
 ## Trigger Messages
 
 **T4 message:**
-> Use `git diff origin/master newbie` to see the diff. You may completely rewrite the PR to make it more ComfyUI idiomatic, referring to how Lumina is implemented. For example, we should use `operation_settings.get("operations").Linear`. We should not pop unexpected kwargs or set kwargs to hardcoded values. `NewBieNextDiT` should just inherit from NextDiT.
+> Now use `git diff origin/master newbie` to see the diff. You may completely rewrite the PR to make it more ComfyUI idiomatic, referring to how Lumina is implemented. For example, we should use `operation_settings.get("operations").Linear`. We should not pop unexpected kwargs or set kwargs to hardcoded values. `NewBieNextDiT` should assume that the caller passes proper args.
 
 **T5 message:**
-> Do we need to init model parameters in NewBieNextDiT? Look at how Lumina does it.
+> Do we need to init the model parameters in `NewBieNextDiT`?
 
 **T6 message:**
-> There is no `nn.init` in Lumina. Model parameters are loaded later in ComfyUI.
+> But there is no `nn.init` in Lumina. The model parameters will be loaded later in ComfyUI.
 
 **T7 message:**
-> In Lumina, is there a module with same functionality as NewBie's `time_text_embed`?
+> Let's check what else we can simplfy. In Lumina is there a module with the same functionality as NewBie's `time_text_embed`?
 
 **T8 message:**
-> In NewBieNextDiT._forward, the `try...except` may cause problem with torch.compile. Can we rewrite without try...except?
+> In `NewBieNextDiT._forward`, the `try ... except ...` may cause problem with `torch.compile`. Can we rewrite it without `try ... except ...`?
 
 **T9 message:**
-> Why does NewBieNextDiT have `t = timesteps` and `return img` while Lumina has `t = 1.0 - timesteps` and `return -img`?
+> In `NewBieNextDiT._forward`, why does it have `t = timesteps` and `return img`, while Lumina has `t = 1.0 - timesteps` and `return -img`? How do other models in ComfyUI handle this?
 
 **T10 message:**
-> Go on...
-
-**T11 message:**
-> Looks like there are still some cleanup items. NewBieImage may not need the apply_model override. Can you check?
+> Go on
 
 **T12 message:**
-> In model_base.py, why does NewBie use `CONDCrossAttn` for c_crossattn while Lumina2 uses `CONDRegular`? Where is c_crossattn used?
+> In @comfy/model_base.py , Why does NewBie use `CONDCrossAttn` for `c_crossattn`, while Lumina2 uses `CONDRegular`? Where will `c_crossattn` be used?
 
 ## Priority Order
 

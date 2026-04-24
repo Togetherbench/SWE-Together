@@ -7,11 +7,12 @@
 # unsuffixed "latents" key and validate its shape using metadata-only
 # (header-only) reads — not by decompressing the full array.
 #
-# 13 tests, 100 points total.
-#   Behavioral F2P  (82%): T1(13), T2(10), T3(5), T4(12), T4b(8), T5(22), T6(12)
+# 14 tests, 108 points total.
+#   Behavioral F2P  (80%): T1(13), T2(10), T3(5), T4(12), T4b(8), T5(22), T6(12)
 #   Behavioral Silver (5%): T7(5)
 #   Behavioral P2P   (5%): T8(1), T9(1), T10(3)
-#   Structural Bronze (8%): T11(4), T12(4)
+#   Structural Bronze (10%): T11(4), T12(4), T13(3)
+#   Behavioral Scoping (Turn 3): T14(5) — non-SD strategies unchanged
 #
 # Nop protection: all F2P tests are gated on a CANARY check that
 # verifies multi-resolution suffixed-key lookup works. If the base code
@@ -628,6 +629,8 @@ for name in dir(type(strat)):
 
 shape = None
 method_used = None
+
+# Search class methods first
 for method_name in CANDIDATE_NAMES:
     method = getattr(strat, method_name, None)
     if method is None:
@@ -648,6 +651,39 @@ for method_name in CANDIDATE_NAMES:
     if shape is not None:
         method_used = method_name
         break
+
+# Also search module-level functions in strategy_base.py and strategy_sd.py
+if shape is None:
+    import importlib
+    for mod_name in ["library.strategy_base", "library.strategy_sd"]:
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:
+            continue
+        for name in dir(mod):
+            if not name.startswith("_") or name.startswith("__"):
+                continue
+            if not any(kw in name for kw in ["shape", "npy", "header", "meta", "npz"]):
+                continue
+            func = getattr(mod, name, None)
+            if not callable(func):
+                continue
+            for attempt in [
+                lambda m: m(npz_path, "latents"),
+                lambda m: m(npz_path, "latents", None),
+            ]:
+                try:
+                    result = attempt(func)
+                    if result is not None:
+                        shape = result
+                        method_used = name
+                        break
+                except Exception:
+                    pass
+            if shape is not None:
+                break
+        if shape is not None:
+            break
 
 os.unlink(npz_path)
 
@@ -839,9 +875,9 @@ for filepath in ["/workspace/sd-scripts/library/strategy_base.py", "/workspace/s
             )
             if not is_candidate:
                 continue
-            # Reject stubs: require >= 2 non-docstring statements
+            # Reject stubs: require >= 1 non-docstring statement (a single try block is valid)
             stmts = [s for s in item.body if not (isinstance(s, ast.Expr) and isinstance(s.value, (ast.Constant,)))]
-            if len(stmts) < 2:
+            if len(stmts) < 1:
                 continue
             if not has_zip_access(item_src):
                 print(f"FAIL: {item.name}: no zip/stream approach")
@@ -855,7 +891,27 @@ for filepath in ["/workspace/sd-scripts/library/strategy_base.py", "/workspace/s
             print(f"PASS: {item.name} uses zip stream + header read")
             sys.exit(0)
 
-# Fallback: check if header reading is inlined in _default_is_disk_cached_latents_expected
+# Fallback A: check module-level functions with zip/stream + header read
+for filepath in ["/workspace/sd-scripts/library/strategy_base.py", "/workspace/sd-scripts/library/strategy_sd.py"]:
+    with open(filepath) as f:
+        src = f.read()
+    tree = ast.parse(src)
+    for item in tree.body:
+        if not isinstance(item, ast.FunctionDef):
+            continue
+        item_src = ast.unparse(item) if hasattr(ast, "unparse") else str(ast.dump(item))
+        is_candidate = any(kw in item.name.lower() for kw in ["shape", "header", "npy", "meta", "npz"]) \
+            and has_zip_access(item_src)
+        if not is_candidate:
+            continue
+        stmts = [s for s in item.body if not (isinstance(s, ast.Expr) and isinstance(s.value, (ast.Constant,)))]
+        if len(stmts) < 1:
+            continue
+        if has_zip_access(item_src) and has_header_read(item_src) and "np.load(" not in item_src:
+            print(f"PASS: module-level {item.name} uses zip stream + header read")
+            sys.exit(0)
+
+# Fallback B: check if header reading is inlined in _default_is_disk_cached_latents_expected
 for filepath in ["/workspace/sd-scripts/library/strategy_base.py"]:
     with open(filepath) as f:
         src = f.read()
@@ -914,15 +970,197 @@ print("FAIL: no fallback enablement found in SdSdxl or base class")
 sys.exit(1)
 PYEOF
 
+echo ""
+echo "=== Test 13/13: Metadata-only shape read integrated into fallback path (3pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 3)) || true
+import sys, ast
+#
+# Verifies that the code path which falls back to the unsuffixed "latents"
+# key performs a METADATA-ONLY shape read — not np.load on the fallback key.
+#
+# Accepts EITHER:
+#   (A) calls a self-method whose name suggests header/metadata/shape reading
+#       (e.g. self._get_npz_array_shape_from_metadata(...)); OR
+#   (B) inlines a numpy.lib.format private-API call (read_magic /
+#       _read_array_header / read_array_header_1_0 / read_array_header_2_0)
+#       alongside zip-member access (.zip.open / zipfile.open).
+#
+# The check is scoped to the fallback branch — the function must reference
+# both suffixed and unsuffixed "latents" keys (i.e. actually implement fallback).
+#
+METADATA_CALL_HINTS = ("shape_from_metadata", "shape_from_npz", "npy_shape",
+                      "npz_array_shape", "npz_shape", "header_shape",
+                      "read_array_shape", "array_shape_from", "shape_from_header",
+                      "metadata_shape", "read_npz_header", "get_npz_array")
+NUMPY_FORMAT_APIS = ("read_magic", "_read_array_header",
+                     "read_array_header_1_0", "read_array_header_2_0")
+ZIP_STREAM_HINTS = (".zip.open", "zipfile.ZipFile", "ZipFile(", ".open(")
+
+FALLBACK_FUNCS = ("_default_is_disk_cached_latents_expected",
+                  "_default_load_latents_from_disk",
+                  "is_disk_cached_latents_expected",
+                  "load_latents_from_disk")
+
+def iter_class_methods(tree, class_names):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name in class_names:
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef):
+                    yield item
+
+found_metadata_integrated_fallback = False
+reasons = []
+
+for filepath in ["/workspace/sd-scripts/library/strategy_base.py",
+                 "/workspace/sd-scripts/library/strategy_sd.py"]:
+    try:
+        with open(filepath) as f:
+            src = f.read()
+        tree = ast.parse(src)
+    except Exception as e:
+        reasons.append(f"{filepath}: parse error {e}")
+        continue
+
+    classes = ("LatentsCachingStrategy", "SdSdxlLatentsCachingStrategy")
+    for fn in iter_class_methods(tree, classes):
+        if fn.name not in FALLBACK_FUNCS:
+            continue
+        fn_src = ast.unparse(fn) if hasattr(ast, "unparse") else ""
+        # Must reference both "latents"+suffix and an unsuffixed "latents" probe
+        import re as re13
+        has_suffixed = bool(re13.search(r"""['"]latents['"][\s]*\+""", fn_src)) \
+                       or ('f"latents{' in fn_src) or ("f'latents{" in fn_src)
+        # Use negative lookahead to find bare 'latents' NOT followed by ' +'
+        has_unsuffixed = bool(re13.search(r"""['"]latents['"](?![\s]*\+)""", fn_src))
+        if not (has_suffixed and has_unsuffixed):
+            continue
+
+        calls_metadata_helper = any(hint in fn_src for hint in METADATA_CALL_HINTS)
+        uses_numpy_format_api = any(api in fn_src for api in NUMPY_FORMAT_APIS)
+        uses_zip_stream = any(hint in fn_src for hint in ZIP_STREAM_HINTS)
+
+        if calls_metadata_helper:
+            found_metadata_integrated_fallback = True
+            reasons.append(f"{fn.name}: calls metadata helper")
+            break
+        if uses_numpy_format_api and uses_zip_stream:
+            found_metadata_integrated_fallback = True
+            reasons.append(f"{fn.name}: inlines numpy.lib.format API + zip stream")
+            break
+    if found_metadata_integrated_fallback:
+        break
+
+if not found_metadata_integrated_fallback:
+    print("FAIL: fallback code path does not integrate a metadata-only shape read")
+    print("       (expected either a self-method call to a metadata-shape helper,")
+    print("        or inline numpy.lib.format API + zip-stream access in a function")
+    print("        that probes both 'latents'+suffix and unsuffixed 'latents')")
+    sys.exit(1)
+
+print(f"PASS: {reasons[0]}")
+sys.exit(0)
+PYEOF
+
+###############################################################################
+# BEHAVIORAL — SCOPING (Test 14, 5pts)
+#
+# Turn 3 constraint: "We only need to add backward compatibility for SD1/SDXL.
+# Or you can implement it in the base class if it's simpler and does not
+# change the current behavior."
+#
+# Verifies that non-SD strategies (multi_resolution=False, no fallback opt-in)
+# retain unchanged behavior — i.e., the fallback is SCOPED and not applied
+# universally. Catches regressions where fallback leaks into the default path.
+###############################################################################
+
+echo ""
+echo "=== Test 14/14: Non-SD strategy behavior preserved — fallback is SD-only (5pts) ==="
+python3 << 'PYEOF' && SCORE=$((SCORE + 5)) || true
+import sys, os, tempfile, inspect, numpy as np
+sys.path.insert(0, "/workspace/sd-scripts")
+
+try:
+    from library.strategy_base import LatentsCachingStrategy
+except Exception as e:
+    print(f"FAIL: import error: {e}")
+    sys.exit(1)
+
+class TestStrategy(LatentsCachingStrategy):
+    def cache_batch_latents(self, *a, **kw): pass
+
+strat = TestStrategy(cache_to_disk=True, batch_size=1, skip_disk_cache_validity_check=False)
+
+# Check A (AST-ish via inspect): any `fallback_*suffix*` param must default False.
+for mname in ("_default_is_disk_cached_latents_expected", "_default_load_latents_from_disk"):
+    m = getattr(strat, mname, None)
+    if m is None:
+        continue
+    try:
+        sig = inspect.signature(m)
+    except (TypeError, ValueError):
+        continue
+    for pname, p in sig.parameters.items():
+        low = pname.lower()
+        if "fallback" in low and ("suffix" in low or "resolution" in low or "legacy" in low):
+            if p.default is not False:
+                print(f"FAIL: {mname}.{pname} default={p.default!r} — must be False so non-SD strategies keep current behavior (opt-in only)")
+                sys.exit(1)
+
+# Check B (behavioral): non-SD path (multi_resolution=False) must still accept
+# legacy unsuffixed npz — that's pre-existing non-SD behavior and must not
+# regress under Turn 3's "does not change the current behavior" constraint.
+bucket_reso = (512, 512)
+lh, lw = bucket_reso[1] // 8, bucket_reso[0] // 8
+
+fd, path = tempfile.mkstemp(suffix=".npz")
+os.close(fd)
+np.savez(path,
+    latents=np.zeros((4, lh, lw), dtype=np.float32),
+    original_size=np.array([512, 512]),
+    crop_ltrb=np.array([0, 0, 0, 0]),
+)
+
+result = None
+err = None
+try:
+    # Preferred signature: multi_resolution kwarg present (base state).
+    result = strat._default_is_disk_cached_latents_expected(
+        8, bucket_reso, path, False, False, multi_resolution=False,
+    )
+except TypeError:
+    try:
+        result = strat._default_is_disk_cached_latents_expected(
+            8, bucket_reso, path, False, False,
+        )
+    except Exception as e:
+        err = e
+except Exception as e:
+    err = e
+finally:
+    if os.path.exists(path):
+        os.unlink(path)
+
+if err is not None:
+    print(f"FAIL: non-SD call raised {type(err).__name__}: {err}")
+    sys.exit(1)
+
+if not result:
+    print("FAIL: non-SD path (multi_resolution=False) rejects legacy unsuffixed npz — breaks pre-existing non-SD behavior")
+    sys.exit(1)
+
+print("PASS: non-SD strategy behavior preserved (fallback is opt-in, default-off)")
+sys.exit(0)
+PYEOF
+
 ###############################################################################
 # FINAL SCORE
 ###############################################################################
 
 echo ""
 echo "================================"
-echo "Weighted score: $SCORE / 100"
+echo "Weighted score: $SCORE / 108"
 echo "================================"
 
-REWARD=$(python3 -c "print(min(1.0, round($SCORE / 100, 2)))")
+REWARD=$(python3 -c "print(min(1.0, round($SCORE / 108, 2)))")
 echo "$REWARD" > "$REWARD_FILE"
 echo "REWARD: $REWARD"

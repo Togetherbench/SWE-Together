@@ -1,16 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Verification for unsloth-idefics3-finetune
 # Tests: Idefics3 VLM support addition + hook compatibility fix
 # Writes reward (0.0-1.0) to /logs/verifier/reward.txt
 #
-# Tier split (100% F2P behavioral+structural / 5% P2P, total 1.05 capped at 1.0):
-#   F2P behavioral:    Check 1 (0.30) — hook compatibility fix
-#   Silver behavioral: Check 2 (0.10) — from_pretrained quality (AST-based)
-#   Silver behavioral: Check 3 (0.05) — VLLM_SUPPORTED_VLM registration
-#   Silver behavioral: Check 4 (0.05) — __init__.py export
-#   Bronze structural: Check 5 (0.20) — code substance (methods+LoRA+dispatch+depth)
-#   Bronze structural: Check 6 (0.30) — implementation completeness (VLM PEFT+utilities)
+# Tier split (F2P total 0.95 + P2P total 0.05 = 1.00):
+#   F2P behavioral:    Check 1 (0.20) — hook compatibility fix
+#   F2P behavioral:    Check 2 (0.10) — from_pretrained quality (AST+import)
+#   F2P behavioral:    Check 3 (0.10) — VLLM_SUPPORTED_VLM registration
+#   F2P behavioral:    Check 4 (0.05) — __init__.py export
+#   F2P structural:    Check 5 (0.20) — code substance (methods+LoRA+dispatch+depth)
+#   F2P structural:    Check 6 (0.25) — implementation completeness (VLM PEFT+utilities)
+#   F2P behavioral:    Check 7 (0.05) — T1 integration (class importable+registered)
 #   P2P behavioral:    P2P-1 (0.01) — source integrity (parse + key files)
 #   P2P behavioral:    P2P-2 (0.02) — peft_utils public API preserved
 #   P2P behavioral:    P2P-3 (0.01) — existing VLLM_SUPPORTED_VLM entries preserved
@@ -114,12 +115,12 @@ export IDEFICS_PY
 echo "Idefics module: ${IDEFICS_PY:-not found}"
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 1 (0.30) — F2P BEHAVIORAL: Hook compatibility fix
+# CHECK 1 (0.20) — F2P BEHAVIORAL: Hook compatibility fix
 #
-# Path A (0.30): Monkey-patch/modify the hook or enclosing function
-# Path B (0.22): Override get_input_embeddings to return Embedding
+# Path A (0.20): Monkey-patch/modify the hook or enclosing function
+# Path B (0.15): Override get_input_embeddings to return Embedding
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Check 1 [0.30] F2P: Hook compatibility fix ---"
+echo "--- Check 1 [0.20] F2P: Hook compatibility fix ---"
 
 CHECK1=$(python3 << 'PYEOF'
 import sys, os, importlib, importlib.util, inspect, ast
@@ -312,9 +313,9 @@ PYEOF
 
 echo "  Result: $CHECK1"
 case "$CHECK1" in
-    PASS_A) add_reward 0.30 ;;
-    PASS_A_PARTIAL) add_reward 0.18 ;;
-    PASS_B) add_reward 0.22 ;;
+    PASS_A) add_reward 0.20 ;;
+    PASS_A_PARTIAL) add_reward 0.12 ;;
+    PASS_B) add_reward 0.15 ;;
 esac
 
 # ═══════════════════════════════════════════════════════════════════
@@ -446,9 +447,9 @@ if echo "$CHECK2" | grep -q "delegation"; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 3 (0.05) — SILVER BEHAVIORAL: VLLM_SUPPORTED_VLM
+# CHECK 3 (0.10) — SILVER BEHAVIORAL: VLLM_SUPPORTED_VLM
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Check 3 [0.05] Silver: VLLM_SUPPORTED_VLM ---"
+echo "--- Check 3 [0.10] Silver: VLLM_SUPPORTED_VLM ---"
 
 CHECK3=$(python3 << 'PYEOF'
 import sys, importlib.util, ast
@@ -488,7 +489,7 @@ PYEOF
 
 echo "  Result: $CHECK3"
 if [ "$CHECK3" = "PASS" ]; then
-    add_reward 0.05
+    add_reward 0.10
 fi
 
 # ═══════════════════════════════════════════════════════════════════
@@ -750,23 +751,18 @@ if echo "$CHECK5" | grep -q "depth=OK"; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# CHECK 6 (0.30) — BRONZE STRUCTURAL: Implementation completeness
+# CHECK 6 (0.25) — BRONZE STRUCTURAL: Implementation completeness
 #
 # Proportional scoring for how complete the VLM class implementation is:
 #   (a) Has get_peft_model method (0.05)
 #   (b) get_peft_model accepts basic LoRA parameters (0.05)
 #   (c) get_peft_model has VLM-specific params: finetune_vision_layers
-#       and/or finetune_language_layers (0.10)
-#       → This is the KEY discriminator. The instruction says "Include
-#         proper LoRA/PEFT configuration targeting the right projection
-#         layers for Idefics3". VLM-aware PEFT requires separate control
-#         of vision vs. language layers, matching FastBaseModel.get_peft_model
-#         in vision.py.
+#       and/or finetune_language_layers (0.05)
 #   (d) get_peft_model has fine-grained module selection:
 #       finetune_attention_modules and/or finetune_mlp_modules (0.05)
 #   (e) Has >=2 utility methods beyond from_pretrained/get_peft_model (0.05)
 # ═══════════════════════════════════════════════════════════════════
-echo "--- Check 6 [0.30] Bronze: Implementation completeness ---"
+echo "--- Check 6 [0.25] Bronze: Implementation completeness ---"
 
 CHECK6=$(python3 << 'PYEOF'
 import ast, sys, os
@@ -947,7 +943,7 @@ if echo "$CHECK6" | grep -q "peft_params=OK"; then
     add_reward 0.05
 fi
 if echo "$CHECK6" | grep -q "vlm_params=OK"; then
-    add_reward 0.10
+    add_reward 0.05
 fi
 if echo "$CHECK6" | grep -q "module_params=OK"; then
     add_reward 0.05
@@ -1129,21 +1125,145 @@ if [ "$P2P4_RESULT" = "PASS" ]; then
     add_reward 0.01
 fi
 
+# ═══════════════════════════════════════════════════════════════════
+# CHECK 7 (0.05) — T1 INTEGRATION: Idefics-named class end-to-end
+#
+# The T1 instruction asks for FastIdefics3Model specifically. Check 4
+# accepts "Granite" as a fallback; this check is stricter — it requires
+# an Idefics-named class to be importable from unsloth.models namespace
+# AND verifies that the same module defines a non-trivial class body
+# (rejects a bare `class FastIdefics3Model: pass` stub). This ties the
+# T1 ask (create + register + export + hook-fix) to one behavioral
+# assertion that cannot be satisfied by only fixing the hook.
+#
+# Subchecks (0.025 each):
+#   (a) Class with "Idefics" in its name importable from unsloth.models
+#   (b) That class has a non-trivial body (>=1 method OR attrs), paired
+#       with 'idefics3' being registered in VLLM_SUPPORTED_VLM
+# ═══════════════════════════════════════════════════════════════════
+echo "--- Check 7 [0.05] T1 integration: Idefics class importable & registered ---"
+
+CHECK7=$(python3 << 'PYEOF'
+import sys, os, ast, importlib.util
+exec(open('/tmp/_cpu_compat.py').read())
+
+idefics_class_importable = False
+non_trivial_and_registered = False
+
+init_path = 'unsloth/models/__init__.py'
+vision_path = 'unsloth/models/vision.py'
+
+# (a) Idefics-named class importable from unsloth.models namespace
+try:
+    spec = importlib.util.spec_from_file_location(
+        'unsloth.models.init_c7', init_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for name in dir(mod):
+        if 'Idefics' in name:
+            obj = getattr(mod, name)
+            if isinstance(obj, type):
+                idefics_class_importable = True
+                break
+except Exception:
+    pass
+
+# Static fallback: explicit `from ... import FastIdefics...` in __init__.py
+if not idefics_class_importable:
+    try:
+        with open(init_path) as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.ImportFrom, ast.Import)):
+                for alias in getattr(node, 'names', []):
+                    nm = alias.asname or alias.name or ''
+                    if 'Idefics' in nm:
+                        idefics_class_importable = True
+                        break
+            if idefics_class_importable:
+                break
+    except Exception:
+        pass
+
+# (b) Non-trivial class body AND 'idefics3' in VLLM_SUPPORTED_VLM.
+#     The pairing is what makes this discriminating: a bare stub class
+#     won't carry substantive methods; a registered-but-empty module
+#     won't satisfy integration.
+idefics_py = os.environ.get('IDEFICS_PY', '')
+has_substantive_class = False
+if idefics_py and os.path.exists(idefics_py):
+    try:
+        with open(idefics_py) as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and 'Idefics' in node.name:
+                method_count = sum(
+                    1 for item in node.body
+                    if isinstance(item, ast.FunctionDef)
+                )
+                non_trivial_body = any(
+                    not isinstance(item, ast.Pass) and
+                    not (isinstance(item, ast.Expr) and
+                         isinstance(item.value, ast.Constant))
+                    for item in node.body
+                )
+                if method_count >= 1 or (non_trivial_body and len(node.body) >= 2):
+                    has_substantive_class = True
+                    break
+    except Exception:
+        pass
+
+registered_in_vlm = False
+try:
+    with open(vision_path) as f:
+        vtree = ast.parse(f.read())
+    for node in ast.walk(vtree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == 'VLLM_SUPPORTED_VLM':
+                    if isinstance(node.value, (ast.List, ast.Tuple, ast.Set)):
+                        for elt in node.value.elts:
+                            if isinstance(elt, ast.Constant) and elt.value == 'idefics3':
+                                registered_in_vlm = True
+except Exception:
+    pass
+
+if has_substantive_class and registered_in_vlm:
+    non_trivial_and_registered = True
+
+results = []
+if idefics_class_importable:
+    results.append('importable')
+if non_trivial_and_registered:
+    results.append('integrated')
+print('|'.join(results) if results else 'FAIL')
+PYEOF
+)
+
+echo "  Result: $CHECK7"
+if echo "$CHECK7" | grep -q "importable"; then
+    add_reward 0.025
+fi
+if echo "$CHECK7" | grep -q "integrated"; then
+    add_reward 0.025
+fi
+
 echo ""
 echo "======================================="
 echo "  Tier breakdown:"
-echo "    [0.30] Check 1: F2P hook compatibility fix (behavioral)"
-echo "    [0.10] Check 2: from_pretrained quality (AST-based)"
-echo "    [0.05] Check 3: VLLM_SUPPORTED_VLM (behavioral)"
-echo "    [0.05] Check 4: __init__.py export (behavioral)"
-echo "    [0.20] Check 5: Code substance — 0.05 each: methods, LoRA, dispatch, depth"
-echo "    [0.30] Check 6: Implementation completeness — peft(0.05), params(0.05),"
-echo "                     vlm_params(0.10), module_params(0.05), utilities(0.05)"
+echo "    [0.20] Check 1: F2P hook compatibility fix (behavioral)"
+echo "    [0.10] Check 2: F2P from_pretrained quality (AST-based)"
+echo "    [0.10] Check 3: F2P VLLM_SUPPORTED_VLM (behavioral)"
+echo "    [0.05] Check 4: F2P __init__.py export (behavioral)"
+echo "    [0.20] Check 5: F2P Code substance — 0.05 each: methods, LoRA, dispatch, depth"
+echo "    [0.25] Check 6: F2P Implementation completeness — 0.05 each: peft, params,"
+echo "                     vlm_params, module_params, utilities"
+echo "    [0.05] Check 7: F2P T1 integration — importable(0.025) + integrated(0.025)"
 echo "    [0.01] P2P-1: Source integrity"
 echo "    [0.02] P2P-2: peft_utils public API preserved"
 echo "    [0.01] P2P-3: Existing VLLM_SUPPORTED_VLM entries preserved"
 echo "    [0.01] P2P-4: Existing model exports preserved"
-echo "    F2P: 1.00 | P2P: 0.05"
+echo "    F2P: 0.95 | P2P: 0.05 | Total: 1.00"
 echo "  Final reward: $REWARD"
 echo "======================================="
 echo "$REWARD" > "$LOG_DIR/reward.txt"

@@ -1,86 +1,84 @@
 # Fix Summary
 
 ## Nop Baseline
-- Nop reward: 0.02 (P2P weight: 2%)
-- All F2P tests fail on base: YES (no tests directory exists)
+- Nop reward: 0.02 (target <= 0.10)
+- P2P-only weight: 2% (only dataclaw importability check passes on unmodified base)
 
-## Agent Results (Round 1 -- original test.sh)
-| Model | Reward | Tests | Coverage | Key Approach |
-|-------|--------|-------|----------|-------------|
-| Sonnet 4.6 | 0.93 | 231 (1 fail) | 61% | Used parametrize, 6/6 secrets funcs, but 1 incorrect test assertion |
-| Haiku 4.5 | 1.00 | 230 (0 fail) | 60% | No parametrize, all tests pass, 6/6 secrets funcs |
+## Session Resolution (Phase 1)
+- Tag: resolved
+- Confidence: 0.85
+- Evidence: Final user message "Make it 0.2.0 then and only update when we push" was fully completed by assistant ("Done. Version bumped to 0.2.0, and publish triggers on every push to main"). No explicit user ack but task was fulfilled.
 
-**Problem**: Haiku scored HIGHER than Sonnet due to zero-tolerance failure penalty. The original test was too easy (all thresholds trivially met by both models) and punished ambitious testing.
+## User-Sim Prompt Audit (Phase 2)
+- Before: 2 rows (T2, T3), both verbatim
+- After: 2 rows, all verbatim (no changes needed)
+- Status: VERIFIED -- T2 "what are therecurity concerns? " and T3 "mark them all dealt with" match original_session.json U1/U2 exactly. U3-U8 correctly excluded as out-of-scope (PyPI, versioning).
 
-## Test Refinements
+## Rubric Compliance (Phase 5)
 
-### Changes to `tests/test.sh`:
+| Rubric | Tier | Status | Notes |
+|--------|------|--------|-------|
+| tests_verify_behavior_not_text | A | PASS | ~88% of reward weight from behavioral gates (pytest execution, mutations, coverage) |
+| test_not_tautological | A | PASS | Nop=0.02; mutation tests require real function calls; meaningful_asserts filters ast.Constant |
+| solution_uniqueness_guard | A | PASS | Task is "write tests" -- verifier accepts any test suite passing behavioral checks |
+| no_solution_leakage | A | PASS | instruction.md describes task (write tests), not solution code |
+| pass_to_pass_coverage | A | PASS | P2P check (0.02) verifies dataclaw modules importable on unmodified base |
+| behavior_in_task_description | A | PASS | Test file names derive from module names in instruction.md; function names from source code |
+| no_hidden_solution_artifacts | A | PASS | No solution/ dir, no COPY solution/ in Dockerfile; `find / -name 'solve*'` returns nothing |
+| dockerfile_determinism | B | PASS | ubuntu:24.04 (exact tag), all pip deps pinned (pytest==8.3.4, pytest-cov==6.0.0, pytest-timeout==2.3.1, huggingface_hub==0.27.1) |
+| no_network_during_tests | B | PASS | test.sh runs fully offline; all deps baked into image at build time |
+| pinned_dependencies | B | FIX | Fixed huggingface_hub from >=0.20.0 to ==0.27.1 in Dockerfile |
+| f2p_p2p_classification_correct | B | FIX | Added F2P/P2P classification comments to all section headers in test.sh |
 
-1. **Softened failure penalty** (Check 9): Changed from zero-tolerance to graduated fail rate (<0%, <2%, <5%, <10%). This stops penalizing models that write ambitious-but-slightly-wrong tests.
+### Changes Made
+1. **Dockerfile**: Pinned `huggingface_hub>=0.20.0` to `huggingface_hub==0.27.1`
+2. **test.sh**: Fixed shebang from `#!/usr/bin/env bash` to `#!/bin/bash`
+3. **test.sh**: Added F2P/P2P classification comments to all section headers
+4. **test.sh**: Raised entropy mutation "basic" threshold from >=1 to >=3 (principled: core entropy function should have >=3 dependent tests)
+5. **task.toml**: Added session_resolution_reasoning field, adjusted confidence to 0.85
+6. **Dockerfile**: Added `/logs/agent/sessions` directory creation for Harbor runner compatibility
 
-2. **Raised test count thresholds**: 80/150/250/350 (from 50/100/160/220). Sonnet crossed 250 in Round 2 (284 vs 212 for Haiku).
+### NOT Changed
+- **instruction.md**: Left verbatim. Already properly scoped to test-writing only.
+- **user_simulation_prompt.md**: Already correct with verbatim messages and good trigger conditions.
 
-3. **Raised per-module quality gates**: test_secrets now requires 55+ passing tests and 6 functions called for full credit (0.08 weight). This separated Sonnet (78 pass, 6 funcs) from Haiku (45 pass, 4 funcs) -- Haiku consistently skips `_shannon_entropy` and `_has_mixed_char_types`.
+## Agent Discrimination (Phase 4+6)
 
-4. **Raised mutation detection thresholds**: scan_text excellent at 25+ (Sonnet ~27, Haiku ~20), anonymizer excellent at 15+ (Sonnet ~15, Haiku ~14-18).
+| Round | Sonnet 4.6 | Haiku 4.5 | Gap |
+|-------|-----------|-----------|-----|
+| 1     | 1.00      | 0.86      | 0.14 |
+| 2 (final) | 1.00  | 0.85      | 0.15 |
 
-5. **Added 3 new mutation checks** (0.12 weight): `_has_mixed_char_types` (always True), `_extract_user_content` (returns empty), `_extract_assistant_content` (returns empty). The mixed_char mutation was a key differentiator -- Sonnet detects 7 failures, Haiku detects 0.
-
-6. **Increased parametrize weight**: 0.02-0.04 (from 0.01). Sonnet consistently uses parametrize (2-4 uses), Haiku does not.
-
-7. **Added per-module coverage check** (0.04 weight): Rewards getting 4/4 core modules (secrets, anonymizer, parser, config) to 90%+ coverage.
-
-8. **Reduced P2P weight**: 0.05 to 0.02 to shift weight toward harder behavioral checks.
-
-9. **Added assertion variety check** (0.03): Rewards 8+ distinct assertion types.
-
-10. **Added function breadth as consolidated check** (0.07): Single graduated check at 15/22/28/33 functions.
-
-### Changes to `environment/Dockerfile`:
-
-- Added non-root `agent` user (required because Claude Code refuses `--dangerously-skip-permissions` as root)
-- Copies git config to agent user
-- Installs Claude Code CLI as agent user
-
-### Changes to `instruction.md`:
-None.
-
-## Per-check Comparison (Round 2, Final verifier):
+### Key Differentiators (Sonnet vs Haiku)
 
 | Check | Sonnet 4.6 | Haiku 4.5 | Delta |
 |-------|-----------|-----------|-------|
-| Parametrize (4) | +0.03 (4 uses) | +0.00 (0 uses) | **+0.03** |
-| 250+ tests (7) | +0.03 (284) | +0.00 (212) | **+0.03** |
-| test_secrets quality (10) | +0.08 (78 pass, 6 funcs) | +0.02 (45 pass, 4 funcs) | **+0.06** |
-| scan_text mutation (18) | +0.06 (27 excellent) | +0.03 (20 good) | **+0.03** |
-| entropy mutation (22) | +0.03 (4 detected) | +0.00 (0 detected) | **+0.03** |
-| allowlist mutation (23) | +0.04 (10 excellent) | +0.01 (3 basic) | **+0.03** |
-| mixed_char mutation (28) | +0.04 (7 excellent) | +0.00 (0 detected) | **+0.04** |
-| **Total uncapped** | ~1.15 | ~0.845 | **~0.30** |
-| **Capped at 1.0** | **1.00** | **0.85** | **0.15** |
+| Test count | 304 pass (0.06) | 210 pass (0.03) | +0.03 |
+| Parametrize | 1 use (0.02) | 0 uses (0.00) | +0.02 |
+| Function breadth | 30 funcs (0.05) | 26 funcs (0.04) | +0.01 |
+| test_secrets quality | 86 pass/full (0.08) | 47 pass/mid (0.04) | +0.04 |
+| cli/config quality | 8 funcs/full (0.04) | 4 funcs/mid (0.02) | +0.02 |
+| Core 90% modules | 4/4 (0.04) | 3/4 (0.03) | +0.01 |
+| Coverage floor | 33% min (0.01) | 21% min (0.00) | +0.01 |
+| scan_text mutation | 38 excellent (0.06) | 16 good (0.03) | +0.03 |
+| anonymizer mutation | 15 excellent (0.06) | 12 good (0.03) | +0.03 |
+| allowlist mutation | 9 excellent (0.04) | 1 basic (0.01) | +0.03 |
+| redact_custom mutation | 6 excellent (0.04) | 4 good (0.02) | +0.02 |
+| entropy mutation | 3 basic (0.01) | 2 none (0.00) | +0.01 |
 
-## Agent Results (Final Round)
-| Model | Reward | Tests Pass | Coverage | LOC | Key Approach |
-|-------|--------|-----------|----------|-----|-------------|
-| Sonnet 4.6 | **1.00** | 284 (0 fail) | 60% (4/4 core >= 90%) | 2106 | Uses parametrize, tests all 6 secrets funcs including helpers, efficient targeted tests |
-| Haiku 4.5 | **0.85** | 212 (0 fail) | 62% (4/4 core >= 90%) | 2328 | No parametrize, skips _shannon_entropy and _has_mixed_char_types, verbose but less effective |
+### Why Discrimination is Valid
+Sonnet produced deeper tests with broader function coverage (30 vs 26 known functions), more tests per module (86 vs 47 for secrets), and better mutation detection. Haiku's tests are functional but shallower -- fewer edge cases for entropy and allowlist testing, fewer cli functions exercised. The gap reflects genuine quality differences in test thoroughness.
 
-## Discrimination Analysis
-- Score gap: **0.15** (1.00 - 0.85)
-- Is this meaningful? **YES** -- reflects genuine quality differences:
-  - Sonnet tests internal helper functions (_shannon_entropy, _has_mixed_char_types) which Haiku consistently skips
-  - Sonnet uses pytest.mark.parametrize for systematic edge case coverage; Haiku never does
-  - Sonnet writes 34% more tests (284 vs 212) despite 10% fewer lines of code (2106 vs 2328)
-  - Sonnet's tests detect subtle mutations (entropy=0, mixed_char_types=True) that Haiku's miss entirely
-  - Sonnet achieves "excellent" tier on 11/13 mutation checks vs Haiku's 5/13
-- The gap is NOT accidental: consistent patterns across 2 separate runs
-- Confidence: **MEDIUM-HIGH**
+## Sim-Fire Validation (Phase 7)
+- Status: FAILED (model timeout, not a task issue)
+- sim_turns_fired: 0
+- Notes: MiniMax M2 via OpenRouter timed out at 15 minutes (AgentTimeoutError). The agent never completed its first turn, so the user sim never had a chance to fire. Additionally, `/logs/agent/sessions` had permission issues (Docker volume mount UID mismatch between host `worker` and container `agent` user). The sim prompt triggers are generous (fire after >=2 agent turns or any test-writing action), so they should work correctly with a faster model. This is a runner/model issue, not a task config problem. Added `/logs/agent/sessions` directory to Dockerfile as a best-effort fix.
 
-## Task Health
-- Solvable without user sim: **YES** -- both models complete the full task in a single turn
-- Recommended difficulty: **EASY-MEDIUM** -- both models score > 0.85, but meaningful differentiation exists
+## Confidence
+- Overall: MEDIUM-HIGH
+- The 0.15 gap meets the target exactly. Single-run variance could shift it +/- 0.02.
 - Remaining concerns:
-  - Both models hit ~60% overall coverage (cli.py at 30-35% drags it down) -- coverage is not a differentiator
-  - The 250+ and 350+ test tiers are ambitious but only Sonnet crosses 250
-  - Haiku's scores may vary between runs (R1: 1.00, R2: 0.85 with same original verifier vs tuned verifier)
-  - The non-root user Dockerfile change is required for agent functionality
+  - Gap is right at the threshold (0.15); a re-run could produce 0.13 or 0.17
+  - Both models produce 0 pytest.raises usages -- error-path coverage check gives no signal
+  - CLI coverage is low for both models (21-33%) due to complex mocking requirements
+  - Sonnet's uncapped score ~1.11 means the cap absorbs some differentiation

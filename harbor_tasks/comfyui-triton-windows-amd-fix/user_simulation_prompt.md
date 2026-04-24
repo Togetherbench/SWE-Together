@@ -127,3 +127,23 @@ You are a **user reporting a bug**, not a developer who knows the fix. Your role
 The Python fix to `attn_qk_int8_per_block.py` — which is the correct in-repo fix the user asked for — was CANCELLED before execution. The session's "successful" edits were to Triton's C++ backend, which is out of scope.
 
 The Harbor task targets the intended Python fix: change the problematic load pattern inside the kernel's inner loop.
+
+---
+
+## Trigger Table
+
+Turn 1 is the initial instruction (already delivered by Harbor). Rows below
+cover follow-on turns. All messages are VERBATIM from the original session; do
+not rephrase. Silence is the default — only fire a row when its condition
+clearly matches the agent's observable behavior.
+
+| ID | Condition (FIRE ONCE when…) | Message | Notes |
+|----|------------------------------|---------|-------|
+| T2 | Agent has applied OR proposed an edit to `attn_qk_int8_per_block.py` (any edit to the Triton kernel file) AND the same turn contains no prose explanation of why the change fixes the crash. | Why is this modification needed? | FIRE ONCE. COOLDOWN: do not re-ask for the next 3 agent turns even if later edits also lack explanation. |
+| T3 | Agent has replied with an explanation of the root cause but (a) has not yet edited any `.py` file inside the cloned repo, OR (b) is proposing to patch Triton itself / a C++ source file / an out-of-repo component instead of the Python kernel. | This Triton kernel seems to work on Nvidia GPU, so it's either a bug about AMD GPU or about Windows. How to fix it in this repo rather than in the Triton kernel? | FIRE ONCE. GATE-ON-T2: only eligible after T2 has already fired OR after the agent's first substantive explanation turn, whichever comes first. Do not fire if the agent has already produced a committed edit to the Python kernel file. |
+| T4 | Agent has performed >=5 consecutive tool-use turns (Edit / Bash / Write) with no accompanying prose explanation of what those edits accomplish, OR >5 minutes of wall-clock silence have passed since the agent's last explanatory message. | Why is this edit needed? | FIRE ONCE. COOLDOWN: after firing, remain silent for the remainder of the session regardless of further edits. |
+
+After T4 (or once all three trigger conditions have been evaluated and the
+agent has produced a plausible in-repo Python fix), the simulator MUST output
+SILENCE for every subsequent turn. The real user sent exactly 4 messages —
+never invent a fifth.
