@@ -592,28 +592,30 @@ server.serve_forever()
 
         # Turn 0: initial run via inner agent's commands
         commands = self._inner.create_run_agent_commands(instruction)
-        for i, exec_input in enumerate(commands):
-            env = exec_input.env
-            result = await environment.exec(
-                command=f"set -o pipefail; {exec_input.command}",
-                cwd=exec_input.cwd,
-                env=env,
-                timeout_sec=exec_input.timeout_sec,
-            )
-            if result.stdout:
-                self._cumulative_output.append(result.stdout)
+        try:
+            for i, exec_input in enumerate(commands):
+                env = exec_input.env
+                result = await environment.exec(
+                    command=f"set -o pipefail; {exec_input.command}",
+                    cwd=exec_input.cwd,
+                    env=env,
+                    timeout_sec=exec_input.timeout_sec,
+                )
+                if result.stdout:
+                    self._cumulative_output.append(result.stdout)
 
-            command_dir = self.logs_dir / f"command-0-{i}"
-            command_dir.mkdir(parents=True, exist_ok=True)
-            (command_dir / "command.txt").write_text(exec_input.command)
-            (command_dir / "return-code.txt").write_text(str(result.return_code))
-            if result.stdout:
-                (command_dir / "stdout.txt").write_text(result.stdout)
-            if result.stderr:
-                (command_dir / "stderr.txt").write_text(result.stderr)
-
-        # Snapshot the candidate patch after the agent's first attempt (turn 0).
-        await self._capture_git_diff(environment, turn=0)
+                command_dir = self.logs_dir / f"command-0-{i}"
+                command_dir.mkdir(parents=True, exist_ok=True)
+                (command_dir / "command.txt").write_text(exec_input.command)
+                (command_dir / "return-code.txt").write_text(str(result.return_code))
+                if result.stdout:
+                    (command_dir / "stdout.txt").write_text(result.stdout)
+                if result.stderr:
+                    (command_dir / "stderr.txt").write_text(result.stderr)
+        finally:
+            # Always capture turn-0 patch — even if the agent's exec crashed
+            # mid-stream, the partial workspace state matters.
+            await self._capture_git_diff(environment, turn=0)
 
         # Multi-turn: resume loop
         session_id = self._find_session_id()
@@ -653,27 +655,35 @@ server.serve_forever()
             self._turn_start_time = time.monotonic()
 
             resume_commands = self._build_resume_command(session_id, user_msg)
-            for j, exec_input in enumerate(resume_commands):
-                result = await environment.exec(
-                    command=f"set -o pipefail; {exec_input.command}",
-                    cwd=exec_input.cwd,
-                    env=exec_input.env,
-                    timeout_sec=exec_input.timeout_sec,
-                )
-                if result.stdout:
-                    self._cumulative_output.append(result.stdout)
+            try:
+                for j, exec_input in enumerate(resume_commands):
+                    result = await environment.exec(
+                        command=f"set -o pipefail; {exec_input.command}",
+                        cwd=exec_input.cwd,
+                        env=exec_input.env,
+                        timeout_sec=exec_input.timeout_sec,
+                    )
+                    if result.stdout:
+                        self._cumulative_output.append(result.stdout)
 
-                command_dir = self.logs_dir / f"command-{turn}-{j}"
-                command_dir.mkdir(parents=True, exist_ok=True)
-                (command_dir / "command.txt").write_text(exec_input.command)
-                (command_dir / "return-code.txt").write_text(str(result.return_code))
-                if result.stdout:
-                    (command_dir / "stdout.txt").write_text(result.stdout)
-                if result.stderr:
-                    (command_dir / "stderr.txt").write_text(result.stderr)
+                    command_dir = self.logs_dir / f"command-{turn}-{j}"
+                    command_dir.mkdir(parents=True, exist_ok=True)
+                    (command_dir / "command.txt").write_text(exec_input.command)
+                    (command_dir / "return-code.txt").write_text(str(result.return_code))
+                    if result.stdout:
+                        (command_dir / "stdout.txt").write_text(result.stdout)
+                    if result.stderr:
+                        (command_dir / "stderr.txt").write_text(result.stderr)
+            finally:
+                # Always capture this turn's patch — survives mid-turn exec failures.
+                await self._capture_git_diff(environment, turn=turn)
 
-            # Snapshot patch state after this turn's resume completes.
-            await self._capture_git_diff(environment, turn=turn)
+        # Final safety net — re-snapshot at run-end so even if all per-turn
+        # captures somehow fail, final.patch reflects the very last state.
+        try:
+            await self._capture_git_diff(environment, turn=999)
+        except Exception as e:
+            log.debug("end-of-run patch capture failed: %s", e)
 
         # Post-run: build trajectory from session logs
         try:
