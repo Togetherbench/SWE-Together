@@ -498,6 +498,21 @@ async def main():
     agent_env = build_agent_env(args.model, action_model, action_key)
     log.info("Provider: %s → agent_env keys: %s", args.model.split("/")[0], list(agent_env.keys())[:5])
 
+    # CRITICAL: agent.setup() reads proxy config from os.environ to decide whether
+    # to upload + start the in-sandbox proxy. agent_env is only the SANDBOX env —
+    # we must also set them on the HOST (this run_eval.py process) so setup()
+    # finds them. Each run_eval.py invocation handles ONE model, so no race.
+    # Without this, setup() sees no LITELLM_PROXY_MODEL → no proxy starts →
+    # CC inside sandbox falls through to direct Anthropic with the lying
+    # "claude-sonnet-4-6" model name → silently routes to real Anthropic Sonnet
+    # for all non-Anthropic models. This is the long-standing recurring bug.
+    for k in ("LITELLM_PROXY_MODEL", "LITELLM_PROXY_PORT", "PROXY_TARGET_URL",
+              "PROXY_API_KEY", "PROXY_FALLBACK_URL", "PROXY_FALLBACK_KEY",
+              "PROXY_FALLBACK_MODEL"):
+        if k in agent_env:
+            os.environ[k] = agent_env[k]
+            log.info("  host env: %s=%s", k, agent_env[k][:60])
+
     # Determine tasks
     if args.tasks:
         task_names = [t.strip() for t in args.tasks.split(",")]
