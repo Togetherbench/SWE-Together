@@ -498,20 +498,28 @@ async def main():
     agent_env = build_agent_env(args.model, action_model, action_key)
     log.info("Provider: %s → agent_env keys: %s", args.model.split("/")[0], list(agent_env.keys())[:5])
 
-    # CRITICAL: agent.setup() reads proxy config from os.environ to decide whether
-    # to upload + start the in-sandbox proxy. agent_env is only the SANDBOX env —
-    # we must also set them on the HOST (this run_eval.py process) so setup()
-    # finds them. Each run_eval.py invocation handles ONE model, so no race.
-    # Without this, setup() sees no LITELLM_PROXY_MODEL → no proxy starts →
-    # CC inside sandbox falls through to direct Anthropic with the lying
-    # "claude-sonnet-4-6" model name → silently routes to real Anthropic Sonnet
-    # for all non-Anthropic models. This is the long-standing recurring bug.
-    for k in ("LITELLM_PROXY_MODEL", "LITELLM_PROXY_PORT", "PROXY_TARGET_URL",
-              "PROXY_API_KEY", "PROXY_FALLBACK_URL", "PROXY_FALLBACK_KEY",
-              "PROXY_FALLBACK_MODEL"):
-        if k in agent_env:
-            os.environ[k] = agent_env[k]
-            log.info("  host env: %s=%s", k, agent_env[k][:60])
+    # CRITICAL: copy ALL agent_env keys into os.environ.
+    #
+    # Two host-side consumers read these via os.environ.get():
+    # 1. user_enabled_claude_code.py:setup() — checks LITELLM_PROXY_MODEL to
+    #    decide whether to upload + start the in-sandbox proxy.
+    # 2. external/harbor/src/harbor/agents/installed/claude_code.py:874-880 —
+    #    reads ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL
+    #    from os.environ to build the env passed to `claude --print` inside
+    #    the sandbox.
+    #
+    # If we only put the proxy config in agent_env (= AgentConfig.env, sandbox-
+    # only), Harbor's installed-agent layer falls back to the host's real
+    # ANTHROPIC_API_KEY (loaded from .env) and ignores ANTHROPIC_BASE_URL —
+    # CC inside the sandbox then talks straight to api.anthropic.com with the
+    # real key and the lying `claude-sonnet-4-6` name → silently runs as real
+    # Anthropic Sonnet for all non-Anthropic models. This is the long-standing
+    # recurring bug (see memory feedback_run_eval_proxy_bug_recurrence).
+    #
+    # Each run_eval.py invocation handles ONE model, so no race condition.
+    for k, v in agent_env.items():
+        os.environ[k] = v
+    log.info("  host-env override applied (%d keys)", len(agent_env))
 
     # Determine tasks
     if args.tasks:
