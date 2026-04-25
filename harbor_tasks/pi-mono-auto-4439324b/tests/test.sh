@@ -2,11 +2,14 @@
 set +e
 
 mkdir -p /logs/verifier
+REWARD=0.0
+echo "$REWARD" > /logs/verifier/reward.txt
+
 cd /workspace/pi-mono 2>/dev/null || { echo "0.0" > /logs/verifier/reward.txt; exit 0; }
 
 export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-BUN=$(which bun 2>/dev/null)
+BUN=$(command -v bun 2>/dev/null)
 if [ -z "$BUN" ]; then
   for cand in /root/.bun/bin/bun /usr/local/bin/bun /workspace/pi-mono/node_modules/.bin/bun; do
     [ -x "$cand" ] && BUN="$cand" && break
@@ -14,23 +17,21 @@ if [ -z "$BUN" ]; then
 fi
 [ -z "$BUN" ] && BUN="bun"
 
-NPX=$(which npx 2>/dev/null)
-[ -z "$NPX" ] && NPX="npx"
-
 SHARED_FILE="/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.ts"
 
 if [ ! -f "$SHARED_FILE" ]; then
-  echo "Missing shared file" 
   echo "0.0" > /logs/verifier/reward.txt
   exit 0
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Build the behavioral driver
+# Build the behavioral driver — exercises convertResponsesMessages with a
+# realistic Copilot-originated tool call and inspects the produced
+# function_call / function_call_output items.
 # ─────────────────────────────────────────────────────────────────────────────
 cat > /tmp/test_foreign_id.ts << 'TSEOF'
-import { getModel } from "/workspace/pi-mono/packages/ai/src/models.js";
 import { convertResponsesMessages } from "/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.js";
+import { getModel } from "/workspace/pi-mono/packages/ai/src/models.js";
 import type { AssistantMessage, Context, ToolResultMessage, Usage } from "/workspace/pi-mono/packages/ai/src/types.js";
 
 const COPILOT_RAW_ID =
@@ -39,17 +40,12 @@ const COPILOT_RAW_ID =
 const SECOND_RAW_ID =
   "call_vs1eoMWtUBKjTmXJjM9clHiF|X90bLu7itE+qX5vORjDhfNHnWPBttLg03yQnn/CIPeBwSrORnhuil386M75H4p";
 
-const SHORT_RAW_ID =
-  "call_shortTest1234567|foreign/with+special/chars+inside";
-
-const ANTHROPIC_LIKE_ID = "call_anthropic_xyz|ant_someItem/with+chars==";
-
 const usage: Usage = {
   input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function buildForeignContext(rawToolCallId: string, sourceProvider = "github-copilot", sourceApi = "openai-responses", sourceModel = "gpt-5.1-codex"): Context {
+function buildForeignContext(rawToolCallId: string): Context {
   const now = Date.now();
   const assistant: AssistantMessage = {
     role: "assistant",
@@ -59,9 +55,9 @@ function buildForeignContext(rawToolCallId: string, sourceProvider = "github-cop
       name: "edit",
       arguments: { path: "src/app.ts" },
     }],
-    api: sourceApi as any,
-    provider: sourceProvider as any,
-    model: sourceModel,
+    api: "openai-responses" as any,
+    provider: "github-copilot" as any,
+    model: "gpt-5.1-codex",
     usage,
     stopReason: "toolUse",
     timestamp: now - 2000,
@@ -84,41 +80,6 @@ function buildForeignContext(rawToolCallId: string, sourceProvider = "github-cop
   };
 }
 
-function buildSameProviderContext(): Context {
-  const now = Date.now();
-  const sameProviderAssistant: AssistantMessage = {
-    role: "assistant",
-    content: [{
-      type: "toolCall",
-      id: "call_abc123XYZ|fc_normalItem456",
-      name: "edit",
-      arguments: { path: "test.ts" },
-    }],
-    api: "openai-codex-responses" as any,
-    provider: "openai-codex" as any,
-    model: "gpt-5.1",
-    usage,
-    stopReason: "toolUse",
-    timestamp: now - 2000,
-  };
-  const toolResult: ToolResultMessage = {
-    role: "toolResult",
-    toolCallId: "call_abc123XYZ|fc_normalItem456",
-    toolName: "edit",
-    content: [{ type: "text", text: "ok" }],
-    isError: false,
-    timestamp: now - 1000,
-  };
-  return {
-    systemPrompt: "test",
-    messages: [
-      { role: "user", content: "Do it.", timestamp: now - 3000 },
-      sameProviderAssistant,
-      toolResult,
-    ],
-  };
-}
-
 function findFunctionCall(items: any[]): any {
   return items.find((i: any) => i.type === "function_call");
 }
@@ -126,65 +87,53 @@ function findFunctionCallOutput(items: any[]): any {
   return items.find((i: any) => i.type === "function_call_output");
 }
 
-let model: any;
-try {
-  model = getModel("openai-codex", "gpt-5.1");
-} catch (e) {
-  // try alternates
-  try { model = getModel("openai-codex", "gpt-5.3-codex"); }
-  catch (e2) {
-    try { model = getModel("openai-codex", "gpt-5"); }
-    catch (e3) {
-      console.log("__JSON__" + JSON.stringify({ error: "model_lookup_failed: " + String(e) }));
-      process.exit(0);
-    }
-  }
+let model: any = null;
+const candidates = [
+  ["openai-codex", "gpt-5.1"],
+  ["openai-codex", "gpt-5.1-codex"],
+  ["openai-codex", "gpt-5.3-codex"],
+  ["openai-codex", "gpt-5"],
+  ["openai-codex", "gpt-5-codex"],
+];
+for (const [p, m] of candidates) {
+  try { model = getModel(p as any, m as any); break; } catch {}
+}
+if (!model) {
+  console.log("__JSON__" + JSON.stringify({ error: "model_lookup_failed" }));
+  process.exit(0);
 }
 
 const allowedProviders = new Set(["openai", "openai-codex", "opencode", "github-copilot"]);
 
-const r1 = convertResponsesMessages(model, buildForeignContext(COPILOT_RAW_ID), allowedProviders);
+let threw = false;
+let errMsg = "";
+let r1: any[] = [], r2: any[] = [], r1b: any[] = [];
+try {
+  r1 = convertResponsesMessages(model, buildForeignContext(COPILOT_RAW_ID), allowedProviders);
+  r2 = convertResponsesMessages(model, buildForeignContext(SECOND_RAW_ID), allowedProviders);
+  r1b = convertResponsesMessages(model, buildForeignContext(COPILOT_RAW_ID), allowedProviders);
+} catch (e: any) {
+  threw = true;
+  errMsg = String(e?.message ?? e);
+}
+
 const fc1 = findFunctionCall(r1);
 const fco1 = findFunctionCallOutput(r1);
-
-const r2 = convertResponsesMessages(model, buildForeignContext(SECOND_RAW_ID), allowedProviders);
 const fc2 = findFunctionCall(r2);
 const fco2 = findFunctionCallOutput(r2);
-
-const r3 = convertResponsesMessages(model, buildForeignContext(SHORT_RAW_ID), allowedProviders);
-const fc3 = findFunctionCall(r3);
-const fco3 = findFunctionCallOutput(r3);
-
-const r1b = convertResponsesMessages(model, buildForeignContext(COPILOT_RAW_ID), allowedProviders);
 const fc1b = findFunctionCall(r1b);
 
-const rs = convertResponsesMessages(model, buildSameProviderContext(), allowedProviders);
-const fcS = findFunctionCall(rs);
-const fcoS = findFunctionCallOutput(rs);
-
-const r6 = convertResponsesMessages(model, buildForeignContext(ANTHROPIC_LIKE_ID, "anthropic", "anthropic-messages", "claude-3"), allowedProviders);
-const fc6 = findFunctionCall(r6);
-const fco6 = findFunctionCallOutput(r6);
-
 const out = {
+  threw,
+  errMsg,
   fc1_id: fc1?.id ?? null,
   fc1_call_id: fc1?.call_id ?? null,
   fco1_call_id: fco1?.call_id ?? null,
   fc2_id: fc2?.id ?? null,
   fc2_call_id: fc2?.call_id ?? null,
   fco2_call_id: fco2?.call_id ?? null,
-  fc3_id: fc3?.id ?? null,
-  fc3_call_id: fc3?.call_id ?? null,
-  fco3_call_id: fco3?.call_id ?? null,
   fc1b_id: fc1b?.id ?? null,
   fc1b_call_id: fc1b?.call_id ?? null,
-  fcS_id: fcS?.id ?? null,
-  fcS_call_id: fcS?.call_id ?? null,
-  fcoS_call_id: fcoS?.call_id ?? null,
-  fc6_id: fc6?.id ?? null,
-  fc6_call_id: fc6?.call_id ?? null,
-  fco6_call_id: fco6?.call_id ?? null,
-  threw: false,
 };
 console.log("__JSON__" + JSON.stringify(out));
 TSEOF
@@ -192,353 +141,229 @@ TSEOF
 # ─────────────────────────────────────────────────────────────────────────────
 # Run driver
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== Running behavioral driver ==="
 TEST_OUTPUT=$($BUN run /tmp/test_foreign_id.ts 2>&1)
 TEST_EXIT=$?
-echo "$TEST_OUTPUT" | tail -40
+echo "=== driver output (tail) ==="
+echo "$TEST_OUTPUT" | tail -30
+echo "============================"
 
 JSON_LINE=$(echo "$TEST_OUTPUT" | grep '^__JSON__' | head -1 | sed 's/^__JSON__//')
 
+if [ -z "$JSON_LINE" ]; then
+  echo "Driver did not produce JSON; reward=0"
+  echo "0.0" > /logs/verifier/reward.txt
+  exit 0
+fi
+
 extract() {
-  python3 -c "
-import json,sys
-try:
-  d=json.loads(r'''$JSON_LINE''')
-  v=d.get('$1')
-  if v is None: print('__NULL__')
-  else: print(v)
-except Exception:
-  print('__ERR__')
-"
+python3 - <<PYEOF
+import json
+d = json.loads(r'''$JSON_LINE''')
+v = d.get('$1')
+if v is None:
+    print('__NULL__')
+else:
+    print(v)
+PYEOF
 }
 
+THREW=$(extract threw)
 FC1_ID=$(extract fc1_id)
 FC1_CALL_ID=$(extract fc1_call_id)
 FCO1_CALL_ID=$(extract fco1_call_id)
 FC2_ID=$(extract fc2_id)
 FC2_CALL_ID=$(extract fc2_call_id)
 FCO2_CALL_ID=$(extract fco2_call_id)
-FC3_ID=$(extract fc3_id)
-FC3_CALL_ID=$(extract fc3_call_id)
-FCO3_CALL_ID=$(extract fco3_call_id)
 FC1B_ID=$(extract fc1b_id)
-FC1B_CALL_ID=$(extract fc1b_call_id)
-FCS_ID=$(extract fcS_id)
-FCS_CALL_ID=$(extract fcS_call_id)
-FCOS_CALL_ID=$(extract fcoS_call_id)
-FC6_ID=$(extract fc6_id)
-FC6_CALL_ID=$(extract fc6_call_id)
-FCO6_CALL_ID=$(extract fco6_call_id)
 
-# Invalid character pattern (BUGGY): contains _ in the fc_ body where original had / + =
-BUGGY_FRAGMENT_1="fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi"
+# Buggy fragment: the broken normalized id contains "_" where original had / + =
+# Examples observed on the buggy base:
+#   fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi
+# Generic "buggy" signature: id starts with fc_ AND contains an underscore
+# AFTER the leading "fc_" prefix (i.e., body has _) — meaning a / + = in the
+# original got mapped to _, which Codex rejects.
 
-# Helper: returns 1 if id is "safe" — either undefined/null, or ^fc_[A-Za-z0-9]+$ within 64 chars
+is_buggy_id() {
+  local v="$1"
+  # If null / undefined / empty → not buggy (omitting id is a valid fix)
+  if [ "$v" = "__NULL__" ] || [ -z "$v" ] || [ "$v" = "undefined" ] || [ "$v" = "null" ]; then
+    return 1
+  fi
+  # buggy if it starts with fc_ and the body (after fc_) contains _
+  if echo "$v" | grep -qE '^fc_[A-Za-z0-9]*_'; then
+    return 0
+  fi
+  return 1
+}
+
 is_safe_id() {
   local v="$1"
-  # null/undefined treated as safe (omitting the id is a valid fix)
+  # null/undefined/empty is safe (omitting the id is a valid fix)
+  if [ "$v" = "__NULL__" ] || [ -z "$v" ] || [ "$v" = "undefined" ] || [ "$v" = "null" ]; then
+    return 0
+  fi
+  # length check (≤ 64)
+  local len=${#v}
+  if [ "$len" -gt 64 ]; then
+    return 1
+  fi
+  # must start with fc_ and rest must be [A-Za-z0-9] only (NO underscores in body)
+  if echo "$v" | grep -qE '^fc_[A-Za-z0-9]+$'; then
+    return 0
+  fi
+  return 1
+}
+
+is_clean_call_id() {
+  # call_id is the prefix before "|" — must NOT contain |, must be sane
+  local v="$1"
+  if [ "$v" = "__NULL__" ] || [ -z "$v" ] || [ "$v" = "undefined" ] || [ "$v" = "null" ]; then
+    return 1
+  fi
+  # call_id should match call_4VnzVawQXPB9MgYib7CiQFEY (no pipe, no special chars)
+  if echo "$v" | grep -qE '^call_[A-Za-z0-9_-]+$'; then
+    # length sanity
+    local len=${#v}
+    if [ "$len" -le 64 ]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+echo "----- extracted -----"
+echo "threw         = $THREW"
+echo "fc1_id        = $FC1_ID"
+echo "fc1_call_id   = $FC1_CALL_ID"
+echo "fco1_call_id  = $FCO1_CALL_ID"
+echo "fc2_id        = $FC2_ID"
+echo "fc2_call_id   = $FC2_CALL_ID"
+echo "fco2_call_id  = $FCO2_CALL_ID"
+echo "fc1b_id       = $FC1B_ID"
+echo "---------------------"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HARD GATE: driver must not throw
+# ─────────────────────────────────────────────────────────────────────────────
+if [ "$THREW" = "True" ] || [ "$THREW" = "true" ]; then
+  echo "Driver threw — reward 0"
+  echo "0.0" > /logs/verifier/reward.txt
+  exit 0
+fi
+
+# Score accumulator (F2P only)
+SCORE=0.0
+add_score() {
+  SCORE=$(awk -v a="$SCORE" -v b="$1" 'BEGIN{ printf("%.4f", a + b) }')
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P gate 1 (0.30): fc1.id is SAFE for Codex (not the buggy `fc_..._...` shape).
+# On the buggy base, the produced id contains an underscore in the body
+# (because '/', '+', '=' → '_'). On the fix it's either omitted or hashed clean.
+# ─────────────────────────────────────────────────────────────────────────────
+GATE1=0
+if is_buggy_id "$FC1_ID"; then
+  echo "GATE1 FAIL: fc1.id is buggy ($FC1_ID)"
+elif is_safe_id "$FC1_ID"; then
+  echo "GATE1 PASS: fc1.id is safe ($FC1_ID)"
+  GATE1=1
+  add_score 0.30
+else
+  echo "GATE1 FAIL: fc1.id not safe ($FC1_ID)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P gate 2 (0.20): same for fc2.id (second distinct foreign id).
+# Ensures the fix isn't hardcoded to one specific id.
+# ─────────────────────────────────────────────────────────────────────────────
+GATE2=0
+if is_buggy_id "$FC2_ID"; then
+  echo "GATE2 FAIL: fc2.id is buggy ($FC2_ID)"
+elif is_safe_id "$FC2_ID"; then
+  echo "GATE2 PASS: fc2.id is safe ($FC2_ID)"
+  GATE2=1
+  add_score 0.20
+else
+  echo "GATE2 FAIL: fc2.id not safe ($FC2_ID)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P gate 3 (0.20): call_id on function_call AND function_call_output is the
+# CLEAN prefix `call_4VnzVawQXPB9MgYib7CiQFEY` — i.e., no pipe leakage and the
+# pairing between call/result is preserved. On the buggy base the call_id ends
+# up mangled (often containing `_` from the pipe substitution or the full
+# compound id).
+# ─────────────────────────────────────────────────────────────────────────────
+GATE3=0
+EXPECTED_CALL_ID_1="call_4VnzVawQXPB9MgYib7CiQFEY"
+EXPECTED_CALL_ID_2="call_vs1eoMWtUBKjTmXJjM9clHiF"
+if [ "$FC1_CALL_ID" = "$EXPECTED_CALL_ID_1" ] && \
+   [ "$FCO1_CALL_ID" = "$EXPECTED_CALL_ID_1" ] && \
+   [ "$FC2_CALL_ID" = "$EXPECTED_CALL_ID_2" ] && \
+   [ "$FCO2_CALL_ID" = "$EXPECTED_CALL_ID_2" ]; then
+  echo "GATE3 PASS: call_ids match clean prefix and pair fc/fco"
+  GATE3=1
+  add_score 0.20
+else
+  echo "GATE3 FAIL: call_id pairing wrong"
+  echo "  fc1=$FC1_CALL_ID fco1=$FCO1_CALL_ID (expected $EXPECTED_CALL_ID_1)"
+  echo "  fc2=$FC2_CALL_ID fco2=$FCO2_CALL_ID (expected $EXPECTED_CALL_ID_2)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P gate 4 (0.15): determinism — the SAME input id produces the SAME output
+# id across two independent calls. (Trivially true if id is omitted/null in
+# both, which is also a valid fix.)
+# ─────────────────────────────────────────────────────────────────────────────
+GATE4=0
+if [ "$FC1_ID" = "$FC1B_ID" ]; then
+  # but we must also make sure this isn't trivially passing on the buggy base
+  # by also requiring the id be safe (gate1 passes). We already credited gate1
+  # for safety; here we only credit determinism if the value isn't the buggy
+  # form.
+  if is_buggy_id "$FC1_ID"; then
+    echo "GATE4 FAIL: deterministic but value is buggy"
+  else
+    echo "GATE4 PASS: deterministic ($FC1_ID == $FC1B_ID)"
+    GATE4=1
+    add_score 0.15
+  fi
+else
+  echo "GATE4 FAIL: not deterministic ($FC1_ID vs $FC1B_ID)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P gate 5 (0.15): length compliance — fc1.id and fc2.id, if present, are
+# ≤ 64 chars. If null (omitted), this also passes since the unsafe long string
+# is not being emitted. Critically must FAIL on the buggy base because the
+# buggy normalizer produces a mangled `fc_..._...` body that, while ≤ 64,
+# also contains the disallowed `_` — so we additionally require the id to NOT
+# be the buggy shape. Effectively gate5 = (length ok) AND (not buggy shape).
+# ─────────────────────────────────────────────────────────────────────────────
+GATE5=0
+length_ok() {
+  local v="$1"
   if [ "$v" = "__NULL__" ] || [ -z "$v" ] || [ "$v" = "undefined" ] || [ "$v" = "null" ]; then
     return 0
   fi
   local len=${#v}
-  if [ "$len" -gt 64 ]; then return 1; fi
-  # must start with fc_ and have only alphanumerics after fc_
-  if echo "$v" | grep -Eq '^fc_[A-Za-z0-9]+$'; then
-    return 0
-  fi
-  return 1
+  [ "$len" -le 64 ]
 }
-
-is_call_id_clean() {
-  local v="$1"
-  # clean call_id: ^call_[A-Za-z0-9]+$  (no | no special chars no underscores in body except leading prefix)
-  if echo "$v" | grep -Eq '^call_[A-Za-z0-9]+$'; then
-    return 0
-  fi
-  return 1
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Scoring
-# ─────────────────────────────────────────────────────────────────────────────
-SCORE=0
-MAX=100
-
-echo ""
-echo "=== Behavioral observations ==="
-echo "fc1_id       = $FC1_ID"
-echo "fc1_call_id  = $FC1_CALL_ID"
-echo "fco1_call_id = $FCO1_CALL_ID"
-echo "fc2_id       = $FC2_ID"
-echo "fc3_id       = $FC3_ID"
-echo "fc1b_id      = $FC1B_ID"
-echo "fcS_id       = $FCS_ID"
-echo "fc6_id       = $FC6_ID"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate A (15pts): Long Copilot foreign ID is SAFE for Codex backend
-#   (either omitted/undefined, OR /^fc_[A-Za-z0-9]+$/ within 64 chars,
-#    AND does NOT equal the buggy mangled form)
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate A: Foreign Copilot tool ID (long base64) is backend-safe ==="
-GATE_A=0
-if is_safe_id "$FC1_ID"; then
-  if [ "$FC1_ID" = "$BUGGY_FRAGMENT_1" ]; then
-    echo "FAIL: id matches the known-buggy mangled form"
-  else
-    echo "PASS: id is null/omitted or fc_<alnum> within 64 chars"
-    GATE_A=15
-  fi
+if length_ok "$FC1_ID" && length_ok "$FC2_ID" && \
+   ! is_buggy_id "$FC1_ID" && ! is_buggy_id "$FC2_ID"; then
+  echo "GATE5 PASS: ids within 64 chars and not buggy shape"
+  GATE5=1
+  add_score 0.15
 else
-  echo "FAIL: id contains invalid characters or exceeds 64 chars"
-fi
-SCORE=$((SCORE + GATE_A))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate B (15pts): call_id (and function_call_output.call_id) preserved as
-# a clean prefix — NOT the mangled compound containing _ in place of |
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate B: call_id pairing preserved (clean prefix) ==="
-GATE_B=0
-EXPECTED_CALL="call_4VnzVawQXPB9MgYib7CiQFEY"
-if [ "$FC1_CALL_ID" = "$EXPECTED_CALL" ] && [ "$FCO1_CALL_ID" = "$EXPECTED_CALL" ]; then
-  echo "PASS: function_call.call_id and function_call_output.call_id both = $EXPECTED_CALL"
-  GATE_B=15
-elif is_call_id_clean "$FC1_CALL_ID" && [ "$FC1_CALL_ID" = "$FCO1_CALL_ID" ]; then
-  echo "PARTIAL: call_id is clean and consistent ($FC1_CALL_ID)"
-  GATE_B=8
-else
-  echo "FAIL: call_id mangled or inconsistent (fc=$FC1_CALL_ID, fco=$FCO1_CALL_ID)"
-fi
-SCORE=$((SCORE + GATE_B))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate C (10pts): Determinism — same input → same id
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate C: Determinism ==="
-GATE_C=0
-if [ "$FC1_ID" = "$FC1B_ID" ] && [ "$FC1_CALL_ID" = "$FC1B_CALL_ID" ]; then
-  echo "PASS: identical output across runs"
-  GATE_C=10
-else
-  echo "FAIL: nondeterministic (fc1=$FC1_ID vs fc1b=$FC1B_ID)"
-fi
-SCORE=$((SCORE + GATE_C))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate D (10pts): Different foreign IDs produce SAFE outputs (not the
-# raw mangled form) — second copilot ID and short ID
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate D: Other foreign IDs are also safe ==="
-GATE_D=0
-D_OK=1
-for label_id in "fc2:$FC2_ID" "fc3:$FC3_ID" "fc6:$FC6_ID"; do
-  label="${label_id%%:*}"
-  val="${label_id#*:}"
-  if is_safe_id "$val"; then
-    echo "  $label safe: $val"
-  else
-    echo "  $label UNSAFE: $val"
-    D_OK=0
-  fi
-done
-# also check call_ids of these are clean
-for label_id in "fc2_call:$FC2_CALL_ID" "fc3_call:$FC3_CALL_ID" "fc6_call:$FC6_CALL_ID"; do
-  label="${label_id%%:*}"
-  val="${label_id#*:}"
-  if is_call_id_clean "$val"; then
-    echo "  $label clean: $val"
-  else
-    echo "  $label UNCLEAN: $val"
-    D_OK=0
-  fi
-done
-if [ "$D_OK" -eq 1 ]; then
-  echo "PASS"
-  GATE_D=10
-else
-  echo "FAIL"
-fi
-SCORE=$((SCORE + GATE_D))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate E (10pts): Distinct foreign IDs produce DISTINCT outputs (or both
-# omitted). Prevents collapsing-to-empty-string trivial fixes from
-# scoring well unless they consistently omit (we accept both omit OR distinct).
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate E: Distinct inputs distinguishable ==="
-GATE_E=0
-# Either both null (omitted), or distinct values
-both_null() { [ "$1" = "__NULL__" ] && [ "$2" = "__NULL__" ]; }
-if both_null "$FC1_ID" "$FC2_ID"; then
-  echo "  fc1 vs fc2: both omitted (acceptable)"
-  E1=1
-elif [ "$FC1_ID" != "$FC2_ID" ] && [ "$FC1_ID" != "__NULL__" ] && [ "$FC2_ID" != "__NULL__" ]; then
-  echo "  fc1 vs fc2: distinct"
-  E1=1
-elif [ "$FC1_ID" = "__NULL__" ] || [ "$FC2_ID" = "__NULL__" ]; then
-  # mixed: one omitted one not — the call_ids should at least be distinct
-  if [ "$FC1_CALL_ID" != "$FC2_CALL_ID" ]; then
-    echo "  fc1 vs fc2: mixed but call_ids distinct"
-    E1=1
-  else
-    E1=0
-  fi
-else
-  echo "  fc1 vs fc2: COLLAPSED to same ($FC1_ID)"
-  E1=0
+  echo "GATE5 FAIL: length/shape violation"
 fi
 
-# call_ids must always differ for different inputs
-if [ "$FC1_CALL_ID" != "$FC2_CALL_ID" ] && [ "$FC2_CALL_ID" != "$FC3_CALL_ID" ]; then
-  E2=1
-else
-  echo "  call_ids collapsed across distinct inputs"
-  E2=0
-fi
+echo "----- gates -----"
+echo "GATE1=$GATE1 GATE2=$GATE2 GATE3=$GATE3 GATE4=$GATE4 GATE5=$GATE5"
+echo "SCORE=$SCORE"
+echo "-----------------"
 
-if [ "$E1" -eq 1 ] && [ "$E2" -eq 1 ]; then
-  echo "PASS"
-  GATE_E=10
-else
-  echo "FAIL"
-fi
-SCORE=$((SCORE + GATE_E))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate F (10pts): Same-provider/same-API IDs still pass through
-# (regression guard) — call_id preserved
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate F: Same-provider regression guard ==="
-GATE_F=0
-if [ "$FCS_CALL_ID" = "call_abc123XYZ" ] && [ "$FCOS_CALL_ID" = "call_abc123XYZ" ]; then
-  echo "PASS: same-provider call_id preserved"
-  GATE_F=10
-else
-  echo "FAIL: same-provider call_id mangled (fc=$FCS_CALL_ID, fco=$FCOS_CALL_ID)"
-fi
-SCORE=$((SCORE + GATE_F))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# P2P Gate G (10pts): TypeScript still compiles
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate G: TypeScript compiles ==="
-GATE_G=0
-if [ -f /workspace/pi-mono/packages/ai/tsconfig.build.json ]; then
-  TSC_OUT=$(cd /workspace/pi-mono && $NPX tsc --noEmit -p packages/ai/tsconfig.build.json 2>&1)
-  TSC_EXIT=$?
-  if [ $TSC_EXIT -eq 0 ]; then
-    echo "PASS"
-    GATE_G=10
-  else
-    echo "FAIL"
-    echo "$TSC_OUT" | tail -10
-  fi
-else
-  echo "SKIP (no tsconfig.build.json)"
-  GATE_G=10
-fi
-SCORE=$((SCORE + GATE_G))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# P2P Gate H (10pts): Existing package tests in the affected file pass
-# (not all tests, just sanity-check the related provider tests don't break)
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate H: Related vitest suite ==="
-GATE_H=0
-TEST_FILES=$(find /workspace/pi-mono/packages/ai/test -maxdepth 2 -name '*responses*.test.ts' 2>/dev/null | head -5)
-if [ -n "$TEST_FILES" ]; then
-  cd /workspace/pi-mono/packages/ai
-  VITEST_OUT=$($BUN x vitest run --no-coverage $TEST_FILES 2>&1)
-  VITEST_EXIT=$?
-  cd /workspace/pi-mono
-  if [ $VITEST_EXIT -eq 0 ]; then
-    echo "PASS"
-    GATE_H=10
-  else
-    # partial credit: count passing
-    PASS_COUNT=$(echo "$VITEST_OUT" | grep -Eo '[0-9]+ passed' | head -1 | grep -Eo '[0-9]+')
-    FAIL_COUNT=$(echo "$VITEST_OUT" | grep -Eo '[0-9]+ failed' | head -1 | grep -Eo '[0-9]+')
-    [ -z "$PASS_COUNT" ] && PASS_COUNT=0
-    [ -z "$FAIL_COUNT" ] && FAIL_COUNT=0
-    TOTAL=$((PASS_COUNT + FAIL_COUNT))
-    if [ "$TOTAL" -gt 0 ]; then
-      GATE_H=$(awk -v p="$PASS_COUNT" -v t="$TOTAL" 'BEGIN { printf "%d", (p*10)/t }')
-    fi
-    echo "PARTIAL: $PASS_COUNT/$TOTAL passing → $GATE_H/10"
-    echo "$VITEST_OUT" | tail -15
-  fi
-else
-  echo "SKIP (no related test files)"
-  GATE_H=10
-fi
-SCORE=$((SCORE + GATE_H))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Structural Gate I (10pts): Source file shows hash-based / omit-based fix
-# (not just the original pattern). Implementation-agnostic: accept either
-# (a) shortHash usage, OR (b) explicit undefined assignment for foreign source,
-# OR (c) call_id-only return path
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Gate I: Source shows a real fix pattern ==="
-GATE_I=0
-SHARED_CONTENT=$(cat "$SHARED_FILE")
-
-# Check for ANY of the three reasonable approaches
-PATTERN_HASH=0
-if echo "$SHARED_CONTENT" | grep -q "shortHash"; then
-  PATTERN_HASH=1
-fi
-
-PATTERN_OMIT=0
-if echo "$SHARED_CONTENT" | grep -Eq "itemId\s*=\s*undefined"; then
-  PATTERN_OMIT=1
-fi
-
-PATTERN_CALLID_ONLY=0
-# Look for a return path that returns just the callId without |itemId in foreign branch
-if echo "$SHARED_CONTENT" | grep -Eq 'isForeign[A-Za-z]*' && echo "$SHARED_CONTENT" | grep -Eq 'return\s+normalizedCallId\s*;'; then
-  PATTERN_CALLID_ONLY=1
-fi
-
-echo "  shortHash usage: $PATTERN_HASH"
-echo "  itemId=undefined: $PATTERN_OMIT"
-echo "  callId-only return: $PATTERN_CALLID_ONLY"
-
-if [ $((PATTERN_HASH + PATTERN_OMIT + PATTERN_CALLID_ONLY)) -ge 1 ]; then
-  echo "PASS"
-  GATE_I=10
-else
-  echo "FAIL: no recognizable fix pattern"
-fi
-SCORE=$((SCORE + GATE_I))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tally
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Score Breakdown ==="
-echo "A (foreign id safe)        : $GATE_A / 15"
-echo "B (call_id preserved)      : $GATE_B / 15"
-echo "C (determinism)            : $GATE_C / 10"
-echo "D (other foreign safe)     : $GATE_D / 10"
-echo "E (distinct inputs)        : $GATE_E / 10"
-echo "F (same-provider regress)  : $GATE_F / 10"
-echo "G (tsc compile)            : $GATE_G / 10"
-echo "H (related tests)          : $GATE_H / 10"
-echo "I (fix pattern present)    : $GATE_I / 10"
-echo "TOTAL: $SCORE / $MAX"
-
-REWARD=$(awk -v s="$SCORE" -v m="$MAX" 'BEGIN { printf "%.3f", s/m }')
-echo "REWARD: $REWARD"
+REWARD="$SCORE"
 echo "$REWARD" > /logs/verifier/reward.txt
 exit 0

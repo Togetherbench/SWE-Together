@@ -1,14 +1,11 @@
 #!/bin/bash
 set +e
 
-# Test for pi-mono issue #2406: Bash tool timing footer at bottom of output
-# Goal: differentiate between fixes that:
-#   - Implemented timing in tool-execution.ts as instructed (full credit)
-#   - Implemented timing elsewhere (e.g. bash.ts renderer) but at bottom (partial)
-#   - Implemented timing at top / no timing (low/zero)
+# Verifier for pi-mono issue #2406: Bash tool timing footer at bottom of output
+# Core principle: no-op patch MUST score 0.0. All reward from behavioral changes.
 
 export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:$PATH"
-which bun >/dev/null 2>&1 || export PATH="$HOME/.bun/bin:$PATH"
+command -v bun >/dev/null 2>&1 || export PATH="$HOME/.bun/bin:$PATH"
 
 REPO=/workspace/pi-mono
 TOOL_EXEC="$REPO/packages/coding-agent/src/modes/interactive/components/tool-execution.ts"
@@ -17,45 +14,69 @@ BASH_TOOL="$REPO/packages/coding-agent/src/core/tools/bash.ts"
 
 mkdir -p /logs/verifier 2>/dev/null || true
 REWARD=0.0
+finalize() { echo "$REWARD" > /logs/verifier/reward.txt; exit 0; }
 
 add_reward() {
   REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{ r=a+b; if(r>1)r=1; printf "%.4f", r }')
 }
 
-cd "$REPO" || { echo "0.0" > /logs/verifier/reward.txt; exit 0; }
-
-# Pre-compute: do timing-related tokens exist anywhere in the relevant files?
-HAS_TOOL_EXEC_TIMING=0
-if grep -qE "Elapsed|Took" "$TOOL_EXEC" 2>/dev/null; then HAS_TOOL_EXEC_TIMING=1; fi
-
-HAS_BASH_TOOL_TIMING=0
-if grep -qE "Elapsed|Took" "$BASH_TOOL" 2>/dev/null; then HAS_BASH_TOOL_TIMING=1; fi
+cd "$REPO" || finalize
 
 # ============================================================
-# P2P Gate 1 (0.10): Files compile (TypeScript transpiles cleanly)
+# Snapshot the baseline (un-modified) versions of these files via git
+# so we can compute deltas relative to base.
 # ============================================================
-echo "=== P2P Gate 1: Transpilation ==="
-P2P1=0
+BASE_DIR=$(mktemp -d)
+get_base() {
+  local rel="${1#$REPO/}"
+  local out="$2"
+  (cd "$REPO" && git show HEAD:"$rel" > "$out" 2>/dev/null)
+  if [ ! -s "$out" ]; then
+    # Try origin/HEAD or similar; fallback empty
+    (cd "$REPO" && git show "$(git rev-list --max-parents=0 HEAD | head -1)":"$rel" > "$out" 2>/dev/null)
+  fi
+}
+get_base "$TOOL_EXEC"   "$BASE_DIR/tool-execution.ts.base"
+get_base "$INTERACTIVE" "$BASE_DIR/interactive-mode.ts.base"
+get_base "$BASH_TOOL"   "$BASE_DIR/bash.ts.base"
+
+# Detect whether the working tree differs from base for the relevant files.
+ANY_CHANGE=0
+for f in "$TOOL_EXEC" "$INTERACTIVE" "$BASH_TOOL"; do
+  rel="${f#$REPO/}"
+  if ! (cd "$REPO" && git diff --quiet HEAD -- "$rel" 2>/dev/null); then
+    ANY_CHANGE=1
+  fi
+done
+
+if [ "$ANY_CHANGE" -eq 0 ]; then
+  echo "No-op patch detected: no changes to relevant files."
+  finalize
+fi
+
+# ============================================================
+# P2P GATE (gating only, no reward): Files transpile.
+# If the agent broke transpilation, exit with 0.
+# ============================================================
+echo "=== P2P Gate: Transpilation (gating) ==="
 if command -v bun >/dev/null 2>&1; then
   bun build "$TOOL_EXEC"   --no-bundle --outdir /tmp/tsc-check >/dev/null 2>&1; rc1=$?
   bun build "$INTERACTIVE" --no-bundle --outdir /tmp/tsc-check >/dev/null 2>&1; rc2=$?
   bun build "$BASH_TOOL"   --no-bundle --outdir /tmp/tsc-check >/dev/null 2>&1; rc3=$?
-  if [ $rc1 -eq 0 ] && [ $rc2 -eq 0 ] && [ $rc3 -eq 0 ]; then P2P1=1; fi
+  if [ $rc1 -ne 0 ] || [ $rc2 -ne 0 ] || [ $rc3 -ne 0 ]; then
+    echo "GATE FAIL: Transpilation broken; reward=0"
+    REWARD=0.0
+    finalize
+  fi
+  echo "GATE PASS: transpiles"
 else
-  # Fallback: at least syntax-check via node parse heuristic (assume OK)
-  P2P1=1
-fi
-if [ $P2P1 -eq 1 ]; then
-  add_reward 0.10
-  echo "PASS (0.10) [P2P]: All three files transpile"
-else
-  echo "FAIL (0.10) [P2P]: Transpilation failed"
+  echo "GATE SKIP: bun not available (assuming OK)"
 fi
 
 # ============================================================
-# P2P Gate 2 (0.05): Core class structure preserved
+# P2P GATE: Core structure preserved (gating only)
 # ============================================================
-echo "=== P2P Gate 2: Structural sanity ==="
+echo "=== P2P Gate: Structural sanity (gating) ==="
 node -e "
 const fs = require('fs');
 const te = fs.readFileSync('$TOOL_EXEC', 'utf8');
@@ -66,269 +87,239 @@ const ok = te.includes('ToolExecutionComponent') &&
            bt.includes('renderResult');
 process.exit(ok ? 0 : 1);
 " 2>/dev/null
-if [ $? -eq 0 ]; then
-  add_reward 0.05
-  echo "PASS (0.05) [P2P]: Class/method structure preserved"
-else
-  echo "FAIL (0.05) [P2P]: Class/method structure broken"
+if [ $? -ne 0 ]; then
+  echo "GATE FAIL: structure broken; reward=0"
+  REWARD=0.0
+  finalize
 fi
+echo "GATE PASS: structure preserved"
 
 # ============================================================
-# F2P Gate 1 (0.10): Both Elapsed and Took labels exist somewhere
-# Accept either tool-execution.ts (instruction-true) or bash.ts (where
-# the original code sometimes lived). Behaviour-equivalent.
+# Helper: read all three working-tree files concatenated
 # ============================================================
-echo "=== F2P Gate 1: Timing labels ==="
+read_all() {
+  cat "$TOOL_EXEC" "$BASH_TOOL" "$INTERACTIVE" 2>/dev/null
+}
+
+# ============================================================
+# Determine baseline behavior for each F2P signal.
+# The base ALREADY contains "Elapsed"/"Took" labels and toFixed(1) in bash.ts —
+# so those grep-style checks pass on base and are NOT valid F2P signals.
+# We need behavioral signals that are FALSE on base and TRUE on the fix.
+# ============================================================
+
+# Compute key facts about base
+BASE_BASH="$BASE_DIR/bash.ts.base"
+BASE_TE="$BASE_DIR/tool-execution.ts.base"
+BASE_IM="$BASE_DIR/interactive-mode.ts.base"
+
+# Did base bash.ts already render timing? (yes — it had startedAt/Took/Elapsed)
+BASE_BASH_HAD_TIMING=0
+if [ -s "$BASE_BASH" ] && grep -qE "Elapsed|Took" "$BASE_BASH"; then
+  BASE_BASH_HAD_TIMING=1
+fi
+
+# Did base render timing in HEADER (renderCall)?  Check by looking at what
+# renderCall produced. In base, renderCall set context.executionStarted timing
+# state but did NOT print elapsed in the header text — header was just
+# formatBashCall(args). We rely on a positive signal: in base, renderCall
+# itself does NOT contain "Elapsed" or "Took" string literals.
+# So checking that header doesn't have timing is uninformative on base
+# (it already doesn't). Skip header-static as F2P.
+
+# ============================================================
+# F2P Gate 1 (0.20): Bottom placement of timing in EITHER
+# tool-execution.ts:renderBashContent / updateDisplay, OR
+# bash.ts:rebuildBashResultRenderComponent
+# 
+# This must verify the timing render is AFTER the output rendering.
+# On the base, bash.ts already places timing AFTER warnings (last addChild),
+# so this would pass on base too — making it not F2P.
+#
+# Therefore the actual F2P signal is: timing rendering exists in
+# tool-execution.ts (instruction-true), OR if it remained in bash.ts, the
+# bottom placement was preserved AND something else changed.
+#
+# Concretely: the BASE bash.ts already renders timing. So leaving it there
+# unmodified yields zero new behavior. We therefore require evidence that
+# the agent ADDED timing rendering to tool-execution.ts (the instructed path).
+# ============================================================
+echo "=== F2P Gate 1 (0.20): Timing rendered in tool-execution.ts (instruction-true) ==="
 node -e "
 const fs = require('fs');
-const sources = ['$TOOL_EXEC','$BASH_TOOL'].map(p => { try { return fs.readFileSync(p,'utf8'); } catch(e){return '';} });
-const all = sources.join('\n----\n');
-const hasElapsed = /[\"'\`]\\s*Elapsed\\b|\\bElapsed\\s+\\\$\\{|Elapsed \\\$/.test(all) || /\"Elapsed\"|'Elapsed'|\`Elapsed/.test(all);
-const hasTook    = /[\"'\`]\\s*Took\\b|\\bTook\\s+\\\$\\{|Took \\\$/.test(all) || /\"Took\"|'Took'|\`Took/.test(all);
-process.exit((hasElapsed && hasTook) ? 0 : 1);
+const cur = fs.readFileSync('$TOOL_EXEC','utf8');
+const base = fs.readFileSync('$BASE_TE','utf8');
+function hasTiming(s){
+  return /Elapsed/.test(s) && /Took/.test(s);
+}
+const baseHas = hasTiming(base);
+const curHas = hasTiming(cur);
+// F2P: cur has timing AND base did not.
+process.exit((curHas && !baseHas) ? 0 : 1);
 " 2>/dev/null
-if [ $? -eq 0 ]; then
-  add_reward 0.10
-  echo "PASS (0.10) [F2P]: Both Elapsed and Took labels present"
+F2P1=$?
+if [ $F2P1 -eq 0 ]; then
+  add_reward 0.20
+  echo "PASS (0.20) [F2P1]: tool-execution.ts now renders timing"
 else
-  echo "FAIL (0.10) [F2P]: Missing Elapsed/Took labels"
+  echo "FAIL (0.20) [F2P1]: tool-execution.ts does not render timing labels (or already did on base)"
 fi
 
 # ============================================================
-# F2P Gate 2 (0.10): Decimal-precision (1dp) formatting somewhere
+# F2P Gate 2 (0.15): tool-execution.ts wires execution start timestamp.
+# Look for evidence of a startTime / startedAt field plumbed through
+# the component (a member assigned from Date.now()) that did NOT exist in base.
 # ============================================================
-echo "=== F2P Gate 2: Decimal precision (1dp) ==="
+echo "=== F2P Gate 2 (0.15): Execution start timestamp captured in tool-execution.ts ==="
 node -e "
 const fs = require('fs');
-const all = ['$TOOL_EXEC','$BASH_TOOL'].map(p => { try { return fs.readFileSync(p,'utf8'); } catch(e){return '';} }).join('\n');
-const ok = /toFixed\\s*\\(\\s*1\\s*\\)/.test(all) || /\\.1f/.test(all);
-process.exit(ok ? 0 : 1);
-" 2>/dev/null
-if [ $? -eq 0 ]; then
-  add_reward 0.10
-  echo "PASS (0.10) [F2P]: One-decimal formatting present"
-else
-  echo "FAIL (0.10) [F2P]: No 1-decimal formatting found"
-fi
-
-# ============================================================
-# F2P Gate 3 (0.15): Live update via setInterval(~1000ms) AND clearInterval cleanup
-# ============================================================
-echo "=== F2P Gate 3: Live update (setInterval + clearInterval) ==="
-node -e "
-const fs = require('fs');
-const all = ['$TOOL_EXEC','$BASH_TOOL'].map(p => { try { return fs.readFileSync(p,'utf8'); } catch(e){return '';} }).join('\n');
-const hasSetInterval   = /setInterval\\s*\\(/.test(all);
-const hasSecond        = /1000|1_000/.test(all);
-const hasClearInterval = /clearInterval\\s*\\(/.test(all);
-process.exit((hasSetInterval && hasSecond && hasClearInterval) ? 0 : 1);
+const cur = fs.readFileSync('$TOOL_EXEC','utf8');
+const base = fs.readFileSync('$BASE_TE','utf8');
+// Look for an instance field / setter capturing a start time.
+const re = /(executionStart|bashStarted|startedAt|startTime|executionStartTime|executionStartTimestamp)/;
+const baseHas = re.test(base);
+const curHas = re.test(cur);
+const hasDateNow = /Date\.now\s*\(\s*\)/.test(cur);
+process.exit((curHas && !baseHas && hasDateNow) ? 0 : 1);
 " 2>/dev/null
 if [ $? -eq 0 ]; then
   add_reward 0.15
-  echo "PASS (0.15) [F2P]: setInterval(~1000ms) and clearInterval cleanup present"
+  echo "PASS (0.15) [F2P2]: tool-execution.ts captures start timestamp"
 else
-  echo "FAIL (0.15) [F2P]: Missing live-update timer or cleanup"
+  echo "FAIL (0.15) [F2P2]: no new start timestamp plumbing in tool-execution.ts"
 fi
 
 # ============================================================
-# F2P Gate 4 (0.15): Bottom placement — timing renders AFTER output/truncation
-# Search whichever file actually contains the timing rendering logic.
+# F2P Gate 3 (0.15): interactive-mode.ts wires the start timestamp
+# on tool_execution_start for bash tools. Must be NEW vs base.
 # ============================================================
-echo "=== F2P Gate 4: Bottom placement ==="
+echo "=== F2P Gate 3 (0.15): interactive-mode.ts wires start timestamp for bash ==="
 node -e "
 const fs = require('fs');
+const cur = fs.readFileSync('$INTERACTIVE','utf8');
+const base = fs.readFileSync('$BASE_IM','utf8');
+function diffAdded(c, b) {
+  // crude: lines in c not in b
+  const bSet = new Set(b.split('\n').map(s=>s.trim()));
+  return c.split('\n').filter(l => !bSet.has(l.trim()));
+}
+const added = diffAdded(cur, base).join('\n');
+// Heuristic: in tool_execution_start handling for bash, agent calls a
+// setter on the component passing Date.now() (or similar) — and references
+// 'bash' or a setter name involving start/timestamp/time.
+const callsSetter = /(setExecutionStart|setStartTime|setBashStart|executionStart\w*\s*=|startedAt\s*=|startTime\s*=)/.test(added);
+const refsBash = /['\"\`]bash['\"\`]/.test(added) || /toolName\s*===?\s*['\"\`]bash/.test(added);
+const refsDateNow = /Date\.now\s*\(\s*\)/.test(added);
+process.exit((callsSetter && (refsBash || refsDateNow)) ? 0 : 1);
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+  add_reward 0.15
+  echo "PASS (0.15) [F2P3]: interactive-mode.ts wires start timestamp"
+else
+  echo "FAIL (0.15) [F2P3]: no new wiring for bash start timestamp"
+fi
 
-function findRange(lines, methodNameRegex) {
-  let start = -1, depth = 0;
+# ============================================================
+# F2P Gate 4 (0.20): Live update plumbing NEW in tool-execution.ts.
+# Base tool-execution.ts has no setInterval. The fix should add one
+# (and a corresponding clearInterval) to update the elapsed display
+# while the bash tool is running.
+# ============================================================
+echo "=== F2P Gate 4 (0.20): Live update timer added in tool-execution.ts ==="
+node -e "
+const fs = require('fs');
+const cur = fs.readFileSync('$TOOL_EXEC','utf8');
+const base = fs.readFileSync('$BASE_TE','utf8');
+const baseHasSet = /setInterval\s*\(/.test(base);
+const curHasSet  = /setInterval\s*\(/.test(cur);
+const curHasClear = /clearInterval\s*\(/.test(cur);
+const curHas1000 = /\b1000\b|1_000/.test(cur);
+process.exit((!baseHasSet && curHasSet && curHasClear && curHas1000) ? 0 : 1);
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+  add_reward 0.20
+  echo "PASS (0.20) [F2P4]: live setInterval(1000) + clearInterval added to tool-execution.ts"
+else
+  echo "FAIL (0.20) [F2P4]: no new live-update timer in tool-execution.ts"
+fi
+
+# ============================================================
+# F2P Gate 5 (0.15): Bottom placement in tool-execution.ts.
+# In tool-execution.ts, the timing render must occur AFTER the result
+# rendering (output, truncation warnings, etc.) inside the same method.
+# ============================================================
+echo "=== F2P Gate 5 (0.15): Timing rendered AFTER output in tool-execution.ts ==="
+node -e "
+const fs = require('fs');
+const src = fs.readFileSync('$TOOL_EXEC','utf8');
+const lines = src.split('\n');
+
+// Find a method that renders bash content. Most likely 'updateDisplay' or
+// 'renderBashContent' or 'render'. We'll scan all methods that contain
+// timing strings and check ordering inside them.
+function blockRanges(lines) {
+  const ranges = [];
+  let stack = [];
   for (let i = 0; i < lines.length; i++) {
-    if (start === -1 && methodNameRegex.test(lines[i]) && /\\{/.test(lines[i])) {
-      start = i;
-      depth = 0;
-    }
-    if (start !== -1) {
-      for (const ch of lines[i]) {
-        if (ch === '{') depth++;
-        else if (ch === '}') depth--;
-      }
-      if (depth === 0 && i > start) return [start, i];
+    const opens = (lines[i].match(/\{/g) || []).length;
+    const closes = (lines[i].match(/\}/g) || []).length;
+    for (let k = 0; k < opens; k++) stack.push(i);
+    for (let k = 0; k < closes; k++) {
+      const start = stack.pop();
+      if (start !== undefined) ranges.push([start, i]);
     }
   }
-  return [-1, -1];
+  return ranges;
 }
 
-function checkBottomPlacement(src, methodRegex) {
-  const lines = src.split('\n');
-  const [start, end] = findRange(lines, methodRegex);
-  if (start === -1) return false;
-  let lastOutput = -1, lastTiming = -1;
-  for (let i = start; i <= end; i++) {
-    const l = lines[i];
-    if (/truncat|fullOutputPath|warnings|getText|output\\s*\\.|content\\.map|formatOutput/i.test(l)) lastOutput = i;
-    if (/Elapsed|Took|elapsed|took|startedAt|startTime|executionStart|bashStarted|bashElapsed|timingInterval|setInterval/.test(l)) lastTiming = i;
-  }
-  return lastTiming !== -1 && lastOutput !== -1 && lastTiming > lastOutput;
-}
-
-const candidates = [
-  ['$TOOL_EXEC',  /renderBashContent\\s*\\(|updateDisplay\\s*\\(|render\\s*\\(/],
-  ['$BASH_TOOL',  /rebuildBashResultRenderComponent\\s*\\(|renderResult\\s*\\(/],
-];
-
+const ranges = blockRanges(lines);
 let ok = false;
-for (const [path, re] of candidates) {
-  let src = '';
-  try { src = fs.readFileSync(path,'utf8'); } catch(e){ continue; }
-  if (checkBottomPlacement(src, re)) { ok = true; break; }
+for (const [s, e] of ranges) {
+  if (e - s < 5 || e - s > 400) continue;
+  let lastOutput = -1, lastTiming = -1, hasTiming = false;
+  for (let i = s; i <= e; i++) {
+    const l = lines[i];
+    if (/Elapsed|Took/.test(l)) { hasTiming = true; lastTiming = i; }
+    if (/(addChild|renderContainer\.add|truncat|warning|fullOutputPath|getText|formatOutput|content\.map|resultRenderer|callRenderer|fallback)/i.test(l)
+        && !/Elapsed|Took/.test(l)) {
+      lastOutput = i;
+    }
+  }
+  if (hasTiming && lastOutput !== -1 && lastTiming > lastOutput) { ok = true; break; }
 }
 process.exit(ok ? 0 : 1);
 " 2>/dev/null
 if [ $? -eq 0 ]; then
   add_reward 0.15
-  echo "PASS (0.15) [F2P]: Timing rendered after output (bottom placement)"
+  echo "PASS (0.15) [F2P5]: timing rendered after output in tool-execution.ts"
 else
-  echo "FAIL (0.15) [F2P]: Timing not below output"
+  echo "FAIL (0.15) [F2P5]: timing not placed below output in tool-execution.ts"
 fi
 
 # ============================================================
-# F2P Gate 5 (0.10): Header is static — no timing tokens in renderBashHeader / formatBashCall
-# This guards against putting timing in the HEADER, which would defeat the issue.
+# F2P Gate 6 (0.15): One-decimal formatting present in tool-execution.ts.
+# Base tool-execution.ts had no toFixed(1). The fix should add it
+# (or use formatDuration imported from elsewhere — accept either).
 # ============================================================
-echo "=== F2P Gate 5: Header stays static ==="
+echo "=== F2P Gate 6 (0.15): 1-decimal precision in tool-execution.ts ==="
 node -e "
 const fs = require('fs');
-
-function getMethodBody(src, re) {
-  const lines = src.split('\n');
-  let start = -1, depth = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (start === -1 && re.test(lines[i]) && /\\{/.test(lines[i])) { start = i; depth = 0; }
-    if (start !== -1) {
-      for (const ch of lines[i]) { if (ch==='{') depth++; else if (ch==='}') depth--; }
-      if (depth === 0 && i > start) return lines.slice(start, i+1).join('\n');
-    }
-  }
-  return '';
-}
-
-const te = (() => { try { return fs.readFileSync('$TOOL_EXEC','utf8'); } catch(e){ return ''; } })();
-const bt = (() => { try { return fs.readFileSync('$BASH_TOOL','utf8'); } catch(e){ return ''; } })();
-
-const headerCandidates = [
-  getMethodBody(te, /renderBashHeader\\s*\\(|renderHeader\\s*\\(/),
-  getMethodBody(bt, /formatBashCall\\s*\\(|renderCall\\s*\\(/),
-];
-
-let headerHasTiming = false;
-for (const body of headerCandidates) {
-  if (!body) continue;
-  if (/Elapsed|Took|toFixed\\s*\\(\\s*1\\s*\\)|setInterval/.test(body)) { headerHasTiming = true; break; }
-}
-process.exit(headerHasTiming ? 1 : 0);
-" 2>/dev/null
-if [ $? -eq 0 ]; then
-  add_reward 0.10
-  echo "PASS (0.10) [F2P]: Header has no timing (static)"
-else
-  echo "FAIL (0.10) [F2P]: Timing leaked into header — would trigger full redraw"
-fi
-
-# ============================================================
-# F2P Gate 6 (0.15): tool_execution_start wires up timestamp for bash
-#   - Either via setExecution*Time(...)/setExecution*Timestamp(...) call
-#   - Or via tool-renderer state.startedAt = Date.now() when executionStarted flips
-# Behaviour: when bash execution starts, a start-time is recorded.
-# ============================================================
-echo "=== F2P Gate 6: Start-time wiring on tool_execution_start ==="
-node -e "
-const fs = require('fs');
-const im = (() => { try { return fs.readFileSync('$INTERACTIVE','utf8'); } catch(e){ return ''; } })();
-const bt = (() => { try { return fs.readFileSync('$BASH_TOOL','utf8'); } catch(e){ return ''; } })();
-const te = (() => { try { return fs.readFileSync('$TOOL_EXEC','utf8'); } catch(e){ return ''; } })();
-
-// Path A: interactive-mode invokes a setter on the component when toolName === 'bash'
-const lines = im.split('\n');
-let inHandler = false, depth = 0, sawBashCheck = false, sawSetter = false;
-for (let i = 0; i < lines.length; i++) {
-  const l = lines[i];
-  if (/tool_execution_start/.test(l)) { inHandler = true; depth = 0; }
-  if (inHandler) {
-    for (const ch of l) { if (ch==='{') depth++; else if (ch==='}') depth--; }
-    if (/toolName\\s*===\\s*[\"']bash[\"']|toolName\\s*==\\s*[\"']bash[\"']/.test(l)) sawBashCheck = true;
-    if (/setExecution(Start)?(Time|Timestamp)\\s*\\(|setStartTime\\s*\\(|markBashStart/.test(l)) sawSetter = true;
-    if (depth < 0 || (depth === 0 && /case\\s+/.test(l) && i > 0)) { /* loose */ }
-  }
-}
-const pathA = sawBashCheck && sawSetter;
-
-// Path B: bash.ts renderCall sets state.startedAt = Date.now() on executionStarted
-const pathB = /executionStarted[\\s\\S]{0,120}startedAt\\s*=\\s*Date\\.now\\s*\\(\\s*\\)/.test(bt) ||
-              /startedAt\\s*=\\s*Date\\.now\\s*\\(\\s*\\)/.test(bt);
-
-// Path C: tool-execution.ts markExecutionStarted itself records bash start-time
-const markBody = (() => {
-  const ls = te.split('\n');
-  let s=-1,d=0;
-  for (let i=0;i<ls.length;i++){
-    if (s===-1 && /markExecutionStarted\\s*\\(/.test(ls[i]) && /\\{/.test(ls[i])) { s=i; d=0; }
-    if (s!==-1) {
-      for (const ch of ls[i]) { if(ch==='{')d++; else if(ch==='}')d--; }
-      if (d===0 && i>s) return ls.slice(s,i+1).join('\n');
-    }
-  }
-  return '';
-})();
-const pathC = /toolName\\s*===\\s*[\"']bash[\"']/.test(markBody) && /Date\\.now\\s*\\(\\s*\\)/.test(markBody);
-
-process.exit((pathA || pathB || pathC) ? 0 : 1);
+const cur = fs.readFileSync('$TOOL_EXEC','utf8');
+const base = fs.readFileSync('$BASE_TE','utf8');
+const baseHas = /toFixed\s*\(\s*1\s*\)/.test(base) || /formatDuration\s*\(/.test(base) || /formatTimingDuration\s*\(/.test(base);
+const curHas  = /toFixed\s*\(\s*1\s*\)/.test(cur)  || /formatDuration\s*\(/.test(cur)  || /formatTimingDuration\s*\(/.test(cur);
+process.exit((!baseHas && curHas) ? 0 : 1);
 " 2>/dev/null
 if [ $? -eq 0 ]; then
   add_reward 0.15
-  echo "PASS (0.15) [F2P]: Start-time recorded on bash tool_execution_start"
+  echo "PASS (0.15) [F2P6]: 1-decimal duration formatting in tool-execution.ts"
 else
-  echo "FAIL (0.15) [F2P]: No bash start-time wiring detected"
+  echo "FAIL (0.15) [F2P6]: no new 1-decimal formatting in tool-execution.ts"
 fi
 
-# ============================================================
-# F2P Gate 7 (0.10): Behavioural simulation — render Elapsed/Took format
-# Run a short Node program that uses toFixed(1) the way the patch does
-# and verify the produced strings match the documented format.
-# This catches non-functional / no-op patches.
-# ============================================================
-echo "=== F2P Gate 7: Format simulation ==="
-node -e "
-const fs = require('fs');
-const all = ['$TOOL_EXEC','$BASH_TOOL'].map(p => { try { return fs.readFileSync(p,'utf8'); } catch(e){return '';} }).join('\n');
-
-// Extract a duration formatter: look for (ms / 1000).toFixed(1) pattern
-const m = all.match(/\\(([^)]*?)\\s*\\/\\s*1000\\)\\.toFixed\\(\\s*1\\s*\\)/);
-if (!m) process.exit(1);
-
-// Simulate
-function fmt(ms){ return (ms/1000).toFixed(1) + 's'; }
-const tests = [
-  [12300, '12.3s'],
-  [47200, '47.2s'],
-  [1000,  '1.0s'],
-  [50,    '0.1s'],
-];
-for (const [ms, want] of tests) {
-  if (fmt(ms) !== want) process.exit(1);
-}
-
-// Also confirm both labels combine: 'Elapsed 12.3s' / 'Took 47.2s'
-const sample1 = 'Elapsed ' + fmt(12300);
-const sample2 = 'Took '    + fmt(47200);
-if (sample1 !== 'Elapsed 12.3s' || sample2 !== 'Took 47.2s') process.exit(1);
-process.exit(0);
-" 2>/dev/null
-if [ $? -eq 0 ]; then
-  add_reward 0.10
-  echo "PASS (0.10) [F2P]: Duration formatting matches 'Elapsed/Took X.Ys'"
-else
-  echo "FAIL (0.10) [F2P]: Duration formatter not present or wrong"
-fi
+# Cap at 1.0 (already capped in add_reward, but be safe)
+REWARD=$(awk -v r="$REWARD" 'BEGIN{ if (r>1) r=1; printf "%.4f", r }')
 
 echo ""
-echo "=== FINAL REWARD: $REWARD ==="
+echo "FINAL REWARD: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt
-exit 0

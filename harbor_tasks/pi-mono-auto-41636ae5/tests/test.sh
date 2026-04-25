@@ -1,230 +1,148 @@
 #!/bin/bash
 set +e
 mkdir -p /logs/verifier
+REWARD=0
+
 cd /workspace/pi-mono 2>/dev/null || { echo "0.00" > /logs/verifier/reward.txt; exit 0; }
 
-export PATH="/usr/local/cargo/bin:/root/.cargo/bin:/usr/local/bin:/usr/bin:$PATH"
-
-REWARD=0
+export PATH="/usr/local/cargo/bin:/root/.cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:$PATH"
 
 add() {
     REWARD=$(awk "BEGIN{printf \"%.2f\", $REWARD + $1}")
 }
 
-# ============================================================
-# Behavioral test 1 (0.40): clipboard-native module loads safely
-# without DISPLAY/WAYLAND_DISPLAY on linux. The bug: requiring
-# @crosscopy/clipboard (or @mariozechner/clipboard) on headless
-# linux panics. Fix: guard the require with a display check.
-# ============================================================
-echo "=== Behavioral 1: clipboard-native loads on headless linux ==="
+finish() {
+    echo "$REWARD" > /logs/verifier/reward.txt
+    exit 0
+}
 
 NATIVE_FILE="/workspace/pi-mono/packages/coding-agent/src/utils/clipboard-native.ts"
-if [ ! -f "$NATIVE_FILE" ]; then
-    # try to discover a clipboard wrapper
-    NATIVE_FILE=$(find /workspace/pi-mono/packages/coding-agent/src -maxdepth 4 -name 'clipboard*.ts' 2>/dev/null | head -1)
-fi
 
-if [ -n "$NATIVE_FILE" ] && [ -f "$NATIVE_FILE" ]; then
+# ============================================================
+# F2P 1 (0.50): clipboard-native module loads safely on headless linux
+# (no DISPLAY, no WAYLAND_DISPLAY) AND the exported clipboard is null.
+# On the buggy base, the require of @mariozechner/clipboard panics
+# the process at module load on headless linux, so this fails.
+# On the fix, a guard short-circuits the require => clipboard = null.
+# ============================================================
+echo "=== F2P 1: clipboard-native loads as null on headless linux ==="
+
+if [ ! -f "$NATIVE_FILE" ]; then
+    echo "F2P 1 FAIL — clipboard-native.ts missing"
+else
     cd /workspace/pi-mono/packages/coding-agent
-    # Run in a subshell with no DISPLAY, simulating headless linux. Import the
-    # module via tsx and exercise hasImage if available — if the guard works,
-    # this returns null/false instead of panicking the process.
-    OUT=$(env -u DISPLAY -u WAYLAND_DISPLAY \
-        node --import tsx -e '
+    OUT=$(env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION \
+        timeout 45 node --import tsx -e '
         (async () => {
             try {
                 const mod = await import("./src/utils/clipboard-native.ts");
-                // Module should load without throwing/panicking.
-                // Try to access default or named exports gracefully.
-                const v = mod.default ?? mod.clipboard ?? mod;
-                if (v && typeof v.hasImage === "function") {
-                    try { v.hasImage(); } catch (e) { /* tolerated */ }
+                // Inspect every export, find the clipboard module reference.
+                const candidates = [];
+                for (const k of Object.keys(mod)) candidates.push([k, mod[k]]);
+                if (mod.default !== undefined) candidates.push(["default", mod.default]);
+
+                // We want at least one exported value that is null on headless.
+                let sawNull = false;
+                let sawNonNullObj = false;
+                for (const [, v] of candidates) {
+                    if (v === null) sawNull = true;
+                    else if (v && typeof v === "object" && typeof v.hasImage === "function") sawNonNullObj = true;
                 }
-                console.log("LOADED_OK");
+                if (sawNull && !sawNonNullObj) console.log("HEADLESS_NULL_OK");
+                else if (sawNonNullObj) console.log("LOADED_NATIVE_BAD");
+                else console.log("LOADED_UNKNOWN");
             } catch (e) {
                 console.log("LOAD_FAIL:" + (e && e.message ? e.message : String(e)));
             }
         })();
         ' 2>&1)
-    echo "$OUT" | tail -20
-    if echo "$OUT" | grep -q "LOADED_OK"; then
-        # Additional check: ensure it's null on headless (not just lucky catch)
-        OUT2=$(env -u DISPLAY -u WAYLAND_DISPLAY \
-            node --import tsx -e '
-            (async () => {
-                try {
-                    const mod = await import("./src/utils/clipboard-native.ts");
-                    const candidates = [mod.default, mod.clipboard, mod.clipboardModule];
-                    let found = null;
-                    for (const c of candidates) {
-                        if (c !== undefined) { found = c; break; }
-                    }
-                    if (found === null) console.log("NULL_OK");
-                    else console.log("VALUE:" + typeof found);
-                } catch (e) {
-                    console.log("ERR:" + e.message);
-                }
-            })();
-            ' 2>&1)
-        echo "$OUT2" | tail -5
-        if echo "$OUT2" | grep -qE "NULL_OK|VALUE:"; then
-            add 0.40
-            echo "Behavioral 1 PASS (0.40)"
-        else
-            add 0.20
-            echo "Behavioral 1 PARTIAL (0.20) — loaded but couldn't verify guard semantic"
-        fi
+    echo "$OUT" | tail -10
+    if echo "$OUT" | grep -q "HEADLESS_NULL_OK"; then
+        add 0.50
+        echo "F2P 1 PASS (0.50)"
     else
-        echo "Behavioral 1 FAIL — module fails to load on headless linux"
+        echo "F2P 1 FAIL"
     fi
     cd /workspace/pi-mono
-else
-    echo "Behavioral 1 FAIL — clipboard-native source not found"
 fi
 
 # ============================================================
-# Behavioral test 2 (0.25): clipboard-image utility works without DISPLAY
-# Should not invoke native clipboard or wl-paste when DISPLAY/WAYLAND_DISPLAY
-# are unset (returning null cleanly).
+# F2P 2 (0.30): With DISPLAY=:0 set but no X11 socket present, OR with
+# WAYLAND_DISPLAY set but no socket, the module should still not load
+# the native clipboard. This catches purely env-based guards that don't
+# verify the socket exists. We accept either the socket-aware fix or
+# the simpler env-only fix by checking the no-DISPLAY case strictly,
+# and here we only require: with env unset, behavior remains null.
+# Specifically test: setting only TERMUX_VERSION makes clipboard null.
+# On base: TERMUX guard already exists, so this is also null on base.
+# So instead, we pivot: verify clipboard-image returns null on headless.
 # ============================================================
 echo ""
-echo "=== Behavioral 2: clipboard-image headless behavior ==="
+echo "=== F2P 2: clipboard-image returns null on headless linux ==="
+
 CLIP_IMG="/workspace/pi-mono/packages/coding-agent/src/utils/clipboard-image.ts"
 if [ -f "$CLIP_IMG" ]; then
     cd /workspace/pi-mono/packages/coding-agent
-    OUT=$(env -u DISPLAY -u WAYLAND_DISPLAY \
-        node --import tsx -e '
+    OUT=$(env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION \
+        timeout 45 node --import tsx -e '
         (async () => {
             try {
                 const mod = await import("./src/utils/clipboard-image.ts");
                 const fn = mod.readClipboardImage ?? mod.default;
-                if (typeof fn !== "function") {
-                    console.log("NO_FN");
-                    return;
-                }
-                let result;
-                try {
-                    result = await fn({ platform: "linux", env: {} });
-                } catch (e) {
-                    try {
-                        result = await fn();
-                    } catch (e2) {
-                        console.log("THREW:" + e2.message);
-                        return;
-                    }
-                }
-                if (result === null || result === undefined) console.log("NULL_OK");
-                else console.log("GOT:" + JSON.stringify(result).slice(0, 80));
+                if (typeof fn !== "function") { console.log("NO_FN"); return; }
+                let r;
+                try { r = await fn({ platform: "linux", env: {} }); }
+                catch { try { r = await fn(); } catch (e) { console.log("THREW:" + e.message); return; } }
+                if (r === null || r === undefined) console.log("NULL_OK");
+                else console.log("GOT:" + JSON.stringify(r).slice(0,80));
             } catch (e) {
-                console.log("IMPORT_ERR:" + e.message);
+                console.log("IMPORT_ERR:" + (e && e.message ? e.message : String(e)));
             }
         })();
         ' 2>&1)
     echo "$OUT" | tail -10
     if echo "$OUT" | grep -q "NULL_OK"; then
-        add 0.25
-        echo "Behavioral 2 PASS (0.25)"
-    elif echo "$OUT" | grep -q "IMPORT_ERR"; then
-        echo "Behavioral 2 FAIL — clipboard-image fails to import"
+        add 0.30
+        echo "F2P 2 PASS (0.30)"
     else
-        # If module exists but doesn't accept env injection, run vitest as fallback
-        if [ -f /workspace/pi-mono/packages/coding-agent/test/clipboard-image.test.ts ]; then
-            cd /workspace/pi-mono
-            VOUT=$(npx vitest --run packages/coding-agent/test/clipboard-image.test.ts 2>&1)
-            VEXIT=$?
-            echo "$VOUT" | tail -20
-            if [ $VEXIT -eq 0 ]; then
-                add 0.25
-                echo "Behavioral 2 PASS via vitest (0.25)"
-            else
-                echo "Behavioral 2 FAIL"
-            fi
-        fi
+        echo "F2P 2 FAIL"
     fi
     cd /workspace/pi-mono
 else
-    # Module doesn't exist, give the points if behavioral 1 passed
-    echo "clipboard-image.ts not found — skipping"
+    echo "F2P 2 SKIP — clipboard-image.ts not found"
 fi
 
 # ============================================================
-# Structural test (0.15): Display guard exists in code path
+# F2P 3 (0.20): Behavioral — the clipboard-native module must not
+# panic when imported in a child process simulating headless linux.
+# We launch a fresh node process, import, and check exit code 0.
+# On the buggy base, the native addon load throws/panics at module
+# evaluation when there's no display, yielding a non-zero exit.
 # ============================================================
 echo ""
-echo "=== Structural: display guard present ==="
-GUARD_OK=1
+echo "=== F2P 3: child process import does not crash on headless ==="
+
 if [ -f "$NATIVE_FILE" ]; then
-    if grep -qE "DISPLAY|WAYLAND|hasDisplay|canUseClipboard|isHeadless|X11-unix" "$NATIVE_FILE"; then
-        GUARD_OK=0
-    fi
-fi
-# Also check interactive-mode if guard is upstream
-IM="/workspace/pi-mono/packages/coding-agent/src/modes/interactive/interactive-mode.ts"
-if [ $GUARD_OK -ne 0 ] && [ -f "$IM" ]; then
-    if grep -qE "DISPLAY|WAYLAND|hasDisplay|canUseClipboard" "$IM"; then
-        GUARD_OK=0
-    fi
-fi
-if [ $GUARD_OK -eq 0 ]; then
-    add 0.15
-    echo "Structural PASS (0.15)"
-else
-    echo "Structural FAIL — no display-related guard found"
-fi
-
-# ============================================================
-# P2P regression (0.10): general skills test still passes
-# ============================================================
-echo ""
-echo "=== P2P: skills regression ==="
-cd /workspace/pi-mono
-SKILLS_TEST="packages/coding-agent/test/skills.test.ts"
-if [ -f "$SKILLS_TEST" ]; then
-    npx vitest --run "$SKILLS_TEST" >/tmp/skills.log 2>&1
-    SX=$?
-    tail -15 /tmp/skills.log
-    if [ $SX -eq 0 ]; then
-        add 0.10
-        echo "P2P PASS (0.10)"
+    cd /workspace/pi-mono/packages/coding-agent
+    env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION \
+        timeout 45 node --import tsx -e '
+        import("./src/utils/clipboard-native.ts").then(() => {
+            process.stdout.write("OK_IMPORT\n");
+            process.exit(0);
+        }).catch((e) => {
+            process.stdout.write("FAIL_IMPORT:" + (e && e.message ? e.message : String(e)) + "\n");
+            process.exit(2);
+        });
+        ' >/tmp/native_import.log 2>&1
+    EX=$?
+    tail -5 /tmp/native_import.log
+    if [ $EX -eq 0 ] && grep -q "OK_IMPORT" /tmp/native_import.log; then
+        add 0.20
+        echo "F2P 3 PASS (0.20)"
     else
-        echo "P2P FAIL (exit=$SX)"
+        echo "F2P 3 FAIL (exit=$EX)"
     fi
-else
-    # fallback: any small unit test
-    ALT=$(find packages/coding-agent/test -maxdepth 2 -name 'tools.test.ts' 2>/dev/null | head -1)
-    if [ -n "$ALT" ]; then
-        npx vitest --run "$ALT" >/tmp/p2p.log 2>&1
-        if [ $? -eq 0 ]; then
-            add 0.10
-            echo "P2P PASS via $ALT (0.10)"
-        fi
-    fi
+    cd /workspace/pi-mono
 fi
 
-# ============================================================
-# Type-check sanity (0.10): TypeScript still compiles
-# ============================================================
-echo ""
-echo "=== TypeScript compiles ==="
-cd /workspace/pi-mono
-if command -v npx >/dev/null 2>&1; then
-    timeout 180 npx tsgo --noEmit >/tmp/tsc.log 2>&1
-    TX=$?
-    if [ $TX -ne 0 ]; then
-        # try plain tsc
-        timeout 180 npx tsc --noEmit >/tmp/tsc.log 2>&1
-        TX=$?
-    fi
-    tail -10 /tmp/tsc.log
-    if [ $TX -eq 0 ]; then
-        add 0.10
-        echo "TS PASS (0.10)"
-    else
-        echo "TS FAIL"
-    fi
-fi
-
-echo ""
-echo "=== FINAL REWARD: $REWARD ==="
-echo "$REWARD" > /logs/verifier/reward.txt
+finish

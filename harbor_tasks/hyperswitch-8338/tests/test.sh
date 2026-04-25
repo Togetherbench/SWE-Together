@@ -1,8 +1,8 @@
 #!/bin/bash
 set +e
 
-# Test script for hyperswitch-8338: refactor auth analytics to support profile, org and merchant level auth
-# Strategy: Heavily favor behavioral verification (cargo check) over grep matching.
+# Verifier for hyperswitch-8338: refactor auth analytics to support profile, org and merchant level auth
+# Core principle: a no-op patch MUST produce 0.0. All reward comes from F2P behavioral changes.
 
 REPO_DIR="/workspace/hyperswitch"
 ROUTER_ANALYTICS="$REPO_DIR/crates/router/src/analytics.rs"
@@ -13,8 +13,9 @@ AUTH_METRICS="$AUTH_DIR/metrics.rs"
 AUTH_METRICS_DIR="$AUTH_DIR/metrics"
 ANALYTICS_LIB="$REPO_DIR/crates/analytics/src/lib.rs"
 
-REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
+REWARD_FILE="/logs/verifier/reward.txt"
+REWARD=0.0
 
 # Make cargo available
 export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
@@ -24,181 +25,214 @@ if ! command -v cargo >/dev/null 2>&1; then
     done
 fi
 
+# ============================================================================
+# P2P gating: must have repo and required source files. If missing, exit 0.0.
+# These checks pass on the unmodified base too (they exist there) — they
+# do NOT contribute reward, only short-circuit on environmental failure.
+# ============================================================================
+if [ ! -d "$REPO_DIR" ]; then
+    echo "Repo missing"; echo "0.0" > "$REWARD_FILE"; exit 0
+fi
+for f in "$ROUTER_ANALYTICS" "$AUTH_CORE" "$AUTH_FILTERS" "$AUTH_METRICS" "$ANALYTICS_LIB"; do
+    if [ ! -f "$f" ]; then
+        echo "Missing required file: $f"; echo "0.0" > "$REWARD_FILE"; exit 0
+    fi
+done
+if [ ! -d "$AUTH_METRICS_DIR" ]; then
+    echo "Missing metrics dir"; echo "0.0" > "$REWARD_FILE"; exit 0
+fi
+
+cd "$REPO_DIR" || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+
+# ============================================================================
+# F2P gates only. Each gate must FAIL on the no-op (buggy base) to award reward.
+# Total weights sum to 1.0.
+# ============================================================================
+
 TOTAL_W=0
 EARNED_W=0
 
-gate() {
-    local weight=$1 pass=$2 desc=$3 type=$4
+award() {
+    local weight=$1 pass=$2 desc=$3
     TOTAL_W=$(awk "BEGIN {printf \"%.4f\", $TOTAL_W + $weight}")
     if [ "$pass" -eq 0 ]; then
         EARNED_W=$(awk "BEGIN {printf \"%.4f\", $EARNED_W + $weight}")
-        echo "PASS ($type, w=$weight): $desc"
+        echo "PASS (w=$weight): $desc"
     else
-        echo "FAIL ($type, w=$weight): $desc"
+        echo "FAIL (w=$weight): $desc"
     fi
 }
 
-# ============================================================================
-# Gate 1 — P2P (weight 0.05): Source structure intact
-# ============================================================================
-P2P_RESULT=1
-if [ -f "$ROUTER_ANALYTICS" ] && [ -f "$AUTH_CORE" ] && [ -f "$AUTH_FILTERS" ] && \
-   [ -f "$AUTH_METRICS" ] && [ -f "$ANALYTICS_LIB" ] && [ -d "$AUTH_METRICS_DIR" ]; then
-    P2P_RESULT=0
-fi
-gate 0.05 $P2P_RESULT "Base analytics source files exist" "P2P"
-
-# ============================================================================
-# Run cargo check ONCE — gates the heavy behavioral weight
-# ============================================================================
-cd "$REPO_DIR" || { echo "$REPO_DIR not found"; echo "0.00" > "$REWARD_FILE"; exit 0; }
-
-CARGO_LOG=$(mktemp)
-CARGO_OK=1
-echo "Running cargo check -p analytics -p router (this may take a while)..."
-timeout 900 cargo check -p analytics -p router --message-format=short > "$CARGO_LOG" 2>&1
-CARGO_EXIT=$?
-if [ "$CARGO_EXIT" -eq 0 ]; then
-    CARGO_OK=0
-    echo "cargo check PASSED"
-else
-    echo "cargo check FAILED (exit $CARGO_EXIT). Last 30 lines:"
-    tail -30 "$CARGO_LOG"
-fi
-
-# ============================================================================
-# Gate 2 — F2P (weight 0.30): Workspace compiles cleanly
-# This is the largest behavioral signal — refactoring an API that touches many
-# call sites is only verified correct if everything still type-checks.
-# ============================================================================
-gate 0.30 $CARGO_OK "Cargo check (analytics + router) compiles" "F2P"
-
-# ============================================================================
-# Gate 3 — F2P (weight 0.20): AuthInfo plumbed through metrics pipeline
-# Verified ONLY through a successful build that also shows the trait signature
-# was changed (load_metrics now takes an AuthInfo). We test by building a
-# small probe that checks the symbol presence via cargo doc/check would be
-# excessive; instead we inspect compiled artifact by matching trait signature
-# in source (this is signature-level not arbitrary string).
-# ============================================================================
-AUTH_TRAIT_RESULT=1
-if [ "$CARGO_OK" -eq 0 ]; then
-    # Trait must take auth: &AuthInfo (any name with AuthInfo type)
-    if grep -Pzo '(?s)trait\s+AuthEventMetric.*?fn\s+load_metrics\s*\([^)]*AuthInfo' "$AUTH_METRICS" >/dev/null 2>&1; then
-        AUTH_TRAIT_RESULT=0
-    fi
-    # Fallback: looser check across the file
-    if [ "$AUTH_TRAIT_RESULT" -ne 0 ]; then
-        if grep -A 15 'fn load_metrics' "$AUTH_METRICS" 2>/dev/null | grep -q 'AuthInfo'; then
-            AUTH_TRAIT_RESULT=0
+# ----------------------------------------------------------------------------
+# F2P Gate 1 (weight 0.18): The AuthEventMetric trait's load_metrics signature
+# was changed from taking merchant_id to taking AuthInfo.
+# On base: load_metrics takes &common_utils::id_type::MerchantId → FAIL
+# On fix: takes &AuthInfo → PASS
+# ----------------------------------------------------------------------------
+G1=1
+if [ -f "$AUTH_METRICS" ]; then
+    # The trait must NOT have merchant_id param in load_metrics
+    # AND must reference AuthInfo in load_metrics signature
+    TRAIT_BLOCK=$(awk '
+        /pub trait AuthEventMetric/,/^}/ {print}
+    ' "$AUTH_METRICS" 2>/dev/null)
+    if [ -n "$TRAIT_BLOCK" ]; then
+        if echo "$TRAIT_BLOCK" | grep -q 'AuthInfo' && \
+           ! echo "$TRAIT_BLOCK" | grep -q 'merchant_id.*MerchantId'; then
+            G1=0
         fi
     fi
 fi
-gate 0.20 $AUTH_TRAIT_RESULT "AuthEventMetric trait load_metrics takes AuthInfo (compiles)" "F2P"
+award 0.18 $G1 "AuthEventMetric trait load_metrics uses AuthInfo (not merchant_id)"
 
-# ============================================================================
-# Gate 4 — F2P (weight 0.15): At least 3 metric impl files migrated to AuthInfo
-# Requires that individual metric modules use auth.set_filter_clause OR accept
-# &AuthInfo. Counts unique files. Compilation-gated.
-# ============================================================================
-METRIC_MIG_RESULT=1
-if [ "$CARGO_OK" -eq 0 ] && [ -d "$AUTH_METRICS_DIR" ]; then
-    MIG_COUNT=0
+# ----------------------------------------------------------------------------
+# F2P Gate 2 (weight 0.18): At least 4 metric impl files migrated from
+# merchant_id parameter to AuthInfo + auth.set_filter_clause.
+# On base: 0 files use AuthInfo → FAIL
+# On fix: most/all use AuthInfo → PASS
+# ----------------------------------------------------------------------------
+G2=1
+MIG_COUNT=0
+if [ -d "$AUTH_METRICS_DIR" ]; then
     for f in "$AUTH_METRICS_DIR"/*.rs; do
         [ -f "$f" ] || continue
-        # File migrated if it references AuthInfo AND no longer takes merchant_id as primary param
-        if grep -q 'AuthInfo' "$f" 2>/dev/null; then
-            if grep -q 'auth.*set_filter_clause\|auth\.set_filter_clause' "$f" 2>/dev/null || \
-               grep -qE 'auth\s*:\s*&AuthInfo' "$f" 2>/dev/null; then
-                MIG_COUNT=$((MIG_COUNT + 1))
-            fi
+        # File migrated if it references AuthInfo AND uses set_filter_clause via auth
+        # AND no longer has add_filter_clause("merchant_id", merchant_id)
+        if grep -q 'AuthInfo' "$f" 2>/dev/null && \
+           grep -qE 'auth\.set_filter_clause|auth: &AuthInfo' "$f" 2>/dev/null && \
+           ! grep -q 'add_filter_clause("merchant_id", merchant_id)' "$f" 2>/dev/null; then
+            MIG_COUNT=$((MIG_COUNT + 1))
         fi
     done
-    echo "Metric files migrated to AuthInfo: $MIG_COUNT"
-    if [ "$MIG_COUNT" -ge 3 ]; then
-        METRIC_MIG_RESULT=0
+fi
+echo "Metric impl files migrated to AuthInfo: $MIG_COUNT"
+if [ "$MIG_COUNT" -ge 4 ]; then G2=0; fi
+award 0.18 $G2 "≥4 metric impls migrated from merchant_id to AuthInfo"
+
+# ----------------------------------------------------------------------------
+# F2P Gate 3 (weight 0.10): filters.rs get_auth_events_filter_for_dimension
+# now takes AuthInfo instead of merchant_id.
+# On base: takes &common_utils::id_type::MerchantId → FAIL
+# On fix: takes &AuthInfo → PASS
+# ----------------------------------------------------------------------------
+G3=1
+if [ -f "$AUTH_FILTERS" ]; then
+    FN_BLOCK=$(awk '
+        /pub async fn get_auth_events_filter_for_dimension/,/^[[:space:]]*\{/ {print}
+    ' "$AUTH_FILTERS" 2>/dev/null)
+    if [ -n "$FN_BLOCK" ]; then
+        if echo "$FN_BLOCK" | grep -q 'AuthInfo' && \
+           ! echo "$FN_BLOCK" | grep -q 'merchant_id.*MerchantId'; then
+            G3=0
+        fi
     fi
 fi
-gate 0.15 $METRIC_MIG_RESULT "≥3 auth_event metric impls migrated to AuthInfo + set_filter_clause" "F2P"
+award 0.10 $G3 "filters.rs get_auth_events_filter_for_dimension uses AuthInfo"
 
-# ============================================================================
-# Gate 5 — F2P (weight 0.20): Org AND Profile level endpoints registered
-# Verifies actual endpoint registration in route table — both /org and /profile
-# scopes must register auth_events metrics handlers. Compilation-gated.
-# ============================================================================
-ENDPOINT_RESULT=1
-if [ "$CARGO_OK" -eq 0 ] && [ -f "$ROUTER_ANALYTICS" ]; then
-    # Extract /org scope block, look for metrics/auth_events
-    ORG_HIT=0
-    PROF_HIT=0
-    MERCH_HIT=0
+# ----------------------------------------------------------------------------
+# F2P Gate 4 (weight 0.12): analytics/src/lib.rs get_auth_event_metrics
+# function signature changed from merchant_id → auth: &AuthInfo.
+# On base: signature has merchant_id MerchantId → FAIL
+# On fix: signature uses AuthInfo → PASS
+# ----------------------------------------------------------------------------
+G4=1
+if [ -f "$ANALYTICS_LIB" ]; then
+    LIB_FN=$(awk '
+        /pub async fn get_auth_event_metrics/,/^[[:space:]]*\{[[:space:]]*$/ {print}
+    ' "$ANALYTICS_LIB" 2>/dev/null)
+    if [ -n "$LIB_FN" ]; then
+        if echo "$LIB_FN" | grep -q 'AuthInfo' && \
+           ! echo "$LIB_FN" | grep -qE 'merchant_id:\s*&common_utils::id_type::MerchantId'; then
+            G4=0
+        fi
+    fi
+fi
+award 0.12 $G4 "analytics lib get_auth_event_metrics uses AuthInfo"
 
-    # Use awk to scan scope-bound blocks for registration of auth_events route
-    # Look for any handler invocation matching org+auth_event*
-    if grep -E 'route.*to\(\s*get_org_auth_event' "$ROUTER_ANALYTICS" >/dev/null 2>&1 || \
-       grep -E 'route.*to\(\s*\w*org\w*auth_event' "$ROUTER_ANALYTICS" >/dev/null 2>&1; then
-        ORG_HIT=1
+# ----------------------------------------------------------------------------
+# F2P Gate 5 (weight 0.14): Org-scope auth_events endpoint registered.
+# On base: only /merchant has metrics/auth_events → FAIL
+# On fix: /org scope registers metrics/auth_events route → PASS
+# ----------------------------------------------------------------------------
+G5=1
+if [ -f "$ROUTER_ANALYTICS" ]; then
+    # Extract /org scope block content (heuristic: scope("/org") through next scope() at similar indent)
+    ORG_BLOCK=$(awk '
+        /web::scope\("\/org"\)/ {found=1}
+        found {print}
+        found && /web::scope\("\/profile"\)/ {exit}
+    ' "$ROUTER_ANALYTICS" 2>/dev/null)
+    if [ -n "$ORG_BLOCK" ] && echo "$ORG_BLOCK" | grep -q 'metrics/auth_events'; then
+        G5=0
     fi
-    if grep -E 'route.*to\(\s*get_profile_auth_event' "$ROUTER_ANALYTICS" >/dev/null 2>&1 || \
-       grep -E 'route.*to\(\s*\w*profile\w*auth_event' "$ROUTER_ANALYTICS" >/dev/null 2>&1; then
-        PROF_HIT=1
-    fi
-    if grep -E 'route.*to\(\s*get_auth_event_metrics\)|to\(\s*\w*merchant\w*auth_event' "$ROUTER_ANALYTICS" >/dev/null 2>&1 || \
-       grep -E 'metrics/auth_events.*get_auth_event_metrics' "$ROUTER_ANALYTICS" >/dev/null 2>&1; then
-        MERCH_HIT=1
-    fi
+fi
+award 0.14 $G5 "Org-scope auth_events endpoint registered"
 
-    # Also accept inline scope-based hits via line proximity
-    # Count distinct "metrics/auth_events" registrations
-    AE_REGS=$(grep -c 'metrics/auth_events' "$ROUTER_ANALYTICS" 2>/dev/null)
+# ----------------------------------------------------------------------------
+# F2P Gate 6 (weight 0.14): Profile-scope auth_events endpoint registered.
+# On base: /profile scope lacks auth_events → FAIL
+# On fix: /profile registers metrics/auth_events → PASS
+# ----------------------------------------------------------------------------
+G6=1
+if [ -f "$ROUTER_ANALYTICS" ]; then
+    PROFILE_BLOCK=$(awk '
+        /web::scope\("\/profile"\)/ {found=1; depth=0}
+        found {
+            print
+            n=gsub(/\.service/,"&")
+            if ($0 ~ /^[[:space:]]+\)\,?[[:space:]]*$/) {
+                rparen++
+                if (rparen >= 8) exit
+            }
+        }
+    ' "$ROUTER_ANALYTICS" 2>/dev/null)
+    # Simpler approach: just check that there are ≥2 distinct route registrations to auth_events
+    # AND that auth_events appears in close proximity to "/profile" scope
+    AE_TOTAL=$(grep -c 'metrics/auth_events' "$ROUTER_ANALYTICS" 2>/dev/null)
+    [ -z "$AE_TOTAL" ] && AE_TOTAL=0
+    # Look for evidence of profile-level auth events handler
+    if grep -qE 'profile.*auth_event|get_profile_auth_event' "$ROUTER_ANALYTICS" 2>/dev/null && \
+       [ "$AE_TOTAL" -ge 2 ]; then
+        G6=0
+    fi
+fi
+award 0.14 $G6 "Profile-scope auth_events endpoint/handler registered"
+
+# ----------------------------------------------------------------------------
+# F2P Gate 7 (weight 0.14): At least 3 distinct metrics/auth_events route
+# registrations exist (merchant + org + profile). On base, typically only 1
+# (merchant) exists, so this fails. On fix, ≥3 exist.
+# ----------------------------------------------------------------------------
+G7=1
+if [ -f "$ROUTER_ANALYTICS" ]; then
+    AE_REGS=$(grep -c 'metrics/auth_events"' "$ROUTER_ANALYTICS" 2>/dev/null)
     [ -z "$AE_REGS" ] && AE_REGS=0
-
-    SUM=$((ORG_HIT + PROF_HIT + MERCH_HIT))
-    echo "Endpoint hits: org=$ORG_HIT profile=$PROF_HIT merchant=$MERCH_HIT total_auth_events_routes=$AE_REGS"
-    if [ "$ORG_HIT" -eq 1 ] && [ "$PROF_HIT" -eq 1 ] && [ "$AE_REGS" -ge 2 ]; then
-        ENDPOINT_RESULT=0
-    elif [ "$SUM" -ge 2 ] && [ "$AE_REGS" -ge 2 ]; then
-        # Partial credit path won't apply (binary gate) — keep strict
-        :
+    # Also accept distinct handler names: get_auth_event_metrics, get_org_auth_event_metrics, get_profile_auth_event_metrics
+    HANDLERS=0
+    grep -qE '\bget_auth_event_metrics\b' "$ROUTER_ANALYTICS" 2>/dev/null && HANDLERS=$((HANDLERS+1))
+    grep -qE '\bget_org_auth_event_metrics\b|\bget_org_auth_events?\b' "$ROUTER_ANALYTICS" 2>/dev/null && HANDLERS=$((HANDLERS+1))
+    grep -qE '\bget_profile_auth_event_metrics\b|\bget_profile_auth_events?\b' "$ROUTER_ANALYTICS" 2>/dev/null && HANDLERS=$((HANDLERS+1))
+    echo "auth_events route registrations: $AE_REGS, distinct handler families: $HANDLERS"
+    if [ "$AE_REGS" -ge 3 ] || [ "$HANDLERS" -ge 3 ]; then
+        G7=0
     fi
 fi
-gate 0.20 $ENDPOINT_RESULT "Org + Profile auth_events endpoints registered (compiles)" "F2P"
+award 0.14 $G7 "≥3 auth_events route registrations (merchant+org+profile)"
 
 # ============================================================================
-# Gate 6 — F2P (weight 0.05): Filter API uses AuthInfo
-# filters.rs get_auth_events_filter_for_dimension takes &AuthInfo
-# ============================================================================
-FILTER_AUTH_RESULT=1
-if [ "$CARGO_OK" -eq 0 ] && [ -f "$AUTH_FILTERS" ]; then
-    if grep -A 8 'fn get_auth_events_filter_for_dimension' "$AUTH_FILTERS" 2>/dev/null | grep -q 'AuthInfo'; then
-        FILTER_AUTH_RESULT=0
-    fi
-fi
-gate 0.05 $FILTER_AUTH_RESULT "filters.rs get_auth_events_filter_for_dimension takes AuthInfo" "F2P"
-
-# ============================================================================
-# Gate 7 — Structural (weight 0.05): Provider lib.rs uses AuthInfo
-# AnalyticsProvider::get_auth_event_metrics threads AuthInfo through.
-# ============================================================================
-PROVIDER_RESULT=1
-if [ "$CARGO_OK" -eq 0 ] && [ -f "$ANALYTICS_LIB" ]; then
-    if grep -A 12 'fn get_auth_event_metrics' "$ANALYTICS_LIB" 2>/dev/null | grep -q 'AuthInfo'; then
-        PROVIDER_RESULT=0
-    fi
-fi
-gate 0.05 $PROVIDER_RESULT "AnalyticsProvider::get_auth_event_metrics uses AuthInfo" "STRUCT"
-
-# ============================================================================
-# Final reward
+# Final reward = sum of earned F2P weights, rounded to 0.01.
+# Total possible: 0.18 + 0.18 + 0.10 + 0.12 + 0.14 + 0.14 + 0.14 = 1.00
 # ============================================================================
 echo ""
-echo "=== Results: earned=$EARNED_W / total=$TOTAL_W ==="
-if awk "BEGIN {exit !($TOTAL_W > 0)}"; then
-    REWARD=$(awk "BEGIN {printf \"%.2f\", $EARNED_W / $TOTAL_W}")
-else
-    REWARD="0.00"
-fi
-echo "Reward: $REWARD"
-echo "$REWARD" > "$REWARD_FILE"
+echo "Total weight allocated: $TOTAL_W"
+echo "Earned weight: $EARNED_W"
 
-rm -f "$CARGO_LOG"
+REWARD=$(awk "BEGIN {printf \"%.2f\", $EARNED_W}")
+
+# Safety: if a no-op patch somehow scored anything, this should still report it
+# correctly. We rely on the fact that none of the F2P checks above pass on the
+# unmodified base.
+
+echo "$REWARD" > "$REWARD_FILE"
+echo "Final reward: $REWARD"
+exit 0

@@ -9,40 +9,40 @@ export PATH="/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 cd /workspace/pi-mono || { echo "0.0" > "$REWARD_FILE"; exit 0; }
 
-REWARD=0
-TOTAL=0
-
-# Helper: run a vitest test file from the ai package
-run_vitest() {
-    local testfile="$1"
-    (cd packages/ai && npx vitest --run "$testfile" 2>&1)
-}
-
 # ═══════════════════════════════════════════════════════════════════
-# P2P 1 (0.05): TypeScript compilation
+# P2P GATE: TypeScript compilation must pass
+# (gating only — no reward weight, since this passes on base)
 # ═══════════════════════════════════════════════════════════════════
-echo "=== P2P 1: TypeScript compilation ==="
-P2P1=0
-if npx tsgo --noEmit 2>&1 | tail -50; [ ${PIPESTATUS[0]} -eq 0 ]; then
-    P2P1=1
-elif npx tsc --noEmit 2>&1 | tail -50; [ ${PIPESTATUS[0]} -eq 0 ]; then
-    P2P1=1
+echo "=== P2P GATE: TypeScript compilation ==="
+COMPILE_OK=0
+if npx tsgo --noEmit 2>&1 | tail -30; [ ${PIPESTATUS[0]} -eq 0 ]; then
+    COMPILE_OK=1
+elif npx tsc --noEmit 2>&1 | tail -30; [ ${PIPESTATUS[0]} -eq 0 ]; then
+    COMPILE_OK=1
 fi
-echo "P2P1=$P2P1"
-
-# ═══════════════════════════════════════════════════════════════════
-# P2P 2 (0.05): Existing tool-choice tests still pass
-# ═══════════════════════════════════════════════════════════════════
-echo "=== P2P 2: Existing tests still pass ==="
-P2P2=0
-if run_vitest test/openai-completions-tool-choice.test.ts | tail -40; [ ${PIPESTATUS[0]} -eq 0 ]; then
-    P2P2=1
+if [ "$COMPILE_OK" -ne 1 ]; then
+    echo "TypeScript compilation failed — regression"
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
 fi
-echo "P2P2=$P2P2"
 
 # ═══════════════════════════════════════════════════════════════════
-# Build a reusable behavioral test harness using vitest
-# Tests qwen/qwen3-32b and openai/gpt-oss-20b with various reasoning levels
+# P2P GATE: Existing tool-choice tests must still pass
+# ═══════════════════════════════════════════════════════════════════
+echo "=== P2P GATE: existing tests ==="
+EXISTING_OUT=$(cd packages/ai && npx vitest --run test/openai-completions-tool-choice.test.ts 2>&1)
+echo "$EXISTING_OUT" | tail -30
+if ! echo "$EXISTING_OUT" | grep -Eq "Tests +.*passed"; then
+    # Vitest summary not found or failed
+    if echo "$EXISTING_OUT" | grep -Eqi "(failed|FAIL )"; then
+        echo "Existing tests broken — regression"
+        echo "0.0" > "$REWARD_FILE"
+        exit 0
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# Build behavioral test harness
 # ═══════════════════════════════════════════════════════════════════
 HARNESS=packages/ai/test/_issue1745_harness.test.ts
 cat > "$HARNESS" << 'TESTEOF'
@@ -96,20 +96,20 @@ async function capture(provider: string, modelId: string, reasoning: any): Promi
     return payload ?? mockState.lastParams;
 }
 
-describe("issue 1745 behavioral", () => {
-    it("QWEN_MEDIUM", async () => {
+describe("issue1745", () => {
+    it("QWEN_MEDIUM_MAPS_TO_DEFAULT", async () => {
         const p = await capture("groq", "qwen/qwen3-32b", "medium");
         expect(p.reasoning_effort).toBe("default");
     });
-    it("QWEN_HIGH", async () => {
+    it("QWEN_HIGH_MAPS_TO_DEFAULT", async () => {
         const p = await capture("groq", "qwen/qwen3-32b", "high");
         expect(p.reasoning_effort).toBe("default");
     });
-    it("QWEN_LOW", async () => {
+    it("QWEN_LOW_MAPS_TO_DEFAULT", async () => {
         const p = await capture("groq", "qwen/qwen3-32b", "low");
         expect(p.reasoning_effort).toBe("default");
     });
-    it("QWEN_MINIMAL", async () => {
+    it("QWEN_MINIMAL_MAPS_TO_DEFAULT", async () => {
         const p = await capture("groq", "qwen/qwen3-32b", "minimal");
         expect(p.reasoning_effort).toBe("default");
     });
@@ -129,29 +129,26 @@ describe("issue 1745 behavioral", () => {
 TESTEOF
 
 echo "=== Running behavioral harness ==="
-HARNESS_OUT=$(run_vitest test/_issue1745_harness.test.ts 2>&1)
-echo "$HARNESS_OUT" | tail -80
+HARNESS_OUT=$(cd packages/ai && npx vitest --run test/_issue1745_harness.test.ts 2>&1)
+echo "$HARNESS_OUT" | tail -100
 
-count_pass() {
+check_pass() {
     local name="$1"
-    # vitest prints "✓ ... > NAME" on pass; check for both pass marker and the test name
-    if echo "$HARNESS_OUT" | grep -E "(✓|PASS|√).*${name}" > /dev/null 2>&1; then
+    if echo "$HARNESS_OUT" | grep -E "(✓|√).*${name}" > /dev/null 2>&1; then
         echo 1
     else
         echo 0
     fi
 }
 
-# Behavioral results
-QWEN_MEDIUM=$(count_pass "QWEN_MEDIUM")
-QWEN_HIGH=$(count_pass "QWEN_HIGH")
-QWEN_LOW=$(count_pass "QWEN_LOW")
-QWEN_MINIMAL=$(count_pass "QWEN_MINIMAL")
-GPTOSS_HIGH=$(count_pass "GPTOSS_HIGH_UNCHANGED")
-GPTOSS_MEDIUM=$(count_pass "GPTOSS_MEDIUM_UNCHANGED")
-GPTOSS_LOW=$(count_pass "GPTOSS_LOW_UNCHANGED")
+QWEN_MEDIUM=$(check_pass "QWEN_MEDIUM_MAPS_TO_DEFAULT")
+QWEN_HIGH=$(check_pass "QWEN_HIGH_MAPS_TO_DEFAULT")
+QWEN_LOW=$(check_pass "QWEN_LOW_MAPS_TO_DEFAULT")
+QWEN_MINIMAL=$(check_pass "QWEN_MINIMAL_MAPS_TO_DEFAULT")
+GPTOSS_HIGH=$(check_pass "GPTOSS_HIGH_UNCHANGED")
+GPTOSS_MEDIUM=$(check_pass "GPTOSS_MEDIUM_UNCHANGED")
+GPTOSS_LOW=$(check_pass "GPTOSS_LOW_UNCHANGED")
 
-# Cleanup harness
 rm -f "$HARNESS"
 
 echo "QWEN_MEDIUM=$QWEN_MEDIUM"
@@ -163,80 +160,43 @@ echo "GPTOSS_MEDIUM=$GPTOSS_MEDIUM"
 echo "GPTOSS_LOW=$GPTOSS_LOW"
 
 # ═══════════════════════════════════════════════════════════════════
-# Structural: docs were updated to mention the qwen3 / reasoning_effort behavior
+# F2P: Documentation update
+# Base file does not mention reasoningEffortMap with qwen3-32b context.
+# Verify by checking that DOC change is genuine vs base.
 # ═══════════════════════════════════════════════════════════════════
-echo "=== Structural: docs updated ==="
+echo "=== F2P: docs updated ==="
 DOCS=packages/coding-agent/docs/custom-provider.md
-DOC_HIT=0
+DOC_F2P=0
 if [ -f "$DOCS" ]; then
-    # Look for any mention indicating awareness of the qwen3 / groq reasoning effort restriction
-    if grep -Eqi "(qwen.*qwen3|qwen3-32b|reasoningEffortMap)" "$DOCS"; then
-        if grep -Eqi "(default|none|groq)" "$DOCS"; then
-            DOC_HIT=1
-        fi
+    # Must reference the qwen3 model AND the restricted effort behavior (default/none/restricted)
+    if grep -Eqi "qwen3-32b|qwen/qwen3" "$DOCS" && \
+       grep -Eqi "(reasoningEffortMap|reasoning_effort)" "$DOCS" && \
+       grep -Eqi "(default|restrict|only accept|none)" "$DOCS"; then
+        DOC_F2P=1
     fi
 fi
-echo "DOC_HIT=$DOC_HIT"
-
-# ═══════════════════════════════════════════════════════════════════
-# Structural: source actually contains a per-model gate (not provider-wide)
-# Look for the openai-completions provider source that conditions the map
-# on a model.id check (qwen3-32b specifically) rather than just isGroq.
-# ═══════════════════════════════════════════════════════════════════
-echo "=== Structural: targeted model gate in source ==="
-SRC=packages/ai/src/providers/openai-completions.ts
-SRC_HIT=0
-if [ -f "$SRC" ]; then
-    # Either explicit qwen/qwen3-32b reference, or a non-trivial gate that excludes openai/* models
-    if grep -Eq 'qwen/qwen3-32b|qwen3-32b' "$SRC"; then
-        SRC_HIT=1
-    elif grep -Eq 'startsWith\("openai/"\)|!== "openai/"|model\.id\.startsWith\("qwen' "$SRC"; then
-        SRC_HIT=1
-    fi
-fi
-echo "SRC_HIT=$SRC_HIT"
+echo "DOC_F2P=$DOC_F2P"
 
 # ═══════════════════════════════════════════════════════════════════
 # Compute reward
-# Weights:
-#   P2P1 = 0.05 (compile)
-#   P2P2 = 0.05 (existing tests)
-#   QWEN behavioral (4 tests) = 0.10 each = 0.40
-#   GPT-OSS behavioral (3 tests) = 0.08 each = 0.24
-#   DOC_HIT = 0.13
-#   SRC_HIT = 0.08
-# Total = 0.05 + 0.05 + 0.40 + 0.24 + 0.13 + 0.08 = 0.95
-# Plus 0.05 base if at least the qwen-medium gate passes (the canonical test from issue)
+# F2P weights sum to 1.0:
+#   QWEN behavioral (4 tests): 4 × 0.18 = 0.72
+#   GPT-OSS behavioral (3 tests): 3 × 0.06 = 0.18
+#   DOC F2P: 0.10
+# Total: 0.72 + 0.18 + 0.10 = 1.00
 # ═══════════════════════════════════════════════════════════════════
 
-REWARD=$(awk -v p1=$P2P1 -v p2=$P2P2 \
-    -v qm=$QWEN_MEDIUM -v qh=$QWEN_HIGH -v ql=$QWEN_LOW -v qmin=$QWEN_MINIMAL \
+REWARD=$(awk -v qm=$QWEN_MEDIUM -v qh=$QWEN_HIGH -v ql=$QWEN_LOW -v qmin=$QWEN_MINIMAL \
     -v gh=$GPTOSS_HIGH -v gm=$GPTOSS_MEDIUM -v gl=$GPTOSS_LOW \
-    -v doc=$DOC_HIT -v src=$SRC_HIT \
+    -v doc=$DOC_F2P \
     'BEGIN {
-        r = p1*0.05 + p2*0.05 \
-          + qm*0.10 + qh*0.10 + ql*0.10 + qmin*0.10 \
-          + gh*0.08 + gm*0.08 + gl*0.08 \
-          + doc*0.13 + src*0.08;
+        r = qm*0.18 + qh*0.18 + ql*0.18 + qmin*0.18 \
+          + gh*0.06 + gm*0.06 + gl*0.06 \
+          + doc*0.10;
         if (r > 1.0) r = 1.0;
+        if (r < 0.0) r = 0.0;
         printf "%.4f", r;
     }')
 
-echo ""
-echo "================================"
-echo "FINAL REWARD: $REWARD"
-echo "  P2P1 (compile)          = $P2P1  [0.05]"
-echo "  P2P2 (existing tests)   = $P2P2  [0.05]"
-echo "  QWEN_MEDIUM             = $QWEN_MEDIUM  [0.10]"
-echo "  QWEN_HIGH               = $QWEN_HIGH  [0.10]"
-echo "  QWEN_LOW                = $QWEN_LOW  [0.10]"
-echo "  QWEN_MINIMAL            = $QWEN_MINIMAL  [0.10]"
-echo "  GPTOSS_HIGH (unchanged) = $GPTOSS_HIGH  [0.08]"
-echo "  GPTOSS_MEDIUM (unchang) = $GPTOSS_MEDIUM  [0.08]"
-echo "  GPTOSS_LOW (unchanged)  = $GPTOSS_LOW  [0.08]"
-echo "  DOC_HIT                 = $DOC_HIT  [0.13]"
-echo "  SRC_HIT                 = $SRC_HIT  [0.08]"
-echo "================================"
-
+echo "REWARD=$REWARD"
 echo "$REWARD" > "$REWARD_FILE"
-exit 0

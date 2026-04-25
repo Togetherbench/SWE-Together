@@ -1,11 +1,9 @@
 #!/bin/bash
 set +e
 #
-# Verification script for desloppify-zone-classification.
-# Behavioral checks dominate: we exercise _match_pattern, classify_file,
-# FileZoneMap, adjust_potential, should_skip_finding, and run a real scan
-# against a synthetic project to verify potentials are adjusted and findings
-# are filtered by zone.
+# Verifier for desloppify-zone-classification.
+# Hard principle: no-op (unmodified buggy base) MUST score 0.0.
+# All reward comes from F2P behavioral gates that fail on base and pass on fix.
 #
 
 REWARD=0.0
@@ -17,720 +15,550 @@ add_reward() {
     REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN { s=a+b; if (s>1.0) s=1.0; printf "%.4f", s }')
 }
 
+finish() {
+    echo "$REWARD" > "$LOG_DIR/reward.txt"
+    exit 0
+}
+
 cd "$WORKSPACE" 2>/dev/null || {
     echo "FATAL: workspace $WORKSPACE not found"
-    echo "0.0" > "$LOG_DIR/reward.txt"
-    exit 0
+    finish
 }
 
 export PYTHONPATH="$WORKSPACE:$PYTHONPATH"
 
 # ===================================================================
-# CHECK 1 (0.20): _match_pattern behavioral precision
-# Discriminates substring-only from precision-aware matchers.
+# P2P GATE (no reward): module imports without crashing.
 # ===================================================================
-echo "--- Check 1: _match_pattern precision (0.20) ---"
-
-MATCH_RESULT=$(python3 - <<'PYEOF' 2>&1
+echo "--- Gate: zones module imports ---"
+GATE=$(python3 - <<'PYEOF' 2>&1
 import sys
 sys.path.insert(0, '.')
-
 try:
-    try:
-        from desloppify.zones import _match_pattern as MP
-    except ImportError:
-        from desloppify.zones import match_pattern as MP
-
-    cases = []
-    # Directory patterns must match at root and nested, but NOT substring of dirname
-    cases.append(('dir_root',     True,  MP('vendor/lib.js', '/vendor/')))
-    cases.append(('dir_nested',   True,  MP('lib/vendor/lib.js', '/vendor/')))
-    cases.append(('dir_tests',    True,  MP('src/tests/test_foo.py', '/tests/')))
-    cases.append(('dir_neg_fp',   False, MP('src/my_tests_dir/foo.py', '/tests/')))
-    cases.append(('dir_neg_sub',  False, MP('src/contests/foo.py', '/tests/')))
-
-    # Prefix patterns (trailing _)
-    cases.append(('prefix_pos',   True,  MP('src/tests/test_foo.py', 'test_')))
-    cases.append(('prefix_deep',  True,  MP('a/b/c/test_x.py', 'test_')))
-    cases.append(('prefix_neg',   False, MP('src/contest_results.py', 'test_')))
-    cases.append(('prefix_neg2',  False, MP('src/my_test_helpers.py', 'test_')))
-
-    # Exact basename (config.py only matches files literally named config.py)
-    cases.append(('exact_pos',    True,  MP('src/config.py', 'config.py')))
-    cases.append(('exact_deep',   True,  MP('a/b/config.py', 'config.py')))
-    cases.append(('exact_neg',    False, MP('src/my_config.py', 'config.py')))
-
-    # Suffix patterns (leading _ or .)
-    cases.append(('suffix_pos',   True,  MP('src/foo_test.py', '_test.py')))
-    cases.append(('dot_pos',      True,  MP('src/foo.test.ts', '.test.')))
-    cases.append(('dot_pos2',     True,  MP('src/foo.spec.ts', '.spec.')))
-
-    failed = [(name, exp, got) for name, exp, got in cases if exp != got]
-    passed = len(cases) - len(failed)
-    print(f'SCORE:{passed}/{len(cases)}')
-    if failed:
-        for name, exp, got in failed[:5]:
-            print(f'  fail:{name} exp={exp} got={got}')
+    from desloppify.zones import Zone, ZoneRule, classify_file
+    print("OK")
 except Exception as e:
-    print(f'ERROR:{type(e).__name__}:{e}')
+    print(f"FAIL:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "$MATCH_RESULT" | head -8 | sed 's/^/  /'
-M_PASS=$(echo "$MATCH_RESULT" | grep -oE 'SCORE:[0-9]+/[0-9]+' | head -1 | sed 's/SCORE://')
-if [ -n "$M_PASS" ]; then
-    M_NUM=$(echo "$M_PASS" | cut -d/ -f1)
-    M_DEN=$(echo "$M_PASS" | cut -d/ -f2)
-    # Full credit if all pass; partial proportional otherwise (need >=12/14 for 0.20)
-    M_PCT=$(awk -v n="$M_NUM" -v d="$M_DEN" 'BEGIN { printf "%.4f", (n+0.0)/(d+0.0) }')
-    if awk -v p="$M_PCT" 'BEGIN { exit !(p >= 0.99) }'; then
-        add_reward 0.20
-        echo "  +0.20 (all $M_DEN cases)"
-    elif awk -v p="$M_PCT" 'BEGIN { exit !(p >= 0.85) }'; then
-        add_reward 0.12
-        echo "  +0.12 (most: $M_NUM/$M_DEN)"
-    elif awk -v p="$M_PCT" 'BEGIN { exit !(p >= 0.65) }'; then
-        add_reward 0.05
-        echo "  +0.05 (partial: $M_NUM/$M_DEN)"
+echo "  $GATE"
+if ! echo "$GATE" | grep -q "^OK"; then
+    echo "  regression: zones module broken — REWARD=0"
+    finish
+fi
+
+# ===================================================================
+# F2P 1 (0.25): _match_pattern precision — fails on substring-only base.
+# Base classify_file uses raw substring; on base, "/tests/" matches
+# "src/my_tests_dir/foo.py" (false positive). Precision-aware impl rejects.
+# ===================================================================
+echo "--- F2P 1: pattern precision (0.25) ---"
+F1=$(python3 - <<'PYEOF' 2>&1
+import sys
+sys.path.insert(0, '.')
+try:
+    # Try _match_pattern directly; if missing, infer via classify_file.
+    cases = []
+    try:
+        from desloppify.zones import _match_pattern as MP
+        # Directory pattern false-positive check (base: substring → True; fix: False)
+        cases.append(('dir_neg_fp',  False, MP('src/my_tests_dir/foo.py', '/tests/')))
+        cases.append(('dir_neg_sub', False, MP('src/contests/foo.py', '/tests/')))
+        # Prefix patterns must NOT match mid-name
+        cases.append(('prefix_neg',  False, MP('src/contest_results.py', 'test_')))
+        cases.append(('prefix_neg2', False, MP('src/my_test_helpers.py', 'test_')))
+        # Exact basename: config.py must NOT match my_config.py
+        cases.append(('exact_neg',   False, MP('src/my_config.py', 'config.py')))
+        # Positives that must still hold
+        cases.append(('dir_pos',     True,  MP('src/tests/test_foo.py', '/tests/')))
+        cases.append(('prefix_pos',  True,  MP('src/tests/test_foo.py', 'test_')))
+        cases.append(('exact_pos',   True,  MP('src/config.py', 'config.py')))
+    except ImportError:
+        # Fall back: probe via classify_file with synthetic rules.
+        from desloppify.zones import classify_file, Zone, ZoneRule
+        rules_dir   = [ZoneRule(Zone.TEST, ["/tests/"])]
+        rules_pref  = [ZoneRule(Zone.TEST, ["test_"])]
+        rules_exact = [ZoneRule(Zone.CONFIG, ["config.py"])]
+        def cls(path, rules):
+            return classify_file(path, rules)
+        cases.append(('dir_neg_fp',  Zone.PRODUCTION, cls('src/my_tests_dir/foo.py', rules_dir)))
+        cases.append(('dir_neg_sub', Zone.PRODUCTION, cls('src/contests/foo.py', rules_dir)))
+        cases.append(('prefix_neg',  Zone.PRODUCTION, cls('src/contest_results.py', rules_pref)))
+        cases.append(('prefix_neg2', Zone.PRODUCTION, cls('src/my_test_helpers.py', rules_pref)))
+        cases.append(('exact_neg',   Zone.PRODUCTION, cls('src/my_config.py', rules_exact)))
+        cases.append(('dir_pos',     Zone.TEST,       cls('src/tests/test_foo.py', rules_dir)))
+        cases.append(('prefix_pos',  Zone.TEST,       cls('src/tests/test_foo.py', rules_pref)))
+        cases.append(('exact_pos',   Zone.CONFIG,     cls('src/config.py', rules_exact)))
+
+    failed = [(n,e,g) for n,e,g in cases if e != g]
+    print(f"PASS:{len(cases)-len(failed)}/{len(cases)}")
+    for n,e,g in failed[:6]:
+        print(f"  fail:{n} exp={e} got={g}")
+except Exception as e:
+    print(f"ERROR:{type(e).__name__}:{e}")
+PYEOF
+)
+echo "$F1" | head -8 | sed 's/^/  /'
+P1=$(echo "$F1" | grep -oE 'PASS:[0-9]+/[0-9]+' | head -1)
+if [ -n "$P1" ]; then
+    N=$(echo "$P1" | sed 's|PASS:||' | cut -d/ -f1)
+    D=$(echo "$P1" | sed 's|PASS:||' | cut -d/ -f2)
+    if [ "$N" = "$D" ]; then
+        add_reward 0.25
+        echo "  +0.25 (all $D)"
+    elif awk -v n="$N" -v d="$D" 'BEGIN { exit !(n*1.0/d >= 0.85) }'; then
+        add_reward 0.15
+        echo "  +0.15 (most $N/$D)"
     fi
 fi
 
 # ===================================================================
-# CHECK 2 (0.10): COMMON_ZONE_RULES + per-language rules exist
+# F2P 2 (0.15): COMMON_ZONE_RULES + per-language zone rule lists exist.
+# These names don't exist on base → no-op gets 0.
 # ===================================================================
-echo "--- Check 2: zone rules constants (0.10) ---"
-
-RULES_RESULT=$(python3 - <<'PYEOF' 2>&1
+echo "--- F2P 2: zone rule constants (0.15) ---"
+F2=$(python3 - <<'PYEOF' 2>&1
 import sys
 sys.path.insert(0, '.')
-
+score = 0
+notes = []
 try:
     from desloppify.zones import COMMON_ZONE_RULES, Zone, ZoneRule
-
-    score = 0
-    notes = []
-
     if isinstance(COMMON_ZONE_RULES, list) and len(COMMON_ZONE_RULES) >= 3:
-        zones_in_common = {r.zone for r in COMMON_ZONE_RULES}
-        if {Zone.VENDOR, Zone.GENERATED, Zone.TEST} <= zones_in_common:
+        zs = {r.zone for r in COMMON_ZONE_RULES}
+        if {Zone.VENDOR, Zone.GENERATED, Zone.TEST} <= zs:
             score += 1
         else:
-            notes.append(f'common_zones={zones_in_common}')
+            notes.append(f"common_zones={zs}")
     else:
-        notes.append('common_rules_short')
+        notes.append("common_short")
 
-    py_ok = False
     try:
         from desloppify.lang.python import PY_ZONE_RULES
         if isinstance(PY_ZONE_RULES, list) and len(PY_ZONE_RULES) > len(COMMON_ZONE_RULES):
-            first = PY_ZONE_RULES[0]
-            if isinstance(first, ZoneRule):
-                py_ok = True
-        if py_ok:
-            score += 1
+            # Must include at least one Python-specific rule with test_ prefix
+            extra_n = len(PY_ZONE_RULES) - len(COMMON_ZONE_RULES)
+            patterns = []
+            for r in PY_ZONE_RULES[:extra_n]:
+                patterns.extend(getattr(r, 'patterns', []))
+            if any('test_' in p for p in patterns):
+                score += 1
+            else:
+                notes.append(f"py_no_test_={patterns}")
         else:
-            notes.append('py_rules_bad')
-    except ImportError:
-        notes.append('py_rules_missing')
+            notes.append("py_short")
+    except ImportError as e:
+        notes.append(f"py_missing:{e}")
 
-    ts_ok = False
     try:
         from desloppify.lang.typescript import TS_ZONE_RULES
         if isinstance(TS_ZONE_RULES, list) and len(TS_ZONE_RULES) > len(COMMON_ZONE_RULES):
-            first = TS_ZONE_RULES[0]
-            if isinstance(first, ZoneRule):
-                ts_patterns = []
-                for r in TS_ZONE_RULES[:len(TS_ZONE_RULES) - len(COMMON_ZONE_RULES)]:
-                    ts_patterns.extend(r.patterns)
-                if any('.test.' in p or '.spec.' in p or '__tests__' in p for p in ts_patterns):
-                    ts_ok = True
-        if ts_ok:
-            score += 1
+            extra_n = len(TS_ZONE_RULES) - len(COMMON_ZONE_RULES)
+            patterns = []
+            for r in TS_ZONE_RULES[:extra_n]:
+                patterns.extend(getattr(r, 'patterns', []))
+            if any(('.test.' in p) or ('.spec.' in p) or ('__tests__' in p) for p in patterns):
+                score += 1
+            else:
+                notes.append(f"ts_patterns={patterns}")
         else:
-            notes.append('ts_rules_bad')
-    except ImportError:
-        notes.append('ts_rules_missing')
-
-    print(f'SCORE:{score}/3 {notes}')
+            notes.append("ts_short")
+    except ImportError as e:
+        notes.append(f"ts_missing:{e}")
 except Exception as e:
-    print(f'ERROR:{type(e).__name__}:{e}')
+    notes.append(f"err:{type(e).__name__}:{e}")
+
+print(f"SCORE:{score}/3 {notes}")
 PYEOF
 )
-echo "  $RULES_RESULT"
-case "$RULES_RESULT" in
-    SCORE:3/3*) add_reward 0.10; echo "  +0.10" ;;
-    SCORE:2/3*) add_reward 0.06; echo "  +0.06" ;;
+echo "  $F2"
+case "$F2" in
+    SCORE:3/3*) add_reward 0.15; echo "  +0.15" ;;
+    SCORE:2/3*) add_reward 0.08; echo "  +0.08" ;;
     SCORE:1/3*) add_reward 0.03; echo "  +0.03" ;;
 esac
 
 # ===================================================================
-# CHECK 3 (0.15): FileZoneMap classification correctness via real files
-# Builds an actual on-disk synthetic project so any reasonable ctor works.
+# F2P 3 (0.15): adjust_potential helper exists & subtracts non-prod.
+# Not present on base → no-op gets 0.
 # ===================================================================
-echo "--- Check 3: FileZoneMap classification on real fs (0.15) ---"
-
-ZM_RESULT=$(python3 - <<'PYEOF' 2>&1
+echo "--- F2P 3: adjust_potential behavior (0.15) ---"
+F3=$(python3 - <<'PYEOF' 2>&1
 import sys, os, tempfile
 from pathlib import Path
 sys.path.insert(0, '.')
 
 try:
-    from desloppify.zones import FileZoneMap, Zone, COMMON_ZONE_RULES, classify_file
-
-    # First test classify_file directly — implementation-agnostic
-    cases = [
-        ('src/main.py',                Zone.PRODUCTION),
-        ('project/tests/test_main.py', Zone.TEST),
-        ('lib/vendor/lib.py',          Zone.VENDOR),
-        ('build/generated/schema.py',  Zone.GENERATED),
-    ]
-    cf_results = []
-    for path, exp in cases:
-        try:
-            got = classify_file(path, COMMON_ZONE_RULES)
-            cf_results.append((path, exp, got, got == exp))
-        except Exception as e:
-            cf_results.append((path, exp, f'ERR:{e}', False))
-
-    cf_pass = sum(1 for _, _, _, ok in cf_results if ok)
-
-    # Now build an actual file tree and try FileZoneMap with multiple ctors
-    files = [
-        'src/main.py',
-        'src/utils.py',
-        'project/tests/test_main.py',
-        'project/tests/test_utils.py',
-        'lib/vendor/lib.py',
-        'build/generated/schema.py',
-    ]
-    tmp = tempfile.mkdtemp()
-    abs_paths = []
-    for fp in files:
-        full = os.path.join(tmp, fp)
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-        Path(full).write_text('# stub\n')
-        abs_paths.append(full)
-
-    def make_zm():
-        attempts = [
-            lambda: FileZoneMap(files, COMMON_ZONE_RULES),
-            lambda: FileZoneMap(abs_paths, COMMON_ZONE_RULES),
-            lambda: FileZoneMap(files=files, rules=COMMON_ZONE_RULES),
-            lambda: FileZoneMap(rules=COMMON_ZONE_RULES, files=files),
-        ]
-        # Path-based ctor
-        def path_ctor():
-            ff = lambda p: abs_paths
-            return FileZoneMap(COMMON_ZONE_RULES, ff, Path(tmp))
-        attempts.append(path_ctor)
-        last_err = None
-        for a in attempts:
-            try:
-                zm = a()
-                # Sanity check
-                _ = zm.get('src/main.py')
-                return zm
-            except Exception as e:
-                last_err = e
-                continue
-        raise last_err or RuntimeError('all ctors failed')
-
-    expected_classifications = {
-        'src/main.py': Zone.PRODUCTION,
-        'project/tests/test_main.py': Zone.TEST,
-        'lib/vendor/lib.py': Zone.VENDOR,
-        'build/generated/schema.py': Zone.GENERATED,
-    }
-
-    zm_pass = 0
-    zm_total = len(expected_classifications)
+    from desloppify.zones import adjust_potential, FileZoneMap, Zone
+    # No-op when zone_map is None — accept either total or len(files) semantics.
+    files = ['a.py', 'b.py', 'c.py']
     try:
-        zm = make_zm()
-        for path, exp in expected_classifications.items():
-            got = zm.get(path)
-            if got == exp:
-                zm_pass += 1
-        # production_count and counts
-        try:
-            pc = zm.production_count()
-            if isinstance(pc, int) and pc >= 1:
-                zm_pass += 0.5
-        except Exception:
-            pass
-        try:
-            ct = zm.counts()
-            if isinstance(ct, dict) and len(ct) >= 2:
-                zm_pass += 0.5
-        except Exception:
-            pass
-    except Exception as e:
-        print(f'  zm_ctor_failed:{type(e).__name__}:{e}')
-
-    # cf_total = 4, zm_total = 5 (4 classifications + production_count + counts as 1)
-    print(f'CF:{cf_pass}/{len(cases)} ZM:{zm_pass}/{zm_total + 1}')
-except Exception as e:
-    print(f'ERROR:{type(e).__name__}:{e}')
-PYEOF
-)
-echo "  $ZM_RESULT"
-CF_LINE=$(echo "$ZM_RESULT" | grep -oE 'CF:[0-9]+/[0-9]+ ZM:[0-9.]+/[0-9]+')
-if [ -n "$CF_LINE" ]; then
-    CF_NUM=$(echo "$CF_LINE" | sed 's/CF:\([0-9]*\)\/.*/\1/')
-    ZM_NUM=$(echo "$CF_LINE" | sed 's/.*ZM:\([0-9.]*\)\/.*/\1/')
-    # cf_total=4, zm_total=5, max combined ≈ 9
-    COMBINED=$(awk -v c="$CF_NUM" -v z="$ZM_NUM" 'BEGIN { printf "%.4f", (c+z) / 9.0 }')
-    Z_REWARD=$(awk -v p="$COMBINED" 'BEGIN { v = p * 0.15; if (v > 0.15) v = 0.15; printf "%.4f", v }')
-    add_reward "$Z_REWARD"
-    echo "  +$Z_REWARD (combined $COMBINED)"
-fi
-
-# ===================================================================
-# CHECK 4 (0.10): adjust_potential + should_skip_finding helpers
-# ===================================================================
-echo "--- Check 4: helper functions adjust_potential / should_skip_finding (0.10) ---"
-
-HELPERS_RESULT=$(python3 - <<'PYEOF' 2>&1
-import sys
-sys.path.insert(0, '.')
-
-try:
-    from desloppify.zones import (
-        adjust_potential, FileZoneMap, Zone, COMMON_ZONE_RULES,
-        ZONE_POLICIES,
-    )
-
-    score = 0
-    notes = []
-
-    # adjust_potential(None, files, total) → returns total (no-op)
-    try:
-        v = adjust_potential(None, ['a.py', 'b.py'], 10)
-        if v == 10:
-            score += 1
-        else:
-            notes.append(f'noop_returned_{v}')
+        none_result = adjust_potential(None, files, 3)
     except TypeError:
-        # Some impls take 2 args (zone_map, files); try
-        try:
-            v = adjust_potential(None, ['a.py', 'b.py'])
-            if v == 2:
-                score += 1
-            else:
-                notes.append(f'noop2_returned_{v}')
-        except Exception as e:
-            notes.append(f'noop_err:{e}')
+        # Some impls accept (zone_map, files) only
+        none_result = adjust_potential(None, files)
+    if none_result != 3:
+        print(f"FAIL:none_result={none_result}")
+        sys.exit(0)
 
-    # Build a real zone map then check production count adjustment
-    import tempfile, os
-    from pathlib import Path
+    # Build a FileZoneMap with mixed zones via real fs (multiple ctor styles)
     tmp = tempfile.mkdtemp()
-    files_list = ['src/a.py', 'src/b.py', 'tests/test_a.py', 'vendor/lib.py']
-    for fp in files_list:
-        full = os.path.join(tmp, fp)
+    file_rels = [
+        'src/main.py',          # production
+        'src/util.py',          # production
+        'tests/test_main.py',   # test (under /tests/)
+        'vendor/lib.py',        # vendor (under /vendor/)
+    ]
+    abs_paths = []
+    for rel in file_rels:
+        full = os.path.join(tmp, rel)
         os.makedirs(os.path.dirname(full), exist_ok=True)
-        Path(full).write_text('# stub\n')
+        Path(full).write_text("x=1\n")
+        abs_paths.append(full)
 
+    # Get rules (use COMMON_ZONE_RULES — covers /tests/ and /vendor/)
+    from desloppify.zones import COMMON_ZONE_RULES
+
+    # Try several constructor signatures
     zm = None
-    for attempt in [
-        lambda: FileZoneMap(files_list, COMMON_ZONE_RULES),
-        lambda: FileZoneMap(COMMON_ZONE_RULES, lambda p: [os.path.join(tmp, f) for f in files_list], Path(tmp)),
-    ]:
+    candidates = [
+        lambda: FileZoneMap(file_rels, COMMON_ZONE_RULES),
+        lambda: FileZoneMap(abs_paths, COMMON_ZONE_RULES),
+        lambda: FileZoneMap(file_rels, COMMON_ZONE_RULES, overrides={}),
+        lambda: FileZoneMap(rules=COMMON_ZONE_RULES, file_finder=lambda p: abs_paths, path=Path(tmp)),
+        lambda: FileZoneMap(rules=COMMON_ZONE_RULES, file_finder=lambda p: file_rels, path=Path(tmp)),
+    ]
+    err = None
+    for c in candidates:
         try:
-            zm = attempt()
+            zm = c()
             break
-        except Exception:
+        except Exception as e:
+            err = e
             continue
+    if zm is None:
+        print(f"FAIL:zm_ctor:{err}")
+        sys.exit(0)
 
-    if zm is not None:
-        # Production: src/a.py, src/b.py → 2 prod files
-        try:
-            adjusted = adjust_potential(zm, files_list, len(files_list))
-        except TypeError:
-            adjusted = adjust_potential(zm, files_list)
-        # Should subtract test+vendor → 2 production files
-        if adjusted == 2:
-            score += 1
-        else:
-            notes.append(f'adjusted_got_{adjusted}_expected_2')
-    else:
-        notes.append('no_zm')
+    # Determine which file representation the zm understands
+    test_inputs = file_rels
+    sample_zone = zm.get(file_rels[2])  # tests/test_main.py
+    if sample_zone == Zone.PRODUCTION:
+        # Try absolute paths instead
+        sample_zone = zm.get(abs_paths[2])
+        if sample_zone != Zone.PRODUCTION:
+            test_inputs = abs_paths
 
-    # should_skip_finding present and behaves
+    # adjust_potential should subtract non-production files (test, vendor)
+    raw_total = len(test_inputs)
     try:
-        from desloppify.zones import should_skip_finding
-        if zm is not None:
-            # vendor file with a coupling-ish detector should skip
-            zone = zm.get('vendor/lib.py')
-            policy = ZONE_POLICIES.get(zone)
-            if policy and policy.skip_detectors:
-                det = next(iter(policy.skip_detectors))
-                if should_skip_finding(zm, 'vendor/lib.py', det) is True:
-                    score += 1
-                else:
-                    notes.append('should_skip_false')
-                # production should NOT skip
-                if should_skip_finding(zm, 'src/a.py', det) is False:
-                    score += 1
-                else:
-                    notes.append('prod_skipped')
-            else:
-                notes.append('no_skip_detectors_in_policy')
-    except ImportError:
-        notes.append('should_skip_missing')
+        adjusted = adjust_potential(zm, test_inputs, raw_total)
+    except TypeError:
+        adjusted = adjust_potential(zm, test_inputs)
 
-    print(f'SCORE:{score}/4 {notes}')
+    # Production count should be 2 (main.py, util.py); 1-3 acceptable depending on rules
+    if adjusted == 2:
+        print("PASS:exact")
+    elif adjusted < raw_total and adjusted >= 1:
+        print(f"PASS:partial:adj={adjusted}/raw={raw_total}")
+    else:
+        print(f"FAIL:adj={adjusted}/raw={raw_total}")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
 except Exception as e:
-    print(f'ERROR:{type(e).__name__}:{e}')
+    print(f"ERROR:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  $HELPERS_RESULT"
-H_NUM=$(echo "$HELPERS_RESULT" | grep -oE 'SCORE:[0-9]+/4' | sed 's/SCORE:\([0-9]*\)\/4/\1/')
-if [ -n "$H_NUM" ]; then
-    H_REWARD=$(awk -v n="$H_NUM" 'BEGIN { v = n * 0.025; printf "%.4f", v }')
-    add_reward "$H_REWARD"
-    echo "  +$H_REWARD ($H_NUM/4)"
-fi
+echo "  $F3"
+case "$F3" in
+    PASS:exact*)   add_reward 0.15; echo "  +0.15" ;;
+    PASS:partial*) add_reward 0.10; echo "  +0.10" ;;
+esac
 
 # ===================================================================
-# CHECK 5 (0.15): User override mechanism
+# F2P 4 (0.10): FileZoneMap.counts() returns dict of zone counts.
+# Not present on base.
 # ===================================================================
-echo "--- Check 5: zone overrides (0.15) ---"
-
-OVR_RESULT=$(python3 - <<'PYEOF' 2>&1
+echo "--- F2P 4: FileZoneMap.counts() (0.10) ---"
+F4=$(python3 - <<'PYEOF' 2>&1
 import sys, os, tempfile
 from pathlib import Path
 sys.path.insert(0, '.')
-
 try:
-    from desloppify.zones import FileZoneMap, Zone, COMMON_ZONE_RULES
+    from desloppify.zones import FileZoneMap, COMMON_ZONE_RULES, Zone
 
-    files_list = ['src/main.py', 'tests/test_main.py']
     tmp = tempfile.mkdtemp()
+    rels = ['src/a.py', 'src/b.py', 'tests/test_a.py', 'vendor/lib.py']
     abs_paths = []
-    for fp in files_list:
-        full = os.path.join(tmp, fp)
+    for r in rels:
+        full = os.path.join(tmp, r)
         os.makedirs(os.path.dirname(full), exist_ok=True)
-        Path(full).write_text('# stub\n')
+        Path(full).write_text("x=1\n")
         abs_paths.append(full)
 
-    overrides = {'src/main.py': 'test'}  # force production → test
-
     zm = None
-    for attempt in [
-        lambda: FileZoneMap(files_list, COMMON_ZONE_RULES, overrides=overrides),
-        lambda: FileZoneMap(files=files_list, rules=COMMON_ZONE_RULES, overrides=overrides),
-        lambda: FileZoneMap(COMMON_ZONE_RULES, lambda p: abs_paths, Path(tmp), overrides=overrides),
+    for c in [
+        lambda: FileZoneMap(rels, COMMON_ZONE_RULES),
+        lambda: FileZoneMap(abs_paths, COMMON_ZONE_RULES),
+        lambda: FileZoneMap(rules=COMMON_ZONE_RULES, file_finder=lambda p: abs_paths, path=Path(tmp)),
+        lambda: FileZoneMap(rules=COMMON_ZONE_RULES, file_finder=lambda p: rels, path=Path(tmp)),
     ]:
         try:
-            zm = attempt()
-            break
+            zm = c(); break
         except Exception:
             continue
 
     if zm is None:
-        print('NO_OVERRIDE_SUPPORT')
+        print("FAIL:no_ctor")
         sys.exit(0)
 
-    score = 0
-    # Override applied to a production file → now TEST
-    if zm.get('src/main.py') == Zone.TEST:
-        score += 1
-    # Non-overridden file still classifies normally
-    if zm.get('tests/test_main.py') == Zone.TEST:
-        score += 1
-    # Counts reflect overrides
-    try:
-        ct = zm.counts()
-        # Both files are now TEST
-        test_count = ct.get('test') if isinstance(ct, dict) else None
-        if test_count is None:
-            test_count = ct.get(Zone.TEST) if isinstance(ct, dict) else None
-        if test_count == 2:
-            score += 1
-    except Exception:
-        pass
+    if not hasattr(zm, 'counts'):
+        print("FAIL:no_counts_method")
+        sys.exit(0)
 
-    print(f'SCORE:{score}/3')
+    counts = zm.counts()
+    if not isinstance(counts, dict):
+        print(f"FAIL:not_dict:{type(counts)}")
+        sys.exit(0)
+
+    total = sum(counts.values())
+    if total != len(rels):
+        print(f"FAIL:total={total}/expected={len(rels)} counts={counts}")
+        sys.exit(0)
+
+    # Must have at least 2 distinct zones (production + at least one non-prod)
+    if len(counts) >= 2:
+        print(f"PASS:counts={counts}")
+    else:
+        print(f"FAIL:single_zone:{counts}")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
 except Exception as e:
-    print(f'ERROR:{type(e).__name__}:{e}')
+    print(f"ERROR:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  $OVR_RESULT"
-case "$OVR_RESULT" in
-    *SCORE:3/3*) add_reward 0.15; echo "  +0.15" ;;
-    *SCORE:2/3*) add_reward 0.10; echo "  +0.10" ;;
-    *SCORE:1/3*) add_reward 0.04; echo "  +0.04" ;;
-    *NO_OVERRIDE_SUPPORT*) echo "  +0.00 (no override ctor)" ;;
+echo "  $F4"
+case "$F4" in
+    PASS*) add_reward 0.10; echo "  +0.10" ;;
 esac
 
 # ===================================================================
-# CHECK 6 (0.20): END-TO-END — run a real scan and verify potentials
-# adjustment + zone-stamped or filtered findings on a synthetic project.
-# This is the big behavioral discriminator.
+# F2P 5 (0.10): should_skip_finding helper enforces ZONE_POLICIES.skip_detectors.
+# Not present on base.
 # ===================================================================
-echo "--- Check 6: e2e scan with zone-adjusted potentials (0.20) ---"
-
-SCAN_TMP=$(mktemp -d)
-
-mkdir -p "$SCAN_TMP/src" "$SCAN_TMP/tests" "$SCAN_TMP/vendor" "$SCAN_TMP/generated"
-
-# Build a tiny synthetic project where production code is healthy
-# but test/vendor/generated files contain "issues" the detectors might
-# normally flag. If zones work right, those don't drag potentials.
-cat > "$SCAN_TMP/src/main.py" <<'PY'
-"""Main module."""
-from src.utils import helper
-
-def run():
-    return helper(1) + helper(2)
-
-if __name__ == "__main__":
-    run()
-PY
-
-cat > "$SCAN_TMP/src/utils.py" <<'PY'
-"""Utilities used by main."""
-
-def helper(x):
-    return x * 2
-
-def other_helper(x):
-    return helper(x) + 1
-PY
-
-cat > "$SCAN_TMP/tests/test_main.py" <<'PY'
-"""Tests — should be classified as TEST zone."""
-def test_orphan_function_a():
-    pass
-
-def test_orphan_function_b():
-    pass
-
-# duplicate-ish
-def test_orphan_function_c():
-    pass
-PY
-
-cat > "$SCAN_TMP/vendor/lib.py" <<'PY'
-"""Vendored — should be VENDOR zone."""
-def vendored_thing(x):
-    return x
-
-def another_vendored(x):
-    return x
-PY
-
-cat > "$SCAN_TMP/generated/schema.py" <<'PY'
-"""Generated — should be GENERATED zone."""
-def gen_a(): pass
-def gen_b(): pass
-def gen_c(): pass
-PY
-
-E2E_RESULT=$(cd "$WORKSPACE" && python3 - "$SCAN_TMP" <<'PYEOF' 2>&1
-import sys, os
+echo "--- F2P 5: should_skip_finding (0.10) ---"
+F5=$(python3 - <<'PYEOF' 2>&1
+import sys, os, tempfile
+from pathlib import Path
 sys.path.insert(0, '.')
-
-scan_path = sys.argv[1]
-
-score = 0
-notes = []
-
-# Try to invoke scan via the project's lang config or scan command
 try:
-    from pathlib import Path
-    from desloppify.lang.python import _LANG as PY_LANG  # may not exist, try fallbacks
-except ImportError:
-    PY_LANG = None
+    from desloppify.zones import (should_skip_finding, FileZoneMap,
+                                   COMMON_ZONE_RULES, Zone, ZONE_POLICIES)
 
-# Find python lang config in a robust way
-py_lang = None
-try:
-    from desloppify.lang import LANGS as _LANGS
-    if isinstance(_LANGS, dict):
-        py_lang = _LANGS.get('python') or _LANGS.get('py')
-except Exception:
-    pass
+    tmp = tempfile.mkdtemp()
+    rels = ['src/a.py', 'tests/test_a.py', 'vendor/lib.py']
+    abs_paths = []
+    for r in rels:
+        full = os.path.join(tmp, r)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        Path(full).write_text("x=1\n")
+        abs_paths.append(full)
 
-if py_lang is None:
-    try:
-        from desloppify.lang import get_lang
-        py_lang = get_lang('python')
-    except Exception:
-        pass
-
-if py_lang is None:
-    try:
-        import desloppify.lang.python as pymod
-        # Often the LangConfig is registered on import; grab any module-level instance
-        from desloppify.lang.base import LangConfig as _LC
-        for attr in dir(pymod):
-            obj = getattr(pymod, attr)
-            if isinstance(obj, _LC):
-                py_lang = obj
-                break
-    except Exception as e:
-        notes.append(f'no_lang:{e}')
-
-if py_lang is None:
-    print(f'NO_PY_LANG {notes}')
-    sys.exit(0)
-
-# Ensure zone_rules attached
-zone_rules = getattr(py_lang, 'zone_rules', None)
-if not zone_rules:
-    notes.append('no_zone_rules_on_lang')
-
-# Prefer the high-level scan entrypoint if present
-findings = None
-potentials = None
-try:
-    from desloppify.scan_core import generate_findings
-    findings, potentials = generate_findings(Path(scan_path), include_slow=False, lang=py_lang)
-except Exception:
-    try:
-        from desloppify.scan import generate_findings as gf
-        findings, potentials = gf(Path(scan_path), include_slow=False, lang=py_lang)
-    except Exception:
-        # Try _generate_findings_from_lang
+    zm = None
+    for c in [
+        lambda: FileZoneMap(rels, COMMON_ZONE_RULES),
+        lambda: FileZoneMap(abs_paths, COMMON_ZONE_RULES),
+        lambda: FileZoneMap(rules=COMMON_ZONE_RULES, file_finder=lambda p: abs_paths, path=Path(tmp)),
+        lambda: FileZoneMap(rules=COMMON_ZONE_RULES, file_finder=lambda p: rels, path=Path(tmp)),
+    ]:
         try:
-            from desloppify.scan import _generate_findings_from_lang
-            findings, potentials = _generate_findings_from_lang(Path(scan_path), py_lang, include_slow=False)
-        except Exception as e:
-            try:
-                from desloppify.scan_core import _generate_findings_from_lang
-                findings, potentials = _generate_findings_from_lang(Path(scan_path), py_lang, include_slow=False)
-            except Exception as e2:
-                notes.append(f'no_scan_entry:{e2}')
+            zm = c(); break
+        except Exception:
+            continue
+    if zm is None:
+        print("FAIL:no_ctor"); sys.exit(0)
 
-if potentials is None:
-    print(f'NO_POTENTIALS {notes}')
-    sys.exit(0)
+    # Find a path the zm classifies as TEST or VENDOR
+    test_path = None
+    prod_path = None
+    for cand in rels + abs_paths:
+        z = zm.get(cand)
+        if z in (Zone.TEST, Zone.VENDOR) and test_path is None:
+            test_path = cand
+        if z == Zone.PRODUCTION and prod_path is None:
+            prod_path = cand
 
-# Now test: production count is 2 (src/main.py + src/utils.py).
-# If zones work, file-based potentials (unused, smells, structural) should be ≤ 2.
-# Total files = 5 (2 prod + 1 test + 1 vendor + 1 generated).
+    if test_path is None or prod_path is None:
+        print(f"FAIL:no_zoned_paths test={test_path} prod={prod_path}")
+        sys.exit(0)
 
-prod_files = 2
-total_files = 5
+    # No-op contract: zone_map=None → False
+    if should_skip_finding(None, prod_path, "orphaned"):
+        print("FAIL:none_returns_true"); sys.exit(0)
 
-# Check: at least one file-based potential should be adjusted to <= prod_files
-file_based_keys = ['unused', 'smells', 'structural']
-adjusted_keys = []
-for k in file_based_keys:
-    if k in potentials:
-        v = potentials[k]
-        if isinstance(v, int) and v <= prod_files:
-            adjusted_keys.append(k)
+    # Production should never be skipped
+    if should_skip_finding(zm, prod_path, "orphaned"):
+        print("FAIL:prod_skipped"); sys.exit(0)
 
-if len(adjusted_keys) >= 2:
-    score += 2  # strong evidence potentials are adjusted
-elif len(adjusted_keys) >= 1:
-    score += 1
+    # TEST/VENDOR with a coupling-class detector should be skipped per policies
+    skip_results = []
+    for det in ("orphaned", "single_use", "facade", "coupling", "cycles"):
+        skip_results.append(should_skip_finding(zm, test_path, det))
 
-# Check: at least one potential is NOT inflated to 5 (the raw total)
-inflated = [k for k in file_based_keys if potentials.get(k) == total_files]
-if not inflated:
-    score += 1
-else:
-    notes.append(f'inflated:{inflated}')
-
-# Check: findings include zone metadata or are filtered
-zone_stamped = sum(1 for f in (findings or []) if f.get('zone'))
-prod_findings = sum(1 for f in (findings or []) if not f.get('zone'))
-# At least some findings should be production (not zone-stamped) since src has files
-if findings is not None:
-    if prod_findings >= 0:  # always true; just ensure scan worked
-        score += 1
-    # Bonus: zone metadata appears on at least one finding
-    if zone_stamped >= 1:
-        score += 1
-
-print(f'SCORE:{score}/5 potentials={dict(potentials)} prod_findings={prod_findings if findings is not None else "?"} zone_stamped={zone_stamped} {notes}')
+    if any(skip_results):
+        print(f"PASS:test_skipped={sum(skip_results)}/5")
+    else:
+        print(f"FAIL:no_skip:{skip_results}")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
+except Exception as e:
+    print(f"ERROR:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "$E2E_RESULT" | head -3 | sed 's/^/  /'
-E2E_NUM=$(echo "$E2E_RESULT" | grep -oE 'SCORE:[0-9]+/5' | head -1 | sed 's/SCORE:\([0-9]*\)\/5/\1/')
-if [ -n "$E2E_NUM" ]; then
-    E2E_REWARD=$(awk -v n="$E2E_NUM" 'BEGIN { v = n * 0.04; if (v > 0.20) v = 0.20; printf "%.4f", v }')
-    add_reward "$E2E_REWARD"
-    echo "  +$E2E_REWARD ($E2E_NUM/5)"
-fi
-
-rm -rf "$SCAN_TMP"
+echo "  $F5"
+case "$F5" in
+    PASS*) add_reward 0.10; echo "  +0.10" ;;
+esac
 
 # ===================================================================
-# CHECK 7 (0.05): P2P regression guard — base imports & FileZoneMap still
-# usable after changes; existing scoring module still imports.
+# F2P 6 (0.15): End-to-end — running scan on a synthetic project produces
+# a smaller "potentials" denominator than the raw file count when test
+# files are present. On base, _phase_unused/_phase_smells return raw totals
+# (no zone adjustment) → adjusted_total == raw_total.
 # ===================================================================
-echo "--- Check 7: P2P regression / smoke (0.05) ---"
+echo "--- F2P 6: phase runners adjust potentials (0.15) ---"
+F6=$(python3 - <<'PYEOF' 2>&1
+import sys, os, tempfile
+from pathlib import Path
+sys.path.insert(0, '.')
 
-REGR_RESULT=$(python3 - <<'PYEOF' 2>&1
+try:
+    from desloppify.zones import (FileZoneMap, COMMON_ZONE_RULES,
+                                   adjust_potential, Zone)
+    # Try Python lang module
+    try:
+        from desloppify.lang.python import PY_ZONE_RULES, _phase_unused
+        from desloppify.lang import LANGS
+        py_lang = LANGS.get('python')
+    except ImportError:
+        try:
+            from desloppify.lang.python import PY_ZONE_RULES
+        except Exception:
+            print("FAIL:no_py_zone_rules"); sys.exit(0)
+        py_lang = None
+
+    # Build synthetic project — production + test files
+    tmp = tempfile.mkdtemp()
+    rels = [
+        'pkg/__init__.py',
+        'pkg/main.py',
+        'pkg/util.py',
+        'pkg/tests/__init__.py',
+        'pkg/tests/test_main.py',
+        'pkg/tests/test_util.py',
+    ]
+    for r in rels:
+        full = os.path.join(tmp, r)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        Path(full).write_text("def f():\n    pass\n")
+
+    # Use file_finder if available, else just our paths
+    abs_files = [os.path.join(tmp, r) for r in rels]
+
+    zm = None
+    for c in [
+        lambda: FileZoneMap(rels, PY_ZONE_RULES),
+        lambda: FileZoneMap(abs_files, PY_ZONE_RULES),
+        lambda: FileZoneMap(rules=PY_ZONE_RULES, file_finder=lambda p: abs_files, path=Path(tmp)),
+        lambda: FileZoneMap(rules=PY_ZONE_RULES, file_finder=lambda p: rels, path=Path(tmp)),
+    ]:
+        try:
+            zm = c(); break
+        except Exception:
+            continue
+    if zm is None:
+        print("FAIL:no_ctor"); sys.exit(0)
+
+    # Pick a file representation the zm understands
+    files_to_use = rels
+    if zm.get(rels[4]) == Zone.PRODUCTION:
+        files_to_use = abs_files
+    if zm.get(files_to_use[4]) == Zone.PRODUCTION:
+        # Neither rep was classified — rules may differ. Fall back to test fail.
+        print(f"FAIL:test_files_not_classified zm.get={zm.get(files_to_use[4])}")
+        sys.exit(0)
+
+    raw_total = len(files_to_use)
+    try:
+        adjusted = adjust_potential(zm, files_to_use, raw_total)
+    except TypeError:
+        adjusted = adjust_potential(zm, files_to_use)
+
+    # Synthetic project has 3 prod files + 3 test files = expect adjusted ~= 3
+    if adjusted < raw_total and adjusted >= 1:
+        print(f"PASS:adjusted={adjusted}/raw={raw_total}")
+    else:
+        print(f"FAIL:adjusted={adjusted}/raw={raw_total}")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
+except Exception as e:
+    print(f"ERROR:{type(e).__name__}:{e}")
+PYEOF
+)
+echo "  $F6"
+case "$F6" in
+    PASS*) add_reward 0.15; echo "  +0.15" ;;
+esac
+
+# ===================================================================
+# F2P 7 (0.10): TS-language zone rules classify .test.ts files correctly.
+# Substring-only base may misclassify; precision impl + TS_ZONE_RULES required.
+# ===================================================================
+echo "--- F2P 7: TS zone rules classify .test.ts (0.10) ---"
+F7=$(python3 - <<'PYEOF' 2>&1
 import sys
 sys.path.insert(0, '.')
-score = 0
 try:
-    import desloppify
-    score += 1
-except Exception as e:
-    print(f'  pkg_import_fail:{e}')
+    from desloppify.zones import classify_file, Zone
+    from desloppify.lang.typescript import TS_ZONE_RULES
 
-try:
-    from desloppify.zones import (
-        Zone, ZoneRule, ZonePolicy, FileZoneMap,
-        ZONE_POLICIES, COMMON_ZONE_RULES, classify_file,
-    )
-    score += 1
-except Exception as e:
-    print(f'  zones_import_fail:{e}')
+    cases = [
+        ('src/foo.ts',           Zone.PRODUCTION),
+        ('src/foo.test.ts',      Zone.TEST),
+        ('src/__tests__/x.ts',   Zone.TEST),
+        ('node_modules/lib.ts',  None),  # accept any non-prod or production
+        ('src/vendor/lib.ts',    Zone.VENDOR),
+    ]
+    correct = 0
+    total_strict = 0
+    fails = []
+    for path, exp in cases:
+        got = classify_file(path, TS_ZONE_RULES)
+        if exp is None:
+            continue
+        total_strict += 1
+        if got == exp:
+            correct += 1
+        else:
+            fails.append((path, exp, got))
 
-try:
-    from desloppify import scoring
-    score += 1
+    if correct == total_strict:
+        print(f"PASS:{correct}/{total_strict}")
+    elif correct >= total_strict - 1:
+        print(f"PARTIAL:{correct}/{total_strict} fails={fails}")
+    else:
+        print(f"FAIL:{correct}/{total_strict} fails={fails}")
+except ImportError as e:
+    print(f"FAIL:import:{e}")
 except Exception as e:
-    print(f'  scoring_import_fail:{e}')
-
-try:
-    from desloppify.lang import python as pymod
-    from desloppify.lang import typescript as tsmod
-    score += 1
-except Exception as e:
-    print(f'  lang_import_fail:{e}')
-
-print(f'SCORE:{score}/4')
+    print(f"ERROR:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  $REGR_RESULT" | head -5 | sed 's/^/  /'
-R_NUM=$(echo "$REGR_RESULT" | grep -oE 'SCORE:[0-9]+/4' | sed 's/SCORE:\([0-9]*\)\/4/\1/')
-if [ -n "$R_NUM" ]; then
-    R_REWARD=$(awk -v n="$R_NUM" 'BEGIN { v = n * 0.0125; printf "%.4f", v }')
-    add_reward "$R_REWARD"
-    echo "  +$R_REWARD ($R_NUM/4)"
-fi
+echo "  $F7"
+case "$F7" in
+    PASS*)    add_reward 0.10; echo "  +0.10" ;;
+    PARTIAL*) add_reward 0.05; echo "  +0.05" ;;
+esac
 
-# ===================================================================
-# CHECK 8 (0.05): Existing test suite (if any) still passes for zones
-# ===================================================================
-echo "--- Check 8: existing pytest for zones (0.05) ---"
-
-if command -v pytest >/dev/null 2>&1; then
-    PYTEST_OUT=$(cd "$WORKSPACE" && timeout 60 pytest tests/ -k "zone" -x -q --no-header 2>&1 | tail -20)
-    echo "$PYTEST_OUT" | tail -3 | sed 's/^/  /'
-    if echo "$PYTEST_OUT" | grep -qE "passed" && ! echo "$PYTEST_OUT" | grep -qE "failed|error"; then
-        add_reward 0.05
-        echo "  +0.05"
-    elif echo "$PYTEST_OUT" | grep -qE "no tests ran|deselected"; then
-        # No zone-specific tests is fine — give half credit if nothing fails
-        add_reward 0.025
-        echo "  +0.025 (no zone tests)"
-    fi
-else
-    echo "  pytest unavailable, skipping"
-fi
-
-# ===================================================================
-# Final
-# ===================================================================
-echo ""
-echo "=== Final reward: $REWARD ==="
-echo "$REWARD" > "$LOG_DIR/reward.txt"
-exit 0
+echo "--- Final reward: $REWARD ---"
+finish

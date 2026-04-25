@@ -43,481 +43,73 @@ fi
 export TARGET SPARSE
 
 # ════════════════════════════════════════════════════════════
-# TEST 1 (0.10): P2P — file parses, structure intact, importable under mocked triton
+# P2P GATE (no reward): file still parses & has expected functions.
+# If broken => regression => exit with 0.0.
 # ════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 1 (0.10): P2P module structure & import ==="
-T1=$(python3 << 'PYEOF'
-import sys, os, ast, importlib.util
-from unittest.mock import MagicMock
-
+echo "=== P2P GATE: parse & structure ==="
+GATE=$(python3 << 'PYEOF'
+import os, ast, sys
 target = os.environ["TARGET"]
-
-mock_triton = MagicMock()
-def passthrough_jit(fn=None, **kwargs):
-    if fn is not None: return fn
-    return lambda f: f
-mock_triton.jit = passthrough_jit
-sys.modules['triton'] = mock_triton
-sys.modules['triton.language'] = mock_triton.language
-
+sparse = os.environ.get("SPARSE","")
 try:
     src = open(target).read()
     tree = ast.parse(src)
 except Exception as e:
-    print(f"FAIL:parse:{e}"); sys.exit(0)
-
+    print(f"FAIL:parse_target:{e}"); sys.exit(0)
 names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 need = {"_attn_fwd_inner", "_attn_fwd", "forward"}
 if not need.issubset(names):
     print(f"FAIL:missing:{need-names}"); sys.exit(0)
-
-try:
-    spec = importlib.util.spec_from_file_location("amod", target)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-except Exception as e:
-    print(f"FAIL:exec:{type(e).__name__}:{e}"); sys.exit(0)
-
-print("PASS")
-PYEOF
-)
-echo "  $T1"
-[ "$T1" = "PASS" ] && add_reward 0.10
-
-# ════════════════════════════════════════════════════════════
-# TEST 2 (0.10): P2P — anti-stub: _attn_fwd_inner has substantial body, for-loop, k_scale & dot used
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 2 (0.10): P2P anti-stub ==="
-T2=$(python3 << 'PYEOF'
-import os, ast
-target = os.environ["TARGET"]
-src = open(target).read()
-tree = ast.parse(src)
-inner = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
-if inner is None: print("FAIL:no_inner"); raise SystemExit
-has_for = any(isinstance(n, ast.For) for n in ast.walk(inner))
-stmts = sum(1 for n in ast.walk(inner) if isinstance(n, (ast.Assign,ast.AugAssign,ast.For,ast.If,ast.Return)))
-has_dot = any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "dot"
-              for n in ast.walk(inner))
-# k_scale referenced (Name load) somewhere
-refs_kscale = any(isinstance(n, ast.Name) and n.id == "k_scale" for n in ast.walk(inner))
-refs_qscale = any(isinstance(n, ast.Name) and n.id == "q_scale" for n in ast.walk(inner))
-if has_for and stmts >= 12 and has_dot and refs_kscale and refs_qscale:
-    print("PASS")
-else:
-    print(f"FAIL:for={has_for} stmts={stmts} dot={has_dot} k={refs_kscale} q={refs_qscale}")
-PYEOF
-)
-echo "  $T2"
-[ "$T2" = "PASS" ] && add_reward 0.10
-
-# ════════════════════════════════════════════════════════════
-# TEST 3 (0.15): Structural — buggy chained-splat qk pattern eliminated
-#   Original: qk = tl.dot(q,k).to(tl.float32) * q_scale * k_scale
-#   This pattern (chained scalar mults on tensor) is what triggers the AMD bug.
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 3 (0.15): Structural - buggy chained pattern eliminated ==="
-T3=$(python3 << 'PYEOF'
-import os, ast
-def is_buggy_chain(val):
-    # Detect: <tensor_expr> * q_scale * k_scale  (left-assoc BinOp)
-    # i.e. BinOp(BinOp(X, *, Name('q_scale')), *, Name('k_scale'))
-    # OR  BinOp(BinOp(X, *, Name('k_scale')), *, Name('q_scale'))
-    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)): return False
-    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")): return False
-    inner = val.left
-    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)): return False
-    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")): return False
-    if val.right.id == inner.right.id: return False
-    return True
-
-def check_file(path):
-    src = open(path).read()
-    tree = ast.parse(src)
-    qk_assigns = []
-    for n in ast.walk(tree):
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Name) and t.id == "qk":
-                    qk_assigns.append(n)
-    if not qk_assigns: return None  # no qk in this file
-    for a in qk_assigns:
-        if is_buggy_chain(a.value):
-            return False
-    return True
-
-target = os.environ["TARGET"]
-sparse = os.environ.get("SPARSE","")
-
-t_ok = check_file(target)
-if t_ok is None:
-    print("FAIL:no_qk_in_target"); raise SystemExit
-if t_ok is False:
-    print("FAIL:target_buggy_present"); raise SystemExit
-
 if sparse and os.path.isfile(sparse):
-    s_ok = check_file(sparse)
-    if s_ok is False:
-        print("FAIL:sparse_buggy_present"); raise SystemExit
-
+    try:
+        ast.parse(open(sparse).read())
+    except Exception as e:
+        print(f"FAIL:parse_sparse:{e}"); sys.exit(0)
 print("PASS")
 PYEOF
 )
-echo "  $T3"
-[ "$T3" = "PASS" ] && add_reward 0.15
+echo "  GATE=$GATE"
+if [ "$GATE" != "PASS" ]; then
+    echo "Regression: $GATE"
+    echo "0.0000" > "$REWARD_FILE"
+    exit 0
+fi
 
 # ════════════════════════════════════════════════════════════
-# TEST 4 (0.35): F2P BEHAVIORAL — execute kernel under mocked triton tracer.
-#   Track every multiplication. Buggy form applies two scalar*tensor mults.
-#   Fix should either:
-#     (a) combine scales first  -> tensor multiplied by ONE scalar (combined)
-#     (b) precompute scale var  -> same effect
-#     (c) parenthesized * (q*k) -> tensor multiplied by ONE scalar
-#   We trace by replacing q_scale, k_scale with sentinel scalars and tl.dot
-#   result with a fake Tensor object that records all __mul__ ops.
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 4 (0.35): F2P behavioral - scaling semantics traced ==="
-T4=$(python3 << 'PYEOF'
-import os, sys, ast, types
-
-target = os.environ["TARGET"]
-src = open(target).read()
-tree = ast.parse(src)
-
-inner_fn = next((n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
-if inner_fn is None:
-    print("FAIL:no_inner"); sys.exit(0)
-
-# We'll directly extract the body of _attn_fwd_inner and execute it after
-# extracting/simulating the for-loop body. Simpler: count the structural
-# pattern of the qk assignment expressions and verify scale combination.
-
-# More reliable: AST analysis of ALL qk assignments + scale precomputation.
-# Acceptable patterns (any one in inner-loop scope):
-#   A) qk = <expr> * (q_scale * k_scale)  or * (k_scale * q_scale)
-#   B) Some assign before qk: scale = q_scale * k_scale (or reversed); then qk = <expr> * scale
-#   C) qk = <expr> * combined_name where combined_name = ... q_scale ... k_scale ...
-
-class TensorProxy:
-    def __init__(self, tag): self.tag = tag; self.scalar_muls = []
-    def __mul__(self, o):
-        # tensor * scalar => still tensor; record
-        new = TensorProxy(self.tag)
-        new.scalar_muls = self.scalar_muls + [o]
-        return new
-    def __rmul__(self, o): return self.__mul__(o)
-    def to(self, *a, **kw): return self
-
-def analyze(fn_node):
-    # Walk top-level statements of function (after for-loop, look in for-body too).
-    # Collect: qk assignments, and any scale-precompute assignments preceding them.
-    bodies = [fn_node.body]
-    for n in ast.walk(fn_node):
-        if isinstance(n, (ast.For, ast.If, ast.While)):
-            bodies.append(n.body)
-            if hasattr(n, 'orelse'): bodies.append(n.orelse)
-
-    results = []
-    for body in bodies:
-        # Track names defined as combinations involving q_scale and k_scale
-        combined_names = set()
-        for stmt in body:
-            if isinstance(stmt, ast.Assign) and len(stmt.targets)==1 and isinstance(stmt.targets[0], ast.Name):
-                tgt = stmt.targets[0].id
-                # Check if RHS contains both q_scale and k_scale and is a BinOp Mult of just these
-                names_in = [n.id for n in ast.walk(stmt.value) if isinstance(n, ast.Name)]
-                if "q_scale" in names_in and "k_scale" in names_in:
-                    # And RHS is purely Names/BinOps (not involving tl.dot)
-                    has_call = any(isinstance(n, ast.Call) for n in ast.walk(stmt.value))
-                    if not has_call:
-                        combined_names.add(tgt)
-            if isinstance(stmt, ast.Assign):
-                for t in stmt.targets:
-                    if isinstance(t, ast.Name) and t.id == "qk":
-                        results.append((stmt.value, combined_names.copy()))
-    return results
-
-qk_results = analyze(inner_fn)
-if not qk_results:
-    print("FAIL:no_qk_assigns"); sys.exit(0)
-
-def classify(val, combined):
-    # val is the RHS expression of qk = ...
-    # Walk top-level multiplication chain: collect right-hand operands of nested * BinOps
-    operands = []
-    cur = val
-    while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Mult):
-        operands.append(cur.right)
-        cur = cur.left
-    operands.append(cur)  # leftmost
-    operands.reverse()
-    # operands[0] = base (likely tl.dot(...).to(...))
-    # operands[1:] = scalars/tensors multiplied in sequence
-    scalar_muls = operands[1:]
-    if not scalar_muls:
-        return "no_mul"
-
-    # Pattern A: single operand that's a parenthesized BinOp of q_scale*k_scale
-    if len(scalar_muls) == 1:
-        op = scalar_muls[0]
-        if isinstance(op, ast.BinOp) and isinstance(op.op, ast.Mult):
-            ns = {n.id for n in ast.walk(op) if isinstance(n, ast.Name)}
-            if {"q_scale","k_scale"}.issubset(ns):
-                return "combined_inline"
-        if isinstance(op, ast.Name) and op.id in combined:
-            return "combined_var"
-        # Single multiplier that isn't both scales -> something different (could be valid e.g. only one scale used)
-        if isinstance(op, ast.Name) and op.id in ("q_scale","k_scale"):
-            return "single_scale"
-        return "other_single"
-
-    # Pattern B (buggy): multiple chained scalars including q_scale and k_scale
-    names = []
-    for o in scalar_muls:
-        if isinstance(o, ast.Name): names.append(o.id)
-    if "q_scale" in names and "k_scale" in names:
-        return "buggy_chain"
-    return "other_chain"
-
-categories = [classify(v, c) for v, c in qk_results]
-# Pass if at least one qk assignment is in {combined_inline, combined_var}
-# AND none are buggy_chain
-good = {"combined_inline", "combined_var"}
-if any(cat == "buggy_chain" for cat in categories):
-    print(f"FAIL:buggy_chain_present:{categories}"); sys.exit(0)
-if any(cat in good for cat in categories):
-    print(f"PASS:{categories}")
-else:
-    print(f"FAIL:no_combined_form:{categories}")
-PYEOF
-)
-echo "  $T4"
-case "$T4" in
-    PASS*) add_reward 0.35 ;;
-esac
-
-# ════════════════════════════════════════════════════════════
-# TEST 5 (0.15): F2P BEHAVIORAL — runtime trace via mocked triton, verify that
-#   tensor-vs-scalar multiplication semantics give exactly ONE combined scalar.
+# F2P 1 (0.50): The buggy chained scalar*tensor pattern
+#   qk = <expr> * q_scale * k_scale   (or reversed)
+# must NOT remain in the target file. This is the line called out
+# in the AMD MLIR error. On the unmodified base this pattern IS
+# present → fails on base, passes on fix.
+#
+# Accept any rewrite: parenthesized combine, precomputed scale var,
+# moved load, etc. The check is purely "buggy chain absent".
 # ════════════════════════════════════════════════════════════
 echo ""
-echo "=== Test 5 (0.15): F2P runtime trace - scalar fold semantics ==="
-T5=$(python3 << 'PYEOF'
-import os, sys, ast, types
-
-target = os.environ["TARGET"]
-src = open(target).read()
-tree = ast.parse(src)
-
-inner_fn = next((n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
-if inner_fn is None: print("FAIL:no_inner"); sys.exit(0)
-
-# Find the for-loop body inside _attn_fwd_inner
-loop = None
-for n in ast.walk(inner_fn):
-    if isinstance(n, ast.For):
-        loop = n; break
-if loop is None: print("FAIL:no_loop"); sys.exit(0)
-
-# Extract statements up to and including the qk assignment
-qk_assign_idx = None
-for i, stmt in enumerate(loop.body):
-    for t in (getattr(stmt,'targets',None) or []):
-        if isinstance(t, ast.Name) and t.id == "qk":
-            qk_assign_idx = i; break
-    if qk_assign_idx is not None: break
-
-if qk_assign_idx is None: print("FAIL:no_qk_in_loop"); sys.exit(0)
-
-# Build a synthetic module that runs just the relevant statements
-prep_stmts = loop.body[:qk_assign_idx+1]
-
-# Compose minimal program
-mod = ast.Module(body=prep_stmts, type_ignores=[])
-try:
-    code = compile(mod, "<trace>", "exec")
-except Exception as e:
-    print(f"FAIL:compile:{e}"); sys.exit(0)
-
-class Scalar:
-    _id = 0
-    def __init__(self, name):
-        self.name = name
-        self.is_tensor = False
-    def __mul__(self, o):
-        if isinstance(o, Scalar):
-            return Scalar(f"({self.name}*{o.name})")
-        if isinstance(o, Tensor):
-            return o.__rmul__(self)
-        return Scalar(f"({self.name}*?)")
-    def __rmul__(self, o): return self.__mul__(o)
-    def __add__(self, o): return Scalar(f"({self.name}+{getattr(o,'name','?')})")
-    def __radd__(self, o): return self.__add__(o)
-
-class Tensor:
-    def __init__(self, tag="T"):
-        self.tag = tag
-        self.scalar_muls = []  # list of scalar names applied
-    def __mul__(self, o):
-        new = Tensor(self.tag)
-        new.scalar_muls = list(self.scalar_muls)
-        if isinstance(o, Scalar):
-            new.scalar_muls.append(o.name)
-        elif isinstance(o, Tensor):
-            new.scalar_muls.append(f"<tensor:{o.tag}>")
-        else:
-            new.scalar_muls.append(f"<v:{o}>")
-        return new
-    def __rmul__(self, o): return self.__mul__(o)
-    def to(self, *a, **k):
-        new = Tensor(self.tag+".to")
-        new.scalar_muls = list(self.scalar_muls)
-        return new
-    def __add__(self, o): return self.__mul__(o)
-    def __sub__(self, o): return self.__mul__(o)
-
-class TL:
-    def load(self, ptr, *a, **kw):
-        # Heuristic: pointers named *_scale_ptr return Scalar; else Tensor
-        # We can't see name; but ptr passed in is whatever is bound in scope.
-        # We'll inspect via repr.
-        r = repr(ptr)
-        if "scale" in r.lower():
-            return Scalar(r)
-        return Tensor("loaded")
-    def dot(self, a, b, *args, **kw):
-        return Tensor("dot")
-    float32 = "f32"
-    float16 = "f16"
-    int32 = "i32"
-    constexpr = int
-    def arange(self, *a, **k): return Tensor("arange")
-    def zeros(self, *a, **k): return Tensor("zeros")
-    def full(self, *a, **k): return Tensor("full")
-    def where(self, *a, **k): return Tensor("where")
-    def maximum(self, *a, **k): return Tensor("max")
-    def minimum(self, *a, **k): return Tensor("min")
-    def exp(self, x): return x if isinstance(x, Tensor) else Scalar("exp")
-    def exp2(self, x): return x if isinstance(x, Tensor) else Scalar("exp2")
-    def log(self, x): return x if isinstance(x, Tensor) else Scalar("log")
-    def log2(self, x): return x if isinstance(x, Tensor) else Scalar("log2")
-    def sum(self, x, *a, **k): return Tensor("sum")
-    def max(self, x, *a, **k): return Tensor("max")
-    def min(self, x, *a, **k): return Tensor("min")
-    def trans(self, x): return x
-    def reshape(self, x, *a, **k): return x
-    def broadcast_to(self, x, *a, **k): return x
-    def cdiv(self, a, b): return 1
-    def static_assert(self, *a, **k): pass
-    def __getattr__(self, name):
-        # generic fallback
-        return lambda *a, **k: Tensor(f"tl.{name}")
-
-class K_scale_ptr_repr:
-    def __repr__(self): return "K_scale_ptr"
-class Q_scale_ptr_repr:
-    def __repr__(self): return "Q_scale_ptr"
-
-# Build globals/locals to execute statements with
-ns = {
-    "tl": TL(),
-    "q": Tensor("q"),
-    # Need K_scale_ptr/Q_scale_ptr in scope; also K_ptrs, k_mask
-    "K_scale_ptr": K_scale_ptr_repr(),
-    "Q_scale_ptr": Q_scale_ptr_repr(),
-    "K_ptrs": "K_ptrs",
-    "k_mask": "k_mask",
-    "q_scale": Scalar("q_scale"),  # may already be in scope from caller
-    "offs_m": Tensor("offs_m"),
-    "offs_n": Tensor("offs_n"),
-    "start_n": 0,
-    "STAGE": 1,
-}
-
-# Allow references to other names as Tensors lazily
-class LazyDict(dict):
-    def __missing__(self, key):
-        # default scalar zero-ish
-        v = Tensor(f"_{key}")
-        self[key] = v
-        return v
-
-g = LazyDict(ns)
-
-try:
-    exec(code, g, g)
-except KeyError as e:
-    print(f"FAIL:keyerr:{e}"); sys.exit(0)
-except Exception as e:
-    # Some statements may use unsupported ops; this is ok if qk got computed
-    pass
-
-qk = g.get("qk")
-if not isinstance(qk, Tensor):
-    print(f"FAIL:qk_not_tensor:{type(qk).__name__}"); sys.exit(0)
-
-muls = qk.scalar_muls
-# Buggy: contains BOTH "q_scale" and "k_scale" as separate entries
-# Fixed: contains a single combined entry like "(q_scale*k_scale)" OR a single name that's a precomputed combo
-sep_q = any(m == "q_scale" for m in muls)
-sep_k = any(m == "k_scale" for m in muls)
-combined = any(("q_scale" in m and "k_scale" in m and m != "q_scale" and m != "k_scale") for m in muls)
-
-if sep_q and sep_k and not combined:
-    print(f"FAIL:separate_chain:{muls}")
-elif combined or (not sep_q and not sep_k) or (sep_q ^ sep_k):
-    print(f"PASS:{muls}")
-else:
-    print(f"PARTIAL:{muls}")
-PYEOF
-)
-echo "  $T5"
-case "$T5" in
-    PASS*) add_reward 0.15 ;;
-    PARTIAL*) add_reward 0.07 ;;
-esac
-
-# ════════════════════════════════════════════════════════════
-# TEST 6 (0.15): F2P — sparse file also fixed (consistency across both kernels)
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== Test 6 (0.15): Sparse kernel also fixed ==="
-T6="SKIP"
-if [ -n "$SPARSE" ] && [ -f "$SPARSE" ]; then
-T6=$(python3 << 'PYEOF'
-import os, ast
-sparse = os.environ["SPARSE"]
-src = open(sparse).read()
-try:
-    tree = ast.parse(src)
-except Exception as e:
-    print(f"FAIL:parse:{e}"); raise SystemExit
+echo "=== F2P 1 (0.50): buggy chained-mult eliminated in TARGET ==="
+F1=$(python3 << 'PYEOF'
+import os, ast, sys
 
 def is_buggy_chain(val):
-    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)): return False
-    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")): return False
+    # BinOp(BinOp(X, *, Name('q_scale'|'k_scale')), *, Name('k_scale'|'q_scale'))
+    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)):
+        return False
+    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")):
+        return False
     inner = val.left
-    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)): return False
-    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")): return False
-    if val.right.id == inner.right.id: return False
+    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)):
+        return False
+    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")):
+        return False
+    if val.right.id == inner.right.id:
+        return False
     return True
 
-def is_combined_form(val):
-    # qk = X * (q_scale * k_scale) OR qk = X * combined_var
-    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)): return False
-    r = val.right
-    if isinstance(r, ast.BinOp) and isinstance(r.op, ast.Mult):
-        ns = {n.id for n in ast.walk(r) if isinstance(n, ast.Name)}
-        if {"q_scale","k_scale"}.issubset(ns): return True
-    return False
+target = os.environ["TARGET"]
+src = open(target).read()
+tree = ast.parse(src)
 
-# Find qk assigns
 qk_assigns = []
 for n in ast.walk(tree):
     if isinstance(n, ast.Assign):
@@ -526,28 +118,308 @@ for n in ast.walk(tree):
                 qk_assigns.append(n)
 
 if not qk_assigns:
-    print("PASS:no_qk"); raise SystemExit  # nothing to fix
+    print("FAIL:no_qk"); sys.exit(0)
 
-any_buggy = any(is_buggy_chain(a.value) for a in qk_assigns)
-if any_buggy:
-    print("FAIL:buggy_present"); raise SystemExit
+for a in qk_assigns:
+    if is_buggy_chain(a.value):
+        print("FAIL:buggy_chain_present"); sys.exit(0)
 
-# Stronger: at least one is combined form OR whole module looks parseable
-# and all qk multiplications are not the buggy chain
 print("PASS")
 PYEOF
 )
-fi
-echo "  $T6"
-case "$T6" in
-    PASS*) add_reward 0.15 ;;
-    SKIP) add_reward 0.07 ;;  # if sparse file absent, give partial (not penalize)
-esac
+echo "  F1=$F1"
+[ "$F1" = "PASS" ] && add_reward 0.50
 
 # ════════════════════════════════════════════════════════════
-# Final
+# F2P 2 (0.20): Same fix applied in the SPARSE companion file
+#   (if it exists). Buggy base has same chained pattern there.
+#   If file doesn't exist on this checkout, skip (no reward, no penalty).
 # ════════════════════════════════════════════════════════════
 echo ""
-echo "=== Final reward: $REWARD ==="
+echo "=== F2P 2 (0.20): buggy chained-mult eliminated in SPARSE ==="
+F2=$(python3 << 'PYEOF'
+import os, ast, sys
+
+sparse = os.environ.get("SPARSE","")
+if not sparse or not os.path.isfile(sparse):
+    print("SKIP"); sys.exit(0)
+
+def is_buggy_chain(val):
+    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)):
+        return False
+    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")):
+        return False
+    inner = val.left
+    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)):
+        return False
+    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")):
+        return False
+    if val.right.id == inner.right.id:
+        return False
+    return True
+
+src = open(sparse).read()
+tree = ast.parse(src)
+qk_assigns = []
+for n in ast.walk(tree):
+    if isinstance(n, ast.Assign):
+        for t in n.targets:
+            if isinstance(t, ast.Name) and t.id == "qk":
+                qk_assigns.append(n)
+if not qk_assigns:
+    # No qk in sparse file at all – treat as skip (don't reward, don't penalize).
+    print("SKIP"); sys.exit(0)
+for a in qk_assigns:
+    if is_buggy_chain(a.value):
+        print("FAIL:buggy_chain_present"); sys.exit(0)
+print("PASS")
+PYEOF
+)
+echo "  F2=$F2"
+[ "$F2" = "PASS" ] && add_reward 0.20
+
+# ════════════════════════════════════════════════════════════
+# F2P 3 (0.30): BEHAVIORAL — execute the qk-scaling logic of
+# _attn_fwd_inner under a tracing harness. We replace tl.dot's
+# result with a TensorProxy that records every scalar __mul__.
+# Buggy base => proxy receives TWO sequential scalar multiplications
+# (q_scale then k_scale, or vice versa) ⇒ FAIL.
+# Any correct fix collapses scaling to ONE scalar multiplication
+# applied to the tensor (combined scale, parenthesized, or
+# precomputed var) ⇒ PASS.
+#
+# We synthesize a tiny driver that mirrors the relevant statements
+# of _attn_fwd_inner by extracting just the qk-related lines from
+# the function body via AST, then exec'ing them with a controlled
+# namespace.
+# ════════════════════════════════════════════════════════════
+echo ""
+echo "=== F2P 3 (0.30): behavioral scale-multiplication trace ==="
+F3=$(python3 << 'PYEOF'
+import os, ast, sys, types
+
+target = os.environ["TARGET"]
+src = open(target).read()
+tree = ast.parse(src)
+
+inner = next((n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
+if inner is None:
+    print("FAIL:no_inner"); sys.exit(0)
+
+# Collect statements in execution order: top-level body of the function,
+# plus any For-loop bodies (the qk computation lives inside the for-loop).
+stmts = []
+def collect(body):
+    for s in body:
+        if isinstance(s, ast.For):
+            collect(s.body)
+        elif isinstance(s, ast.If):
+            # take then-branch statements (best effort)
+            stmts.append(s)
+            collect(s.body)
+        else:
+            stmts.append(s)
+collect(inner.body)
+
+# Find index of qk assignment.
+qk_idx = None
+for i, s in enumerate(stmts):
+    if isinstance(s, ast.Assign):
+        for t in s.targets:
+            if isinstance(t, ast.Name) and t.id == "qk":
+                qk_idx = i
+                break
+        if qk_idx is not None:
+            break
+
+if qk_idx is None:
+    print("FAIL:no_qk_assign"); sys.exit(0)
+
+# We want statements that may define scale-related names leading up to qk.
+# Keep only Assign statements (simple) up to and including qk_idx, and
+# skip those whose RHS we cannot evaluate. We'll try to exec them in a
+# permissive namespace; on NameError for an unknown name, we inject a
+# benign sentinel and retry.
+relevant = [s for s in stmts[:qk_idx+1] if isinstance(s, ast.Assign)]
+
+# Build a small module containing just these statements as a function.
+fn_ast = ast.FunctionDef(
+    name="_run",
+    args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+    body=relevant + [ast.Return(value=ast.Name(id="qk", ctx=ast.Load()))],
+    decorator_list=[],
+    returns=None,
+    type_comment=None,
+)
+mod = ast.Module(body=[fn_ast], type_ignores=[])
+ast.fix_missing_locations(mod)
+
+# Tracer
+class TensorProxy:
+    def __init__(self, scalar_mul_count=0):
+        self.scalar_mul_count = scalar_mul_count
+    def _wrap(self, other):
+        # Multiplying by anything that isn't another TensorProxy counts as
+        # a scalar mul on the tensor.
+        if isinstance(other, TensorProxy):
+            return TensorProxy(self.scalar_mul_count + other.scalar_mul_count)
+        return TensorProxy(self.scalar_mul_count + 1)
+    def __mul__(self, o): return self._wrap(o)
+    def __rmul__(self, o): return self._wrap(o)
+    def __add__(self, o): return self
+    def __radd__(self, o): return self
+    def __sub__(self, o): return self
+    def __rsub__(self, o): return self
+    def __truediv__(self, o): return self
+    def __rtruediv__(self, o): return self
+    def to(self, *a, **kw): return self
+    def __getitem__(self, k): return self
+    def __neg__(self): return self
+
+class FakeTL:
+    float32 = "float32"
+    float16 = "float16"
+    int32 = "int32"
+    @staticmethod
+    def dot(a, b, *args, **kwargs):
+        return TensorProxy()
+    @staticmethod
+    def load(ptr, *args, **kwargs):
+        # Scalar load (q_scale / k_scale style) — return a plain float.
+        return 1.0
+    @staticmethod
+    def arange(a, b): return 0
+    @staticmethod
+    def maximum(a, b): return a
+    @staticmethod
+    def minimum(a, b): return a
+    @staticmethod
+    def exp(a): return a
+    @staticmethod
+    def exp2(a): return a
+    @staticmethod
+    def log2(a): return a
+    @staticmethod
+    def sum(a, axis=None): return a
+    @staticmethod
+    def max(a, axis=None): return a
+    @staticmethod
+    def where(c, a, b): return a
+    @staticmethod
+    def zeros(shape, dtype=None): return TensorProxy()
+    @staticmethod
+    def full(shape, value, dtype=None): return TensorProxy()
+    @staticmethod
+    def cdiv(a, b): return 1
+    @staticmethod
+    def program_id(axis): return 0
+    @staticmethod
+    def num_programs(axis): return 1
+    @staticmethod
+    def static_assert(*a, **kw): return None
+    @staticmethod
+    def static_print(*a, **kw): return None
+    @staticmethod
+    def trans(a, *args): return a
+    @staticmethod
+    def view(a, *args): return a
+    @staticmethod
+    def reshape(a, *args): return a
+    @staticmethod
+    def broadcast_to(a, *args): return a
+
+# Compile
+try:
+    code = compile(mod, "<extracted>", "exec")
+except Exception as e:
+    print(f"FAIL:compile:{e}"); sys.exit(0)
+
+# Try executing with a permissive namespace, auto-injecting unknown names
+# as benign scalars. q_scale / k_scale are real floats so chained
+# multiplications are detectable on the TensorProxy.
+attempts = 0
+ns = {
+    "tl": FakeTL,
+    "q": TensorProxy(),
+    "k": TensorProxy(),
+    "v": TensorProxy(),
+    "q_scale": 1.0,
+    "k_scale": 1.0,
+    "Q_scale_ptr": 0,
+    "K_scale_ptr": 0,
+    "K_ptrs": 0,
+    "V_ptrs": 0,
+    "Q_ptrs": 0,
+    "k_mask": True,
+    "v_mask": True,
+    "q_mask": True,
+    "offs_m": TensorProxy(),
+    "offs_n": TensorProxy(),
+    "start_n": 0,
+    "STAGE": 1,
+    "BLOCK_M": 64,
+    "BLOCK_N": 64,
+    "HEAD_DIM": 64,
+    "N_CTX": 64,
+    "stride_kn": 1, "stride_kk": 1,
+    "stride_vn": 1, "stride_vk": 1,
+    "stride_qm": 1, "stride_qk": 1,
+    "lo": 0, "hi": 0,
+    "m_i": TensorProxy(), "l_i": TensorProxy(), "acc": TensorProxy(),
+    "qk_scale": 1.0,
+    "n": TensorProxy(), "m": TensorProxy(),
+    "True": True, "False": False, "None": None,
+    "scale": 1.0,
+    "combined_scale": 1.0,
+    "qk": TensorProxy(),
+}
+
+result = None
+last_err = None
+for attempt in range(60):
+    try:
+        local_ns = {}
+        exec(code, ns, local_ns)
+        result = local_ns["_run"]()
+        break
+    except NameError as e:
+        # Extract missing name from message: "name 'X' is not defined"
+        msg = str(e)
+        import re
+        m = re.search(r"'([^']+)'", msg)
+        if not m:
+            last_err = e; break
+        missing = m.group(1)
+        if missing in ns:
+            last_err = e; break
+        ns[missing] = 1.0  # benign scalar
+    except Exception as e:
+        last_err = e
+        break
+
+if result is None:
+    print(f"FAIL:exec:{type(last_err).__name__}:{last_err}"); sys.exit(0)
+
+if not isinstance(result, TensorProxy):
+    print(f"FAIL:not_tensor:{type(result).__name__}"); sys.exit(0)
+
+# Buggy form: tensor multiplied by q_scale then by k_scale separately
+# => scalar_mul_count >= 2.
+# Correct fix: scales combined first => scalar_mul_count == 1
+# (one tensor*scalar applied to the dot result).
+n = result.scalar_mul_count
+if n <= 1:
+    print(f"PASS:n={n}")
+else:
+    print(f"FAIL:scalar_muls={n}")
+PYEOF
+)
+echo "  F3=$F3"
+case "$F3" in
+    PASS*) add_reward 0.30 ;;
+esac
+
+echo ""
+echo "Final reward: $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
-exit 0

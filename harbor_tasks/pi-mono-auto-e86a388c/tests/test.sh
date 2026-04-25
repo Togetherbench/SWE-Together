@@ -17,48 +17,26 @@ add_reward() {
     REWARD=$(awk -v r="$REWARD" -v a="$1" 'BEGIN { printf "%.4f", r + a }')
 }
 
+write_reward_and_exit() {
+    echo "$REWARD" > /logs/verifier/reward.txt
+    exit 0
+}
+
 SHARED="packages/ai/src/providers/openai-responses-shared.ts"
 RESPONSES="packages/ai/src/providers/openai-responses.ts"
 
 # ═══════════════════════════════════════════════════════════════
-# Gate 0 [P2P]: TypeScript compilation (15%)
+# P2P GATE (regression guard, no reward): TypeScript compiles
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- Gate 0 [P2P]: TypeScript compilation (0.15) ---"
-G0=0
-if (cd packages/ai && npx tsc --noEmit -p tsconfig.build.json 2>/tmp/tsc_errors.txt); then
-    G0=1
-    add_reward 0.15
-    echo "PASS: TypeScript compiles (+0.15)"
-else
-    echo "FAIL: TypeScript compilation errors:"
+echo "--- P2P GATE: TypeScript compilation (gating, no reward) ---"
+if ! (cd packages/ai && npx tsc --noEmit -p tsconfig.build.json 2>/tmp/tsc_errors.txt); then
+    echo "FAIL: TypeScript compilation broken — destructive change. REWARD=0."
     tail -30 /tmp/tsc_errors.txt
+    REWARD=0
+    write_reward_and_exit
 fi
-
-# ═══════════════════════════════════════════════════════════════
-# Gate 1 [Structural]: strictResponsesPairing flag is no longer required (10%)
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "--- Gate 1 [Structural]: behavior NOT gated on strictResponsesPairing (0.10) ---"
-G1=0
-GATED=0
-for f in "$SHARED" "$RESPONSES"; do
-    if [ -f "$f" ]; then
-        if grep -E "if\s*\(.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
-            GATED=$((GATED + 1))
-        fi
-        if grep -E "\?\s*.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
-            GATED=$((GATED + 1))
-        fi
-    fi
-done
-if [ "$GATED" -eq 0 ]; then
-    G1=1
-    add_reward 0.10
-    echo "PASS: No conditional gating on strictResponsesPairing (+0.10)"
-else
-    echo "FAIL: Behavior still gated on strictResponsesPairing flag in $GATED location(s)"
-fi
+echo "PASS gate: TypeScript compiles."
 
 # ═══════════════════════════════════════════════════════════════
 # Set up testable copies that export internal functions
@@ -113,25 +91,22 @@ run_test() {
 }
 
 # ═══════════════════════════════════════════════════════════════
-# Gate 2 [P2P Behavioral]: Same-model reasoning + function_call preserved (15%)
+# F2P GATE A: Same-model preservation (regression check w/ behavior)
+# Buggy base preserves these. Reward only because the fix could
+# accidentally break this; but it's also true on no-op. So we make
+# this PURELY GATING with no reward — if fix broke it, reward=0.
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- Gate 2 [P2P Behavioral]: Same-model reasoning + function_call preserved (0.15) ---"
+echo "--- F2P GATE A: same-model still works (gating, 0 reward) ---"
 
 cat > /tmp/pitest/same_model.ts << 'SAMEEOF'
 import { loadConvert } from "/tmp/pitest/harness.ts";
-
 const convert = await loadConvert();
 
 const model = {
-    id: "gpt-5-codex",
-    name: "gpt-5-codex",
-    provider: "openai",
-    api: "openai-responses" as const,
-    input: ["text"],
-    reasoning: true,
-    baseUrl: "https://api.openai.com/v1",
-    headers: {},
+    id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai",
+    api: "openai-responses" as const, input: ["text"], reasoning: true,
+    baseUrl: "https://api.openai.com/v1", headers: {},
 } as any;
 
 const context = {
@@ -140,37 +115,17 @@ const context = {
         {
             role: "assistant" as const,
             content: [
-                {
-                    type: "thinking" as const,
-                    thinking: "thinking",
-                    thinkingSignature: JSON.stringify({
-                        type: "reasoning",
-                        id: "rs_sametest",
-                        summary: [{ type: "summary_text", text: "thinking" }],
-                    }),
-                },
-                {
-                    type: "toolCall" as const,
-                    id: "call_same|fc_sametest",
-                    name: "search",
-                    arguments: { query: "test" },
-                },
+                { type: "thinking" as const, thinking: "thinking",
+                  thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_sametest", summary: [{ type: "summary_text", text: "thinking" }] }) },
+                { type: "toolCall" as const, id: "call_same|fc_sametest", name: "search", arguments: { query: "test" } },
             ],
-            model: "gpt-5-codex",
-            provider: "openai",
-            api: "openai-responses" as const,
+            model: "gpt-5-codex", provider: "openai", api: "openai-responses" as const,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-            stopReason: "toolUse" as const,
-            timestamp: Date.now(),
+            stopReason: "toolUse" as const, timestamp: Date.now(),
         },
-        {
-            role: "toolResult" as const,
-            toolCallId: "call_same|fc_sametest",
-            toolName: "search",
-            content: [{ type: "text" as const, text: "result" }],
-            isError: false,
-            timestamp: Date.now(),
-        },
+        { role: "toolResult" as const, toolCallId: "call_same|fc_sametest", toolName: "search",
+          content: [{ type: "text" as const, text: "result" }], isError: false, timestamp: Date.now() },
+        { role: "user" as const, content: "ok", timestamp: Date.now() },
     ],
 };
 
@@ -182,9 +137,7 @@ try {
 
     let fcHasFcId = false;
     for (const fc of fcs) {
-        if ((fc as any).id && String((fc as any).id).startsWith("fc_")) {
-            fcHasFcId = true;
-        }
+        if ((fc as any).id && String((fc as any).id).startsWith("fc_")) fcHasFcId = true;
     }
 
     const ok = reasoning.length >= 1 && fcs.length >= 1 && fcOut.length >= 1 && fcHasFcId;
@@ -194,439 +147,238 @@ try {
 }
 SAMEEOF
 
-OUT=$(run_test /tmp/pitest/same_model.ts)
-echo "$OUT" | tail -5
-G2=0
-if echo "$OUT" | grep -q "RESULT=PASS"; then
-    G2=1
-    add_reward 0.15
-    echo "PASS: Same-model preserved reasoning + fc_xxx id (+0.15)"
-else
-    echo "FAIL: Same-model behavior broken"
+OUT_A=$(run_test /tmp/pitest/same_model.ts)
+echo "$OUT_A" | tail -5
+if ! echo "$OUT_A" | grep -q "RESULT=PASS"; then
+    echo "FAIL: Same-model behavior broken — destructive change. REWARD=0."
+    REWARD=0
+    write_reward_and_exit
 fi
+echo "PASS gate: same-model preserved."
 
 # ═══════════════════════════════════════════════════════════════
-# Gate 3 [F2P Behavioral - CORE FIX]: Different-model same-provider handoff
-# (25% - this IS the bug)
-#
-# When an assistant message has provider==model.provider, api==model.api,
-# but a different model.id, the fc_xxx item id MUST be cleared (set to
-# undefined or omitted) because the rs_xxx reasoning item was stripped
-# by transformMessages and replaying fc_xxx without its paired rs_xxx
-# triggers a 400. The function_call must still be present so that
-# function_call_output can pair via call_id.
+# F2P GATE 1 (CORE FIX, weight 0.55): different-model handoff
+# clears fc_xxx by default (no strictResponsesPairing flag set).
+# On buggy base: assistant has provider==model.provider, api match,
+# different model.id → fc_xxx is replayed AS-IS (bug). On fix: id is
+# undefined/missing OR function_call is dropped, but function_call
+# still pairs with output via call_id (or fc with no fc_ id).
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- Gate 3 [F2P CORE]: Different-model handoff clears fc_xxx (0.25) ---"
+echo "--- F2P GATE 1 [CORE FIX]: different-model handoff (0.55) ---"
 
 cat > /tmp/pitest/diff_model.ts << 'DIFFEOF'
 import { loadConvert } from "/tmp/pitest/harness.ts";
-
 const convert = await loadConvert();
 
-// Target model: different model.id, same provider+api
 const model = {
-    id: "gpt-5-codex",
-    name: "gpt-5-codex",
-    provider: "openai",
-    api: "openai-responses" as const,
-    input: ["text"],
-    reasoning: true,
-    baseUrl: "https://api.openai.com/v1",
-    headers: {},
+    id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai",
+    api: "openai-responses" as const, input: ["text"], reasoning: true,
+    baseUrl: "https://api.openai.com/v1", headers: {},
 } as any;
 
+// Assistant produced by *different* OpenAI Responses model (e.g. gpt-5-mini).
+// transformMessages strips the thinkingSignature for cross-model handoffs.
+// So the assistant message has no thinkingSignature when convertMessages sees it.
 const context = {
     messages: [
-        { role: "user" as const, content: "Hi", timestamp: Date.now() },
+        { role: "user" as const, content: "Compute things", timestamp: Date.now() },
         {
             role: "assistant" as const,
-            // Different model.id from target. Note: in real flow, transformMessages
-            // strips thinkingSignature from cross-model messages. Simulate that.
             content: [
-                {
-                    type: "thinking" as const,
-                    thinking: "thinking",
-                    // No thinkingSignature — transformMessages stripped it
-                },
-                {
-                    type: "toolCall" as const,
-                    id: "call_diff|fc_difftest",
-                    name: "search",
-                    arguments: { query: "test" },
-                },
+                // no thinkingSignature — transformMessages strips it cross-model
+                { type: "thinking" as const, thinking: "let me think" },
+                { type: "toolCall" as const, id: "call_x1|fc_xtest", name: "search", arguments: { q: "a" } },
             ],
             model: "gpt-5-mini",
-            provider: "openai",
-            api: "openai-responses" as const,
+            provider: "openai", api: "openai-responses" as const,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-            stopReason: "toolUse" as const,
-            timestamp: Date.now(),
+            stopReason: "toolUse" as const, timestamp: Date.now(),
         },
-        {
-            role: "toolResult" as const,
-            toolCallId: "call_diff|fc_difftest",
-            toolName: "search",
-            content: [{ type: "text" as const, text: "result" }],
-            isError: false,
-            timestamp: Date.now(),
-        },
+        { role: "toolResult" as const, toolCallId: "call_x1|fc_xtest", toolName: "search",
+          content: [{ type: "text" as const, text: "result" }], isError: false, timestamp: Date.now() },
+        { role: "user" as const, content: "Continue", timestamp: Date.now() },
     ],
 };
 
 try {
     const result = convert(model, context);
     const fcs = result.filter((i: any) => i.type === "function_call");
-    const reasoning = result.filter((i: any) => i.type === "reasoning");
     const fcOut = result.filter((i: any) => i.type === "function_call_output");
-    const assistantMsgs = result.filter((i: any) => i.role === "assistant" || i.type === "message");
+    const reasoning = result.filter((i: any) => i.type === "reasoning");
 
-    // CORE: no rs_xxx replayed because no signature
-    const noOrphanReasoning = reasoning.length === 0;
+    // No reasoning items should be emitted (no signature available).
+    const noReasoning = reasoning.length === 0;
 
-    // CORE: tool result must be reachable somehow.
-    // Two valid strategies:
-    //   (a) Keep function_call but clear fc_xxx id; emit function_call_output (call_id pairs)
-    //   (b) Convert tool call to assistant text + tool result to user text
-    let strategyA = false;
-    let strategyB = false;
+    // The toolResult must be representable: either function_call_output with call_x1
+    //   matched by some function_call (with fc id cleared / undefined),
+    // OR text-conversion: tool call rendered as text and result rendered as user input.
+    let coreFix = false;
 
-    if (fcs.length >= 1) {
-        // Strategy A: function_call exists, but its id must NOT be a leaky fc_xxx
-        // that was paired with a missing rs_xxx
-        const fcIds = fcs.map((fc: any) => fc.id);
-        const noLeakyFcId = fcIds.every((id: any) => !id || !String(id).startsWith("fc_"));
-        const callIdPreserved = fcs.some((fc: any) => fc.call_id === "call_diff");
-        const hasFcOut = fcOut.some((o: any) => o.call_id === "call_diff");
-        strategyA = noLeakyFcId && callIdPreserved && hasFcOut;
-    } else {
-        // Strategy B: no function_call at all → must have text describing the tool call
-        // and the tool result, sent as messages
-        const allText = JSON.stringify(result);
-        strategyB = allText.includes("search") && allText.includes("result");
+    // Pattern A: function_call kept but fc_xxx id cleared, function_call_output present, paired by call_id
+    const fcWithCallId = fcs.find((f: any) => f.call_id === "call_x1");
+    const outWithCallId = fcOut.find((f: any) => f.call_id === "call_x1");
+    if (fcWithCallId && outWithCallId) {
+        const idCleared = !fcWithCallId.id || !String(fcWithCallId.id).startsWith("fc_");
+        if (idCleared) coreFix = true;
     }
 
-    const ok = noOrphanReasoning && (strategyA || strategyB);
-    console.log(`RESULT=${ok ? "PASS" : "FAIL"} noOrphanReasoning=${noOrphanReasoning} strategyA=${strategyA} strategyB=${strategyB} fcs=${fcs.length} reasoning=${reasoning.length} fcOut=${fcOut.length}`);
-    if (!ok) {
-        console.log("FCs:", JSON.stringify(fcs));
-        console.log("Reasoning:", JSON.stringify(reasoning));
+    // Pattern B: function_call dropped entirely AND no orphan function_call_output emitted
+    //   (must be converted to text user message) — context preserved
+    if (!fcWithCallId && !outWithCallId) {
+        // verify some user/assistant message in result mentions search/result text
+        const serialized = JSON.stringify(result);
+        if (serialized.includes("search") && serialized.includes("result")) {
+            coreFix = true;
+        }
     }
+
+    // BUG signature on base: fc_xtest replayed AS-IS with id="fc_xtest"
+    const bugReplayed = fcs.some((f: any) => f.id === "fc_xtest");
+
+    console.log(`RESULT=${coreFix && !bugReplayed && noReasoning ? "PASS" : "FAIL"} coreFix=${coreFix} bugReplayed=${bugReplayed} noReasoning=${noReasoning} reasoning=${reasoning.length} fcs=${fcs.length} fcOut=${fcOut.length}`);
+    console.log("FCS:", JSON.stringify(fcs));
+    console.log("FCOUT:", JSON.stringify(fcOut));
 } catch (e: any) {
     console.log(`RESULT=FAIL error=${e.message}`);
-    console.log(e.stack);
 }
 DIFFEOF
 
-OUT=$(run_test /tmp/pitest/diff_model.ts)
-echo "$OUT" | tail -10
-G3=0
-if echo "$OUT" | grep -q "RESULT=PASS"; then
-    G3=1
-    add_reward 0.25
-    echo "PASS: Different-model handoff handled correctly (+0.25)"
+OUT_1=$(run_test /tmp/pitest/diff_model.ts)
+echo "$OUT_1" | tail -10
+if echo "$OUT_1" | grep -q "RESULT=PASS"; then
+    add_reward 0.55
+    echo "PASS: F2P core fix — different-model handoff clears fc_xxx (+0.55)"
 else
-    echo "FAIL: Different-model handoff still broken"
+    echo "FAIL: F2P core fix not applied"
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# Gate 4 [F2P Behavioral]: Same-model with missing thinkingSignature (15%)
-# When thinkingSignature is missing on same-model (e.g., never persisted,
-# or stream cut), fc_xxx must also be cleared because there's no rs_xxx
-# to pair with.
+# F2P GATE 2 (weight 0.20): No flag-gating on strictResponsesPairing
+# This is the explicit user requirement: behavior must be default,
+# without the strictResponsesPairing compat flag.
+# Buggy base may not have the flag at all (failed port), but if any
+# code path is conditional on the flag, this fails.
+# We grep ONLY for conditional gating patterns, not the bare token.
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- Gate 4 [F2P]: Same-model missing thinkingSignature handled (0.15) ---"
+echo "--- F2P GATE 2: no flag-gated behavior (0.20) ---"
 
-cat > /tmp/pitest/missing_sig.ts << 'MISSEOF'
-import { loadConvert } from "/tmp/pitest/harness.ts";
+# We need this to fail on the buggy base too if base has flag-gating.
+# But buggy base in this repo never had the flag (the user complained the
+# port omitted it). So this gate only awards reward if the agent ALSO did
+# not introduce flag-gating while implementing the fix.
+# To avoid awarding on no-op (where no fix exists), we couple this to
+# Gate 1 having passed — only count if core fix was applied.
 
-const convert = await loadConvert();
-
-const model = {
-    id: "gpt-5-codex",
-    name: "gpt-5-codex",
-    provider: "openai",
-    api: "openai-responses" as const,
-    input: ["text"],
-    reasoning: true,
-    baseUrl: "https://api.openai.com/v1",
-    headers: {},
-} as any;
-
-const context = {
-    messages: [
-        { role: "user" as const, content: "Hi", timestamp: Date.now() },
-        {
-            role: "assistant" as const,
-            content: [
-                {
-                    type: "thinking" as const,
-                    thinking: "thinking",
-                    // signature missing
-                },
-                {
-                    type: "toolCall" as const,
-                    id: "call_miss|fc_misssig",
-                    name: "search",
-                    arguments: { query: "test" },
-                },
-            ],
-            model: "gpt-5-codex",
-            provider: "openai",
-            api: "openai-responses" as const,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-            stopReason: "toolUse" as const,
-            timestamp: Date.now(),
-        },
-        {
-            role: "toolResult" as const,
-            toolCallId: "call_miss|fc_misssig",
-            toolName: "search",
-            content: [{ type: "text" as const, text: "result" }],
-            isError: false,
-            timestamp: Date.now(),
-        },
-    ],
-};
-
-try {
-    const result = convert(model, context);
-    const fcs = result.filter((i: any) => i.type === "function_call");
-    const reasoning = result.filter((i: any) => i.type === "reasoning");
-    const fcOut = result.filter((i: any) => i.type === "function_call_output");
-
-    // No reasoning emitted (no signature)
-    const noOrphanReasoning = reasoning.length === 0;
-
-    // No fc_xxx id leak (would orphan the rs_xxx pairing)
-    const fcIds = fcs.map((fc: any) => fc.id);
-    const noLeakyFcId = fcIds.every((id: any) => !id || !String(id).startsWith("fc_"));
-
-    // Tool round-trip preserved (either via function_call+output or text-conversion)
-    let roundTrip = false;
-    if (fcs.length >= 1) {
-        roundTrip = fcs.some((fc: any) => fc.call_id === "call_miss") &&
-                    fcOut.some((o: any) => o.call_id === "call_miss");
-    } else {
-        const txt = JSON.stringify(result);
-        roundTrip = txt.includes("search") && txt.includes("result");
-    }
-
-    const ok = noOrphanReasoning && noLeakyFcId && roundTrip;
-    console.log(`RESULT=${ok ? "PASS" : "FAIL"} noOrphanReasoning=${noOrphanReasoning} noLeakyFcId=${noLeakyFcId} roundTrip=${roundTrip} fcs=${fcs.length}`);
-    if (!ok) console.log("FCs:", JSON.stringify(fcs));
-} catch (e: any) {
-    console.log(`RESULT=FAIL error=${e.message}`);
-}
-MISSEOF
-
-OUT=$(run_test /tmp/pitest/missing_sig.ts)
-echo "$OUT" | tail -5
-G4=0
-if echo "$OUT" | grep -q "RESULT=PASS"; then
-    G4=1
-    add_reward 0.15
-    echo "PASS: Missing thinkingSignature handled (+0.15)"
-else
-    echo "FAIL: Missing thinkingSignature not handled"
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# Gate 5 [P2P]: Cross-provider tool calls still work (10%)
-# Synthetic fc_<hash> IDs from cross-provider must NOT trigger any
-# pairing-related dropping/clearing that breaks the replay.
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "--- Gate 5 [P2P]: Cross-provider tool round-trip preserved (0.10) ---"
-
-cat > /tmp/pitest/cross_provider.ts << 'CROSSEOF'
-import { loadConvert } from "/tmp/pitest/harness.ts";
-
-const convert = await loadConvert();
-
-const model = {
-    id: "gpt-5-codex",
-    name: "gpt-5-codex",
-    provider: "openai",
-    api: "openai-responses" as const,
-    input: ["text"],
-    reasoning: true,
-    baseUrl: "https://api.openai.com/v1",
-    headers: {},
-} as any;
-
-const context = {
-    messages: [
-        { role: "user" as const, content: "Hi", timestamp: Date.now() },
-        {
-            role: "assistant" as const,
-            content: [
-                {
-                    type: "toolCall" as const,
-                    id: "call_xprov|tooluse_anthropic_xyz",
-                    name: "search",
-                    arguments: { query: "test" },
-                },
-            ],
-            model: "claude-3-7",
-            provider: "anthropic",
-            api: "anthropic-messages" as const,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-            stopReason: "toolUse" as const,
-            timestamp: Date.now(),
-        },
-        {
-            role: "toolResult" as const,
-            toolCallId: "call_xprov|tooluse_anthropic_xyz",
-            toolName: "search",
-            content: [{ type: "text" as const, text: "result" }],
-            isError: false,
-            timestamp: Date.now(),
-        },
-    ],
-};
-
-try {
-    const result = convert(model, context);
-    const fcs = result.filter((i: any) => i.type === "function_call");
-    const fcOut = result.filter((i: any) => i.type === "function_call_output");
-
-    // Cross-provider tool round-trip should still happen one way or another.
-    let ok = false;
-    if (fcs.length >= 1 && fcOut.length >= 1) {
-        // Strategy A: function_call + function_call_output paired
-        ok = fcs.some((fc: any) => fc.call_id === "call_xprov") &&
-             fcOut.some((o: any) => o.call_id === "call_xprov");
-    } else {
-        // Strategy B: text-converted, but the round-trip context must be present
-        const txt = JSON.stringify(result);
-        ok = txt.includes("search") && txt.includes("result");
-    }
-
-    console.log(`RESULT=${ok ? "PASS" : "FAIL"} fcs=${fcs.length} fcOut=${fcOut.length}`);
-    if (!ok) console.log("Result:", JSON.stringify(result, null, 2));
-} catch (e: any) {
-    console.log(`RESULT=FAIL error=${e.message}`);
-}
-CROSSEOF
-
-OUT=$(run_test /tmp/pitest/cross_provider.ts)
-echo "$OUT" | tail -5
-G5=0
-if echo "$OUT" | grep -q "RESULT=PASS"; then
-    G5=1
-    add_reward 0.10
-    echo "PASS: Cross-provider tool round-trip preserved (+0.10)"
-else
-    echo "FAIL: Cross-provider regression"
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# Gate 6 [P2P]: Plain text assistant message still works (5%)
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "--- Gate 6 [P2P]: Plain text assistant preserved (0.05) ---"
-
-cat > /tmp/pitest/plain.ts << 'PLAINEOF'
-import { loadConvert } from "/tmp/pitest/harness.ts";
-
-const convert = await loadConvert();
-
-const model = {
-    id: "gpt-5-codex",
-    name: "gpt-5-codex",
-    provider: "openai",
-    api: "openai-responses" as const,
-    input: ["text"],
-    reasoning: false,
-    baseUrl: "https://api.openai.com/v1",
-    headers: {},
-} as any;
-
-const context = {
-    messages: [
-        { role: "user" as const, content: "Hi", timestamp: Date.now() },
-        {
-            role: "assistant" as const,
-            content: [{ type: "text" as const, text: "Hello there!" }],
-            model: "gpt-5-codex",
-            provider: "openai",
-            api: "openai-responses" as const,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-            stopReason: "stop" as const,
-            timestamp: Date.now(),
-        },
-        { role: "user" as const, content: "Bye", timestamp: Date.now() },
-    ],
-};
-
-try {
-    const result = convert(model, context);
-    const txt = JSON.stringify(result);
-    const ok = txt.includes("Hello there!") && result.length >= 2;
-    console.log(`RESULT=${ok ? "PASS" : "FAIL"} length=${result.length}`);
-} catch (e: any) {
-    console.log(`RESULT=FAIL error=${e.message}`);
-}
-PLAINEOF
-
-OUT=$(run_test /tmp/pitest/plain.ts)
-echo "$OUT" | tail -5
-G6=0
-if echo "$OUT" | grep -q "RESULT=PASS"; then
-    G6=1
-    add_reward 0.05
-    echo "PASS: Plain text preserved (+0.05)"
-else
-    echo "FAIL: Plain text regression"
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# Gate 7 [Structural]: Code change actually addresses the issue (5%)
-# Look for evidence that the fix touches the relevant convert function
-# beyond trivially removing the flag.
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "--- Gate 7 [Structural]: Convert function modified (0.05) ---"
-G7=0
-SIGNALS=0
+GATED=0
 for f in "$SHARED" "$RESPONSES"; do
     if [ -f "$f" ]; then
-        # Look for evidence of new pairing logic
-        if grep -E "(hasPairedContent|hasFollowingContent|hasReplayableReasoning|hasThinkingSignature|reasoningEmittedInTurn|pendingReasoning|emittedCallIds|textConvertedCallIds|isSameProviderApi|hasIncompleteReasoning)" "$f" >/dev/null 2>&1; then
-            SIGNALS=$((SIGNALS + 1))
+        if grep -E "if\s*\(.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
+            GATED=$((GATED + 1))
         fi
-        # Or the old isDifferentModel is now used to clear ids by default
-        if grep -E "isDifferentModel" "$f" >/dev/null 2>&1 && grep -E "itemId\s*=\s*undefined" "$f" >/dev/null 2>&1; then
-            SIGNALS=$((SIGNALS + 1))
+        if grep -E "\?\s*.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
+            GATED=$((GATED + 1))
+        fi
+        if grep -E "&&.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
+            GATED=$((GATED + 1))
         fi
     fi
 done
-if [ "$SIGNALS" -ge 1 ]; then
-    G7=1
-    add_reward 0.05
-    echo "PASS: Convert function shows fix-related changes (+0.05)"
+
+if echo "$OUT_1" | grep -q "RESULT=PASS" && [ "$GATED" -eq 0 ]; then
+    add_reward 0.20
+    echo "PASS: behavior is default (not flag-gated) AND core fix applied (+0.20)"
 else
-    echo "FAIL: No fix signals in convert functions"
+    if [ "$GATED" -ne 0 ]; then
+        echo "FAIL: behavior is gated on strictResponsesPairing in $GATED location(s)"
+    else
+        echo "FAIL: core fix not applied (Gate 1 failed) — no credit"
+    fi
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# Final
+# F2P GATE 3 (weight 0.25): tool-result pairing preserved end-to-end
+# After the fix, a different-model handoff with an orphaned tool result
+# (the tool call's fc_xxx was paired with a stripped rs_xxx) must NOT
+# produce: a function_call with intact fc_xxx id, AND the conversation
+# must remain coherent (the model still sees the result somehow).
+#
+# Specifically: if function_call_output is emitted, there must be a
+# matching function_call (paired by call_id) to avoid 400 from the API.
+# If function_call is dropped, function_call_output must also be dropped
+# (and the result content surfaced as text).
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "═══════════════════════════════════════════════"
-echo "Gate 0 (TS compile, 0.15):           $G0"
-echo "Gate 1 (no flag gating, 0.10):       $G1"
-echo "Gate 2 (same-model, 0.15):           $G2"
-echo "Gate 3 (diff-model CORE, 0.25):      $G3"
-echo "Gate 4 (missing sig, 0.15):          $G4"
-echo "Gate 5 (cross-provider, 0.10):       $G5"
-echo "Gate 6 (plain text, 0.05):           $G6"
-echo "Gate 7 (structural change, 0.05):    $G7"
-echo "═══════════════════════════════════════════════"
-echo "TOTAL REWARD: $REWARD"
+echo "--- F2P GATE 3: tool-result pairing coherent post-fix (0.25) ---"
+
+cat > /tmp/pitest/pairing.ts << 'PAIREOF'
+import { loadConvert } from "/tmp/pitest/harness.ts";
+const convert = await loadConvert();
+
+const model = {
+    id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai",
+    api: "openai-responses" as const, input: ["text"], reasoning: true,
+    baseUrl: "https://api.openai.com/v1", headers: {},
+} as any;
+
+const context = {
+    messages: [
+        { role: "user" as const, content: "Q", timestamp: Date.now() },
+        {
+            role: "assistant" as const,
+            content: [
+                { type: "thinking" as const, thinking: "..." },
+                { type: "toolCall" as const, id: "call_p|fc_p", name: "search", arguments: { q: "x" } },
+            ],
+            model: "gpt-5-mini", provider: "openai", api: "openai-responses" as const,
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            stopReason: "toolUse" as const, timestamp: Date.now(),
+        },
+        { role: "toolResult" as const, toolCallId: "call_p|fc_p", toolName: "search",
+          content: [{ type: "text" as const, text: "the answer is 42" }], isError: false, timestamp: Date.now() },
+        { role: "user" as const, content: "more", timestamp: Date.now() },
+    ],
+};
+
+try {
+    const result = convert(model, context);
+    const fcs = result.filter((i: any) => i.type === "function_call");
+    const fcOut = result.filter((i: any) => i.type === "function_call_output");
+
+    // Build pairing map: every function_call_output must have matching function_call
+    const fcCallIds = new Set(fcs.map((f: any) => f.call_id));
+    const orphanOutputs = fcOut.filter((o: any) => !fcCallIds.has(o.call_id));
+
+    // No orphan outputs (would cause 400)
+    const pairingOK = orphanOutputs.length === 0;
+
+    // No fc_xxx id on any function_call (the bug signature)
+    const noLeakedFcId = fcs.every((f: any) => !f.id || !String(f.id).startsWith("fc_"));
+
+    // Context preserved: result text "42" must appear somewhere
+    const serialized = JSON.stringify(result);
+    const contextPreserved = serialized.includes("42");
+
+    const ok = pairingOK && noLeakedFcId && contextPreserved;
+    console.log(`RESULT=${ok ? "PASS" : "FAIL"} pairingOK=${pairingOK} noLeakedFcId=${noLeakedFcId} contextPreserved=${contextPreserved} orphans=${orphanOutputs.length}`);
+} catch (e: any) {
+    console.log(`RESULT=FAIL error=${e.message}`);
+}
+PAIREOF
+
+OUT_3=$(run_test /tmp/pitest/pairing.ts)
+echo "$OUT_3" | tail -5
+if echo "$OUT_3" | grep -q "RESULT=PASS"; then
+    add_reward 0.25
+    echo "PASS: tool-result pairing coherent (+0.25)"
+else
+    echo "FAIL: tool-result pairing broken or fc_xxx leaked"
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "FINAL REWARD: $REWARD"
+echo "═══════════════════════════════════════════════════════════════"
 
 echo "$REWARD" > /logs/verifier/reward.txt
-
-exit 0

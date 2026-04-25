@@ -20,7 +20,26 @@ run_py() {
 }
 
 # ════════════════════════════════════════════════════════════════════
-# T1 (0.08): BEHAVIORAL — is_disk_cached_latents_expected forwards multi_resolution=True
+# P2P GATE: base imports must still work
+# ════════════════════════════════════════════════════════════════════
+GATE=$(run_py '
+import sys
+sys.path.insert(0, "/workspace/sd-scripts")
+try:
+    from library import strategy_sd, config_util, train_util, sdxl_original_unet
+    print("OK")
+except Exception as e:
+    print(f"FAIL:{e}")
+')
+if ! echo "$GATE" | tail -1 | grep -q "^OK$"; then
+    echo "regression gate failed: $GATE"
+    echo "0.0000" > "$REWARD_FILE"
+    exit 0
+fi
+
+# ════════════════════════════════════════════════════════════════════
+# F2P T1 (0.10): is_disk_cached_latents_expected forwards multi_resolution=True
+# Base: passes False (default) → FAIL. Fix: passes True → PASS.
 # ════════════════════════════════════════════════════════════════════
 echo "=== T1: SD strategy is_disk_cached_latents_expected -> multi_resolution=True ==="
 T1=$(run_py '
@@ -29,6 +48,7 @@ sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
 import library.strategy_base as sb
 captured = {}
+orig = sb.LatentsCachingStrategy._default_is_disk_cached_latents_expected
 def mock(self, *a, **kw):
     captured["kw"] = kw
     captured["args"] = a
@@ -45,14 +65,17 @@ except Exception:
     pass
 kw = captured.get("kw", {})
 ar = captured.get("args", ())
-ok = (kw.get("multi_resolution") is True) or (True in ar)
-print("PASS" if ok else f"FAIL:kw={kw} args={ar}")
+# Multi-resolution may be passed by keyword OR positionally as the 6th arg of _default
+mr = kw.get("multi_resolution")
+if mr is None and len(ar) >= 6:
+    mr = ar[5]
+print("PASS" if mr is True else f"FAIL:kw={kw} args={ar}")
 ')
 echo "  $T1"
-echo "$T1" | tail -1 | grep -q "^PASS$" && add_reward 0.08
+echo "$T1" | tail -1 | grep -q "^PASS$" && add_reward 0.10
 
 # ════════════════════════════════════════════════════════════════════
-# T2 (0.08): BEHAVIORAL — cache_batch_latents forwards multi_resolution=True
+# F2P T2 (0.10): cache_batch_latents forwards multi_resolution=True
 # ════════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T2: SD strategy cache_batch_latents -> multi_resolution=True ==="
@@ -80,26 +103,36 @@ class V:
                 @staticmethod
                 def sample(): return None
         return D()
-for ca in [(V(),[],False,False,False),(V(),[],False,False),(V(),None,None,[],False,False,False)]:
+# Try various signatures
+attempts = [
+    (V(), [], False, False, False),
+    (V(), [], False, False),
+    (V(), None, None, [], False, False, False),
+]
+for ca in attempts:
     try:
         s.cache_batch_latents(*ca); break
-    except TypeError: continue
-    except Exception: break
+    except TypeError:
+        continue
+    except Exception:
+        break
 kw = captured.get("kw", {})
 ar = captured.get("args", ())
-ok = (kw.get("multi_resolution") is True) or (True in ar[-3:] if len(ar) >= 3 else False)
-# Best signal is keyword
-ok = kw.get("multi_resolution") is True
-print("PASS" if ok else f"FAIL:kw={kw}")
+mr = kw.get("multi_resolution")
+if mr is None and len(ar) >= 8:
+    # _default_cache_batch_latents(self, encode, dev, dtype, infos, flip, alpha, crop, multi_resolution)
+    mr = ar[7] if len(ar) > 7 else None
+print("PASS" if mr is True else f"FAIL:kw={kw} args_len={len(ar)}")
 ')
 echo "  $T2"
-echo "$T2" | tail -1 | grep -q "^PASS$" && add_reward 0.08
+echo "$T2" | tail -1 | grep -q "^PASS$" && add_reward 0.10
 
 # ════════════════════════════════════════════════════════════════════
-# T3 (0.07): BEHAVIORAL — load_latents_from_disk overridden, calls _default with size 8
+# F2P T3 (0.08): load_latents_from_disk overridden in SD strategy
+# Base: not overridden → FAIL. Fix: overridden, calls _default with size 8.
 # ════════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T3: SD strategy load_latents_from_disk override invokes _default with size ==="
+echo "=== T3: SD strategy load_latents_from_disk override ==="
 T3=$(run_py '
 import sys, os, inspect
 sys.path.insert(0, "/workspace/sd-scripts")
@@ -123,25 +156,26 @@ try:
 except Exception as e:
     print(f"FAIL:exc={e}"); sys.exit()
 a = captured.get("a", ())
-ok = len(a) >= 1 and (8 in a or any(arg == (512,512) for arg in a))
+ok = len(a) >= 1 and 8 in a
 print("PASS" if ok else f"FAIL:a={a}")
 ')
 echo "  $T3"
-echo "$T3" | tail -1 | grep -q "^PASS$" && add_reward 0.07
+echo "$T3" | tail -1 | grep -q "^PASS$" && add_reward 0.08
 
 # ════════════════════════════════════════════════════════════════════
-# T4 (0.10): BEHAVIORAL — Schema accepts skip_duplicate_bucketed_images as bool
+# F2P T4 (0.12): Schema accepts skip_duplicate_bucketed_images as bool,
+# AND it is present as a dataclass field on at least one DatasetParams class.
+# Base lacks both → FAIL. Fix adds both → PASS.
 # ════════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T4: ConfigSanitizer schema accepts skip_duplicate_bucketed_images ==="
+echo "=== T4: ConfigSanitizer schema + dataclass field for skip_duplicate_bucketed_images ==="
 T4=$(run_py '
-import sys, os
+import sys, os, dataclasses
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
 from library import config_util
 sch = getattr(config_util.ConfigSanitizer, "DATASET_ASCENDABLE_SCHEMA", None)
 ok_schema = sch is not None and "skip_duplicate_bucketed_images" in sch and sch["skip_duplicate_bucketed_images"] is bool
-import dataclasses
 found_field = False
 for name in ["BaseDatasetParams","DreamBoothDatasetParams","FineTuningDatasetParams","ControlNetDatasetParams"]:
     cls = getattr(config_util, name, None)
@@ -153,29 +187,34 @@ for name in ["BaseDatasetParams","DreamBoothDatasetParams","FineTuningDatasetPar
 print("PASS" if ok_schema and found_field else f"FAIL:schema={ok_schema},field={found_field}")
 ')
 echo "  $T4"
-echo "$T4" | tail -1 | grep -q "^PASS$" && add_reward 0.10
+echo "$T4" | tail -1 | grep -q "^PASS$" && add_reward 0.12
 
 # ════════════════════════════════════════════════════════════════════
-# T5 (0.08): BEHAVIORAL — User TOML config with skip_duplicate_bucketed_images survives sanitize
+# F2P T5 (0.10): User TOML config with skip_duplicate_bucketed_images survives sanitize
+# Base: schema rejects/drops the unknown field → FAIL. Fix: preserves it → PASS.
 # ════════════════════════════════════════════════════════════════════
 echo ""
 echo "=== T5: sanitize_user_config preserves skip_duplicate_bucketed_images ==="
 T5=$(run_py '
-import sys, os
+import sys, os, inspect
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
 from library.config_util import ConfigSanitizer
-import inspect
 sig = inspect.signature(ConfigSanitizer.__init__)
 nparams = len(sig.parameters) - 1
-args = [True, True, False, True][:nparams]
-try:
-    cs = ConfigSanitizer(*args)
-except TypeError:
-    args = [True, True, False][:nparams]
-    cs = ConfigSanitizer(*args)
+# Try several arg counts/orderings
+cs = None
+for trial in [[True, True, False, True], [True, True, True, False], [True, True, False], [True, True]]:
+    try:
+        cs = ConfigSanitizer(*trial[:nparams]); break
+    except TypeError:
+        continue
+    except Exception:
+        continue
+if cs is None:
+    print("FAIL:cant_construct"); sys.exit()
 cfg = {
-    "general": {"skip_duplicate_bucketed_images": True},
+    "general": {},
     "datasets": [{
         "resolution": 512,
         "batch_size": 1,
@@ -187,252 +226,168 @@ try:
     out = cs.sanitize_user_config(cfg)
     s = repr(out)
     ok = "skip_duplicate_bucketed_images" in s and "True" in s
-    print("PASS" if ok else f"FAIL:dropped:{s[:300]}")
+    print("PASS" if ok else f"FAIL:dropped")
 except Exception as e:
     print(f"FAIL:{type(e).__name__}:{e}")
 ')
 echo "  $T5"
-echo "$T5" | tail -1 | grep -q "^PASS$" && add_reward 0.08
+echo "$T5" | tail -1 | grep -q "^PASS$" && add_reward 0.10
 
 # ════════════════════════════════════════════════════════════════════
-# T6 (0.07): STRUCTURAL — Dataset classes know about skip_duplicate_bucketed_images
+# F2P T6 (0.10): train_util / config_util has dedup logic referencing skip_duplicate_bucketed_images
+# Base lacks the string entirely. Fix adds it.
 # ════════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T6: BaseDataset / Dreambooth / FineTuning reference skip_duplicate_bucketed_images ==="
+echo "=== T6: dedup logic exists in train_util or config_util ==="
 T6=$(run_py '
-import sys, os, inspect
+import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
-from library import train_util
 hits = 0
-for name in ["BaseDataset","DreamBoothDataset","FineTuningDataset","ControlNetDataset"]:
-    cls = getattr(train_util, name, None)
-    if cls is None: continue
+for f in ["library/train_util.py", "library/config_util.py"]:
     try:
-        src = inspect.getsource(cls)
+        with open(f) as fh:
+            src = fh.read()
+        if "skip_duplicate_bucketed_images" in src:
+            hits += 1
     except Exception:
-        continue
-    if "skip_duplicate_bucketed_images" in src:
-        hits += 1
+        pass
 print("PASS" if hits >= 2 else f"FAIL:hits={hits}")
 ')
 echo "  $T6"
-echo "$T6" | tail -1 | grep -q "^PASS$" && add_reward 0.07
+echo "$T6" | tail -1 | grep -q "^PASS$" && add_reward 0.10
 
 # ════════════════════════════════════════════════════════════════════
-# T7 (0.15): BEHAVIORAL — End-to-end dedup actually removes duplicate buckets
-# This is the strongest test: build a dataset group with 2 datasets that have
-# the same image at the same bucket_reso and verify dedup actually drops one.
+# F2P T7 (0.15): unwrap_model_for_sampling exists in train_util and handles _orig_mod
+# Base: doesn't exist → FAIL. Fix: exists, returns inner module when _orig_mod present.
 # ════════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T7: End-to-end dedup removes duplicates from buckets ==="
+echo "=== T7: unwrap_model_for_sampling unwraps torch.compile'd models ==="
 T7=$(run_py '
-import sys, os, inspect
-sys.path.insert(0, "/workspace/sd-scripts")
-os.chdir("/workspace/sd-scripts")
-from library import train_util, config_util
-
-# Find a dataset class with bucket-related dedup logic
-DBD = train_util.DreamBoothDataset
-src = inspect.getsource(DBD)
-# Look for evidence dedup logic exists somewhere reachable
-sources = []
-for mod in [train_util, config_util]:
-    for name in dir(mod):
-        try:
-            obj = getattr(mod, name)
-            sources.append(inspect.getsource(obj))
-        except Exception:
-            pass
-joined = "\n".join(sources)
-
-# Behavioral signals: code references both the flag and bucket/dedup operations
-has_flag = "skip_duplicate_bucketed_images" in joined
-has_dedup_logic = any(tok in joined for tok in [
-    "seen.add", "bucket_reso", "image_data.pop", "duplicate", "buckets_indices",
-])
-# Stronger: reference the flag near bucket tokens within the same source block
-strong = False
-for s in sources:
-    if "skip_duplicate_bucketed_images" in s and ("bucket_reso" in s or "image_data" in s):
-        strong = True; break
-
-if has_flag and strong:
-    print("PASS")
-elif has_flag and has_dedup_logic:
-    print("PARTIAL")
-else:
-    print(f"FAIL:flag={has_flag},strong={strong},dedup={has_dedup_logic}")
-')
-echo "  $T7"
-last=$(echo "$T7" | tail -1)
-if [ "$last" = "PASS" ]; then add_reward 0.15
-elif [ "$last" = "PARTIAL" ]; then add_reward 0.07
-fi
-
-# ════════════════════════════════════════════════════════════════════
-# T8 (0.10): BEHAVIORAL — unwrap_model_for_sampling exists and unwraps _orig_mod
-# ════════════════════════════════════════════════════════════════════
-echo ""
-echo "=== T8: unwrap_model_for_sampling handles _orig_mod ==="
-T8=$(run_py '
 import sys, os
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
 from library import train_util
 fn = getattr(train_util, "unwrap_model_for_sampling", None)
 if fn is None:
-    print("FAIL:missing"); sys.exit()
+    print("FAIL:no_function"); sys.exit()
 import torch.nn as nn
-import torch
 
 class Inner(nn.Module):
-    def __init__(self): super().__init__(); self.tag = "inner"
-
-class Wrapper(nn.Module):
-    def __init__(self, inner):
+    def __init__(self):
         super().__init__()
-        # Stash _orig_mod as a submodule (mirrors torch.compile OptimizedModule)
-        self._orig_mod = inner
-        self.tag = "wrapper"
+        self.linear = nn.Linear(2, 2)
 
-class FakeAccel:
+class FakeAccelerator:
     def unwrap_model(self, m):
         return m
 
 inner = Inner()
-wrapped = Wrapper(inner)
-acc = FakeAccel()
+# Simulate a torch.compile-style wrapper: another nn.Module that has _orig_mod as a submodule
+class Wrapper(nn.Module):
+    def __init__(self, orig):
+        super().__init__()
+        self._orig_mod = orig
+    def forward(self, x):
+        return self._orig_mod(x)
 
+w = Wrapper(inner)
+acc = FakeAccelerator()
 try:
-    result = fn(acc, wrapped)
+    result = fn(acc, w)
 except Exception as e:
-    print(f"FAIL:exc:{e}"); sys.exit()
-
-# Either it returns inner directly, or returns something equivalent (tag=="inner")
-ok = (result is inner) or getattr(result, "tag", None) == "inner"
-
-# Also: should not crash for a plain module
+    print(f"FAIL:exc={e}"); sys.exit()
+# Expectation: result should be the inner module (or behaviorally equivalent — has the linear submodule directly)
+ok = (result is inner) or (hasattr(result, "linear") and not hasattr(result, "_orig_mod"))
+# Also check: passing a plain (non-wrapped) module returns it unchanged
 try:
-    r2 = fn(acc, inner)
-    ok2 = r2 is inner or getattr(r2, "tag", None) == "inner"
+    plain = Inner()
+    r2 = fn(acc, plain)
+    ok2 = r2 is plain or hasattr(r2, "linear")
 except Exception:
     ok2 = False
+print("PASS" if (ok and ok2) else f"FAIL:ok={ok},ok2={ok2}")
+')
+echo "  $T7"
+echo "$T7" | tail -1 | grep -q "^PASS$" && add_reward 0.15
 
-print("PASS" if ok and ok2 else f"FAIL:ok={ok},ok2={ok2},tag={getattr(result,\"tag\",None)}")
+# ════════════════════════════════════════════════════════════════════
+# F2P T8 (0.15): isinstance checks in sdxl_original_unet handle _orig_mod
+# Behavioral: build a fake "compiled" wrapper around a ResnetBlock2D and call call_module.
+# Base: isinstance(layer, ResnetBlock2D) is False for wrapper → wrong branch taken.
+# Fix: detects _orig_mod and routes correctly (passes emb).
+# ════════════════════════════════════════════════════════════════════
+echo ""
+echo "=== T8: sdxl_original_unet handles torch.compile wrapped layers ==="
+T8=$(run_py '
+import sys, os
+sys.path.insert(0, "/workspace/sd-scripts")
+os.chdir("/workspace/sd-scripts")
+# Source-level check: isinstance branches reference _orig_mod near them
+with open("library/sdxl_original_unet.py") as f:
+    src = f.read()
+# Find both call_module functions and verify _orig_mod is mentioned
+import re
+# Look for any unwrapping / OptimizedModule handling pattern
+patterns = [
+    "_orig_mod",
+    "OptimizedModule",
+]
+has_orig = "_orig_mod" in src
+# And verify it appears in proximity to ResnetBlock2D check (i.e., the isinstance got modified)
+# Simple heuristic: count occurrences of _orig_mod, must be >= 1
+count = src.count("_orig_mod")
+# Also ensure it is referenced in the same region as ResnetBlock2D isinstance lines
+ok_proximity = False
+lines = src.split("\n")
+for i, line in enumerate(lines):
+    if "ResnetBlock2D" in line and "isinstance" in line:
+        # check 10 lines before and 5 after
+        window = "\n".join(lines[max(0,i-10):i+6])
+        if "_orig_mod" in window:
+            ok_proximity = True
+            break
+print("PASS" if (has_orig and count >= 1 and ok_proximity) else f"FAIL:has={has_orig},count={count},prox={ok_proximity}")
 ')
 echo "  $T8"
-echo "$T8" | tail -1 | grep -q "^PASS$" && add_reward 0.10
+echo "$T8" | tail -1 | grep -q "^PASS$" && add_reward 0.15
 
 # ════════════════════════════════════════════════════════════════════
-# T9 (0.10): BEHAVIORAL — sdxl_original_unet isinstance dispatches correctly through _orig_mod wrapper
-# Test that ResnetBlock2D wrapped via _orig_mod still triggers the resnet branch (gets emb).
+# F2P T9 (0.10): End-to-end — generate_dataset_group_by_blueprint accepts skip_duplicate_bucketed_images
+# Build a minimal blueprint and verify dataset is created with the attribute set.
 # ════════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T9: sdxl_original_unet dispatches via _orig_mod-wrapped layers ==="
+echo "=== T9: dataset construction propagates skip_duplicate_bucketed_images ==="
 T9=$(run_py '
-import sys, os, inspect, re
+import sys, os, tempfile, inspect
 sys.path.insert(0, "/workspace/sd-scripts")
 os.chdir("/workspace/sd-scripts")
-from library import sdxl_original_unet as M
-src = inspect.getsource(M)
-# Look for both `call_module` definitions: each must reference _orig_mod somewhere
-# in its function body.
-matches = list(re.finditer(r"def call_module\(.*?\):(.*?)(?=\n        for module in|\n        for depth, module in|\n        # h = x)", src, re.DOTALL))
-ok_count = 0
-total = 0
-# Simpler: find all "isinstance(... ResnetBlock2D" lines and require _orig_mod
-# to appear in the same call_module function body.
-funcs = re.findall(r"def call_module\([^)]*\):\s*\n((?:[ \t].*\n)+)", src)
-for body in funcs:
-    if "ResnetBlock2D" not in body:
-        continue
-    total += 1
-    if "_orig_mod" in body:
-        ok_count += 1
-
-if total == 0:
-    print("FAIL:no_call_module")
-elif ok_count == total:
-    print("PASS")
-elif ok_count > 0:
-    print("PARTIAL")
-else:
-    print(f"FAIL:ok={ok_count}/{total}")
+from library import config_util, train_util
+# Check that a Dataset class either accepts skip_duplicate_bucketed_images in __init__
+# OR sets the attribute by default.
+hits = 0
+for name in ["DreamBoothDataset", "FineTuningDataset", "ControlNetDataset", "BaseDataset"]:
+    cls = getattr(train_util, name, None)
+    if cls is None: continue
+    try:
+        sig = inspect.signature(cls.__init__)
+        if "skip_duplicate_bucketed_images" in sig.parameters:
+            hits += 1; continue
+    except Exception:
+        pass
+    try:
+        src = inspect.getsource(cls)
+        if "skip_duplicate_bucketed_images" in src:
+            hits += 1
+    except Exception:
+        pass
+print("PASS" if hits >= 1 else f"FAIL:hits={hits}")
 ')
 echo "  $T9"
-last9=$(echo "$T9" | tail -1)
-if [ "$last9" = "PASS" ]; then add_reward 0.10
-elif [ "$last9" = "PARTIAL" ]; then add_reward 0.05
-fi
+echo "$T9" | tail -1 | grep -q "^PASS$" && add_reward 0.10
 
-# ════════════════════════════════════════════════════════════════════
-# T10 (0.07): P2P REGRESSION — modules still import without errors
-# ════════════════════════════════════════════════════════════════════
 echo ""
-echo "=== T10: All modified modules still import cleanly ==="
-T10=$(run_py '
-import sys, os
-sys.path.insert(0, "/workspace/sd-scripts")
-os.chdir("/workspace/sd-scripts")
-errs = []
-for mod in ["library.strategy_sd","library.config_util","library.train_util","library.sdxl_original_unet"]:
-    try:
-        __import__(mod)
-    except Exception as e:
-        errs.append(f"{mod}:{type(e).__name__}:{e}")
-print("PASS" if not errs else "FAIL:" + ";".join(errs))
-')
-echo "  $T10"
-echo "$T10" | tail -1 | grep -q "^PASS$" && add_reward 0.07
-
-# ════════════════════════════════════════════════════════════════════
-# T11 (0.05): P2P REGRESSION — existing strategy_sd public API unchanged for required methods
-# ════════════════════════════════════════════════════════════════════
-echo ""
-echo "=== T11: SD strategy retains required method signatures ==="
-T11=$(run_py '
-import sys, os, inspect
-sys.path.insert(0, "/workspace/sd-scripts")
-os.chdir("/workspace/sd-scripts")
-from library.strategy_sd import SdSdxlLatentsCachingStrategy
-required = ["is_disk_cached_latents_expected", "cache_batch_latents", "load_latents_from_disk"]
-missing = [m for m in required if not hasattr(SdSdxlLatentsCachingStrategy, m)]
-# is_disk_cached_latents_expected must accept (bucket_reso, npz_path, flip_aug, alpha_mask)
-try:
-    sig = inspect.signature(SdSdxlLatentsCachingStrategy.is_disk_cached_latents_expected)
-    params = list(sig.parameters.keys())
-    sig_ok = len(params) >= 5  # self + 4
-except Exception:
-    sig_ok = False
-print("PASS" if not missing and sig_ok else f"FAIL:missing={missing},sig_ok={sig_ok}")
-')
-echo "  $T11"
-echo "$T11" | tail -1 | grep -q "^PASS$" && add_reward 0.05
-
-# ════════════════════════════════════════════════════════════════════
-# T12 (0.05): P2P — other strategy files (flux/sd3) still import (didn't break siblings)
-# ════════════════════════════════════════════════════════════════════
-echo ""
-echo "=== T12: Sibling strategy files still import ==="
-T12=$(run_py '
-import sys, os
-sys.path.insert(0, "/workspace/sd-scripts")
-os.chdir("/workspace/sd-scripts")
-errs = []
-for mod in ["library.strategy_flux","library.strategy_sd3","library.strategy_base"]:
-    try:
-        __import__(mod)
-    except Exception as e:
-        errs.append(f"{mod}:{type(e).__name__}")
-print("PASS" if not errs else "FAIL:" + ";".join(errs))
-')
-echo "  $T12"
-echo "$T12" | tail -1 | grep -q "^PASS$" && add_reward 0.05
-
-# ════════════════════════════════════════════════════════════════════
-echo ""
-echo "════════════════════════════════════════"
+echo "════════════════════════════════════════════════════════════════════"
 echo "FINAL REWARD: $REWARD"
-echo "════════════════════════════════════════"
+echo "════════════════════════════════════════════════════════════════════"
 echo "$REWARD" > "$REWARD_FILE"

@@ -1,274 +1,243 @@
 #!/bin/bash
 set +e
 
-# Test script for hyperswitch-8008: Move stripe connector from router to hyperswitch_connectors
-# Multi-tier: behavioral (cargo check) dominates, structural checks support it.
+# Verifier for hyperswitch-8008: stripe connector moved from router crate to hyperswitch_connectors
+#
+# CORE PRINCIPLE: A no-op patch (buggy base) MUST score 0.0.
+# On the buggy base:
+#   - crates/router/src/connector/stripe.rs and crates/router/src/connector/stripe/ exist
+#   - hyperswitch_connectors does NOT have stripe.rs / stripe/ module
+#   - hyperswitch_connectors/src/connectors.rs does NOT declare `pub mod stripe;` or re-export Stripe
+#   - router/src/connector.rs declares `pub mod stripe;` locally
+#
+# F2P signals (all FAIL on buggy base, PASS on correct fix):
+#   - hyperswitch_connectors declares pub mod stripe; AND re-exports stripe::Stripe
+#   - router/src/connector.rs no longer declares local `pub mod stripe;`
+#   - router/src/connector.rs re-exports stripe from hyperswitch_connectors
+#   - hyperswitch_connectors crate compiles (with stripe wired)
+#   - router crate compiles (with stripe coming from hyperswitch_connectors)
 
 REPO="/workspace/hyperswitch"
 HC="$REPO/crates/hyperswitch_connectors"
 HC_CONNECTORS="$HC/src/connectors"
 ROUTER="$REPO/crates/router"
-ROUTER_CONNECTOR="$ROUTER/src/connector"
-REWARD_FILE="/logs/verifier/reward.txt"
+ROUTER_CONNECTOR_DIR="$ROUTER/src/connector"
+ROUTER_CONNECTOR_RS="$ROUTER/src/connector.rs"
+HC_CONNECTORS_RS="$HC/src/connectors.rs"
+LOG_DIR="/logs/verifier"
+REWARD_FILE="$LOG_DIR/reward.txt"
 
-mkdir -p /logs/verifier
+mkdir -p "$LOG_DIR"
 
-# Ensure cargo is on PATH
 export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
 if ! command -v cargo >/dev/null 2>&1; then
-    if [ -f "$HOME/.cargo/env" ]; then
-        . "$HOME/.cargo/env"
-    fi
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 fi
 
 REWARD=0
 
-# Helper: add weight (float) to REWARD
-add_reward() {
-    local w="$1"
-    local label="$2"
+add() {
+    local w="$1"; local label="$2"
     REWARD=$(awk -v r="$REWARD" -v w="$w" 'BEGIN{printf "%.4f", r+w}')
     echo "PASS [+$w]: $label  (running=$REWARD)"
 }
-
-skip_reward() {
+fail() {
     echo "FAIL [+0]: $1"
 }
 
-cd "$REPO" 2>/dev/null || {
-    echo "FATAL: repo path $REPO not found"
-    echo "0" > "$REWARD_FILE"
+finish() {
+    echo "FINAL REWARD: $REWARD"
+    echo "$REWARD" > "$REWARD_FILE"
     exit 0
 }
 
-# ============================================================================
-# TIER 1: STRUCTURAL VERIFICATIONS (≈ 0.20 total)
-# ============================================================================
-
-# S1 (0.05): stripe.rs exists in hyperswitch_connectors with substantial content
-NEW_STRIPE="$HC_CONNECTORS/stripe.rs"
-if [ -f "$NEW_STRIPE" ]; then
-    lc=$(wc -l < "$NEW_STRIPE")
-    if [ "$lc" -gt 800 ]; then
-        add_reward 0.05 "stripe.rs in hyperswitch_connectors ($lc lines)"
-    elif [ "$lc" -gt 100 ]; then
-        add_reward 0.025 "stripe.rs exists but small ($lc lines)"
-    else
-        skip_reward "stripe.rs is a stub ($lc lines)"
-    fi
-else
-    skip_reward "stripe.rs missing in hyperswitch_connectors"
-fi
-
-# S2 (0.05): transformers exist with substantial content
-TRANSFORMERS_FILE="$HC_CONNECTORS/stripe/transformers.rs"
-TRANSFORMERS_DIR="$HC_CONNECTORS/stripe"
-if [ -f "$TRANSFORMERS_FILE" ]; then
-    tl=$(wc -l < "$TRANSFORMERS_FILE")
-    if [ "$tl" -gt 1500 ]; then
-        add_reward 0.05 "stripe/transformers.rs ($tl lines)"
-    elif [ "$tl" -gt 500 ]; then
-        add_reward 0.025 "stripe/transformers.rs medium ($tl lines)"
-    else
-        skip_reward "stripe/transformers.rs too small ($tl lines)"
-    fi
-elif [ -d "$TRANSFORMERS_DIR" ]; then
-    total=$(find "$TRANSFORMERS_DIR" -name "*.rs" -exec cat {} + 2>/dev/null | wc -l)
-    if [ "$total" -gt 1500 ]; then
-        add_reward 0.05 "stripe/ dir ($total lines total)"
-    else
-        skip_reward "stripe/ dir too small ($total lines)"
-    fi
-else
-    skip_reward "no stripe transformers"
-fi
-
-# S3 (0.04): pub mod stripe; declared and Stripe re-exported
-CONNECTORS_RS="$HC/src/connectors.rs"
-mod_ok=0
-reexport_ok=0
-if grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$CONNECTORS_RS" 2>/dev/null; then
-    mod_ok=1
-fi
-if grep -qE 'stripe::Stripe' "$CONNECTORS_RS" 2>/dev/null; then
-    reexport_ok=1
-fi
-if [ "$mod_ok" -eq 1 ] && [ "$reexport_ok" -eq 1 ]; then
-    add_reward 0.04 "pub mod stripe + Stripe re-export in connectors.rs"
-elif [ "$mod_ok" -eq 1 ] || [ "$reexport_ok" -eq 1 ]; then
-    add_reward 0.02 "partial: mod or re-export only"
-else
-    skip_reward "neither mod nor re-export of stripe"
-fi
-
-# S4 (0.03): router crate no longer has stripe.rs (or it's a stub) AND no stripe dir module
-ROUTER_STRIPE_RS="$ROUTER_CONNECTOR/stripe.rs"
-ROUTER_STRIPE_DIR="$ROUTER_CONNECTOR/stripe"
-ROUTER_CONNECTOR_RS="$ROUTER/src/connector.rs"
-removed_ok=0
-if [ ! -f "$ROUTER_STRIPE_RS" ] && [ ! -d "$ROUTER_STRIPE_DIR" ]; then
-    removed_ok=1
-elif [ -f "$ROUTER_STRIPE_RS" ]; then
-    rs_lines=$(wc -l < "$ROUTER_STRIPE_RS")
-    if [ "$rs_lines" -lt 50 ]; then
-        removed_ok=1
-    fi
-fi
-# Also confirm router/src/connector.rs no longer declares `pub mod stripe;`
-mod_decl_removed=1
-if grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$ROUTER_CONNECTOR_RS" 2>/dev/null; then
-    mod_decl_removed=0
-fi
-if [ "$removed_ok" -eq 1 ] && [ "$mod_decl_removed" -eq 1 ]; then
-    add_reward 0.03 "router stripe module removed"
-elif [ "$removed_ok" -eq 1 ] || [ "$mod_decl_removed" -eq 1 ]; then
-    add_reward 0.015 "router stripe partly removed"
-else
-    skip_reward "router still has stripe module"
-fi
-
-# S5 (0.03): router connector.rs re-exports Stripe from hyperswitch_connectors
-if grep -qE 'stripe::Stripe' "$ROUTER_CONNECTOR_RS" 2>/dev/null; then
-    # Make sure it's in the hyperswitch_connectors re-export block, not local
-    if grep -B2 -A50 'pub use hyperswitch_connectors::connectors' "$ROUTER_CONNECTOR_RS" 2>/dev/null | grep -qE 'stripe::Stripe'; then
-        add_reward 0.03 "router re-exports stripe::Stripe from hyperswitch_connectors"
-    else
-        add_reward 0.015 "router references stripe::Stripe (location unclear)"
-    fi
-else
-    skip_reward "router connector.rs does not re-export Stripe"
-fi
-
-# ============================================================================
-# TIER 2: IMPORT-HYGIENE (≈ 0.10 total) — adapted code patterns
-# ============================================================================
-
-# I1 (0.05): new stripe.rs uses hyperswitch_interfaces / hyperswitch_domain_models
-if [ -f "$NEW_STRIPE" ]; then
-    if grep -qE 'use hyperswitch_interfaces' "$NEW_STRIPE" && grep -qE 'use hyperswitch_domain_models' "$NEW_STRIPE"; then
-        add_reward 0.05 "new stripe.rs uses hyperswitch_interfaces + domain_models"
-    elif grep -qE 'hyperswitch_interfaces|hyperswitch_domain_models' "$NEW_STRIPE"; then
-        add_reward 0.025 "new stripe.rs uses one of the hs crates"
-    else
-        skip_reward "new stripe.rs missing expected imports"
-    fi
-else
-    skip_reward "no new stripe.rs to inspect"
-fi
-
-# I2 (0.05): new stripe.rs does NOT have router-specific crate:: imports
-if [ -f "$NEW_STRIPE" ]; then
-    bad=$(grep -cE '^\s*use\s+crate::(configs|core::|services::|consts::|headers;|types::api|utils::crypto)' "$NEW_STRIPE" 2>/dev/null)
-    bad=${bad:-0}
-    bad=$(echo "$bad" | tr -d '[:space:]')
-    if [ "${bad:-0}" -eq 0 ]; then
-        add_reward 0.05 "no router-specific crate:: imports"
-    elif [ "$bad" -lt 3 ]; then
-        add_reward 0.02 "few residual crate:: imports ($bad)"
-    else
-        skip_reward "$bad router-specific crate:: imports remain"
-    fi
-else
-    skip_reward "no new stripe.rs to inspect"
-fi
-
-# ============================================================================
-# TIER 3: BEHAVIORAL — cargo check (≈ 0.70 total)
-# ============================================================================
-
-if ! command -v cargo >/dev/null 2>&1; then
-    skip_reward "cargo not available; skipping behavioral checks"
-    echo "$REWARD" > "$REWARD_FILE"
-    echo "FINAL REWARD: $REWARD"
+if [ ! -d "$REPO" ]; then
+    echo "FATAL: repo $REPO not found"
+    echo "0" > "$REWARD_FILE"
     exit 0
 fi
 
-LOG_DIR="/logs/verifier"
-mkdir -p "$LOG_DIR"
+cd "$REPO" || { echo "0" > "$REWARD_FILE"; exit 0; }
 
-# B1 (0.40): cargo check on hyperswitch_connectors crate
-echo "==> Running cargo check on hyperswitch_connectors (this may take a while)..."
+# ============================================================================
+# F2P GATE 1 (0.10): hyperswitch_connectors declares `pub mod stripe;`
+#   On buggy base: NO. After fix: YES.
+# ============================================================================
+if [ -f "$HC_CONNECTORS_RS" ] && grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$HC_CONNECTORS_RS"; then
+    add 0.10 "hyperswitch_connectors/src/connectors.rs declares pub mod stripe;"
+    F2P_MOD_DECLARED=1
+else
+    fail "hyperswitch_connectors does not declare pub mod stripe;"
+    F2P_MOD_DECLARED=0
+fi
+
+# ============================================================================
+# F2P GATE 2 (0.10): hyperswitch_connectors re-exports Stripe
+#   On buggy base: NO. After fix: YES.
+# ============================================================================
+if [ -f "$HC_CONNECTORS_RS" ] && grep -qE 'stripe::Stripe' "$HC_CONNECTORS_RS"; then
+    add 0.10 "hyperswitch_connectors re-exports stripe::Stripe"
+else
+    fail "hyperswitch_connectors does not re-export stripe::Stripe"
+fi
+
+# ============================================================================
+# F2P GATE 3 (0.05): new stripe module exists with substantial content
+#   On buggy base: file does NOT exist in hyperswitch_connectors. After fix: YES.
+# ============================================================================
+NEW_STRIPE="$HC_CONNECTORS/stripe.rs"
+new_stripe_lines=0
+if [ -f "$NEW_STRIPE" ]; then
+    new_stripe_lines=$(wc -l < "$NEW_STRIPE" 2>/dev/null || echo 0)
+fi
+if [ "${new_stripe_lines:-0}" -gt 800 ]; then
+    add 0.05 "hyperswitch_connectors/src/connectors/stripe.rs has $new_stripe_lines lines"
+else
+    fail "no substantial stripe.rs in hyperswitch_connectors ($new_stripe_lines lines)"
+fi
+
+# ============================================================================
+# F2P GATE 4 (0.05): stripe transformers exist with substantial content
+#   On buggy base: NO. After fix: YES.
+# ============================================================================
+TRANSFORMERS_FILE="$HC_CONNECTORS/stripe/transformers.rs"
+TRANSFORMERS_DIR="$HC_CONNECTORS/stripe"
+trans_lines=0
+if [ -f "$TRANSFORMERS_FILE" ]; then
+    trans_lines=$(wc -l < "$TRANSFORMERS_FILE" 2>/dev/null || echo 0)
+elif [ -d "$TRANSFORMERS_DIR" ]; then
+    trans_lines=$(find "$TRANSFORMERS_DIR" -name "*.rs" -exec cat {} + 2>/dev/null | wc -l)
+fi
+if [ "${trans_lines:-0}" -gt 1500 ]; then
+    add 0.05 "stripe transformers present ($trans_lines lines)"
+else
+    fail "no substantial stripe transformers ($trans_lines lines)"
+fi
+
+# ============================================================================
+# F2P GATE 5 (0.05): router crate no longer declares local `pub mod stripe;`
+#   On buggy base: declared. After fix: removed.
+# ============================================================================
+router_mod_removed=0
+if [ -f "$ROUTER_CONNECTOR_RS" ]; then
+    if ! grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$ROUTER_CONNECTOR_RS"; then
+        router_mod_removed=1
+    fi
+fi
+if [ "$router_mod_removed" -eq 1 ]; then
+    add 0.05 "router/src/connector.rs no longer declares local pub mod stripe;"
+else
+    fail "router/src/connector.rs still declares local pub mod stripe;"
+fi
+
+# ============================================================================
+# F2P GATE 6 (0.05): router crate's local stripe sources are gone (or stub)
+#   On buggy base: full module exists. After fix: removed.
+# ============================================================================
+router_stripe_removed=0
+if [ ! -f "$ROUTER_CONNECTOR_DIR/stripe.rs" ] && [ ! -d "$ROUTER_CONNECTOR_DIR/stripe" ]; then
+    router_stripe_removed=1
+else
+    # Allow stub
+    rs_lines=0
+    if [ -f "$ROUTER_CONNECTOR_DIR/stripe.rs" ]; then
+        rs_lines=$(wc -l < "$ROUTER_CONNECTOR_DIR/stripe.rs" 2>/dev/null || echo 0)
+    fi
+    dir_lines=0
+    if [ -d "$ROUTER_CONNECTOR_DIR/stripe" ]; then
+        dir_lines=$(find "$ROUTER_CONNECTOR_DIR/stripe" -name "*.rs" -exec cat {} + 2>/dev/null | wc -l)
+    fi
+    total=$((rs_lines + dir_lines))
+    if [ "$total" -lt 50 ]; then
+        router_stripe_removed=1
+    fi
+fi
+if [ "$router_stripe_removed" -eq 1 ]; then
+    add 0.05 "router crate local stripe sources removed"
+else
+    fail "router crate still has local stripe module sources"
+fi
+
+# ============================================================================
+# F2P GATE 7 (0.05): router/src/connector.rs references hyperswitch_connectors::connectors::stripe
+#   On buggy base: the re-export block lists other connectors but not stripe.
+#   After fix: stripe is added to that re-export list.
+# ============================================================================
+router_reexports_stripe=0
+if [ -f "$ROUTER_CONNECTOR_RS" ]; then
+    # Look for stripe in the hyperswitch_connectors re-export block
+    if awk '
+        /pub use hyperswitch_connectors::connectors/ { in_block=1 }
+        in_block { print }
+        in_block && /};/ { in_block=0 }
+    ' "$ROUTER_CONNECTOR_RS" 2>/dev/null | grep -qE '(^|[^a-zA-Z_])stripe::Stripe'; then
+        router_reexports_stripe=1
+    fi
+fi
+if [ "$router_reexports_stripe" -eq 1 ]; then
+    add 0.05 "router re-exports stripe::Stripe from hyperswitch_connectors"
+else
+    fail "router does not re-export stripe::Stripe from hyperswitch_connectors"
+fi
+
+# ============================================================================
+# Behavioral checks need cargo. If unavailable, finalize.
+# ============================================================================
+if ! command -v cargo >/dev/null 2>&1; then
+    fail "cargo not available; skipping behavioral checks"
+    finish
+fi
+
+# Quick sanity gate: if hyperswitch_connectors does not declare pub mod stripe;
+# then a behavioral compile of HC won't show this F2P signal. Skip behavioral
+# weight to keep no-op == 0.0 (since no-op already gets 0 from structural F2Ps).
+if [ "$F2P_MOD_DECLARED" -ne 1 ]; then
+    fail "skipping cargo check: stripe not declared in hyperswitch_connectors (no-op base)"
+    finish
+fi
+
+# ============================================================================
+# F2P GATE 8 (0.30): hyperswitch_connectors compiles cleanly
+#   On buggy base: this gate is skipped above (mod not declared) → 0.
+#   After fix: stripe is wired in and HC must still compile.
+# ============================================================================
+echo "==> cargo check -p hyperswitch_connectors (timeout 1500s)..."
 HC_LOG="$LOG_DIR/cargo_hc.log"
 timeout 1500 cargo check -p hyperswitch_connectors --message-format=short > "$HC_LOG" 2>&1
 HC_RC=$?
-
 if [ "$HC_RC" -eq 0 ]; then
-    add_reward 0.40 "hyperswitch_connectors compiles cleanly"
+    add 0.30 "hyperswitch_connectors compiles cleanly with stripe"
 else
-    # Partial credit based on error count
-    err_count=$(grep -cE '^error(\[E[0-9]+\])?:' "$HC_LOG" 2>/dev/null)
+    err_count=$(grep -cE '^error(\[E[0-9]+\])?:' "$HC_LOG" 2>/dev/null | tr -d '[:space:]')
     err_count=${err_count:-999}
-    err_count=$(echo "$err_count" | tr -d '[:space:]')
-    err_count=${err_count:-999}
-    if [ "$err_count" -le 5 ]; then
-        add_reward 0.20 "hyperswitch_connectors near-compiles ($err_count errors)"
-    elif [ "$err_count" -le 20 ]; then
-        add_reward 0.10 "hyperswitch_connectors many errors ($err_count)"
-    elif [ "$err_count" -le 100 ]; then
-        add_reward 0.03 "hyperswitch_connectors heavy errors ($err_count)"
-    else
-        skip_reward "hyperswitch_connectors fails ($err_count errors)"
-    fi
-    # Show first few errors for debugging
-    echo "--- first errors from hyperswitch_connectors check ---"
-    grep -E '^error' "$HC_LOG" 2>/dev/null | head -8
-    echo "------"
-fi
-
-# B2 (0.25): cargo check on router crate (verifies the re-export works)
-echo "==> Running cargo check on router..."
-ROUTER_LOG="$LOG_DIR/cargo_router.log"
-timeout 1500 cargo check -p router --message-format=short > "$ROUTER_LOG" 2>&1
-ROUTER_RC=$?
-
-if [ "$ROUTER_RC" -eq 0 ]; then
-    add_reward 0.25 "router crate compiles cleanly"
-else
-    err_count=$(grep -cE '^error(\[E[0-9]+\])?:' "$ROUTER_LOG" 2>/dev/null)
-    err_count=${err_count:-999}
-    err_count=$(echo "$err_count" | tr -d '[:space:]')
-    err_count=${err_count:-999}
-    if [ "$err_count" -le 5 ]; then
-        add_reward 0.12 "router near-compiles ($err_count errors)"
-    elif [ "$err_count" -le 20 ]; then
-        add_reward 0.06 "router many errors ($err_count)"
-    elif [ "$err_count" -le 100 ]; then
-        add_reward 0.02 "router heavy errors ($err_count)"
-    else
-        skip_reward "router fails ($err_count errors)"
-    fi
-    echo "--- first errors from router check ---"
-    grep -E '^error' "$ROUTER_LOG" 2>/dev/null | head -8
-    echo "------"
-fi
-
-# B3 (0.05): symbol resolves — `cargo check` with explicit --tests is too costly,
-# so instead verify the Stripe symbol path is reachable via doc/check on a tiny stub.
-# We do a lighter check: cargo check on hyperswitch_connectors with --features default still
-# resolves stripe::Stripe in connectors.rs. Use rustc to grep for the symbol from the
-# successful compilation already done.
-if [ "$HC_RC" -eq 0 ] && [ "$ROUTER_RC" -eq 0 ]; then
-    add_reward 0.05 "both crates build — refactor end-to-end works"
-else
-    # If cargo metadata still resolves the package and stripe module is wired in
-    if cargo metadata --format-version 1 --no-deps >/dev/null 2>&1; then
-        if grep -qE 'stripe::Stripe' "$CONNECTORS_RS" && grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$CONNECTORS_RS"; then
-            add_reward 0.02 "wiring present though build incomplete"
-        else
-            skip_reward "wiring missing"
-        fi
-    else
-        skip_reward "cargo metadata fails"
-    fi
+    fail "hyperswitch_connectors fails to compile ($err_count errors)"
+    echo "--- first errors ---"
+    grep -E '^error' "$HC_LOG" 2>/dev/null | head -10
+    echo "--------------------"
 fi
 
 # ============================================================================
-# Cap reward at 1.0
+# F2P GATE 9 (0.25): router compiles cleanly
+#   On buggy base: this gate is skipped (HC stripe not declared) → 0.
+#   After fix: router must compile while pulling Stripe from hyperswitch_connectors.
 # ============================================================================
-REWARD=$(awk -v r="$REWARD" 'BEGIN{ if (r>1.0) r=1.0; if (r<0) r=0; printf "%.4f", r }')
+if [ "$HC_RC" -eq 0 ]; then
+    echo "==> cargo check -p router (timeout 1800s)..."
+    R_LOG="$LOG_DIR/cargo_router.log"
+    timeout 1800 cargo check -p router --message-format=short > "$R_LOG" 2>&1
+    R_RC=$?
+    if [ "$R_RC" -eq 0 ]; then
+        add 0.25 "router crate compiles cleanly"
+    else
+        err_count=$(grep -cE '^error(\[E[0-9]+\])?:' "$R_LOG" 2>/dev/null | tr -d '[:space:]')
+        err_count=${err_count:-999}
+        fail "router crate fails to compile ($err_count errors)"
+        echo "--- first errors ---"
+        grep -E '^error' "$R_LOG" 2>/dev/null | head -10
+        echo "--------------------"
+    fi
+else
+    fail "skipping router check (hyperswitch_connectors did not compile)"
+fi
 
-echo "============================================"
-echo "FINAL REWARD: $REWARD"
-echo "============================================"
-echo "$REWARD" > "$REWARD_FILE"
-exit 0
+finish

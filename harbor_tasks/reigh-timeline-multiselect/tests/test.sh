@@ -1,45 +1,41 @@
 #!/bin/bash
 set +e
 
-# Timeline Multi-Select Implementation Verifier (rewritten)
-# Total weight = 1.0
-# Mix:
-#  - P2P regression guards (0.20): core files intact, TS compiles
-#  - F2P behavioral gates (0.55): runtime behavior of new selection hook + integration
-#  - Structural verifications (0.25): hook props/integration in drag, tap, container, item
+# Timeline Multi-Select verifier — F2P-only reward.
+# No-op (unmodified base) = 0.0. All reward comes from new behaviors.
 
 REWARD=0
 LOG_DIR=/logs/verifier
 mkdir -p "$LOG_DIR"
 
-# Path detection
+finish() {
+  echo "FINAL_REWARD=$REWARD"
+  echo "$REWARD" > "$LOG_DIR/reward.txt"
+  exit 0
+}
+
+# Locate repo
 REPO=""
-for c in /workspace/repo /workspace/reigh /workspace/reigh-timeline-multiselect /workspace; do
+for c in /workspace/repo /workspace/repo /workspace/repo-timeline-multiselect /workspace; do
   if [ -d "$c/src/tools/travel-between-images/components/Timeline" ]; then
     REPO="$c"; break
   fi
 done
 if [ -z "$REPO" ]; then
-  # Fallback: search
-  CAND=$(find /workspace -maxdepth 5 -type d -name Timeline -path '*travel-between-images*' 2>/dev/null | head -1)
+  CAND=$(find /workspace -maxdepth 6 -type d -name Timeline -path '*travel-between-images*' 2>/dev/null | head -1)
   if [ -n "$CAND" ]; then
     REPO=$(echo "$CAND" | sed 's|/src/tools/travel-between-images/components/Timeline||')
   fi
 fi
-[ -z "$REPO" ] && REPO=/workspace/repo
+[ -z "$REPO" ] && { echo "no repo found"; finish; }
 
 echo "REPO=$REPO"
 
 TIMELINE="$REPO/src/tools/travel-between-images/components/Timeline"
 HOOKS="$TIMELINE/hooks"
-UTILS="$TIMELINE/utils"
 TC_FILE="$TIMELINE/TimelineContainer.tsx"
 TI_FILE="$TIMELINE/TimelineItem.tsx"
-DRAG_FILE="$HOOKS/useTimelineDrag.ts"
-TAP_FILE="$HOOKS/useTapToMove.ts"
-UTILS_FILE="$UTILS/timeline-utils.ts"
 
-# PATH robustness
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/cargo/bin:$PATH"
 [ -d "$REPO/node_modules/.bin" ] && export PATH="$REPO/node_modules/.bin:$PATH"
 
@@ -47,127 +43,71 @@ add_score() {
   REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{printf "%.4f", a+b}')
 }
 
-# Locate selection hook (implementation-agnostic)
+# ===== P2P Gate: required pre-existing files intact (gating, no reward) =====
+for f in "$TC_FILE" "$TI_FILE" "$HOOKS/useTimelineDrag.ts" "$HOOKS/useTapToMove.ts"; do
+  if [ ! -f "$f" ]; then
+    echo "P2P FAIL: missing pre-existing file $f"
+    finish
+  fi
+done
+
+# Locate the new selection hook (only exists if agent created it)
 SELECTION_HOOK=""
 for cand in "$HOOKS/useTimelineSelection.ts" "$HOOKS/useTimelineSelection.tsx"; do
   [ -f "$cand" ] && SELECTION_HOOK="$cand" && break
 done
 if [ -z "$SELECTION_HOOK" ]; then
-  SELECTION_HOOK=$(find "$TIMELINE" -maxdepth 4 -type f \( -iname '*Selection*.ts' -o -iname '*Selection*.tsx' \) 2>/dev/null | grep -iE 'useTimelineSelection|useSelection' | head -1)
+  SELECTION_HOOK=$(find "$TIMELINE" -maxdepth 4 -type f \( -name '*.ts' -o -name '*.tsx' \) 2>/dev/null \
+    | xargs grep -l -E 'useTimelineSelection' 2>/dev/null \
+    | grep -E '/hooks/' | head -1)
 fi
 echo "SELECTION_HOOK=$SELECTION_HOOK"
 
 ############################################
-# P2P Gate 1: core files intact (0.05)
+# F2P 1: Selection hook RUNTIME behavior (0.45)
+# Bundle the hook with esbuild against a stubbed react and exercise:
+#   - initial selectedIds = []
+#   - toggle('a') -> contains 'a'
+#   - toggle('b') -> contains 'a' and 'b'
+#   - toggle('a') -> contains 'b' only
+#   - clearSelection -> empty
+# Plus: showSelectionBar truthy when selection non-empty (allow either immediate or after 200ms timer).
+#
+# All of these REQUIRE the new file to exist. On no-op base, file doesn't exist → 0.
 ############################################
 echo ""
-echo "=== P2P 1: Core Timeline files intact ==="
-G1_OK=1
-for f in "$TC_FILE" "$TI_FILE" "$DRAG_FILE" "$TAP_FILE" "$UTILS_FILE"; do
-  if [ ! -f "$f" ]; then
-    echo "FAIL missing $f"
-    G1_OK=0
-  fi
-done
-if [ $G1_OK -eq 1 ]; then
-  echo "PASS"
-  add_score 0.05
-fi
+echo "=== F2P 1: Selection hook behavior ==="
+HOOK_SCORE=0
 
-############################################
-# P2P Gate 2: TypeScript compilation (0.15)
-############################################
-echo ""
-echo "=== P2P 2: TypeScript compilation ==="
-cd "$REPO" 2>/dev/null
-
-TSC_CMD=""
-if [ -x "$REPO/node_modules/.bin/tsc" ]; then
-  TSC_CMD="$REPO/node_modules/.bin/tsc"
-elif command -v npx >/dev/null 2>&1; then
-  TSC_CMD="npx --no-install tsc"
-elif command -v tsc >/dev/null 2>&1; then
-  TSC_CMD="tsc"
-fi
-
-if [ -n "$TSC_CMD" ]; then
-  $TSC_CMD --noEmit > "$LOG_DIR/tsc.log" 2>&1
-  TSC_EXIT=$?
-  ERR_COUNT=$(grep -cE 'error TS' "$LOG_DIR/tsc.log" 2>/dev/null)
-  ERR_COUNT=${ERR_COUNT:-0}
-  if [ "$TSC_EXIT" -eq 0 ]; then
-    echo "PASS: 0 errors"
-    add_score 0.15
-  elif [ "$ERR_COUNT" -lt 3 ]; then
-    echo "PARTIAL: $ERR_COUNT errors"
-    add_score 0.10
-    head -20 "$LOG_DIR/tsc.log"
-  elif [ "$ERR_COUNT" -lt 10 ]; then
-    echo "WEAK: $ERR_COUNT errors"
-    add_score 0.05
-    head -20 "$LOG_DIR/tsc.log"
-  else
-    echo "FAIL: $ERR_COUNT errors"
-    head -20 "$LOG_DIR/tsc.log"
-  fi
-else
-  echo "SKIP: no tsc available — partial credit"
-  add_score 0.05
-fi
-
-############################################
-# F2P Gate 3: Selection hook RUNTIME behavior (0.35)
-# Bundle the hook with esbuild + a stub 'react' module, then exercise:
-#   - initial: selectedIds=[]
-#   - toggle('a') -> ['a']
-#   - toggle('b') -> ['a','b']
-#   - toggle('a') -> ['b']    (toggle removes)
-#   - clearSelection() -> []
-#   - exposes some boolean indicating "selection bar should show" when len>0
-############################################
-echo ""
-echo "=== F2P 3: Selection hook runtime behavior ==="
-G3_BEHAVIOR=0
-G3_API=0
-
-if [ -z "$SELECTION_HOOK" ] || [ ! -f "$SELECTION_HOOK" ]; then
-  echo "FAIL: no selection hook found"
-else
-  # Find esbuild
+if [ -n "$SELECTION_HOOK" ] && [ -f "$SELECTION_HOOK" ]; then
   ESBUILD=""
   if [ -x "$REPO/node_modules/.bin/esbuild" ]; then
     ESBUILD="$REPO/node_modules/.bin/esbuild"
   elif command -v esbuild >/dev/null 2>&1; then
     ESBUILD="esbuild"
-  elif command -v npx >/dev/null 2>&1; then
-    ESBUILD="npx --no-install esbuild"
   fi
 
-  WORK=$(mktemp -d)
-  # React stub package
-  mkdir -p "$WORK/node_modules/react"
-  cat > "$WORK/node_modules/react/package.json" <<'PKG'
+  if [ -z "$ESBUILD" ]; then
+    echo "no esbuild available; skipping runtime"
+  else
+    WORK=$(mktemp -d)
+    mkdir -p "$WORK/node_modules/react"
+    cat > "$WORK/node_modules/react/package.json" <<'PKG'
 {"name":"react","main":"index.js","version":"0.0.0"}
 PKG
-  cat > "$WORK/node_modules/react/index.js" <<'STUB'
+    cat > "$WORK/node_modules/react/index.js" <<'STUB'
 let stateCells = [];
 let refCells = [];
 let effectQueue = [];
 let cleanupQueue = [];
-let stateIdx = 0;
-let refIdx = 0;
-let effectIdx = 0;
+let stateIdx = 0, refIdx = 0, effectIdx = 0;
 let timers = [];
 let now = 0;
 
-function reset() {
-  stateCells = []; refCells = []; effectQueue = []; cleanupQueue = [];
-  stateIdx = 0; refIdx = 0; effectIdx = 0;
-  timers = []; now = 0;
-}
-function startRender() { stateIdx = 0; refIdx = 0; effectIdx = 0; effectQueue = []; }
-function flushEffects() {
-  while (effectQueue.length) {
+function reset(){ stateCells=[]; refCells=[]; effectQueue=[]; cleanupQueue=[]; stateIdx=0; refIdx=0; effectIdx=0; timers=[]; now=0; }
+function startRender(){ stateIdx=0; refIdx=0; effectIdx=0; effectQueue=[]; }
+function flushEffects(){
+  while(effectQueue.length){
     const e = effectQueue.shift();
     try {
       if (cleanupQueue[e.i]) { try { cleanupQueue[e.i](); } catch(_){} }
@@ -176,61 +116,39 @@ function flushEffects() {
     } catch(_){}
   }
 }
-function advanceTime(ms) {
+function advanceTime(ms){
   now += ms;
-  const due = timers.filter(t => t.at <= now);
-  timers = timers.filter(t => t.at > now);
-  due.sort((a,b)=>a.at-b.at).forEach(t => { try { t.fn(); } catch(_){} });
+  const due = timers.filter(t=>t.at<=now);
+  timers = timers.filter(t=>t.at>now);
+  due.sort((a,b)=>a.at-b.at).forEach(t=>{ try{ t.fn(); }catch(_){} });
 }
-
-function useState(initial) {
+function useState(init){
   const i = stateIdx++;
-  if (stateCells.length <= i) stateCells.push(typeof initial === 'function' ? initial() : initial);
-  const setter = (v) => {
-    const cur = stateCells[i];
-    const next = typeof v === 'function' ? v(cur) : v;
-    stateCells[i] = next;
-  };
-  return [stateCells[i], setter];
+  if (stateCells.length<=i) stateCells.push(typeof init==='function'?init():init);
+  const set = v => { const cur=stateCells[i]; stateCells[i]= typeof v==='function'?v(cur):v; };
+  return [stateCells[i], set];
 }
-function useRef(initial) {
+function useRef(init){
   const i = refIdx++;
-  if (refCells.length <= i) refCells.push({ current: initial });
+  if (refCells.length<=i) refCells.push({current:init});
   return refCells[i];
 }
-function useCallback(fn) { return fn; }
-function useMemo(fn) { return fn(); }
-function useEffect(fn) {
-  const i = effectIdx++;
-  effectQueue.push({ fn, i });
-}
-function useLayoutEffect(fn) { useEffect(fn); }
+function useCallback(fn){ return fn; }
+function useMemo(fn){ return fn(); }
+function useEffect(fn){ const i=effectIdx++; effectQueue.push({fn,i}); }
+function useLayoutEffect(fn){ useEffect(fn); }
 
-// expose timer hooks for selection-bar delay
-const origSetTimeout = setTimeout;
-const origClearTimeout = clearTimeout;
-global.setTimeout = (fn, ms) => {
-  const t = { fn, at: now + (ms || 0), id: Symbol('t') };
-  timers.push(t);
-  return t;
-};
-global.clearTimeout = (t) => {
-  if (!t) return;
-  timers = timers.filter(x => x !== t);
-};
+global.setTimeout = (fn,ms)=>{ const t={fn,at:now+(ms||0),id:Symbol('t')}; timers.push(t); return t; };
+global.clearTimeout = (t)=>{ if(!t) return; timers = timers.filter(x=>x!==t); };
 
 module.exports = {
   useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect,
-  __reset: reset,
-  __startRender: startRender,
-  __flushEffects: flushEffects,
-  __advanceTime: advanceTime,
+  __reset: reset, __startRender: startRender, __flushEffects: flushEffects, __advanceTime: advanceTime,
   default: { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect }
 };
 STUB
 
-  # Bundle hook -> CJS resolving react from our stub
-  if [ -n "$ESBUILD" ]; then
+    cd "$WORK"
     $ESBUILD --bundle "$SELECTION_HOOK" \
       --format=cjs --platform=node --target=es2020 \
       --loader:.ts=ts --loader:.tsx=tsx \
@@ -239,339 +157,259 @@ STUB
       --log-level=error \
       --tsconfig-raw='{"compilerOptions":{"jsx":"react","target":"es2020","module":"commonjs","esModuleInterop":true}}' \
       > "$LOG_DIR/esbuild.log" 2>&1
+    cd "$REPO"
 
-    # Force react to resolve to our stub by working from $WORK
-    if [ ! -s "$WORK/bundle.cjs" ]; then
-      cd "$WORK"
-      $ESBUILD --bundle "$SELECTION_HOOK" \
-        --format=cjs --platform=node --target=es2020 \
-        --loader:.ts=ts --loader:.tsx=tsx \
-        --resolve-extensions=.ts,.tsx,.js,.mjs \
-        --outfile="$WORK/bundle.cjs" \
-        --log-level=error \
-        --tsconfig-raw='{"compilerOptions":{"jsx":"react","target":"es2020","module":"commonjs","esModuleInterop":true}}' \
-        >> "$LOG_DIR/esbuild.log" 2>&1
-      cd "$REPO"
-    fi
-  fi
-
-  if [ ! -s "$WORK/bundle.cjs" ]; then
-    echo "BUNDLE_FAIL — falling back to static checks"
-    cat "$LOG_DIR/esbuild.log" 2>/dev/null | head -20
-  fi
-
-  # Test runner
-  cat > "$WORK/run.cjs" <<'RUN'
+    if [ -s "$WORK/bundle.cjs" ]; then
+      cat > "$WORK/run.cjs" <<'RUN'
 const path = require('path');
 const Module = require('module');
 const origResolve = Module._resolveFilename;
-const stubReact = path.join(__dirname, 'node_modules', 'react', 'index.js');
-Module._resolveFilename = function(req, parent, ...rest) {
-  if (req === 'react' || req === 'react/jsx-runtime' || req === 'react/jsx-dev-runtime') return stubReact;
+Module._resolveFilename = function(req, parent, ...rest){
+  if (req === 'react' || req === 'react/jsx-runtime' || req === 'react/jsx-dev-runtime') {
+    return path.join(__dirname, 'node_modules', 'react', 'index.js');
+  }
   return origResolve.call(this, req, parent, ...rest);
 };
 
-let bundle;
-try {
-  bundle = require('./bundle.cjs');
-} catch (e) {
-  console.log('LOAD_FAIL', e.message);
-  process.exit(2);
-}
 const React = require('react');
+const mod = require('./bundle.cjs');
 
-// Locate the hook export
-let hookFn = bundle.useTimelineSelection;
-if (!hookFn) {
-  for (const k of Object.keys(bundle)) {
-    if (typeof bundle[k] === 'function' && /[Ss]election/.test(k)) { hookFn = bundle[k]; break; }
+// Find the hook export (any function named like useTimelineSelection or default)
+let hook = null;
+for (const k of Object.keys(mod)) {
+  if (typeof mod[k] === 'function' && /selection/i.test(k)) { hook = mod[k]; break; }
+}
+if (!hook && typeof mod.default === 'function') hook = mod.default;
+if (!hook) {
+  for (const k of Object.keys(mod)) {
+    if (typeof mod[k] === 'function') { hook = mod[k]; break; }
   }
 }
-if (!hookFn && typeof bundle.default === 'function') hookFn = bundle.default;
-if (!hookFn) { console.log('NO_HOOK_EXPORT'); process.exit(3); }
+if (!hook) { console.log('NO_HOOK'); process.exit(2); }
 
-let captured;
-function render(arg) {
+function call(args){
   React.__startRender();
-  try {
-    captured = hookFn(arg);
-  } catch (e) {
-    console.log('RENDER_THREW', e.message);
-    throw e;
+  let res;
+  // Try various calling conventions: (), ({isDragging:false}), (false)
+  const attempts = [
+    () => hook(args),
+    () => hook(),
+    () => hook({ isDragging: false }),
+    () => hook({ isDragInProgress: false }),
+    () => hook(false),
+  ];
+  let lastErr;
+  for (const a of attempts) {
+    try { res = a(); lastErr = null; break; } catch(e) { lastErr = e; }
   }
+  if (lastErr) throw lastErr;
   React.__flushEffects();
+  return res;
 }
 
-// Try calling hook with various arg shapes
-function tryRender(args) {
-  for (const a of args) {
-    React.__reset();
-    try {
-      render(a);
-      if (captured && typeof captured === 'object') return a;
-    } catch (e) { /* try next */ }
-  }
+function getIds(r){
+  if (!r) return null;
+  if (Array.isArray(r.selectedIds)) return r.selectedIds.slice();
   return null;
 }
 
-const argShapes = [
-  undefined,
-  {},
-  { isDragging: false },
-  { isDragInProgress: false },
-  false,
-];
-const usedShape = tryRender(argShapes);
-if (!captured) { console.log('CALL_FAIL'); process.exit(4); }
+const results = { initEmpty:false, addA:false, addB:false, removeA:false, clear:false, showBar:false };
 
-function getSelectedIds(c) {
-  if (Array.isArray(c.selectedIds)) return c.selectedIds;
-  if (Array.isArray(c.selected)) return c.selected;
-  if (Array.isArray(c.selectedItems)) return c.selectedItems;
-  return null;
-}
-function getToggle(c) {
-  return c.toggleSelection || c.toggle || c.toggleSelected || c.onToggle;
-}
-function getClear(c) {
-  return c.clearSelection || c.clear || c.deselectAll || c.reset;
-}
-function getShowBar(c) {
-  if (typeof c.showSelectionBar === 'boolean') return 'showSelectionBar';
-  if (typeof c.showActionBar === 'boolean') return 'showActionBar';
-  if (typeof c.showBar === 'boolean') return 'showBar';
-  return null;
-}
+try {
+  React.__reset();
+  let r = call();
+  let ids = getIds(r);
+  if (Array.isArray(ids) && ids.length === 0) results.initEmpty = true;
 
-const apiInfo = {
-  hasSelectedIds: getSelectedIds(captured) !== null,
-  hasToggle: typeof getToggle(captured) === 'function',
-  hasClear: typeof getClear(captured) === 'function',
-  showBarKey: getShowBar(captured),
-  argShape: usedShape,
-};
-console.log('API', JSON.stringify(apiInfo));
+  // toggle 'a'
+  if (typeof r.toggleSelection === 'function') r.toggleSelection('a');
+  React.__flushEffects();
+  React.__advanceTime(250);
+  React.__flushEffects();
+  r = call();
+  ids = getIds(r);
+  if (Array.isArray(ids) && ids.includes('a') && ids.length === 1) results.addA = true;
 
-if (!apiInfo.hasSelectedIds || !apiInfo.hasToggle || !apiInfo.hasClear) {
-  console.log('API_INCOMPLETE');
-  process.exit(5);
-}
+  // showSelectionBar should be true now (after timer or immediately)
+  if (r.showSelectionBar === true) results.showBar = true;
 
-// Behavioral sequence
-function reRender() { render(usedShape); }
+  // toggle 'b'
+  if (typeof r.toggleSelection === 'function') r.toggleSelection('b');
+  React.__flushEffects();
+  React.__advanceTime(250);
+  React.__flushEffects();
+  r = call();
+  ids = getIds(r);
+  if (Array.isArray(ids) && ids.includes('a') && ids.includes('b') && ids.length === 2) results.addB = true;
 
-// Initial empty
-let ids = getSelectedIds(captured);
-const initOk = ids.length === 0;
+  // toggle 'a' again -> remove
+  if (typeof r.toggleSelection === 'function') r.toggleSelection('a');
+  React.__flushEffects();
+  React.__advanceTime(50);
+  React.__flushEffects();
+  r = call();
+  ids = getIds(r);
+  if (Array.isArray(ids) && !ids.includes('a') && ids.includes('b') && ids.length === 1) results.removeA = true;
 
-// toggle 'a'
-getToggle(captured)('a');
-reRender();
-ids = getSelectedIds(captured);
-const t1 = ids.length === 1 && ids.includes('a');
+  // clear
+  if (typeof r.clearSelection === 'function') r.clearSelection();
+  React.__flushEffects();
+  React.__advanceTime(50);
+  React.__flushEffects();
+  r = call();
+  ids = getIds(r);
+  if (Array.isArray(ids) && ids.length === 0) results.clear = true;
 
-// toggle 'b'
-getToggle(captured)('b');
-reRender();
-ids = getSelectedIds(captured);
-const t2 = ids.length === 2 && ids.includes('a') && ids.includes('b');
-
-// toggle 'a' (remove)
-getToggle(captured)('a');
-reRender();
-ids = getSelectedIds(captured);
-const t3 = ids.length === 1 && ids.includes('b') && !ids.includes('a');
-
-// clearSelection
-getClear(captured)();
-reRender();
-ids = getSelectedIds(captured);
-const t4 = ids.length === 0;
-
-// showSelectionBar transitions: should be false when empty, true when something selected (possibly after delay)
-let showBarOk = true;
-const sbKey = apiInfo.showBarKey;
-if (sbKey) {
-  // start empty
-  showBarOk = showBarOk && captured[sbKey] === false;
-  // toggle one in
-  getToggle(captured)('x');
-  reRender();
-  // Allow delay: advance time and re-render multiple times
-  for (let i = 0; i < 5; i++) {
-    React.__advanceTime(80);
-    reRender();
-  }
-  // After ~400ms it should be true
-  const finalShow = captured[sbKey];
-  showBarOk = showBarOk && finalShow === true;
+} catch(e){
+  console.error('RUNTIME_ERROR', e && e.message);
 }
 
-const result = { initOk, t1, t2, t3, t4, showBarOk, hasShowBar: !!sbKey };
-console.log('RESULT', JSON.stringify(result));
-
-const passed = ['initOk','t1','t2','t3','t4'].filter(k => result[k]).length;
-console.log('PASSED_CORE', passed, '/5');
-console.log('SHOWBAR', result.hasShowBar ? (result.showBarOk ? 'ok' : 'fail') : 'absent');
-process.exit(passed === 5 ? 0 : (passed >= 3 ? 10 : 11));
+console.log('RESULTS=' + JSON.stringify(results));
 RUN
 
-  if [ -s "$WORK/bundle.cjs" ]; then
-    node "$WORK/run.cjs" > "$LOG_DIR/g3_runtime.log" 2>&1
-    G3_EXIT=$?
-    cat "$LOG_DIR/g3_runtime.log"
+      node "$WORK/run.cjs" > "$LOG_DIR/hook_run.log" 2>&1
+      cat "$LOG_DIR/hook_run.log"
+      LINE=$(grep -E '^RESULTS=' "$LOG_DIR/hook_run.log" | tail -1)
+      echo "$LINE"
 
-    if [ $G3_EXIT -eq 0 ]; then
-      echo "G3: full behavioral pass"
-      G3_BEHAVIOR=1
-      add_score 0.30
-      # Bonus for delayed showSelectionBar
-      if grep -q 'SHOWBAR ok' "$LOG_DIR/g3_runtime.log"; then
-        add_score 0.05
-        echo "G3: showSelectionBar delay verified (+0.05)"
-      fi
-    elif [ $G3_EXIT -eq 10 ]; then
-      echo "G3: partial (>=3/5 behaviors)"
-      add_score 0.18
-      G3_API=1
-    elif [ $G3_EXIT -eq 5 ]; then
-      echo "G3: API present but signature mismatch"
-      add_score 0.08
-      G3_API=1
+      check() {
+        echo "$LINE" | grep -q "\"$1\":true"
+      }
+
+      # Award per behavior
+      if check initEmpty; then add_score 0.05; HOOK_SCORE=$((HOOK_SCORE+1)); fi
+      if check addA;      then add_score 0.10; HOOK_SCORE=$((HOOK_SCORE+1)); fi
+      if check addB;      then add_score 0.10; HOOK_SCORE=$((HOOK_SCORE+1)); fi
+      if check removeA;   then add_score 0.10; HOOK_SCORE=$((HOOK_SCORE+1)); fi
+      if check clear;     then add_score 0.05; HOOK_SCORE=$((HOOK_SCORE+1)); fi
+      if check showBar;   then add_score 0.05; HOOK_SCORE=$((HOOK_SCORE+1)); fi
     else
-      echo "G3: runtime failed; falling back to static API check"
+      echo "esbuild produced no bundle"
+      cat "$LOG_DIR/esbuild.log" | head -30
     fi
   fi
-
-  # Static fallback if behavior didn't pass at all
-  if [ $G3_BEHAVIOR -eq 0 ] && [ $G3_API -eq 0 ] && [ -f "$SELECTION_HOOK" ]; then
-    SH_CONTENT=$(cat "$SELECTION_HOOK")
-    has_export=0; has_state=0; has_toggle=0; has_clear=0; has_selected=0
-    echo "$SH_CONTENT" | grep -qE 'export\s+(const|function)\s+useTimelineSelection' && has_export=1
-    echo "$SH_CONTENT" | grep -qE 'useState' && has_state=1
-    echo "$SH_CONTENT" | grep -qiE 'toggle' && has_toggle=1
-    echo "$SH_CONTENT" | grep -qiE 'clear' && has_clear=1
-    echo "$SH_CONTENT" | grep -qE 'selectedIds|selectedItems' && has_selected=1
-    SUM=$((has_export + has_state + has_toggle + has_clear + has_selected))
-    if [ $SUM -ge 4 ]; then
-      echo "G3 fallback static: $SUM/5 markers"
-      add_score 0.06
-    fi
-  fi
+else
+  echo "No selection hook present (expected on no-op base)"
 fi
 
+echo "Hook behavior gates passed: $HOOK_SCORE/6"
+
 ############################################
-# F2P Gate 4: TimelineItem accepts selection props (0.10)
+# F2P 2: TimelineItem accepts isSelected / onSelectionClick props (0.15)
+#   These props don't exist in the base file. Their presence indicates the
+#   visual + click-toggle wiring required by Phase 2.
 ############################################
 echo ""
-echo "=== F2P 4: TimelineItem isSelected wiring ==="
-G4=0
+echo "=== F2P 2: TimelineItem multi-select props ==="
+TI_OK=0
 if [ -f "$TI_FILE" ]; then
-  c=$(cat "$TI_FILE")
-  # Must declare prop in interface AND consume it (in JSX/expression) AND have visual differentiation
-  has_prop=0
-  has_consumed=0
-  has_visual=0
-  echo "$c" | grep -qE 'isSelected\s*\??\s*:' && has_prop=1
-  # Consumed beyond just the type declaration: appears in code (assignment, condition, JSX)
-  count=$(echo "$c" | grep -cE 'isSelected')
-  [ "$count" -ge 3 ] && has_consumed=1
-  # Visual: ring/border/box-shadow/background tied to isSelected
-  echo "$c" | grep -qE 'isSelected.*\?(.|\n)*(ring|border|shadow|bg-|boxShadow|outline|color)' && has_visual=1
-  # Loose visual fallback
-  if [ $has_visual -eq 0 ]; then
-    echo "$c" | grep -E 'isSelected' | grep -qE 'ring|border|shadow|bg-|outline|orange|blue' && has_visual=1
+  # Must reference isSelected as a prop (typed/accepted) AND use it in render logic.
+  # Filter out pre-existing isSelectedForMove by requiring word boundary.
+  if grep -E '(\bisSelected\b[^F])' "$TI_FILE" | grep -vqE 'isSelectedForMove' ; then
+    # also require it actually controls visuals (referenced in JSX/style block)
+    if grep -cE '\bisSelected\b' "$TI_FILE" | awk '{exit !($1>=2)}'; then
+      TI_OK=1
+    fi
   fi
+fi
+if [ $TI_OK -eq 1 ]; then
+  echo "PASS: TimelineItem references isSelected prop"
+  add_score 0.10
+else
+  echo "FAIL: TimelineItem does not use isSelected"
+fi
 
-  SUM=$((has_prop + has_consumed + has_visual))
-  echo "TimelineItem: prop=$has_prop consumed=$has_consumed visual=$has_visual"
-  if [ $SUM -eq 3 ]; then
-    add_score 0.10; G4=1
-  elif [ $SUM -eq 2 ]; then
-    add_score 0.05
+# onSelectionClick OR an onClick that calls a selection toggle handler
+TI_CLICK_OK=0
+if [ -f "$TI_FILE" ]; then
+  if grep -qE 'onSelectionClick' "$TI_FILE"; then
+    TI_CLICK_OK=1
   fi
+fi
+if [ $TI_CLICK_OK -eq 1 ]; then
+  echo "PASS: TimelineItem exposes onSelectionClick"
+  add_score 0.05
+else
+  echo "FAIL: no onSelectionClick wiring"
 fi
 
 ############################################
-# F2P Gate 5: useTimelineDrag accepts selectedIds + bundle logic (0.10)
+# F2P 3: TimelineContainer integrates selection + SelectionActionBar (0.20)
 ############################################
 echo ""
-echo "=== F2P 5: useTimelineDrag multi-item bundle support ==="
-G5=0
-if [ -f "$DRAG_FILE" ]; then
-  c=$(cat "$DRAG_FILE")
-  has_param=0; has_bundle_const=0; has_multi_branch=0
-  # Accepts selectedIds prop
-  echo "$c" | grep -qE 'selectedIds' && has_param=1
-  # Bundle gap constant of 5 frames
-  echo "$c" | grep -qE 'BUNDLE_GAP|bundleGap|bundle_gap|=\s*5\s*[;,)]|\*\s*5\b' && has_bundle_const=1
-  # Branch on selection length > 1 (multi vs single)
-  echo "$c" | grep -qE 'selectedIds\.length\s*[><=!]+\s*1|selectedIds\.length\s*>\s*1|length\s*===?\s*1' && has_multi_branch=1
-  echo "drag: param=$has_param const=$has_bundle_const branch=$has_multi_branch"
-  SUM=$((has_param + has_bundle_const + has_multi_branch))
-  if [ $SUM -eq 3 ]; then
-    add_score 0.10; G5=1
-  elif [ $SUM -eq 2 ]; then
-    add_score 0.06
-  elif [ $SUM -eq 1 ]; then
-    add_score 0.02
-  fi
-fi
-
-############################################
-# F2P Gate 6: useTapToMove uses external selectedIds + multi-bundle (0.05)
-############################################
-echo ""
-echo "=== F2P 6: useTapToMove external selection ==="
-G6=0
-if [ -f "$TAP_FILE" ]; then
-  c=$(cat "$TAP_FILE")
-  has_external=0; has_branch=0
-  echo "$c" | grep -qE 'selectedIds' && has_external=1
-  echo "$c" | grep -qE 'selectedIds\.length\s*[><=!]+\s*1|length\s*===?\s*1|length\s*>\s*1' && has_branch=1
-  echo "tap: external=$has_external branch=$has_branch"
-  SUM=$((has_external + has_branch))
-  if [ $SUM -eq 2 ]; then
-    add_score 0.05; G6=1
-  elif [ $SUM -eq 1 ]; then
-    add_score 0.02
-  fi
-fi
-
-############################################
-# F2P Gate 7: TimelineContainer integrates SelectionActionBar (0.10)
-############################################
-echo ""
-echo "=== F2P 7: TimelineContainer SelectionActionBar integration ==="
-G7=0
+echo "=== F2P 3: TimelineContainer integration ==="
+TC_HOOK_OK=0
+TC_BAR_OK=0
 if [ -f "$TC_FILE" ]; then
-  c=$(cat "$TC_FILE")
-  uses_hook=0; renders_bar=0; passes_count=0; wires_delete=0
-  echo "$c" | grep -qE 'useTimelineSelection' && uses_hook=1
-  echo "$c" | grep -qE 'SelectionActionBar' && renders_bar=1
-  echo "$c" | grep -qE 'selectedCount|selectedIds\.length' && passes_count=1
-  echo "$c" | grep -qE 'onDelete|handleBatchDelete|handleDelete' && wires_delete=1
-  echo "container: useHook=$uses_hook renderBar=$renders_bar passCount=$passes_count delete=$wires_delete"
-  SUM=$((uses_hook + renders_bar + passes_count + wires_delete))
-  if [ $SUM -ge 4 ]; then
-    add_score 0.10; G7=1
-  elif [ $SUM -eq 3 ]; then
-    add_score 0.07
-  elif [ $SUM -eq 2 ]; then
-    add_score 0.04
+  if grep -qE 'useTimelineSelection' "$TC_FILE"; then
+    TC_HOOK_OK=1
   fi
+  if grep -qE 'SelectionActionBar' "$TC_FILE"; then
+    TC_BAR_OK=1
+  fi
+fi
+if [ $TC_HOOK_OK -eq 1 ]; then
+  echo "PASS: TimelineContainer uses useTimelineSelection"
+  add_score 0.10
+else
+  echo "FAIL: useTimelineSelection not used in TimelineContainer"
+fi
+if [ $TC_BAR_OK -eq 1 ]; then
+  echo "PASS: TimelineContainer renders SelectionActionBar"
+  add_score 0.10
+else
+  echo "FAIL: SelectionActionBar not integrated"
 fi
 
 ############################################
-# Finalize
+# F2P 4: useTimelineDrag and useTapToMove accept selectedIds (0.10)
+#   On base, these hooks do not have a selectedIds parameter.
 ############################################
-# Cap at 1.0
-REWARD=$(awk -v r="$REWARD" 'BEGIN{ if (r>1) r=1; printf "%.4f", r }')
+echo ""
+echo "=== F2P 4: drag + tap multi-item awareness ==="
+DRAG_OK=0
+TAP_OK=0
+if grep -qE '\bselectedIds\b' "$HOOKS/useTimelineDrag.ts" 2>/dev/null; then
+  DRAG_OK=1
+fi
+if grep -qE '\bselectedIds\b' "$HOOKS/useTapToMove.ts" 2>/dev/null; then
+  TAP_OK=1
+fi
+if [ $DRAG_OK -eq 1 ]; then
+  echo "PASS: useTimelineDrag references selectedIds"
+  add_score 0.05
+fi
+if [ $TAP_OK -eq 1 ]; then
+  echo "PASS: useTapToMove references selectedIds"
+  add_score 0.05
+fi
+
+############################################
+# F2P 5: Bundle gap (5 frames apart) implemented (0.10)
+#   Look for the bundle constant / arithmetic in drag or tap or utils.
+#   On the base, neither hook has any reference to a 5-frame multi bundle.
+############################################
+echo ""
+echo "=== F2P 5: bundle-5-frames behavior present ==="
+BUNDLE_OK=0
+SEARCH_FILES="$HOOKS/useTimelineDrag.ts $HOOKS/useTapToMove.ts $TIMELINE/utils/timeline-utils.ts"
+for f in $SEARCH_FILES; do
+  [ -f "$f" ] || continue
+  # match either explicit BUNDLE_GAP/named constant of 5 OR `index * 5` / `i * 5` arithmetic for multi-positioning
+  if grep -qE '(BUNDLE[_ ]?GAP|bundleGap)\s*[:=]\s*5\b' "$f"; then
+    BUNDLE_OK=1; break
+  fi
+  if grep -qE '\*\s*5\b' "$f" && grep -qE 'selectedIds' "$f"; then
+    BUNDLE_OK=1; break
+  fi
+done
+if [ $BUNDLE_OK -eq 1 ]; then
+  echo "PASS: bundle-gap logic detected"
+  add_score 0.10
+else
+  echo "FAIL: no 5-frame bundle logic detected"
+fi
 
 echo ""
-echo "============================================"
-echo "FINAL REWARD: $REWARD"
-echo "============================================"
-echo "$REWARD" > "$LOG_DIR/reward.txt"
-
-exit 0
+echo "REWARD=$REWARD"
+finish

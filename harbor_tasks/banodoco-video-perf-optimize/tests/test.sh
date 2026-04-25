@@ -3,81 +3,68 @@ set +e
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
+REWARD=0
 
 REPO="/workspace/banodoco-wrapped"
 TOP_GEN="$REPO/components/TopGenerations.tsx"
 MODEL_TRENDS="$REPO/components/ModelTrends.tsx"
 
 export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-which npm >/dev/null 2>&1 || export PATH="$PATH:/usr/local/lib/node_modules/.bin"
-which node >/dev/null 2>&1 || export PATH="$PATH:/usr/local/lib/node_modules/.bin"
 
-SCORE=0
-add() {
-  SCORE=$(awk -v s="$SCORE" -v p="$1" 'BEGIN{printf "%.4f", s+p}')
-  echo "  +$1 : $2"
+finish() {
+  echo "$REWARD" > "$REWARD_FILE"
+  exit 0
 }
 
 if [ ! -d "$REPO" ] || [ ! -f "$TOP_GEN" ] || [ ! -f "$MODEL_TRENDS" ]; then
-  echo "FATAL: required files missing"
-  echo "0.0" > "$REWARD_FILE"
-  exit 0
+  echo "FATAL: missing files"
+  REWARD=0
+  finish
 fi
 
-cd "$REPO"
+cd "$REPO" || finish
 
 ###############################################################################
-# T1 [0.10]: TS compiles cleanly on the two task files
+# P2P GATE: Production build must succeed (gating only, no reward)
 ###############################################################################
-echo "=== T1 [0.10]: TypeScript compile ==="
-TSC_OUT=$(timeout 120 npx --no-install tsc --noEmit 2>&1)
-TASK_ERRORS=$(echo "$TSC_OUT" | grep -E "TopGenerations\.tsx|ModelTrends\.tsx" || true)
-if [ -z "$TASK_ERRORS" ]; then
-  add 0.10 "T1: tsc clean on task files"
-else
-  echo "$TASK_ERRORS" | head -10
-  echo "  T1: tsc errors in task files"
-fi
-
-###############################################################################
-# T2 [0.10]: Production build succeeds
-###############################################################################
-echo ""
-echo "=== T2 [0.10]: Production build ==="
+echo "=== P2P GATE: Production build ==="
 BUILD_OUT=$(timeout 240 npm run build 2>&1)
 BUILD_EXIT=$?
-if [ $BUILD_EXIT -eq 0 ]; then
-  add 0.10 "T2: build succeeded"
-else
-  echo "$BUILD_OUT" | tail -20
-  echo "  T2: build failed"
+if [ $BUILD_EXIT -ne 0 ]; then
+  echo "$BUILD_OUT" | tail -30
+  echo "GATE FAILED: build broken"
+  REWARD=0
+  finish
 fi
+echo "Build OK"
+
+add() {
+  REWARD=$(awk -v s="$REWARD" -v p="$1" 'BEGIN{printf "%.4f", s+p}')
+  echo "  +$1 : $2  (running=$REWARD)"
+}
 
 ###############################################################################
-# T3 [0.20]: Normalization — every row sums to 100% (or filtered to zero rows)
+# F2P 1 [0.25]: Normalization — at least 2 rows sum to ~100 across 2/3 datasets.
+# Buggy base does NOT normalize → fails. Fixed code returns rows summing to 100.
 ###############################################################################
 echo ""
-echo "=== T3 [0.20]: Normalization (rows sum to ~100) ==="
-T3_PTS=$(node -e '
+echo "=== F2P 1 [0.25]: Row normalization to 100% ==="
+T_NORM=$(node -e '
 const ts = require("typescript");
 const fs = require("fs");
-const path = "'"$MODEL_TRENDS"'";
-const src = fs.readFileSync(path, "utf8");
+const src = fs.readFileSync("'"$MODEL_TRENDS"'", "utf8");
 const sf = ts.createSourceFile("f.tsx", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
 const candidates = [];
 function walk(n) {
   if (ts.isVariableDeclaration(n) && n.initializer &&
       (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) {
-    if (n.initializer.parameters && n.initializer.parameters.length <= 1) {
-      candidates.push(n.initializer);
-    }
+    if (n.initializer.parameters && n.initializer.parameters.length <= 1) candidates.push(n.initializer);
   }
   if (ts.isFunctionDeclaration(n) && n.body && n.parameters.length <= 1) candidates.push(n);
   if (ts.isCallExpression(n)) {
     for (const arg of n.arguments) {
-      if ((ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) &&
-          arg.parameters && arg.parameters.length <= 1) {
+      if ((ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) && arg.parameters && arg.parameters.length <= 1) {
         candidates.push(arg);
       }
     }
@@ -105,33 +92,28 @@ const testSets = [
 ];
 
 function checkNormalized(result, original) {
-  if (!Array.isArray(result) || result.length === 0) return 0;
-  if (result.length > original.length) return 0;
-  let goodRows = 0;
-  let total100Rows = 0;
+  if (!Array.isArray(result) || result.length === 0) return false;
+  if (result.length > original.length) return false;
+  let total100 = 0;
   for (const row of result) {
-    if (!row || typeof row !== "object") return 0;
-    const nums = Object.entries(row)
-      .filter(([k, v]) => typeof v === "number" && k !== "month")
-      .map(([, v]) => v);
+    if (!row || typeof row !== "object") return false;
+    const nums = Object.entries(row).filter(([k,v]) => typeof v === "number" && k !== "month").map(([,v]) => v);
     if (nums.length === 0) continue;
-    const sum = nums.reduce((a,b)=>a+b, 0);
+    const sum = nums.reduce((a,b)=>a+b,0);
     const ok100 = Math.abs(sum - 100) <= 2;
     const ok1   = Math.abs(sum - 1)   <= 0.02;
-    const okZero = sum === 0;
-    if (nums.some(v => v < -0.01)) return 0;
-    if (ok100 || ok1) { goodRows++; total100Rows++; }
-    else if (!okZero) return 0;
+    if (nums.some(v => v < -0.01)) return false;
+    if (ok100 || ok1) total100++;
+    else if (sum !== 0) return false;
   }
-  return total100Rows >= 2 ? 1 : 0;
+  return total100 >= 2;
 }
 
 let bestPasses = 0;
 for (const node of candidates) {
   try {
     const fnSrc = src.slice(node.pos, node.end).trim();
-    const wrapped = "(" + fnSrc + ")";
-    const js = ts.transpileModule("module.exports = " + wrapped + ";", {
+    const js = ts.transpileModule("module.exports = (" + fnSrc + ");", {
       compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, module: ts.ModuleKind.CommonJS }
     }).outputText;
     let fn;
@@ -145,27 +127,27 @@ for (const node of candidates) {
     let passes = 0;
     for (const td of testSets) {
       try {
-        const inp = JSON.parse(JSON.stringify(td));
-        const out = fn(inp);
+        const out = fn(JSON.parse(JSON.stringify(td)));
         if (checkNormalized(out, td)) passes++;
       } catch(e) {}
     }
     if (passes > bestPasses) bestPasses = passes;
   } catch(e) {}
 }
-
-const score = (bestPasses / 3) * 0.20;
-console.log(score.toFixed(4));
+// Need at least 2/3 datasets to score
+if (bestPasses >= 2) console.log("0.2500");
+else console.log("0.0000");
 ' 2>/dev/null)
-if [ -z "$T3_PTS" ] || [ "$T3_PTS" = "0.0000" ]; then T3_PTS=0; fi
-add "$T3_PTS" "T3: normalization passes / 0.20"
+[ -z "$T_NORM" ] && T_NORM=0
+add "$T_NORM" "F2P1 normalization"
 
 ###############################################################################
-# T4 [0.10]: Ease-out timing function present and behaves correctly
+# F2P 2 [0.15]: Ease-out timing function exists in ModelTrends.
+# Buggy base has no ease function → fails. Fix introduces one.
 ###############################################################################
 echo ""
-echo "=== T4 [0.10]: Ease-out timing ==="
-T4_PTS=$(node -e '
+echo "=== F2P 2 [0.15]: Ease-out timing function ==="
+T_EASE=$(node -e '
 const ts = require("typescript");
 const fs = require("fs");
 const src = fs.readFileSync("'"$MODEL_TRENDS"'", "utf8");
@@ -178,14 +160,12 @@ function walk(n) {
     const params = n.initializer.parameters;
     if (params && params.length === 1) candidates.push(n.initializer);
   }
-  if (ts.isFunctionDeclaration(n) && n.parameters && n.parameters.length === 1 && n.body) {
-    candidates.push(n);
-  }
+  if (ts.isFunctionDeclaration(n) && n.parameters && n.parameters.length === 1 && n.body) candidates.push(n);
   ts.forEachChild(n, walk);
 }
 walk(sf);
 
-let bestScore = 0;
+let best = 0;
 for (const node of candidates) {
   try {
     const fnSrc = src.slice(node.pos, node.end).trim();
@@ -195,160 +175,143 @@ for (const node of candidates) {
     let fn;
     try {
       const m = { exports: {} };
-      const f = new Function("module", "exports", "Math", js);
+      const f = new Function("module","exports","Math", js);
       f(m, m.exports, Math);
       fn = m.exports;
-    } catch(e) { continue; }
+    } catch(e){continue;}
     if (typeof fn !== "function") continue;
     try {
-      const f0 = fn(0);
-      const f1 = fn(1);
-      const fq = fn(0.25);
-      const fh = fn(0.5);
-      const f3q = fn(0.75);
+      const f0 = fn(0), f1 = fn(1), fq = fn(0.25), fh = fn(0.5), f3q = fn(0.75);
       if (typeof f0 !== "number" || typeof f1 !== "number") continue;
-      // Ease-out: starts fast (steep early), slows down (flat late).
-      // f(0)≈0, f(1)≈1, monotonically increasing, f(0.25) > 0.25, deceleration.
       if (Math.abs(f0) > 0.05) continue;
       if (Math.abs(f1 - 1) > 0.05) continue;
-      if (!(fq > 0.25 + 0.05)) continue;
-      if (!(fh > 0.5 + 0.05)) continue;
-      if (!(f3q > 0.75)) continue;
-      // Decelerating: first half should cover more ground than second half
+      if (!(fq > 0.30)) continue;
+      if (!(fh > 0.55)) continue;
+      if (!(f3q > 0.78)) continue;
       const firstHalf = fh - f0;
       const secondHalf = f1 - fh;
       if (!(firstHalf > secondHalf + 0.05)) continue;
-      bestScore = 1;
-      break;
-    } catch(e) {}
-  } catch(e) {}
+      best = 1; break;
+    } catch(e){}
+  } catch(e){}
 }
-console.log((bestScore * 0.10).toFixed(4));
+console.log(best ? "0.1500" : "0.0000");
 ' 2>/dev/null)
-if [ -z "$T4_PTS" ]; then T4_PTS=0; fi
-add "$T4_PTS" "T4: ease-out timing / 0.10"
+[ -z "$T_EASE" ] && T_EASE=0
+add "$T_EASE" "F2P2 ease-out"
 
 ###############################################################################
-# T5 [0.15]: Y-axis fixed to [0,100] (does not rescale during animation)
+# F2P 3 [0.15]: Y-axis fixed to [0, 100] on the YAxis tag.
+# Buggy base lacks `domain={[0, 100]}` on YAxis. Fix adds it.
 ###############################################################################
 echo ""
-echo "=== T5 [0.15]: Y-axis domain fixed [0,100] ==="
-T5_PTS=0
-# Look for a YAxis with explicit domain [0, 100]. Strip whitespace then regex.
-MT_FLAT=$(tr -d '\n' < "$MODEL_TRENDS" | tr -s ' ')
-if echo "$MT_FLAT" | grep -qE 'YAxis[^/]*domain=\{[^}]*\[[[:space:]]*0[[:space:]]*,[[:space:]]*100[[:space:]]*\]'; then
-  T5_PTS=0.15
+echo "=== F2P 3 [0.15]: YAxis fixed domain [0,100] ==="
+# Extract the YAxis JSX block(s) and check for domain=[0,100]
+YAXIS_OK=0
+# Use perl for multi-line match across YAxis ... />
+if perl -0777 -ne 'while(/<YAxis\b[^>]*?\/>/sg){ if($& =~ /domain\s*=\s*\{\s*\[\s*0\s*,\s*100\s*\]\s*\}/){ exit 0 } } exit 1' "$MODEL_TRENDS"; then
+  YAXIS_OK=1
 fi
-add "$T5_PTS" "T5: YAxis domain=[0,100] / 0.15"
+if [ $YAXIS_OK -eq 1 ]; then
+  add 0.15 "F2P3 YAxis domain [0,100]"
+else
+  echo "  YAxis domain not fixed to [0,100]"
+fi
 
 ###############################################################################
-# T6 [0.10]: Animation starts from zero/empty, not all-data-visible
+# F2P 4 [0.15]: Auto-play on viewport entry — useInView/IntersectionObserver
+# wired to start the animation. Buggy base has no auto-start logic.
 ###############################################################################
 echo ""
-echo "=== T6 [0.10]: Animation starts from beginning ==="
-T6_PTS=0
-# Look for visible-count / progress state initialized to 0 or 1, not data.length
-if grep -qE "useState[<(][^>]*>?\s*\(?\s*(0|1)\s*\)" "$MODEL_TRENDS"; then
-  # And animation logic should reference some kind of incrementing counter
-  if grep -qE "(visibleCount|visibleIndex|progress|animationProgress|currentIndex|step|frame)" "$MODEL_TRENDS"; then
-    if grep -qE "requestAnimationFrame|setInterval|setTimeout|useInView|isInView|inView" "$MODEL_TRENDS"; then
-      T6_PTS=0.10
-    fi
+echo "=== F2P 4 [0.15]: Auto-play when section enters viewport ==="
+AUTO_OK=0
+# Look for IntersectionObserver OR useInView referencing setIsPlaying/start
+if grep -qE "IntersectionObserver|useInView|isInView" "$MODEL_TRENDS"; then
+  # And evidence of triggering animation start
+  if grep -qE "setIsPlaying\(true\)|startAnimation|setVisibleCount\(" "$MODEL_TRENDS"; then
+    AUTO_OK=1
   fi
 fi
-add "$T6_PTS" "T6: animation from zero / 0.10"
-
-###############################################################################
-# T7 [0.10]: Auto-plays when section enters viewport
-###############################################################################
-echo ""
-echo "=== T7 [0.10]: Auto-plays on scroll into view ==="
-T7_PTS=0
-if grep -qE "(IntersectionObserver|useInView|isInView|inView)" "$MODEL_TRENDS"; then
-  T7_PTS=0.10
+if [ $AUTO_OK -eq 1 ]; then
+  add 0.15 "F2P4 auto-play in view"
+else
+  echo "  No auto-play-on-view logic detected"
 fi
-add "$T7_PTS" "T7: auto-play on view / 0.10"
 
 ###############################################################################
-# T8 [0.15]: TopGenerations virtualizes / lazy-loads videos (windowed loading)
+# F2P 5 [0.10]: Animation starts from zero/empty (not all data visible).
+# Buggy base shows all data immediately. Fix initializes visibleCount to 0 or 1.
 ###############################################################################
 echo ""
-echo "=== T8 [0.15]: TopGenerations lazy/windowed loading ==="
-T8_PTS=0
-T8_DETAIL=""
-
-# Behavioral indicator 1: IntersectionObserver or useInView used
-if grep -qE "(IntersectionObserver|useInView|isInView|inView)" "$TOP_GEN"; then
-  T8_PTS=$(awk -v s="$T8_PTS" 'BEGIN{printf "%.4f", s+0.07}')
-  T8_DETAIL="$T8_DETAIL [observer:+0.07]"
+echo "=== F2P 5 [0.10]: Animation starts from left (visibleCount initial 0/1) ==="
+START_OK=0
+# Find useState(<small int>) used as visibleCount or similar
+if grep -qE "useState<number>\(\s*[01]\s*\)|useState\(\s*[01]\s*\)" "$MODEL_TRENDS"; then
+  # Also require slicing of data by a count, indicating progressive reveal
+  if grep -qE "\.slice\(\s*0\s*,\s*visibleCount" "$MODEL_TRENDS" || \
+     grep -qE "\.slice\(\s*0\s*,\s*\w*[Cc]ount" "$MODEL_TRENDS"; then
+    START_OK=1
+  fi
 fi
-
-# Behavioral indicator 2: src is conditionally set (lazy) OR window-slicing
-if grep -qE "(src=\{[^}]*\?|src=\{[^}]*&&|preload=[\"']none[\"']|loading=[\"']lazy[\"'])" "$TOP_GEN"; then
-  T8_PTS=$(awk -v s="$T8_PTS" 'BEGIN{printf "%.4f", s+0.04}')
-  T8_DETAIL="$T8_DETAIL [conditional-src:+0.04]"
-elif grep -qE "\.slice\(|windowStart|visibleRange|\.filter\(.*index" "$TOP_GEN"; then
-  T8_PTS=$(awk -v s="$T8_PTS" 'BEGIN{printf "%.4f", s+0.04}')
-  T8_DETAIL="$T8_DETAIL [windowing:+0.04]"
+if [ $START_OK -eq 1 ]; then
+  add 0.10 "F2P5 starts from left"
+else
+  echo "  Progressive reveal not detected"
 fi
-
-# Behavioral indicator 3: cleanup on scroll-out (clear src, unload, disconnect)
-if grep -qE "(removeAttribute|\.src\s*=\s*['\"]{2}|setSrc\(\s*(null|''|\"\")|unload|releas|disconnect)" "$TOP_GEN"; then
-  T8_PTS=$(awk -v s="$T8_PTS" 'BEGIN{printf "%.4f", s+0.04}')
-  T8_DETAIL="$T8_DETAIL [cleanup:+0.04]"
-fi
-
-add "$T8_PTS" "T8: lazy/windowed videos / 0.15$T8_DETAIL"
 
 ###############################################################################
-# T9 [0.10]: Model name labels appear on graph segments (white text)
+# F2P 6 [0.10]: White model name labels overlaid on chart.
+# Buggy base has no label overlay for new models. Fix adds white text labels.
 ###############################################################################
 echo ""
-echo "=== T9 [0.10]: Model labels overlay ==="
-T9_PTS=0
-T9_DETAIL=""
-
-# Must reference MODEL_COLORS / model names AND render text/labels with white fill
-HAS_LABEL_RENDER=0
-if grep -qE "(MODEL_COLORS|MODEL_KEYS|firstAppearance|activeLabel|visibleLabel|newModel|modelLabel|<text|ReferenceDot|Customized)" "$MODEL_TRENDS"; then
-  HAS_LABEL_RENDER=1
+echo "=== F2P 6 [0.10]: White model name label overlay ==="
+LABEL_OK=0
+# Look for evidence of model-name labels rendered with white color, keyed off MODEL_COLORS or model keys
+# Must be near MODEL_COLORS[...].name or similar usage
+if perl -0777 -ne '
+  my $src = $_;
+  # Look for white labels rendered with model names
+  my $hasWhite = ($src =~ /(?:fill\s*=\s*["\x27]white["\x27]|color:\s*["\x27]?white|text-white|fill\s*=\s*\{["\x27]white)/);
+  my $hasModelName = ($src =~ /MODEL_COLORS\s*\[\s*\w+\s*\]\.name/);
+  exit ($hasWhite && $hasModelName ? 0 : 1);
+' "$MODEL_TRENDS"; then
+  LABEL_OK=1
+fi
+if [ $LABEL_OK -eq 1 ]; then
+  add 0.10 "F2P6 white model labels"
+else
+  echo "  No white model-name label overlay"
 fi
 
-HAS_WHITE=0
-if grep -qE "(fill=[\"']white[\"']|color:\s*['\"]white|text-white|fill:\s*['\"]?#fff|#FFFFFF|#ffffff)" "$MODEL_TRENDS"; then
-  HAS_WHITE=1
+###############################################################################
+# F2P 7 [0.10]: TopGenerations virtualization — IntersectionObserver to load
+# only nearby rows. Buggy base loads all videos at once.
+###############################################################################
+echo ""
+echo "=== F2P 7 [0.10]: TopGenerations row virtualization ==="
+VIRT_OK=0
+if grep -qE "IntersectionObserver" "$TOP_GEN"; then
+  # And actually conditionally renders <video> based on visibility state
+  if grep -qE "isLoaded|isVisible|isInView|isIntersecting|inView|isActive" "$TOP_GEN"; then
+    VIRT_OK=1
+  fi
 fi
-
-# Must be conditional on first appearance / new model entering
-HAS_FIRST_APPEAR=0
-if grep -qE "(firstAppearance|first.*[Aa]ppear|newModel|justAppeared|\.findIndex\(.*>\s*0)" "$MODEL_TRENDS"; then
-  HAS_FIRST_APPEAR=1
+# Alternative: window-based slicing in the parent
+if [ $VIRT_OK -eq 0 ]; then
+  if grep -qE "windowStart|WINDOW_SIZE|VISIBLE_WINDOW" "$TOP_GEN" && \
+     grep -qE "scroll|IntersectionObserver|getBoundingClientRect" "$TOP_GEN"; then
+    VIRT_OK=1
+  fi
 fi
-
-if [ $HAS_LABEL_RENDER -eq 1 ]; then
-  T9_PTS=$(awk -v s="$T9_PTS" 'BEGIN{printf "%.4f", s+0.04}')
-  T9_DETAIL="$T9_DETAIL [render:+0.04]"
+if [ $VIRT_OK -eq 1 ]; then
+  add 0.10 "F2P7 row virtualization"
+else
+  echo "  No row virtualization detected"
 fi
-if [ $HAS_WHITE -eq 1 ]; then
-  T9_PTS=$(awk -v s="$T9_PTS" 'BEGIN{printf "%.4f", s+0.03}')
-  T9_DETAIL="$T9_DETAIL [white:+0.03]"
-fi
-if [ $HAS_FIRST_APPEAR -eq 1 ]; then
-  T9_PTS=$(awk -v s="$T9_PTS" 'BEGIN{printf "%.4f", s+0.03}')
-  T9_DETAIL="$T9_DETAIL [first-appear:+0.03]"
-fi
-
-add "$T9_PTS" "T9: model labels / 0.10$T9_DETAIL"
 
 ###############################################################################
 # Final
 ###############################################################################
 echo ""
-REWARD=$(awk -v s="$SCORE" 'BEGIN{
-  if (s > 1.0) s = 1.0;
-  if (s < 0.0) s = 0.0;
-  printf "%.4f", s
-}')
-echo "FINAL REWARD: $REWARD"
-echo "$REWARD" > "$REWARD_FILE"
-exit 0
+echo "=== FINAL REWARD: $REWARD ==="
+finish

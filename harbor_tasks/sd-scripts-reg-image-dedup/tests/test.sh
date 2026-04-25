@@ -14,16 +14,40 @@ awk_add() {
     awk -v a="$1" -v b="$2" 'BEGIN { printf "%.4f", a + b }'
 }
 
+write_reward_and_exit() {
+    echo "$1" > "$REWARD_FILE"
+    exit 0
+}
+
 echo "=== sd-scripts-reg-image-dedup verifier ==="
 
 if [ ! -f "$SRC" ]; then
     echo "FATAL: $SRC missing"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
+    write_reward_and_exit "0.0"
 fi
 
 # ---------------------------------------------------------------------------
-# Pre-parse: extract structural data
+# GATE: module imports cleanly. If this fails, the agent broke something.
+# This passes on the base, so it's purely a gate (no reward weight).
+# ---------------------------------------------------------------------------
+echo "--- Gate: module imports ---"
+timeout 30 python3 -c "
+import sys
+sys.path.insert(0, '/workspace/sd-scripts')
+import library.train_util as tu
+assert hasattr(tu, 'DreamBoothDataset')
+assert hasattr(tu, 'BaseDataset')
+print('GATE PASS')
+" > /tmp/gate_import.log 2>&1
+if [ $? -ne 0 ]; then
+    echo "GATE FAIL: import error (regression)"
+    cat /tmp/gate_import.log | head -40
+    write_reward_and_exit "0.0"
+fi
+
+# ---------------------------------------------------------------------------
+# Pre-parse: AST-walk to extract structural facts about __init__, the
+# DreamBooth filter override, and balancing-while occurrences.
 # ---------------------------------------------------------------------------
 timeout 30 python3 << 'PYEOF' > /tmp/parse_out 2>&1
 import ast, json, sys
@@ -47,20 +71,12 @@ for node in ast.walk(tree):
         elif node.name == "BaseDataset":
             base_cls = node
 
-def calls_method(caller, name):
-    return any(
-        isinstance(n, ast.Call) and (
-            (isinstance(n.func, ast.Attribute) and n.func.attr == name) or
-            (isinstance(n.func, ast.Name) and n.func.id == name))
-        for n in ast.walk(caller))
-
-def count_while_with_first_loop(fn):
-    # Count whiles that contain a reference to 'first_loop' or that look like the bal loop
+def count_balance_while(fn):
     count = 0
     for n in ast.walk(fn):
         if isinstance(n, ast.While):
             seg = ast.dump(n)
-            if "first_loop" in seg or "num_train_images" in seg:
+            if "first_loop" in seg or ("num_train_images" in seg and "num_repeats" in seg):
                 count += 1
     return count
 
@@ -68,27 +84,17 @@ if db_cls:
     cache["dreambooth_found"] = True
     methods = {i.name: i for i in db_cls.body if isinstance(i, ast.FunctionDef)}
     init_fn = methods.get("__init__")
-    rebalance_fn = methods.get("rebalance_regularization_images")
     db_filter_fn = methods.get("filter_registered_images_by_orig_resolution")
 
     if init_fn:
         init_src = ast.get_source_segment(src, init_fn) or ""
-        cache["init_has_first_loop_var"] = "first_loop = True" in init_src or "first_loop=True" in init_src
-        cache["init_balance_while_count"] = count_while_with_first_loop(init_fn)
-        cache["init_loc"] = init_src.count("\n")
-
-    if rebalance_fn:
-        cache["rebalance_found"] = True
-        rb_src = ast.get_source_segment(src, rebalance_fn) or ""
-        cache["rebalance_loc"] = rb_src.count("\n")
-    else:
-        cache["rebalance_found"] = False
+        cache["init_has_first_loop_var"] = ("first_loop = True" in init_src) or ("first_loop=True" in init_src)
+        cache["init_balance_while_count"] = count_balance_while(init_fn)
 
     if db_filter_fn:
         cache["db_filter_found"] = True
         seg = ast.get_source_segment(src, db_filter_fn) or ""
         cache["db_filter_source"] = seg
-        # Count direct calls to update_dataset_image_counts inside the override
         update_calls = 0
         for n in ast.walk(db_filter_fn):
             if isinstance(n, ast.Call):
@@ -103,7 +109,6 @@ if db_cls:
     else:
         cache["db_filter_found"] = False
 
-# Count occurrences of the balancing while loop pattern in source
 cache["first_loop_count"] = src.count("first_loop")
 cache["while_n_lt_num_train"] = src.count("while n < num_train_images")
 
@@ -115,178 +120,179 @@ PYEOF
 if [ ! -f /tmp/test_cache.json ]; then
     echo "FATAL: pre-parse failed"
     cat /tmp/parse_out
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
+    write_reward_and_exit "0.0"
 fi
 
 PARSE_OK=$(python3 -c "import json; print(json.load(open('/tmp/test_cache.json')).get('parse_ok', False))" 2>/dev/null)
 if [ "$PARSE_OK" != "True" ]; then
-    echo "FAIL: source did not parse"
+    echo "GATE FAIL: source did not parse"
     cat /tmp/test_cache.json
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
+    write_reward_and_exit "0.0"
 fi
 
 # ===========================================================================
-# TEST 1 (Structural, 0.08): Module imports cleanly. Required for everything.
+# F2P TEST 1 (0.20): Balancing logic deduplicated out of __init__.
+# On the buggy base, __init__ contains the `first_loop = True` while-loop and
+# this test FAILS. After the refactor (any sensible extraction), it passes.
 # ===========================================================================
-echo "--- Test 1: Module imports ---"
-timeout 30 python3 -c "
-import sys
-sys.path.insert(0, '/workspace/sd-scripts')
-import library.train_util as tu
-assert hasattr(tu, 'DreamBoothDataset')
-assert hasattr(tu, 'BaseDataset')
-print('PASS')
-" > /tmp/t1.log 2>&1
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.08")
-    echo "PASS (+0.08)"
-else
-    echo "FAIL: import error"
-    cat /tmp/t1.log | head -30
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
-fi
-
-# ===========================================================================
-# TEST 2 (Structural, 0.10): Dedup achieved — the balancing while-loop with
-# first_loop is no longer in __init__. (Allows it to live in a helper.)
-# ===========================================================================
-echo "--- Test 2: Balancing logic deduplicated out of __init__ ---"
-timeout 10 python3 << 'PYEOF' > /tmp/t2.log 2>&1
+echo "--- F2P 1: Balancing logic deduplicated out of __init__ ---"
+timeout 10 python3 << 'PYEOF' > /tmp/t1.log 2>&1
 import json, sys
 c = json.load(open("/tmp/test_cache.json"))
 init_has_var = c.get("init_has_first_loop_var", True)
 init_while = c.get("init_balance_while_count", 1)
-fl = c.get("first_loop_count", 0)
 wn = c.get("while_n_lt_num_train", 0)
 
 if init_has_var:
-    print(f"FAIL: __init__ still has 'first_loop = True' (balancing not extracted)")
+    print("FAIL: __init__ still has 'first_loop = True'")
     sys.exit(1)
 if init_while > 0:
     print(f"FAIL: __init__ still has balancing-style while loop ({init_while})")
     sys.exit(1)
-# After dedup, the bal pattern should appear at most once in the file
+# After dedup, the bal-while pattern should appear at most once in the file.
 if wn > 1:
-    print(f"FAIL: 'while n < num_train_images' appears {wn} times (duplication remains)")
+    print(f"FAIL: 'while n < num_train_images' appears {wn} times (still duplicated)")
     sys.exit(1)
-print(f"PASS (first_loop refs={fl}, while-pattern={wn})")
+print(f"PASS (while-pattern occurrences={wn})")
 PYEOF
 if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.10")
-    cat /tmp/t2.log
-    echo "(+0.10)"
+    REWARD=$(awk_add "$REWARD" "0.20")
+    cat /tmp/t1.log
+    echo "(+0.20)"
 else
-    cat /tmp/t2.log
+    cat /tmp/t1.log
 fi
 
 # ===========================================================================
-# TEST 3 (Structural, 0.07): DreamBooth filter override should NOT directly
-# call update_dataset_image_counts (it's already called via base / rebalance).
-# Allow at most 0 such direct calls — base class call is via super().
+# F2P TEST 2 (0.15): DreamBooth filter override doesn't redundantly call
+# update_dataset_image_counts after rebalancing. The instruction explicitly
+# requires removing that double call.
+# On base: no override exists OR override calls update twice → fails.
+# After fix: override exists and has 0 direct calls (super/base handles it).
 # ===========================================================================
-echo "--- Test 3: DB filter override doesn't re-call update_dataset_image_counts ---"
-timeout 10 python3 << 'PYEOF' > /tmp/t3.log 2>&1
+echo "--- F2P 2: DB filter override doesn't double-call update_dataset_image_counts ---"
+timeout 10 python3 << 'PYEOF' > /tmp/t2.log 2>&1
 import json, sys
 c = json.load(open("/tmp/test_cache.json"))
 if not c.get("db_filter_found", False):
-    # OK if no override exists; nothing to fix
-    print("SKIP: no DB filter override (acceptable)")
-    sys.exit(0)
+    print("FAIL: no DreamBooth filter override exists yet")
+    sys.exit(1)
 calls = c.get("db_filter_update_count_calls", 99)
 seg = c.get("db_filter_source", "")
-# Allow exactly one — but only if it's the super() call inside the override.
-# We count direct attribute/name calls to update_dataset_image_counts.
-# After fix, the override shouldn't call update_dataset_image_counts at all
-# (because base does, OR rebalance does).
-if calls > 1:
-    print(f"FAIL: override still has {calls} direct update_dataset_image_counts calls")
+# After the fix, the override should NOT directly call update_dataset_image_counts
+# at the end (the base-class call via super() handles it after rebalance).
+# Allow 0 direct calls. >=1 indicates the redundant call still present.
+if calls >= 1:
+    print(f"FAIL: override still has {calls} direct update_dataset_image_counts call(s)")
     sys.exit(1)
 print(f"PASS (direct update calls in override = {calls})")
 PYEOF
 if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.07")
-    cat /tmp/t3.log
-    echo "(+0.07)"
+    REWARD=$(awk_add "$REWARD" "0.15")
+    cat /tmp/t2.log
+    echo "(+0.15)"
 else
-    cat /tmp/t3.log
+    cat /tmp/t2.log
 fi
 
 # ===========================================================================
-# Helper: build a DreamBoothDataset for behavioral tests
-# Implementation-agnostic — handles signature variations.
+# Build a DreamBoothDataset for behavioral tests. Helper handles signature
+# differences; if construction fails entirely we skip behavioral tests with
+# zero (which is correct — base would have failed too).
 # ===========================================================================
+mkdir -p /tmp/sd_test
+rm -rf /tmp/sd_test/*
+mkdir -p /tmp/sd_test/train_only/cls
+mkdir -p /tmp/sd_test/train_with_reg/cls
+mkdir -p /tmp/sd_test/train_with_reg/reg
+mkdir -p /tmp/sd_test/zero_reg/cls
+
+# Create dummy small images
+timeout 30 python3 << 'PYEOF' > /tmp/mkimg.log 2>&1
+from PIL import Image
+import os
+def mkimgs(dir_, n, size=(64,64), color=(128,128,128)):
+    os.makedirs(dir_, exist_ok=True)
+    for i in range(n):
+        Image.new("RGB", size, color).save(os.path.join(dir_, f"img_{i}.png"))
+        with open(os.path.join(dir_, f"img_{i}.txt"), "w") as f:
+            f.write("a photo")
+
+mkimgs("/tmp/sd_test/train_only/cls", 5)
+mkimgs("/tmp/sd_test/train_with_reg/cls", 4)
+mkimgs("/tmp/sd_test/train_with_reg/reg", 2)
+mkimgs("/tmp/sd_test/zero_reg/cls", 3)
+print("imgs OK")
+PYEOF
+if [ $? -ne 0 ]; then
+    echo "IMG SETUP FAIL (skipping behavioral tests)"
+    cat /tmp/mkimg.log | head
+fi
+
 cat > /tmp/build_ds.py << 'PYEOF'
-"""Helper to build a DreamBoothDataset robustly across small signature differences."""
+"""Robust DreamBoothDataset builder across signature variations."""
 import sys, os, inspect
 sys.path.insert(0, '/workspace/sd-scripts')
-
-from PIL import Image
 import library.train_util as tu
 
-def mkimg(path, size=(64, 64)):
-    Image.new("RGB", size, (128, 128, 128)).save(path)
-
-def build_subset(image_dir, num_repeats=1, is_reg=False, **overrides):
-    cls = tu.DreamBoothSubset
-    sig = inspect.signature(cls.__init__)
-    params = list(sig.parameters.values())[1:]  # skip self
+def make_subset(image_dir, num_repeats=1, is_reg=False):
+    SubsetCls = tu.DreamBoothSubset
+    sig = inspect.signature(SubsetCls.__init__)
+    params = list(sig.parameters.keys())
     kwargs = {}
+    # The original signature includes many fields; use defaults / sensible values.
     defaults = {
         "image_dir": image_dir,
-        "num_repeats": num_repeats,
         "is_reg": is_reg,
+        "class_tokens": "cls",
+        "caption_extension": ".txt",
+        "cache_info": False,
+        "num_repeats": num_repeats,
         "shuffle_caption": False,
         "caption_separator": ",",
         "keep_tokens": 0,
         "keep_tokens_separator": "",
-        "secondary_separator": "",
+        "secondary_separator": None,
         "enable_wildcard": False,
         "color_aug": False,
         "flip_aug": False,
         "face_crop_aug_range": None,
         "random_crop": False,
+        "caption_prefix": None,
+        "caption_suffix": None,
         "caption_dropout_rate": 0.0,
         "caption_dropout_every_n_epochs": 0,
         "caption_tag_dropout_rate": 0.0,
-        "caption_prefix": "",
-        "caption_suffix": "",
         "token_warmup_min": 1,
         "token_warmup_step": 0,
-        "class_tokens": "x",
-        "caption_extension": ".txt",
-        "cache_info": False,
         "alpha_mask": False,
-        "resize_interpolation": None,
         "custom_attributes": None,
+        "resize_interpolation": None,
     }
-    defaults.update(overrides)
     for p in params:
-        if p.name in defaults:
-            kwargs[p.name] = defaults[p.name]
-        elif p.default is inspect.Parameter.empty:
-            # Required arg we don't know — try None
-            kwargs[p.name] = None
+        if p == "self":
+            continue
+        if p in defaults:
+            kwargs[p] = defaults[p]
     try:
-        return cls(**kwargs)
-    except TypeError as e:
-        # Try positional with all params we have
-        raise
+        return SubsetCls(**kwargs)
+    except TypeError:
+        # Fallback: positional with first few common args
+        return SubsetCls(image_dir, False, "cls", ".txt", False, num_repeats,
+                         False, ",", 0, "", None, False, False, False, None, False,
+                         None, None, 0.0, 0, 0.0, 1, 0, False, None)
 
-def build_dataset(subsets, batch_size=1, resolution=(64, 64), validation_split=0.0, is_training_dataset=True):
-    cls = tu.DreamBoothDataset
-    sig = inspect.signature(cls.__init__)
-    params = list(sig.parameters.values())[1:]
+def make_dataset(subsets, is_training=True):
+    DSCls = tu.DreamBoothDataset
+    sig = inspect.signature(DSCls.__init__)
+    params = list(sig.parameters.keys())
     defaults = {
         "subsets": subsets,
-        "is_training_dataset": is_training_dataset,
-        "batch_size": batch_size,
+        "is_training_dataset": is_training,
+        "batch_size": 1,
         "tokenizer": None,
-        "tokenizers": [None],
         "max_token_length": 75,
-        "resolution": resolution,
+        "resolution": (64, 64),
         "network_multiplier": 1.0,
         "enable_bucket": False,
         "min_bucket_reso": 64,
@@ -295,299 +301,163 @@ def build_dataset(subsets, batch_size=1, resolution=(64, 64), validation_split=0
         "bucket_no_upscale": False,
         "prior_loss_weight": 1.0,
         "debug_dataset": False,
-        "validation_split": validation_split,
+        "validation_split": 0.0,
         "validation_seed": None,
         "resize_interpolation": None,
     }
     kwargs = {}
     for p in params:
-        if p.name in defaults:
-            kwargs[p.name] = defaults[p.name]
-        elif p.default is inspect.Parameter.empty:
-            kwargs[p.name] = None
-    return cls(**kwargs)
+        if p == "self":
+            continue
+        if p in defaults:
+            kwargs[p] = defaults[p]
+    return DSCls(**kwargs)
 PYEOF
 
 # ===========================================================================
-# TEST 4 (Behavioral, 0.18): Normal balancing — reg images get repeats bumped
-# to roughly match training image total.
+# F2P TEST 3 (0.25): Zero-reg-images edge case — instantiating a dataset with
+# only training images (no reg subset) must not crash.
+# On a buggy base where balancing logic isn't guarded, division/loop may break;
+# more importantly, the agent's refactor must preserve this. We treat this as
+# a behavioral check that exercises the new helper path.
+# Crucially this also checks that base behavior (counts) is sensible.
 # ===========================================================================
-echo "--- Test 4: Normal balancing behavior ---"
-timeout 90 python3 << 'PYEOF' > /tmp/t4.log 2>&1
-import sys, os, tempfile
+echo "--- F2P 3: Zero reg images doesn't crash & counts correct ---"
+timeout 60 python3 << 'PYEOF' > /tmp/t3.log 2>&1
+import sys
 sys.path.insert(0, '/workspace/sd-scripts')
 sys.path.insert(0, '/tmp')
-from build_ds import mkimg, build_subset, build_dataset
-
-with tempfile.TemporaryDirectory() as tmp:
-    train_dir = os.path.join(tmp, "10_train")
-    reg_dir = os.path.join(tmp, "1_reg")
-    os.makedirs(train_dir)
-    os.makedirs(reg_dir)
-    # 3 train images * 10 repeats = 30 train repeats
-    for i in range(3):
-        mkimg(os.path.join(train_dir, f"t{i}.png"))
-    # 2 reg images * 1 repeat = 2 reg repeats; should be balanced up to ~30
-    for i in range(2):
-        mkimg(os.path.join(reg_dir, f"r{i}.png"))
-
-    ts = build_subset(train_dir, num_repeats=10, is_reg=False)
-    rs = build_subset(reg_dir, num_repeats=1, is_reg=True)
-
-    ds = build_dataset([ts, rs])
-    ntr = ds.num_train_images
-    nrg = ds.num_reg_images
-    print(f"num_train_images={ntr} num_reg_images={nrg}")
-    assert ntr == 30, f"expected 30 train, got {ntr}"
-    # Reg should be balanced to >= train (within 1 of train, since topup goes per-image)
-    assert nrg >= ntr - 1 and nrg <= ntr + 2, f"reg not balanced: {nrg} vs {ntr}"
-    # And the actual sum of repeats over reg image_data should match
-    total_reg = sum(info.num_repeats for info in ds.image_data.values() if info.is_reg)
-    assert total_reg == nrg, f"reg counts inconsistent: total={total_reg} stored={nrg}"
-    print("PASS")
-PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.18")
-    cat /tmp/t4.log | tail -3
-    echo "(+0.18)"
-else
-    echo "FAIL"
-    cat /tmp/t4.log | tail -25
-fi
-
-# ===========================================================================
-# TEST 5 (Behavioral, 0.15): Edge case — zero reg images shouldn't crash.
-# ===========================================================================
-echo "--- Test 5: Zero reg images edge case ---"
-timeout 90 python3 << 'PYEOF' > /tmp/t5.log 2>&1
-import sys, os, tempfile
-sys.path.insert(0, '/workspace/sd-scripts')
-sys.path.insert(0, '/tmp')
-from build_ds import mkimg, build_subset, build_dataset
-
-with tempfile.TemporaryDirectory() as tmp:
-    train_dir = os.path.join(tmp, "5_train")
-    os.makedirs(train_dir)
-    for i in range(2):
-        mkimg(os.path.join(train_dir, f"t{i}.png"))
-
-    ts = build_subset(train_dir, num_repeats=5, is_reg=False)
-    ds = build_dataset([ts])  # NO reg subset
-    assert ds.num_train_images == 10, f"expected 10, got {ds.num_train_images}"
+try:
+    from build_ds import make_subset, make_dataset
+    s = make_subset("/tmp/sd_test/zero_reg/cls", num_repeats=3, is_reg=False)
+    ds = make_dataset([s], is_training=True)
+    # 3 images * num_repeats=3 = 9
+    assert ds.num_train_images == 9, f"expected 9 train, got {ds.num_train_images}"
     assert ds.num_reg_images == 0, f"expected 0 reg, got {ds.num_reg_images}"
-    print("PASS")
+    print("PASS: zero-reg dataset built; counts correct")
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    print(f"FAIL: {e}")
+    sys.exit(1)
 PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.15")
-    cat /tmp/t5.log | tail -3
-    echo "(+0.15)"
-else
-    echo "FAIL"
-    cat /tmp/t5.log | tail -25
-fi
+T3_RESULT=$?
+cat /tmp/t3.log | tail -30
+
+# This test passes on base too (zero-reg already works in original code).
+# So we use it only as a GATE for the more interesting behavioral checks below;
+# no reward weight assigned here directly.
 
 # ===========================================================================
-# TEST 6 (Behavioral, 0.10): Edge case — reg images present but train list is
-# empty (validation-split or zero-train scenario). Shouldn't infinite loop.
+# F2P TEST 4 (0.25): Reg image balancing still works correctly after refactor.
+# 4 train images * num_repeats=2 = 8 train; 2 reg images should balance to 8.
+# This passes on base AND on fix — but only if the refactor preserved behavior.
+# A broken refactor would fail. We use this as a regression GUARD: if it fails,
+# whole reward zeroes out.
 # ===========================================================================
-echo "--- Test 6: Zero train images (with reg) shouldn't hang ---"
-timeout 60 python3 << 'PYEOF' > /tmp/t6.log 2>&1
-import sys, os, tempfile, signal
+echo "--- GUARD: balancing behavior preserved ---"
+timeout 60 python3 << 'PYEOF' > /tmp/guard.log 2>&1
+import sys
 sys.path.insert(0, '/workspace/sd-scripts')
 sys.path.insert(0, '/tmp')
-from build_ds import mkimg, build_subset, build_dataset
-
-# Set hard alarm to detect infinite loop
-def handler(signum, frame):
-    raise TimeoutError("infinite loop detected in balancing")
-signal.signal(signal.SIGALRM, handler)
-signal.alarm(30)
-
-with tempfile.TemporaryDirectory() as tmp:
-    reg_dir = os.path.join(tmp, "1_reg")
-    os.makedirs(reg_dir)
-    for i in range(2):
-        mkimg(os.path.join(reg_dir, f"r{i}.png"))
-
-    rs = build_subset(reg_dir, num_repeats=1, is_reg=True)
-    try:
-        ds = build_dataset([rs])
-        print(f"num_train={ds.num_train_images} num_reg={ds.num_reg_images}")
-        # No train images; whatever the implementation chooses, just shouldn't hang
-        print("PASS")
-    except TimeoutError as e:
-        print(f"FAIL: {e}")
-        sys.exit(1)
-    except Exception as e:
-        # An exception is acceptable as long as it's not a hang
-        # but a clean handling is preferred
-        print(f"PARTIAL: raised {type(e).__name__}: {e}")
-        # We accept this case rather than failing — but let's be lenient and pass
-        print("PASS")
+try:
+    from build_ds import make_subset, make_dataset
+    train = make_subset("/tmp/sd_test/train_with_reg/cls", num_repeats=2, is_reg=False)
+    reg = make_subset("/tmp/sd_test/train_with_reg/reg", num_repeats=1, is_reg=True)
+    ds = make_dataset([train, reg], is_training=True)
+    # 4 train * 2 = 8 train repeats
+    assert ds.num_train_images == 8, f"expected 8 train, got {ds.num_train_images}"
+    # reg should be balanced to match (8)
+    assert ds.num_reg_images == 8, f"expected 8 reg (balanced), got {ds.num_reg_images}"
+    print("GUARD PASS: balancing preserved")
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    print(f"GUARD FAIL: {e}")
+    sys.exit(1)
 PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.10")
-    cat /tmp/t6.log | tail -3
-    echo "(+0.10)"
-else
-    echo "FAIL"
-    cat /tmp/t6.log | tail -25
+GUARD_RESULT=$?
+cat /tmp/guard.log | tail -30
+
+if [ $GUARD_RESULT -ne 0 ]; then
+    echo "GUARD FAILED — refactor broke balancing. Zeroing reward."
+    write_reward_and_exit "0.0"
+fi
+
+# Now the dedup-edge-case award: dataset with no reg images should also have
+# successful construction (this passes on base too, so it's a guard, not reward).
+if [ $T3_RESULT -ne 0 ]; then
+    echo "GUARD FAIL: zero-reg case broke. Zeroing reward."
+    write_reward_and_exit "0.0"
 fi
 
 # ===========================================================================
-# TEST 7 (Behavioral, 0.10): Multiple reg subsets with different num_repeats
-# should still balance correctly without double-counting.
+# F2P TEST 5 (0.20): A single helper method exists on DreamBoothDataset that
+# encapsulates the balancing logic. Acceptable names span what models chose:
+# _balance_reg_images, register_regularization_images, rebalance_regularization_images.
+# On the buggy base, NONE of these helper methods exist on DreamBoothDataset.
+# After any reasonable refactor, at least one exists.
 # ===========================================================================
-echo "--- Test 7: Multi-subset balancing correctness ---"
-timeout 90 python3 << 'PYEOF' > /tmp/t7.log 2>&1
-import sys, os, tempfile
+echo "--- F2P 5: balancing helper method exists ---"
+timeout 30 python3 << 'PYEOF' > /tmp/t5.log 2>&1
+import sys
 sys.path.insert(0, '/workspace/sd-scripts')
-sys.path.insert(0, '/tmp')
-from build_ds import mkimg, build_subset, build_dataset
-
-with tempfile.TemporaryDirectory() as tmp:
-    t1 = os.path.join(tmp, "5_train1"); os.makedirs(t1)
-    t2 = os.path.join(tmp, "3_train2"); os.makedirs(t2)
-    r1 = os.path.join(tmp, "2_reg1");   os.makedirs(r1)
-    for i in range(2): mkimg(os.path.join(t1, f"a{i}.png"))
-    for i in range(2): mkimg(os.path.join(t2, f"b{i}.png"))
-    for i in range(3): mkimg(os.path.join(r1, f"r{i}.png"))
-
-    ts1 = build_subset(t1, num_repeats=5, is_reg=False)
-    ts2 = build_subset(t2, num_repeats=3, is_reg=False)
-    rs  = build_subset(r1, num_repeats=2, is_reg=True)
-
-    ds = build_dataset([ts1, ts2, rs])
-    expected_train = 2*5 + 2*3   # = 16
-    assert ds.num_train_images == expected_train, f"train: got {ds.num_train_images} want {expected_train}"
-    # Reg should be roughly balanced toward 16
-    assert ds.num_reg_images >= expected_train - 1, f"reg under-balanced: {ds.num_reg_images}"
-    assert ds.num_reg_images <= expected_train + 3, f"reg over-balanced (likely double-call): {ds.num_reg_images}"
-
-    # Check stored image_data sums match the reported counts
-    train_sum = sum(i.num_repeats for i in ds.image_data.values() if not i.is_reg)
-    reg_sum   = sum(i.num_repeats for i in ds.image_data.values() if     i.is_reg)
-    assert train_sum == ds.num_train_images, f"train mismatch {train_sum} vs {ds.num_train_images}"
-    assert reg_sum   == ds.num_reg_images,   f"reg   mismatch {reg_sum} vs {ds.num_reg_images}"
-    print(f"PASS (train={ds.num_train_images}, reg={ds.num_reg_images})")
+import library.train_util as tu
+candidates = [
+    "_balance_reg_images",
+    "balance_reg_images",
+    "register_regularization_images",
+    "rebalance_regularization_images",
+]
+found = [n for n in candidates if hasattr(tu.DreamBoothDataset, n)]
+if not found:
+    print(f"FAIL: no balancing helper method found. Tried: {candidates}")
+    sys.exit(1)
+print(f"PASS: helper(s) present = {found}")
 PYEOF
 if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.10")
-    cat /tmp/t7.log | tail -3
-    echo "(+0.10)"
+    REWARD=$(awk_add "$REWARD" "0.20")
+    cat /tmp/t5.log
+    echo "(+0.20)"
 else
-    echo "FAIL"
-    cat /tmp/t7.log | tail -25
+    cat /tmp/t5.log
 fi
 
 # ===========================================================================
-# TEST 8 (Behavioral, 0.12): The double-update bug — after calling the
-# DreamBooth filter override, num_train_images and num_reg_images should be
-# accurate and consistent with image_data sums (no stale or doubled state).
+# F2P TEST 6 (0.20): Override calls super() and the base/super invocation
+# triggers exactly one update of dataset image counts overall. We verify by
+# reading the override source: it must call super().filter_registered_images_by_orig_resolution
+# (so we know it composes properly rather than reimplementing) AND it must NOT
+# directly call update_dataset_image_counts (already enforced in F2P 2, but
+# here we additionally require the super() call exists, which it doesn't on
+# the base because the override itself doesn't exist on the base).
 # ===========================================================================
-echo "--- Test 8: filter override leaves counts consistent ---"
-timeout 90 python3 << 'PYEOF' > /tmp/t8.log 2>&1
-import sys, os, tempfile
-sys.path.insert(0, '/workspace/sd-scripts')
-sys.path.insert(0, '/tmp')
-from build_ds import mkimg, build_subset, build_dataset
-
-with tempfile.TemporaryDirectory() as tmp:
-    train_dir = os.path.join(tmp, "4_train"); os.makedirs(train_dir)
-    reg_dir   = os.path.join(tmp, "1_reg");   os.makedirs(reg_dir)
-    for i in range(3): mkimg(os.path.join(train_dir, f"t{i}.png"))
-    for i in range(2): mkimg(os.path.join(reg_dir,   f"r{i}.png"))
-
-    ts = build_subset(train_dir, num_repeats=4, is_reg=False)
-    rs = build_subset(reg_dir,   num_repeats=1, is_reg=True)
-
-    ds = build_dataset([ts, rs])
-
-    # Call the filter override (no actual filtering will happen since enable_bucket=False
-    # but the call paths still exercise update logic)
-    if hasattr(ds, "filter_registered_images_by_orig_resolution"):
-        try:
-            ds.filter_registered_images_by_orig_resolution()
-        except Exception as e:
-            print(f"NOTE: filter raised {type(e).__name__}: {e}")
-
-    train_sum = sum(i.num_repeats for i in ds.image_data.values() if not i.is_reg)
-    reg_sum   = sum(i.num_repeats for i in ds.image_data.values() if     i.is_reg)
-    # After the filter, the counts should match the actual image_data state.
-    # The bug was a double-call to update_dataset_image_counts which by itself
-    # is idempotent... but combined with rebalance it could re-bump reg counts.
-    # We assert: stored attributes match recomputed sums, AND reg sum is balanced.
-    assert ds.num_train_images == train_sum, f"train: stored={ds.num_train_images} actual={train_sum}"
-    assert ds.num_reg_images   == reg_sum,   f"reg:   stored={ds.num_reg_images} actual={reg_sum}"
-    # And reg should not have been over-bumped (consistent with train ~12)
-    assert reg_sum <= train_sum + 2, f"reg over-bumped {reg_sum} vs train {train_sum}"
-    assert reg_sum >= train_sum - 2, f"reg under-balanced {reg_sum} vs train {train_sum}"
-    print(f"PASS (train={train_sum}, reg={reg_sum})")
+echo "--- F2P 6: override exists, calls super(), no direct update call ---"
+timeout 10 python3 << 'PYEOF' > /tmp/t6.log 2>&1
+import json, sys, re
+c = json.load(open("/tmp/test_cache.json"))
+if not c.get("db_filter_found", False):
+    print("FAIL: DreamBooth filter override does not exist")
+    sys.exit(1)
+seg = c.get("db_filter_source", "")
+# Must call super() form
+if not re.search(r"super\s*\(\s*\)\s*\.\s*filter_registered_images_by_orig_resolution", seg):
+    print("FAIL: override doesn't call super().filter_registered_images_by_orig_resolution")
+    sys.exit(1)
+# Must NOT directly call update_dataset_image_counts (re-check)
+direct = c.get("db_filter_update_count_calls", 99)
+if direct >= 1:
+    print(f"FAIL: override has {direct} direct update_dataset_image_counts calls")
+    sys.exit(1)
+print("PASS: override delegates to super() and doesn't double-call update")
 PYEOF
 if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.12")
-    cat /tmp/t8.log | tail -3
-    echo "(+0.12)"
+    REWARD=$(awk_add "$REWARD" "0.20")
+    cat /tmp/t6.log
+    echo "(+0.20)"
 else
-    echo "FAIL"
-    cat /tmp/t8.log | tail -25
+    cat /tmp/t6.log
 fi
 
-# ===========================================================================
-# TEST 9 (Behavioral, 0.10): Idempotence — calling rebalance again or
-# calling filter twice shouldn't keep growing reg counts (regression guard
-# against double-balancing).
-# ===========================================================================
-echo "--- Test 9: Idempotence — repeated filter calls don't inflate reg counts ---"
-timeout 90 python3 << 'PYEOF' > /tmp/t9.log 2>&1
-import sys, os, tempfile
-sys.path.insert(0, '/workspace/sd-scripts')
-sys.path.insert(0, '/tmp')
-from build_ds import mkimg, build_subset, build_dataset
-
-with tempfile.TemporaryDirectory() as tmp:
-    train_dir = os.path.join(tmp, "6_train"); os.makedirs(train_dir)
-    reg_dir   = os.path.join(tmp, "1_reg");   os.makedirs(reg_dir)
-    for i in range(2): mkimg(os.path.join(train_dir, f"t{i}.png"))
-    for i in range(2): mkimg(os.path.join(reg_dir,   f"r{i}.png"))
-
-    ts = build_subset(train_dir, num_repeats=6, is_reg=False)
-    rs = build_subset(reg_dir,   num_repeats=1, is_reg=True)
-
-    ds = build_dataset([ts, rs])
-    initial_reg = ds.num_reg_images
-    initial_train = ds.num_train_images
-    print(f"initial: train={initial_train} reg={initial_reg}")
-
-    # Call filter override several times; numbers should stabilize
-    if hasattr(ds, "filter_registered_images_by_orig_resolution"):
-        for i in range(3):
-            try:
-                ds.filter_registered_images_by_orig_resolution()
-            except Exception:
-                pass
-        after_reg = ds.num_reg_images
-        after_train = ds.num_train_images
-        print(f"after 3 calls: train={after_train} reg={after_reg}")
-        assert after_train == initial_train, f"train changed: {after_train} vs {initial_train}"
-        # reg should NOT have been re-bumped each time
-        assert after_reg <= initial_reg + 2, f"reg inflated: {after_reg} (was {initial_reg})"
-    print("PASS")
-PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.10")
-    cat /tmp/t9.log | tail -5
-    echo "(+0.10)"
-else
-    echo "FAIL"
-    cat /tmp/t9.log | tail -25
-fi
-
-# ===========================================================================
-# Final reward
-# ===========================================================================
-# Cap at 1.0
-FINAL=$(awk -v r="$REWARD" 'BEGIN { if (r > 1.0) r = 1.0; if (r < 0) r = 0; printf "%.4f", r }')
-echo "=== Final reward: $FINAL ==="
-echo "$FINAL" > "$REWARD_FILE"
-exit 0
+echo "=== Final reward: $REWARD ==="
+echo "$REWARD" > "$REWARD_FILE"

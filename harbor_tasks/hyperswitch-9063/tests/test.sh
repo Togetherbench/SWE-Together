@@ -1,14 +1,9 @@
 #!/bin/bash
 set +e
 
-# Test: Verify underscore-to-hyphen locale fix in hyperswitch
-# Strategy: behavioral JS test via node (dominates), Rust normalization checks
-# (regex match on entry points), structural checks on locale.js dict keys.
-
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 
-# Locate repo
 REPO_DIR=""
 for candidate in "/workspace/hyperswitch" "/workspace/repos/hyperswitch_pool_9" \
                  "/workspace/hyperswitch_pool_9" "./repos/hyperswitch_pool_9"; do
@@ -20,14 +15,19 @@ done
 if [ -z "$REPO_DIR" ]; then
     REPO_DIR=$(find /workspace -maxdepth 4 -name ".git" -type d 2>/dev/null | head -1 | xargs -r dirname)
 fi
+
+REWARD=0
+write_reward() {
+    echo "$REWARD" > "$REWARD_FILE"
+}
+
 if [ -z "$REPO_DIR" ] || [ ! -d "$REPO_DIR/.git" ]; then
     echo "FAIL: repo not found"
-    echo "0.0" > "$REWARD_FILE"
+    write_reward
     exit 0
 fi
 
-echo "Repo: $REPO_DIR"
-cd "$REPO_DIR" || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+cd "$REPO_DIR" || { write_reward; exit 0; }
 git config --global --add safe.directory "$REPO_DIR" 2>/dev/null
 
 LOCALE_JS="$REPO_DIR/crates/router/src/core/payment_link/locale.js"
@@ -36,70 +36,34 @@ UTILS="$REPO_DIR/crates/router/src/utils.rs"
 CONTEXT_RS="$REPO_DIR/crates/router/src/services/api/generic_link_response/context.rs"
 MIDDLEWARE="$REPO_DIR/crates/router/src/middleware.rs"
 
-REWARD=0
+# P2P gate: locale.js must exist
+if [ ! -f "$LOCALE_JS" ]; then
+    echo "GATE FAIL: locale.js missing"
+    write_reward
+    exit 0
+fi
+
+# Detect node
+NODE_BIN=""
+export PATH="/usr/local/bin:/usr/bin:$PATH"
+for n in node nodejs; do
+    if command -v "$n" >/dev/null 2>&1; then NODE_BIN="$n"; break; fi
+done
+
 add() {
     REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN { printf "%.4f", a + b }')
 }
 
-# Detect node
-NODE_BIN=""
-for n in node nodejs; do
-    if command -v "$n" >/dev/null 2>&1; then NODE_BIN="$n"; break; fi
-done
-if [ -z "$NODE_BIN" ]; then
-    export PATH="/usr/local/bin:/usr/bin:$PATH"
-    for n in node nodejs; do
-        if command -v "$n" >/dev/null 2>&1; then NODE_BIN="$n"; break; fi
-    done
-fi
-
 ###############################################################################
-# CHECK 1 (0.10) — Regression / engagement guard
-# Files exist, modifications happened, no insane mass deletion.
+# F2P 1 (0.45): Behavioral test of locale.js getLanguage().
+# On buggy base: getLanguage('zh_hant') returns 'zh' (because key uses underscore
+# but split is on '-' so country=null), or returns 'zh_null', etc.
+# On fix: getLanguage('zh_hant') returns 'zh-hant' (or at minimum, dictionary
+# keys are hyphenated and underscores are normalized).
 ###############################################################################
-echo ""
-echo "=== Check 1: engagement & regression guard (0.10) ==="
-ENG_OK=0
-if [ -f "$LOCALE_JS" ]; then
-    BASE_COMMIT=$(git log --reverse --format=%H 2>/dev/null | head -1)
-    DIFF=$(git diff HEAD~5 HEAD 2>/dev/null)
-    [ -z "$DIFF" ] && DIFF=$(git diff 2>/dev/null)
-    [ -z "$DIFF" ] && DIFF=$(git log -1 -p 2>/dev/null)
-    ADDED=$(echo "$DIFF" | grep -c "^+[^+]")
-    REMOVED=$(echo "$DIFF" | grep -c "^-[^-]")
-    echo "  diff +$ADDED / -$REMOVED"
-    # Some change must exist; reject mass deletes (>2000 lines)
-    if [ "$ADDED" -gt 0 ] || [ "$REMOVED" -gt 0 ]; then
-        if [ "$REMOVED" -lt 2000 ]; then
-            ENG_OK=1
-        fi
-    fi
-    # locale.js must still parse / not be empty
-    if [ ! -s "$LOCALE_JS" ]; then
-        ENG_OK=0
-    fi
-fi
-if [ "$ENG_OK" = "1" ]; then
-    echo "  PASS"
-    add 0.10
-else
-    echo "  FAIL"
-fi
-
-###############################################################################
-# CHECK 2 (0.40) — BEHAVIORAL: locale.js getLanguage() must produce
-# correct dictionary keys for ISO inputs incl. underscore variants.
-# The dictionary lookup must succeed for the returned key.
-###############################################################################
-echo ""
-echo "=== Check 2: locale.js behavioral via node (0.40) ==="
-B_PASS=0; B_TOTAL=0
-DICT_HYPHEN=0; DICT_UNDER=0
-GETLANG_OK=0
-
-if [ -z "$NODE_BIN" ] || [ ! -f "$LOCALE_JS" ]; then
-    echo "  node or locale.js missing — falling back to structural checks"
-else
+echo "=== F2P 1: locale.js behavioral (0.45) ==="
+F2P1=0
+if [ -n "$NODE_BIN" ]; then
     TMPJS=$(mktemp /tmp/locale_run_XXXXXX.js)
     cat > "$TMPJS" <<'EOF'
 const fs = require('fs');
@@ -131,69 +95,72 @@ if (typeof exp.getLanguage !== 'function') {
   process.exit(2);
 }
 
-// Cases: input -> expected returned key (must also be a valid dict key when applicable)
-const cases = [
-  ['zh-hant',        'zh-hant'],
-  ['zh_hant',        'zh-hant'],
-  ['ZH-HANT',        'zh-hant'],
-  ['Zh',             'zh'],
-  ['zh',             'zh'],
-  ['zh-abcdef',      'zh'],
-  ['en-gb',          'en-gb'],
-  ['en_gb',          'en-gb'],
-  ['EN_GB',          'en-gb'],
-  ['fr-be',          'fr-be'],
-  ['fr_be',          'fr-be'],
-  ['en',             'en'],
-  ['fr',             'fr'],
-];
+// F2P cases: these FAIL on buggy base (which uses underscore keys + split('-'))
+// and PASS on fix.
+// On buggy base:
+//   getLanguage('zh_hant') -> split('-') yields ['zh_hant'], language='zh_hant',
+//     key='zh_hant_null', default returns 'zh_hant' (NOT a valid dict key).
+//   getLanguage('zh-hant') -> language='zh', country='hant', key='zh_hant',
+//     no case matches, returns 'zh' (NOT 'zh-hant' which is the wanted ISO key).
+//   Dict has 'zh_hant' key, NOT 'zh-hant'.
+// On fix:
+//   getLanguage('zh-hant') -> 'zh-hant'
+//   getLanguage('zh_hant') -> 'zh-hant'
+//   Dict has 'zh-hant' key.
 
-let pass = 0;
-const lines = [];
-for (const [inp, want] of cases) {
-  let got;
-  try { got = exp.getLanguage(inp); } catch (e) { got = 'ERR:' + e.message; }
-  let ok = (got === want);
-  // Tolerate zh-hant-abcdef-style tail truncation matches not in this list
-  if (ok) pass++;
-  lines.push(`${inp} -> ${got} (want ${want}) ${ok ? 'OK' : 'FAIL'}`);
-}
-// Tail-tolerance separate case
-{
-  let got;
-  try { got = exp.getLanguage('zh-hant-abcdef'); } catch (e) { got = 'ERR'; }
-  const ok = (got === 'zh-hant' || got === 'zh');
-  if (ok) pass++;
-  lines.push(`zh-hant-abcdef -> ${got} (want zh-hant or zh) ${ok ? 'OK' : 'FAIL'}`);
-}
+const results = {};
 
-const total = cases.length + 1;
-console.log(lines.join('\n'));
-console.log(`SUMMARY ${pass}/${total}`);
+// Case A: zh-hant input must yield 'zh-hant' (fails on base which returns 'zh')
+try {
+  results.A = exp.getLanguage('zh-hant') === 'zh-hant';
+} catch (e) { results.A = false; }
 
-// Inspect dictionary keys
+// Case B: zh_hant input must yield 'zh-hant' (fails on base)
+try {
+  results.B = exp.getLanguage('zh_hant') === 'zh-hant';
+} catch (e) { results.B = false; }
+
+// Case C: ZH-HANT yields 'zh-hant'
+try {
+  results.C = exp.getLanguage('ZH-HANT') === 'zh-hant';
+} catch (e) { results.C = false; }
+
+// Case D: en_gb yields 'en-gb' (fails on base which returns 'en_gb' but key not in hyphen dict)
+try {
+  results.D = exp.getLanguage('en_gb') === 'en-gb';
+} catch (e) { results.D = false; }
+
+// Case E: fr_be yields 'fr-be'
+try {
+  results.E = exp.getLanguage('fr_be') === 'fr-be';
+} catch (e) { results.E = false; }
+
+// Case F: dict has hyphenated keys (fails on base which has underscore keys)
+let dictHyphen = false;
+let dictUnderscore = false;
 if (exp.dict && typeof exp.dict === 'object') {
   const keys = Object.keys(exp.dict);
-  const hasHy = keys.some(k => k === 'en-gb' || k === 'fr-be' || k === 'zh-hant');
-  const hasUn = keys.some(k => k === 'en_gb' || k === 'fr_be' || k === 'zh_hant');
-  console.log(`DICT hyphen=${hasHy} underscore=${hasUn}`);
+  dictHyphen = keys.includes('zh-hant') && keys.includes('en-gb') && keys.includes('fr-be');
+  dictUnderscore = keys.includes('zh_hant') || keys.includes('en_gb') || keys.includes('fr_be');
+}
+results.F_dict_hyphen = dictHyphen;
+results.F_dict_no_underscore = !dictUnderscore;
 
-  // Lookup test: getLanguage's output for underscore inputs should produce a
-  // key that exists in the dict (where applicable).
-  const lookups = [
-    ['zh_hant', 'zh-hant'],
-    ['en_gb',   'en-gb'],
-    ['fr_be',   'fr-be'],
-  ];
-  let lookupPass = 0;
-  for (const [inp, expectKey] of lookups) {
-    const got = exp.getLanguage(inp);
-    if (got === expectKey && exp.dict[got]) lookupPass++;
-  }
-  console.log(`LOOKUP ${lookupPass}/${lookups.length}`);
-} else {
-  console.log('DICT none');
-  console.log('LOOKUP 0/3');
+// Case G: lookup roundtrip — getLanguage output is a valid dict key
+let lookupOk = false;
+if (exp.dict && typeof exp.dict === 'object') {
+  try {
+    const k1 = exp.getLanguage('zh_hant');
+    const k2 = exp.getLanguage('en_gb');
+    const k3 = exp.getLanguage('fr_be');
+    lookupOk = !!(exp.dict[k1] && exp.dict[k2] && exp.dict[k3])
+            && k1 === 'zh-hant' && k2 === 'en-gb' && k3 === 'fr-be';
+  } catch (e) { lookupOk = false; }
+}
+results.G_lookup = lookupOk;
+
+for (const k of Object.keys(results)) {
+  console.log(`R_${k}=${results[k] ? '1' : '0'}`);
 }
 EOF
     OUT=$("$NODE_BIN" "$TMPJS" "$LOCALE_JS" 2>&1)
@@ -202,217 +169,175 @@ EOF
     echo "$OUT" | sed 's/^/  /'
 
     if [ "$EC" -eq 0 ]; then
-        GETLANG_OK=1
-        SUMMARY=$(echo "$OUT" | grep "^SUMMARY" | tail -1)
-        B_PASS=$(echo "$SUMMARY" | awk '{print $2}' | cut -d/ -f1)
-        B_TOTAL=$(echo "$SUMMARY" | awk '{print $2}' | cut -d/ -f2)
-        DICTLINE=$(echo "$OUT" | grep "^DICT" | tail -1)
-        echo "$DICTLINE" | grep -q "hyphen=true"  && DICT_HYPHEN=1
-        echo "$DICTLINE" | grep -q "underscore=true" && DICT_UNDER=1
-        LOOKUPLINE=$(echo "$OUT" | grep "^LOOKUP" | tail -1)
-        LOOKUP_PASS=$(echo "$LOOKUPLINE" | awk '{print $2}' | cut -d/ -f1)
-        [ -z "$LOOKUP_PASS" ] && LOOKUP_PASS=0
+        # Count passing checks
+        PASSED=0
+        for KEY in R_A R_B R_C R_D R_E R_F_dict_hyphen R_F_dict_no_underscore R_G_lookup; do
+            if echo "$OUT" | grep -q "^${KEY}=1"; then
+                PASSED=$((PASSED + 1))
+            fi
+        done
+        echo "  Behavioral passes: $PASSED/8"
+        # 8 checks * 0.05625 = 0.45
+        F2P1=$(awk -v p="$PASSED" 'BEGIN { printf "%.4f", p * 0.05625 }')
     fi
 fi
-
-# Score check 2:
-#  - 0.25 weight for getLanguage cases (>=12/14 → full, >=8 → half)
-#  - 0.10 weight for dict-key migration (hyphen present & underscore absent → full;
-#                                        hyphen present but underscore lingering → half)
-#  - 0.05 for cross-lookup (getLanguage out resolves into dict)
-[ -z "$B_PASS" ] && B_PASS=0
-[ -z "$B_TOTAL" ] && B_TOTAL=14
-[ -z "$LOOKUP_PASS" ] && LOOKUP_PASS=0
-
-GETLANG_PART=0
-if [ "$GETLANG_OK" = "1" ]; then
-    if [ "$B_PASS" -ge $((B_TOTAL - 2)) ]; then
-        GETLANG_PART=0.25
-    elif [ "$B_PASS" -ge $((B_TOTAL / 2)) ]; then
-        GETLANG_PART=0.12
-    fi
-fi
-DICT_PART=0
-if [ "$DICT_HYPHEN" = "1" ] && [ "$DICT_UNDER" = "0" ]; then
-    DICT_PART=0.10
-elif [ "$DICT_HYPHEN" = "1" ]; then
-    DICT_PART=0.05
-fi
-LOOKUP_PART=0
-if [ "$LOOKUP_PASS" -ge 3 ]; then
-    LOOKUP_PART=0.05
-elif [ "$LOOKUP_PASS" -ge 1 ]; then
-    LOOKUP_PART=0.02
-fi
-
-# Fallback structural if node unavailable
-if [ "$GETLANG_OK" = "0" ] && [ -f "$LOCALE_JS" ]; then
-    if grep -qE "['\"]zh-hant['\"]" "$LOCALE_JS"; then GETLANG_PART=0.12; fi
-    if grep -qE "['\"]en-gb['\"]" "$LOCALE_JS" && grep -qE "['\"]fr-be['\"]" "$LOCALE_JS"; then
-        DICT_PART=0.05
-        if ! grep -qE "['\"]en_gb['\"]" "$LOCALE_JS" && ! grep -qE "['\"]fr_be['\"]" "$LOCALE_JS" && ! grep -qE "['\"]zh_hant['\"]" "$LOCALE_JS"; then
-            DICT_PART=0.10
-        fi
-    fi
-fi
-
-C2_TOTAL=$(awk -v a="$GETLANG_PART" -v b="$DICT_PART" -v c="$LOOKUP_PART" 'BEGIN { printf "%.4f", a + b + c }')
-echo "  getLang=$GETLANG_PART dict=$DICT_PART lookup=$LOOKUP_PART -> $C2_TOTAL / 0.40"
-add "$C2_TOTAL"
+echo "  F2P 1 partial: $F2P1"
+add "$F2P1"
 
 ###############################################################################
-# CHECK 3 (0.25) — Behavioral-equivalent: Rust entry points normalize
-# underscore -> hyphen for incoming locale.
-# We require AT LEAST ONE of the standard entry points to apply the
-# replace('_', "-") transformation. Strong fixes touch multiple.
+# F2P 2 (0.30): Rust-side underscore→hyphen normalization at locale entry points.
+# On buggy base: ACCEPT_LANGUAGE header value passed as-is (.to_string()).
+# On fix: normalized via .replace('_', "-") somewhere in the locale flow
+# (transformers.rs HeaderPayload, utils.rs get_locale_from_header, or middleware).
+# We require the normalization in at least 2 different files OR in a key place.
 ###############################################################################
 echo ""
-echo "=== Check 3: Rust normalization at locale entry points (0.25) ==="
+echo "=== F2P 2: Rust locale normalization (0.30) ==="
+F2P2=0
+NORM_FILES=0
 
-count_norm_in_block() {
-    # $1 file, $2 anchor regex, $3 lines after
-    local f="$1" pat="$2" n="$3"
-    [ -f "$f" ] || { echo 0; return; }
-    awk -v pat="$pat" -v n="$n" '
-        $0 ~ pat { found=1; count=0 }
-        found && count<=n { print; count++ }
-        found && count>n { found=0 }
-    ' "$f" | grep -cE 'replace\(.[_].,\s*"-"\)'
-}
-
-NORM_TRANSFORMERS=0
-NORM_UTILS=0
-NORM_MIDDLEWARE=0
-NORM_OTHER=0
-
+# Check transformers.rs: locale read with replace
 if [ -f "$TRANSFORMERS" ]; then
-    # Count occurrences where ACCEPT_LANGUAGE block is followed (within ~5 lines) by replace('_', "-")
-    # Simpler: any line within 4 of an ACCEPT_LANGUAGE that contains the replace pattern.
-    HITS=$(awk '
-        /ACCEPT_LANGUAGE/ { window=5 }
-        window>0 { print; window-- }
-    ' "$TRANSFORMERS" | grep -cE "replace\(.[_].,\s*\"-\"\)")
-    NORM_TRANSFORMERS=$HITS
-    echo "  transformers.rs ACCEPT_LANGUAGE-adjacent normalizations: $HITS"
+    # Look for ACCEPT_LANGUAGE block where val is .replace('_', "-")
+    if awk '
+        /ACCEPT_LANGUAGE/ { in_block=5 }
+        in_block > 0 && /replace\(.*_.*-.*\)/ { found=1 }
+        in_block > 0 { in_block-- }
+        END { exit (found ? 0 : 1) }
+    ' "$TRANSFORMERS"; then
+        echo "  transformers.rs: normalizes Accept-Language"
+        NORM_FILES=$((NORM_FILES + 1))
+    fi
 fi
 
+# Check utils.rs
 if [ -f "$UTILS" ]; then
-    BLOCK=$(awk '/fn get_locale_from_header/,/^}/' "$UTILS")
-    if echo "$BLOCK" | grep -qE "replace\(.[_].,\s*\"-\"\)"; then
-        NORM_UTILS=1
+    if awk '
+        /get_locale_from_header/ { in_block=15 }
+        in_block > 0 && /replace\(.*_.*-.*\)/ { found=1 }
+        in_block > 0 { in_block-- }
+        END { exit (found ? 0 : 1) }
+    ' "$UTILS"; then
+        echo "  utils.rs: get_locale_from_header normalizes"
+        NORM_FILES=$((NORM_FILES + 1))
     fi
-    echo "  utils.rs get_locale_from_header normalizes: $NORM_UTILS"
 fi
 
+# Check middleware.rs
 if [ -f "$MIDDLEWARE" ]; then
-    # Look for locale_param.locale or ACCEPT_LANGUAGE setter region with replace
-    if grep -A 8 "locale_param" "$MIDDLEWARE" 2>/dev/null | grep -qE "replace\(.[_].,\s*\"-\"\)"; then
-        NORM_MIDDLEWARE=1
+    if awk '
+        /locale_param\.locale|ACCEPT_LANGUAGE/ { in_block=10 }
+        in_block > 0 && /replace\(.*_.*-.*\)/ { found=1 }
+        in_block > 0 { in_block-- }
+        END { exit (found ? 0 : 1) }
+    ' "$MIDDLEWARE"; then
+        echo "  middleware.rs: normalizes locale param"
+        NORM_FILES=$((NORM_FILES + 1))
     fi
-    echo "  middleware.rs locale_param normalizes: $NORM_MIDDLEWARE"
 fi
 
-# Count broader normalizations across crates/router/src as backstop
-NORM_OTHER=$(grep -rE "replace\(.[_].,\s*\"-\"\)" "$REPO_DIR/crates/router/src" 2>/dev/null | wc -l)
-echo "  total replace('_', \"-\") occurrences in crates/router/src: $NORM_OTHER"
-
-# Score:
-#  - 0.10 if at least one Rust entry point (transformers/utils/middleware) normalizes
-#  - +0.10 if two of the three normalize
-#  - +0.05 if three of the three (or transformers has >=2 matches AND utils OR middleware)
-TIER=0
-[ "$NORM_TRANSFORMERS" -ge 1 ] && TIER=$((TIER+1))
-[ "$NORM_UTILS" -ge 1 ]        && TIER=$((TIER+1))
-[ "$NORM_MIDDLEWARE" -ge 1 ]   && TIER=$((TIER+1))
-
-C3=0
-if [ "$TIER" -ge 3 ]; then
-    C3=0.25
-elif [ "$TIER" -eq 2 ]; then
-    C3=0.18
-elif [ "$TIER" -eq 1 ]; then
-    C3=0.10
-elif [ "$NORM_OTHER" -ge 1 ]; then
-    # Some normalization somewhere — minimal credit
-    C3=0.05
-fi
-echo "  tier=$TIER → +$C3"
-add "$C3"
-
-###############################################################################
-# CHECK 4 (0.15) — Structural: generic_link_response/context.rs locale match
-# now returns hyphenated keys (en-gb, fr-be).
-###############################################################################
-echo ""
-echo "=== Check 4: context.rs locale construction uses hyphens (0.15) ==="
-C4=0
+# Check context.rs: hyphenated keys (en-gb / fr-be) returned
 if [ -f "$CONTEXT_RS" ]; then
-    BLOCK=$(awk '/match \(language, country\)/,/^[[:space:]]*\}/' "$CONTEXT_RS")
-    if [ -z "$BLOCK" ]; then
-        BLOCK=$(grep -E "(\"en\".*gb|\"fr\".*be)" "$CONTEXT_RS")
-    fi
-    HAS_HY=0; HAS_UN=0
-    echo "$BLOCK" | grep -qE '"en-gb"' && HAS_HY=$((HAS_HY+1))
-    echo "$BLOCK" | grep -qE '"fr-be"' && HAS_HY=$((HAS_HY+1))
-    echo "$BLOCK" | grep -qE '"en_gb"' && HAS_UN=$((HAS_UN+1))
-    echo "$BLOCK" | grep -qE '"fr_be"' && HAS_UN=$((HAS_UN+1))
-    echo "  hyphen-keys=$HAS_HY underscore-keys=$HAS_UN"
-    if [ "$HAS_HY" -ge 2 ] && [ "$HAS_UN" -eq 0 ]; then
-        C4=0.15
-    elif [ "$HAS_HY" -ge 1 ] && [ "$HAS_UN" -eq 0 ]; then
-        C4=0.10
-    elif [ "$HAS_HY" -ge 1 ]; then
-        C4=0.05
-    fi
-else
-    echo "  context.rs not present — partial credit if locale.js dict already migrated"
-    if [ "$DICT_HYPHEN" = "1" ] && [ "$DICT_UNDER" = "0" ]; then
-        C4=0.05
-    fi
-fi
-echo "  -> +$C4"
-add "$C4"
-
-###############################################################################
-# CHECK 5 (0.10) — Anti-regression: no obvious leftover "en_gb"/"fr_be"/"zh_hant"
-# AS DICTIONARY KEYS in locale.js (comments tolerated).
-###############################################################################
-echo ""
-echo "=== Check 5: no underscore dict keys lingering in locale.js (0.10) ==="
-C5=0
-if [ -f "$LOCALE_JS" ]; then
-    LEFTOVER=0
-    # Patterns that look like an object key: en_gb: { OR "en_gb": { OR 'en_gb': {
-    for k in en_gb fr_be zh_hant; do
-        if grep -E "(^|[^A-Za-z0-9_])(['\"]?)${k}\2[[:space:]]*:[[:space:]]*\{" "$LOCALE_JS" >/dev/null; then
-            LEFTOVER=$((LEFTOVER+1))
-            echo "  leftover key: $k"
+    if grep -qE '"en-gb"' "$CONTEXT_RS" && grep -qE '"fr-be"' "$CONTEXT_RS"; then
+        # Make sure underscored versions aren't still used as the returned key
+        if ! grep -qE '"en_gb"\.to_string|"fr_be"\.to_string' "$CONTEXT_RS"; then
+            echo "  context.rs: returns hyphenated keys"
+            NORM_FILES=$((NORM_FILES + 1))
         fi
-    done
-    if [ "$LEFTOVER" -eq 0 ]; then
-        C5=0.10
-        echo "  PASS"
-    elif [ "$LEFTOVER" -le 1 ]; then
-        C5=0.04
-        echo "  PARTIAL"
-    else
-        echo "  FAIL"
     fi
-else
-    echo "  locale.js missing"
 fi
-add "$C5"
+
+# Other places: payment_link.rs / payment_create.rs / payouts.rs
+for EXTRA in \
+    "$REPO_DIR/crates/router/src/core/payment_link.rs" \
+    "$REPO_DIR/crates/router/src/core/payments/operations/payment_create.rs" \
+    "$REPO_DIR/crates/router/src/core/payouts.rs"; do
+    if [ -f "$EXTRA" ]; then
+        if grep -qE 'locale.*replace\(.*_.*-.*\)|replace\(.*_.*-.*\).*locale' "$EXTRA"; then
+            echo "  $(basename $EXTRA): normalizes locale"
+            NORM_FILES=$((NORM_FILES + 1))
+            break
+        fi
+    fi
+done
+
+echo "  Normalization sites found: $NORM_FILES"
+if [ "$NORM_FILES" -ge 2 ]; then
+    F2P2=0.30
+elif [ "$NORM_FILES" -eq 1 ]; then
+    F2P2=0.18
+fi
+echo "  F2P 2 partial: $F2P2"
+add "$F2P2"
 
 ###############################################################################
-# Finalize
+# F2P 3 (0.15): locale.js dictionary keys are hyphenated, not underscored.
+# Direct grep-based check (structural but tied to the bug — base FAILS this).
 ###############################################################################
-# Clamp to [0,1]
-REWARD=$(awk -v r="$REWARD" 'BEGIN {
-    if (r<0) r=0; if (r>1) r=1; printf "%.4f", r
-}')
 echo ""
-echo "=============================="
-echo "FINAL REWARD: $REWARD"
-echo "=============================="
-echo "$REWARD" > "$REWARD_FILE"
-exit 0
+echo "=== F2P 3: locale.js dict key migration (0.15) ==="
+F2P3=0
+HAS_HYPHEN_KEYS=0
+HAS_UNDERSCORE_KEYS=0
+
+# Hyphenated keys: "en-gb" or 'en-gb' as object property
+if grep -qE "[\"']en-gb[\"'][[:space:]]*:" "$LOCALE_JS" \
+   && grep -qE "[\"']fr-be[\"'][[:space:]]*:" "$LOCALE_JS" \
+   && grep -qE "[\"']zh-hant[\"'][[:space:]]*:" "$LOCALE_JS"; then
+    HAS_HYPHEN_KEYS=1
+fi
+
+# Underscore keys still present as object properties
+if grep -qE "(^|[[:space:]])en_gb[[:space:]]*:" "$LOCALE_JS" \
+   || grep -qE "(^|[[:space:]])fr_be[[:space:]]*:" "$LOCALE_JS" \
+   || grep -qE "(^|[[:space:]])zh_hant[[:space:]]*:" "$LOCALE_JS"; then
+    HAS_UNDERSCORE_KEYS=1
+fi
+
+echo "  hyphen_keys=$HAS_HYPHEN_KEYS underscore_keys=$HAS_UNDERSCORE_KEYS"
+if [ "$HAS_HYPHEN_KEYS" = "1" ] && [ "$HAS_UNDERSCORE_KEYS" = "0" ]; then
+    F2P3=0.15
+elif [ "$HAS_HYPHEN_KEYS" = "1" ]; then
+    F2P3=0.07
+fi
+echo "  F2P 3 partial: $F2P3"
+add "$F2P3"
+
+###############################################################################
+# F2P 4 (0.10): locale.js getLanguage uses hyphen-based key construction.
+# On buggy base: `${language}_${country}` — F2P 4 fails.
+# On fix: hyphen-based key construction OR cases that return hyphenated keys.
+###############################################################################
+echo ""
+echo "=== F2P 4: getLanguage hyphen-based (0.10) ==="
+F2P4=0
+# Extract the getLanguage function body (rough)
+GETLANG_BODY=$(awk '/function getLanguage/,/^}/' "$LOCALE_JS")
+if echo "$GETLANG_BODY" | grep -qE "['\"]zh-hant['\"]|['\"]en-gb['\"]|['\"]fr-be['\"]" \
+   || echo "$GETLANG_BODY" | grep -qE 'replace\(.*_.*-.*\)'; then
+    # And NOT returning underscore variants
+    if ! echo "$GETLANG_BODY" | grep -qE "return ['\"]en_gb['\"]|return ['\"]fr_be['\"]|return ['\"]zh_hant['\"]"; then
+        F2P4=0.10
+    else
+        F2P4=0.05
+    fi
+fi
+echo "  F2P 4 partial: $F2P4"
+add "$F2P4"
+
+###############################################################################
+# Final
+###############################################################################
+echo ""
+echo "================================================"
+echo "TOTAL REWARD: $REWARD"
+echo "================================================"
+
+# Clamp [0, 1]
+REWARD=$(awk -v r="$REWARD" 'BEGIN {
+  if (r < 0) r = 0;
+  if (r > 1) r = 1;
+  printf "%.4f", r;
+}')
+
+echo "$REWARD" > /logs/verifier/reward.txt

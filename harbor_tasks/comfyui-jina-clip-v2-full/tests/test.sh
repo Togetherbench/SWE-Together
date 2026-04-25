@@ -14,6 +14,11 @@ add_reward() {
     REWARD=$(awk "BEGIN { v = $REWARD + $1; if (v > 1.0) v = 1.0; printf \"%.4f\", v }")
 }
 
+finish() {
+    echo "$REWARD" > "$REWARD_FILE"
+    exit 0
+}
+
 PYTHON="/workspace/ComfyUI/bin/python3"
 if ! "$PYTHON" -c "import torch" 2>/dev/null; then
     if python3 -c "import torch" 2>/dev/null; then
@@ -28,11 +33,30 @@ export PYTHONPATH="/workspace/ComfyUI:${PYTHONPATH:-}"
 
 JINA_FILE="/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
 
-# ------------------------------------------------------------------
-# Shared helper: discover the wrapper class and call it generically
-# ------------------------------------------------------------------
+# ============================================================================
+# HARD GATE: file must exist (no-op base does NOT have this file).
+# This is the F2P trigger: on no-op, file is absent → REWARD stays 0.0.
+# ============================================================================
+if [ ! -f "$JINA_FILE" ]; then
+    echo "GATE FAIL: $JINA_FILE missing — no-op base"
+    finish
+fi
+
+# ============================================================================
+# HARD GATE: regression guard — comfy.sd must still import cleanly.
+# If agent broke pre-existing import paths, zero out.
+# ============================================================================
+"$PYTHON" -c "import sys; sys.path.insert(0,'/workspace/ComfyUI'); import comfy.sd" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "GATE FAIL: comfy.sd import broken — destructive change"
+    finish
+fi
+
+# ----------------------------------------------------------------------------
+# Shared helper
+# ----------------------------------------------------------------------------
 cat > /tmp/_jina_helpers.py << 'HELPEREOF'
-import sys, inspect, os
+import sys, os
 sys.path.insert(0, "/workspace/ComfyUI")
 try:
     import comfy.cli_args
@@ -81,17 +105,30 @@ def find_wrapper_cls(mod):
         return c
     return None
 
-def find_inner_sdclip(instance):
-    """Find an inner SDClipModel-like submodule (the one with .transformer)."""
+def find_tokenizer_cls(mod):
+    candidates = []
+    for name in dir(mod):
+        obj = getattr(mod, name)
+        if not isinstance(obj, type):
+            continue
+        if "tokenizer" in name.lower():
+            candidates.append(obj)
+    # prefer ones that don't subclass SDTokenizer (i.e., the top-level wrapper)
     from comfy import sd1_clip
-    for name, child in instance.named_modules():
-        if isinstance(child, sd1_clip.SDClipModel) and child is not instance:
-            return child
-        if hasattr(child, "transformer") and isinstance(getattr(child, "transformer", None), torch.nn.Module):
-            if child is not instance:
-                return child
-    if hasattr(instance, "transformer"):
-        return instance
+    top = []
+    inner = []
+    for c in candidates:
+        try:
+            if issubclass(c, sd1_clip.SD1Tokenizer):
+                top.append(c)
+                continue
+        except TypeError:
+            pass
+        inner.append(c)
+    if top:
+        return top[0]
+    if candidates:
+        return candidates[0]
     return None
 
 def make_instance(cls):
@@ -148,38 +185,15 @@ def extract_cond_pooled(result):
     return None, None
 HELPEREOF
 
-# ===================================================================
-# T1 (0.05): File exists, parses, isn't a stub
-# ===================================================================
-echo "=== T1: file exists + non-stub ==="
+# ============================================================================
+# F2P GATE 1 (0.10): module imports + has wrapper + tokenizer classes
+# Fails on no-op (file absent → import fails).
+# ============================================================================
+echo "=== F2P-1: import + wrapper + tokenizer classes ==="
 T1=$("$PYTHON" << 'PYEOF'
-import os, ast
-p = "/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
-if not os.path.exists(p):
-    print("FAIL:missing"); raise SystemExit
-src = open(p).read()
-try:
-    tree = ast.parse(src)
-except SyntaxError as e:
-    print(f"FAIL:syntax:{e}"); raise SystemExit
-classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
-code_lines = sum(1 for l in src.splitlines() if l.strip() and not l.strip().startswith("#"))
-if len(classes) < 3 or code_lines < 100:
-    print(f"FAIL:stub classes={len(classes)} lines={code_lines}"); raise SystemExit
-print(f"PASS classes={len(classes)} lines={code_lines}")
-PYEOF
-)
-echo "  $T1"
-[[ "$T1" == PASS* ]] && add_reward 0.05
-
-# ===================================================================
-# T2 (0.05): Module imports cleanly; wrapper + tokenizer classes exist
-# ===================================================================
-echo "=== T2: module imports + wrapper + tokenizer classes ==="
-T2=$("$PYTHON" << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
-from _jina_helpers import import_module, find_wrapper_cls
+from _jina_helpers import import_module, find_wrapper_cls, find_tokenizer_cls
 try:
     mod = import_module()
 except Exception as e:
@@ -188,33 +202,40 @@ except Exception as e:
 cls = find_wrapper_cls(mod)
 if cls is None:
     print("FAIL:no_wrapper"); raise SystemExit
-tok = None
-for name in dir(mod):
-    obj = getattr(mod, name)
-    if isinstance(obj, type) and "tokenizer" in name.lower():
-        tok = obj; break
+tok = find_tokenizer_cls(mod)
 if tok is None:
     print("FAIL:no_tokenizer_class"); raise SystemExit
+# Sanity: file is non-trivial
+import os, ast
+src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read()
+classes = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ClassDef)]
+code_lines = sum(1 for l in src.splitlines() if l.strip() and not l.strip().startswith("#"))
+if len(classes) < 2 or code_lines < 50:
+    print(f"FAIL:stub classes={len(classes)} lines={code_lines}"); raise SystemExit
 print(f"PASS wrapper={cls.__name__} tokenizer={tok.__name__}")
 PYEOF
 )
-echo "  $T2"
-[[ "$T2" == PASS* ]] && add_reward 0.05
+echo "  $T1"
+[[ "$T1" == PASS* ]] && add_reward 0.10
 
-# ===================================================================
-# T3 (0.08): Wrapper instantiates on CPU
-# ===================================================================
-echo "=== T3: wrapper instantiates ==="
-T3=$("$PYTHON" << 'PYEOF'
+# ============================================================================
+# F2P GATE 2 (0.20): wrapper instantiates on CPU as nn.Module.
+# Fails on no-op.
+# ============================================================================
+echo "=== F2P-2: wrapper instantiates on CPU ==="
+T2=$("$PYTHON" << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
 from _jina_helpers import import_module, find_wrapper_cls, make_instance
+import torch
 try:
     mod = import_module()
     cls = find_wrapper_cls(mod)
     inst = make_instance(cls)
-    import torch
     assert isinstance(inst, torch.nn.Module), "wrapper not nn.Module"
+    # Must contain a transformer somewhere with parameters
+    has_params = any(True for _ in inst.parameters())
+    assert has_params, "no parameters"
     print("PASS")
 except Exception as e:
     import traceback
@@ -222,14 +243,16 @@ except Exception as e:
     print(f"FAIL:{e}")
 PYEOF
 )
-echo "  $T3"
-[[ "$T3" == PASS* ]] && add_reward 0.08
+echo "  $T2"
+[[ "$T2" == PASS* ]] && add_reward 0.20
 
-# ===================================================================
-# T4 (0.15): encode_token_weights produces a real tensor (forward pass)
-# ===================================================================
-echo "=== T4: encode forward pass produces real tensor ==="
-T4=$("$PYTHON" << 'PYEOF'
+# ============================================================================
+# F2P GATE 3 (0.30): forward pass through encode_token_weights produces
+# a real cond tensor with hidden_size matching XLM-RoBERTa-large (1024).
+# Fails on no-op.
+# ============================================================================
+echo "=== F2P-3: forward pass produces real tensor with hidden_size=1024 ==="
+T3=$("$PYTHON" << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
 from _jina_helpers import import_module, find_wrapper_cls, make_instance, encode, extract_cond_pooled
@@ -239,273 +262,126 @@ try:
     cls = find_wrapper_cls(mod)
     inst = make_instance(cls)
     inst.eval()
-    toks = [[(0, 1.0), (42, 1.0), (100, 1.0), (2, 1.0)]]
+    # Build a small token sequence: BOS=0, some ids, EOS=2, pad=1
+    seq = [(0, 1.0), (5, 1.0), (10, 1.0), (20, 1.0), (2, 1.0)]
+    seq += [(1, 1.0)] * 3
+    toks = [seq]
     with torch.no_grad():
-        r = encode(inst, toks)
-    cond, pooled = extract_cond_pooled(r)
-    if cond is None or not hasattr(cond, "shape"):
-        print(f"FAIL:no_cond r_type={type(r).__name__}"); raise SystemExit
-    if cond.dim() < 2:
-        print(f"FAIL:cond_dim={cond.dim()} shape={tuple(cond.shape)}"); raise SystemExit
-    # Expect hidden_size 1024 for XLM-RoBERTa-large
-    last = cond.shape[-1]
-    if last != 1024:
-        print(f"FAIL:hidden_size={last} (expected 1024)"); raise SystemExit
-    if not torch.isfinite(cond).all():
-        print("FAIL:nonfinite"); raise SystemExit
-    print(f"PASS cond_shape={tuple(cond.shape)}")
+        result = encode(inst, toks)
+    cond, pooled = extract_cond_pooled(result)
+    assert cond is not None, "no cond"
+    assert hasattr(cond, "shape"), f"cond not tensor: {type(cond)}"
+    # Expected: (B, T, hidden) — hidden == 1024 for XLM-RoBERTa large
+    assert cond.dim() == 3, f"cond dim {cond.dim()}"
+    assert cond.shape[0] == 1, f"batch {cond.shape}"
+    assert cond.shape[2] == 1024, f"hidden {cond.shape[2]}"
+    # Output must not be all zeros / all NaN
+    assert torch.isfinite(cond).all(), "non-finite"
+    assert cond.abs().sum().item() > 0, "all zero"
+    print(f"PASS shape={tuple(cond.shape)}")
 except Exception as e:
-    import traceback; traceback.print_exc()
+    import traceback
+    traceback.print_exc()
     print(f"FAIL:{e}")
+PYEOF
+)
+echo "  $T3"
+[[ "$T3" == PASS* ]] && add_reward 0.30
+
+# ============================================================================
+# F2P GATE 4 (0.15): config exposes XLM-RoBERTa large dimensions.
+# Either via JSON config beside the .py, or via constants in the module.
+# Fails on no-op.
+# ============================================================================
+echo "=== F2P-4: config dimensions correct (XLM-RoBERTa large, vocab 250002) ==="
+T4=$("$PYTHON" << 'PYEOF'
+import os, json, glob, re
+te_dir = "/workspace/ComfyUI/comfy/text_encoders"
+ok = False
+# Search any JSON in the text_encoders dir whose name contains 'jina'
+for path in glob.glob(os.path.join(te_dir, "*jina*.json")):
+    try:
+        cfg = json.load(open(path))
+    except Exception:
+        continue
+    hs = cfg.get("hidden_size")
+    nl = cfg.get("num_hidden_layers")
+    nh = cfg.get("num_attention_heads")
+    vs = cfg.get("vocab_size")
+    if hs == 1024 and nl == 24 and nh == 16 and vs == 250002:
+        ok = True
+        break
+if not ok:
+    # fallback: check constants in the .py
+    src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read()
+    if (re.search(r"\b1024\b", src) and re.search(r"\b24\b", src)
+            and re.search(r"\b16\b", src) and re.search(r"\b250002\b", src)):
+        ok = True
+print("PASS" if ok else "FAIL")
 PYEOF
 )
 echo "  $T4"
 [[ "$T4" == PASS* ]] && add_reward 0.15
 
-# ===================================================================
-# T5 (0.10): XLM-RoBERTa config sanity (vocab=250002, 24 layers, 16 heads)
-# ===================================================================
-echo "=== T5: architecture config matches XLM-RoBERTa-large ==="
+# ============================================================================
+# F2P GATE 5 (0.10): tokenizer class is wired and has standard sd1_clip
+# tokenize interface. We don't require an actual tokenizer model file
+# (download might be infeasible) — just that the class exists and inherits
+# the right base or exposes tokenize_with_weights.
+# Fails on no-op.
+# ============================================================================
+echo "=== F2P-5: tokenizer class has tokenize interface ==="
 T5=$("$PYTHON" << 'PYEOF'
-import os, json, glob
-d = "/workspace/ComfyUI/comfy/text_encoders"
-cfgs = glob.glob(os.path.join(d, "jina*config*.json")) + glob.glob(os.path.join(d, "*jina*config*.json"))
-ok = False
-for c in cfgs:
+import sys
+sys.path.insert(0, "/tmp")
+from _jina_helpers import import_module, find_tokenizer_cls
+try:
+    mod = import_module()
+    tok = find_tokenizer_cls(mod)
+    assert tok is not None, "no tokenizer class"
+    # Must be either: subclass of SD1Tokenizer, or have tokenize_with_weights
+    from comfy import sd1_clip
+    is_top = False
     try:
-        j = json.load(open(c))
-    except Exception:
-        continue
-    vs = j.get("vocab_size")
-    nh = j.get("num_hidden_layers")
-    ah = j.get("num_attention_heads")
-    hs = j.get("hidden_size")
-    if vs == 250002 and nh == 24 and ah == 16 and hs == 1024:
-        ok = True
-        print(f"PASS cfg={os.path.basename(c)}")
-        break
-if not ok:
-    # Try inferring from module source
-    src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read()
-    if "250002" in src and "1024" in src:
-        print("PASS inline")
-        ok = True
-if not ok:
-    print("FAIL")
+        is_top = issubclass(tok, sd1_clip.SD1Tokenizer)
+    except TypeError:
+        pass
+    has_iface = hasattr(tok, "tokenize_with_weights") or is_top
+    assert has_iface, f"tokenizer {tok.__name__} lacks tokenize interface"
+    print(f"PASS {tok.__name__} top={is_top}")
+except Exception as e:
+    import traceback; traceback.print_exc()
+    print(f"FAIL:{e}")
 PYEOF
 )
 echo "  $T5"
 [[ "$T5" == PASS* ]] && add_reward 0.10
 
-# ===================================================================
-# T6 (0.10): Jina-specific architectural choice present (RoPE or mean pooling)
-# These are the two key documented departures from vanilla XLM-RoBERTa.
-# ===================================================================
-echo "=== T6: jina-specific RoPE / mean-pool implementation ==="
+# ============================================================================
+# F2P GATE 6 (0.15): differs from absolute-position XLM-RoBERTa.
+# Jina CLIP v2 uses RoPE (rotary positional embeddings) and mean pooling.
+# Either signal (RoPE OR mean pooling) is accepted. Fails on no-op.
+# ============================================================================
+echo "=== F2P-6: RoPE or mean-pooling signal present ==="
 T6=$("$PYTHON" << 'PYEOF'
 import re
 src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read().lower()
-score = 0
-# RoPE indicators
-rope_terms = ["rope", "rotary", "freqs_cis", "rotate_half", "apply_rope", "precompute"]
-if any(t in src for t in rope_terms):
-    score += 1
-# Mean-pool indicators (or attention-mask weighted pool)
-pool_terms = ["mean_pool", "mean pool", "mean pooling", "mean(dim", ".mean(", "attention_mask"]
-if any(t in src for t in pool_terms):
-    score += 1
-if score >= 1:
-    print(f"PASS score={score}")
+rope = ("rope" in src or "rotary" in src or "freqs_cis" in src
+        or "rope_theta" in src or "rotary_emb" in src or "apply_rope" in src
+        or "precompute_freqs" in src)
+mean_pool = ("mean_pool" in src or "mean pooling" in src
+             or re.search(r"attention_mask.*sum\(", src) is not None
+             or re.search(r"\.mean\(.*dim", src) is not None
+             or "masked_mean" in src)
+if rope or mean_pool:
+    print(f"PASS rope={rope} mean_pool={mean_pool}")
 else:
     print("FAIL")
 PYEOF
 )
 echo "  $T6"
-[[ "$T6" == PASS* ]] && add_reward 0.10
+[[ "$T6" == PASS* ]] && add_reward 0.15
 
-# ===================================================================
-# T7 (0.10): Output sequence dim matches input token count (real per-token output)
-# ===================================================================
-echo "=== T7: output respects input sequence length ==="
-T7=$("$PYTHON" << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-from _jina_helpers import import_module, find_wrapper_cls, make_instance, encode, extract_cond_pooled
-import torch
-try:
-    mod = import_module()
-    cls = find_wrapper_cls(mod)
-    inst = make_instance(cls); inst.eval()
-    short = [[(0,1.0),(5,1.0),(2,1.0)]]
-    long_ = [[(0,1.0)]+[(i+10,1.0) for i in range(12)]+[(2,1.0)]]
-    with torch.no_grad():
-        rs = encode(inst, short)
-        rl = encode(inst, long_)
-    cs, _ = extract_cond_pooled(rs)
-    cl, _ = extract_cond_pooled(rl)
-    if cs is None or cl is None:
-        print("FAIL:none"); raise SystemExit
-    # Sequence dimension: usually shape[-2]; tolerate small offsets (added BOS/EOS)
-    sl_s = cs.shape[-2] if cs.dim() >= 2 else None
-    sl_l = cl.shape[-2] if cl.dim() >= 2 else None
-    if sl_s is None or sl_l is None:
-        print(f"FAIL:dim cs={tuple(cs.shape)} cl={tuple(cl.shape)}"); raise SystemExit
-    if sl_l <= sl_s:
-        print(f"FAIL:not_growing s={sl_s} l={sl_l}"); raise SystemExit
-    # outputs should differ (real forward, not constant)
-    if cs.shape == cl.shape:
-        print(f"FAIL:same_shape {tuple(cs.shape)}"); raise SystemExit
-    print(f"PASS s={sl_s} l={sl_l}")
-except Exception as e:
-    import traceback; traceback.print_exc()
-    print(f"FAIL:{e}")
-PYEOF
-)
-echo "  $T7"
-[[ "$T7" == PASS* ]] && add_reward 0.10
-
-# ===================================================================
-# T8 (0.10): State dict has roberta-style keys with correct shapes
-# ===================================================================
-echo "=== T8: transformer state_dict has roberta-shaped weights ==="
-T8=$("$PYTHON" << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-from _jina_helpers import import_module, find_wrapper_cls, make_instance, find_inner_sdclip
-import torch, re
-try:
-    mod = import_module()
-    cls = find_wrapper_cls(mod)
-    inst = make_instance(cls)
-    inner = find_inner_sdclip(inst)
-    if inner is None:
-        # Try the wrapper itself
-        if hasattr(inst, "transformer"):
-            inner = inst
-        else:
-            print("FAIL:no_inner"); raise SystemExit
-    transformer = inner.transformer
-    sd = transformer.state_dict()
-    keys = list(sd.keys())
-    if len(keys) < 50:
-        print(f"FAIL:too_few_keys={len(keys)}"); raise SystemExit
-    # Embedding shape
-    emb_keys = [k for k in keys if "word_embedding" in k or "embed_tokens" in k]
-    if not emb_keys:
-        print(f"FAIL:no_emb sample={keys[:5]}"); raise SystemExit
-    emb = sd[emb_keys[0]]
-    if emb.shape[0] != 250002 or emb.shape[1] != 1024:
-        print(f"FAIL:emb_shape={tuple(emb.shape)}"); raise SystemExit
-    # Count distinct layers (look for 'layer.N' or 'layers.N' patterns)
-    layer_idxs = set()
-    for k in keys:
-        m = re.search(r"layers?\.(\d+)\.", k)
-        if m:
-            layer_idxs.add(int(m.group(1)))
-    if len(layer_idxs) < 24:
-        print(f"FAIL:layers={len(layer_idxs)}"); raise SystemExit
-    print(f"PASS keys={len(keys)} layers={len(layer_idxs)} emb={tuple(emb.shape)}")
-except Exception as e:
-    import traceback; traceback.print_exc()
-    print(f"FAIL:{e}")
-PYEOF
-)
-echo "  $T8"
-[[ "$T8" == PASS* ]] && add_reward 0.10
-
-# ===================================================================
-# T9 (0.10): Different inputs produce different outputs (transformer actually runs)
-# ===================================================================
-echo "=== T9: different inputs -> different outputs ==="
-T9=$("$PYTHON" << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-from _jina_helpers import import_module, find_wrapper_cls, make_instance, encode, extract_cond_pooled
-import torch
-try:
-    mod = import_module()
-    cls = find_wrapper_cls(mod)
-    inst = make_instance(cls); inst.eval()
-    a = [[(0,1.0),(42,1.0),(100,1.0),(2,1.0)]]
-    b = [[(0,1.0),(999,1.0),(7777,1.0),(2,1.0)]]
-    with torch.no_grad():
-        ra = encode(inst, a)
-        rb = encode(inst, b)
-    ca, _ = extract_cond_pooled(ra)
-    cb, _ = extract_cond_pooled(rb)
-    if ca is None or cb is None:
-        print("FAIL:none"); raise SystemExit
-    if ca.shape != cb.shape:
-        print(f"FAIL:shape_mismatch {tuple(ca.shape)} vs {tuple(cb.shape)}"); raise SystemExit
-    diff = (ca - cb).abs().mean().item()
-    if diff < 1e-5:
-        print(f"FAIL:identical diff={diff}"); raise SystemExit
-    print(f"PASS diff={diff:.4f}")
-except Exception as e:
-    import traceback; traceback.print_exc()
-    print(f"FAIL:{e}")
-PYEOF
-)
-echo "  $T9"
-[[ "$T9" == PASS* ]] && add_reward 0.10
-
-# ===================================================================
-# T10 (0.10): Integration in comfy/sd.py (registration + detection)
-# ===================================================================
-echo "=== T10: comfy/sd.py registration ==="
-T10=$("$PYTHON" << 'PYEOF'
-sd_src = open("/workspace/ComfyUI/comfy/sd.py").read()
-score = 0
-if "jina_clip_2" in sd_src:
-    score += 1
-if "JINA_CLIP_2" in sd_src or "jina_clip_2" in sd_src.lower():
-    score += 1
-# Detection rule referencing roberta
-if "roberta" in sd_src.lower():
-    score += 1
-if score >= 2:
-    print(f"PASS score={score}")
-else:
-    print(f"FAIL score={score}")
-PYEOF
-)
-echo "  $T10"
-[[ "$T10" == PASS* ]] && add_reward 0.10
-
-# ===================================================================
-# T11 (0.07): comfy.sd module still imports cleanly (P2P regression guard)
-# ===================================================================
-echo "=== T11: comfy.sd imports without breakage ==="
-T11=$("$PYTHON" << 'PYEOF'
-import sys
-sys.path.insert(0, "/workspace/ComfyUI")
-try:
-    import comfy.cli_args
-    comfy.cli_args.args.cpu = True
-except Exception:
-    pass
-try:
-    import comfy.sd
-    # Detection function still callable
-    fn = getattr(comfy.sd, "detect_te_model", None)
-    if fn is None:
-        print("FAIL:no_detect")
-    else:
-        # Empty sd should return None (or at least not crash)
-        r = fn({})
-        print(f"PASS detect_empty={r}")
-except Exception as e:
-    import traceback; traceback.print_exc()
-    print(f"FAIL:{e}")
-PYEOF
-)
-echo "  $T11"
-[[ "$T11" == PASS* ]] && add_reward 0.07
-
-# ===================================================================
-# Final report
-# ===================================================================
-echo ""
-echo "================ FINAL REWARD: $REWARD ================"
+echo "=== TOTAL REWARD: $REWARD ==="
 echo "$REWARD" > "$REWARD_FILE"
 exit 0

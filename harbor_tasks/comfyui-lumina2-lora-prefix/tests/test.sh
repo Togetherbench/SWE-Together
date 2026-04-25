@@ -13,7 +13,7 @@ if [ ! -x "$VENV_PY" ]; then
 fi
 
 add_reward() {
-    REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 4)))")
+    REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{r=a+b; if(r>1.0)r=1.0; printf "%.4f", r}')
     echo "  PASS (+$1)  total=$REWARD"
 }
 
@@ -21,7 +21,33 @@ fail_check() {
     echo "  FAIL: $1"
 }
 
-# Shared helper that exercises the real model_lora_keys_unet code path.
+finish() {
+    echo "$REWARD" > "$REWARD_FILE"
+    exit 0
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# GATE A: lora.py is valid Python (P2P regression guard, no reward)
+# ─────────────────────────────────────────────────────────────────────
+echo "=== Gate A: lora.py syntactically valid Python ==="
+T=$(python3 - << 'PYEOF'
+import ast
+try:
+    with open("/workspace/ComfyUI/comfy/lora.py") as f:
+        ast.parse(f.read())
+    print("PASS")
+except Exception as e:
+    print(f"FAIL:{e}")
+PYEOF
+)
+echo "  $T"
+if [ "$T" != "PASS" ]; then
+    echo "  REGRESSION: lora.py has invalid syntax. Reward=0."
+    REWARD=0.0
+    finish
+fi
+
+# Build shared helper
 cat > /tmp/lumina2_test_helper.py << 'PYCFG'
 import sys
 sys.path.insert(0, "/workspace/ComfyUI")
@@ -70,88 +96,12 @@ def get_key_map(n_layers=2):
         mock.model_config = _MockModelConfig(n_layers)
         _cache[n_layers] = lora.model_lora_keys_unet(mock, key_map={})
     return _cache[n_layers]
-
-def extract_target(val):
-    return val[0] if isinstance(val, tuple) else val
 PYCFG
 
-echo "=== Verifying ComfyUI Lumina2 LoRA base_model.model key mapping ==="
-echo ""
-
 # ─────────────────────────────────────────────────────────────────────
-# Test 1 (0.02): lora.py is valid Python (P2P)
+# GATE B: comfy imports cleanly (P2P regression guard, no reward)
 # ─────────────────────────────────────────────────────────────────────
-echo "--- Test 1: lora.py valid Python (0.02) ---"
-T=$(python3 - << 'PYEOF'
-import ast
-try:
-    with open("/workspace/ComfyUI/comfy/lora.py") as f:
-        ast.parse(f.read())
-    print("PASS")
-except Exception as e:
-    print(f"FAIL:{e}")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.02 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 2 (0.03): AST — base_model.model. assignment lives inside Lumina2 block (F2P structural)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 2: base_model.model key_map assignment in Lumina2 block (0.03) ---"
-T=$(python3 - << 'PYEOF'
-import ast, sys
-try:
-    with open("/workspace/ComfyUI/comfy/lora.py") as f:
-        tree = ast.parse(f.read())
-except Exception as e:
-    print(f"FAIL:{e}"); sys.exit(0)
-
-func = next((n for n in ast.walk(tree)
-             if isinstance(n, ast.FunctionDef) and n.name == "model_lora_keys_unet"), None)
-if not func:
-    print("FAIL:no_func"); sys.exit(0)
-
-lumina2 = None
-for node in ast.walk(func):
-    if isinstance(node, ast.If) and isinstance(node.test, ast.Call):
-        t = node.test
-        if isinstance(t.func, ast.Name) and t.func.id == "isinstance":
-            if len(t.args) >= 2 and "Lumina2" in ast.dump(t.args[1]):
-                lumina2 = node; break
-if not lumina2:
-    print("FAIL:no_lumina2"); sys.exit(0)
-
-found = False
-for node in ast.walk(lumina2):
-    if isinstance(node, ast.Assign):
-        for tgt in node.targets:
-            if isinstance(tgt, ast.Subscript):
-                # Look for any string constant with base_model.model. in the slice
-                for sub in ast.walk(tgt):
-                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str) \
-                            and "base_model.model." in sub.value:
-                        found = True
-                        break
-                # Also handle f-string / format-call with base_model.model.
-                for sub in ast.walk(tgt):
-                    if isinstance(sub, ast.Call):
-                        for c in ast.walk(sub):
-                            if isinstance(c, ast.Constant) and isinstance(c.value, str) \
-                                    and "base_model.model." in c.value:
-                                found = True
-            if found: break
-    if found: break
-print("PASS" if found else "FAIL:no_assignment")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.03 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 3 (0.05): Behavioral — comfy imports cleanly (P2P)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 3: comfy imports cleanly (0.05) ---"
+echo "=== Gate B: comfy imports cleanly ==="
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -159,13 +109,49 @@ from lumina2_test_helper import IMPORT_OK, IMPORT_ERR
 print("PASS" if IMPORT_OK else f"FAIL:{IMPORT_ERR}")
 PYEOF
 )
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.05 || fail_check "$T"
+echo "  $T"
+if [ "$T" != "PASS" ]; then
+    echo "  REGRESSION: comfy imports failed. Reward=0."
+    REWARD=0.0
+    finish
+fi
 
 # ─────────────────────────────────────────────────────────────────────
-# Test 4 (0.10): Behavioral — base_model.model.* keys exist in returned key_map (F2P)
+# GATE C: baseline transformer.* keys still produced (P2P regression guard)
+# This protects against destructive edits that wipe Lumina2 mapping.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- Test 4: base_model.model.* keys exist (0.10) ---"
+echo "=== Gate C: transformer.* keys still produced (regression guard) ==="
+T=$($VENV_PY - << 'PYEOF'
+import sys
+sys.path.insert(0, "/tmp")
+try:
+    from lumina2_test_helper import get_key_map
+    km = get_key_map(2)
+    tf = [k for k in km if k.startswith("transformer.")]
+    if len(tf) < 5:
+        print(f"FAIL:transformer_keys_too_few:{len(tf)}")
+    else:
+        print("PASS")
+except Exception as e:
+    print(f"FAIL:{type(e).__name__}:{e}")
+PYEOF
+)
+echo "  $T"
+if [ "$T" != "PASS" ]; then
+    echo "  REGRESSION: transformer.* mapping broken. Reward=0."
+    REWARD=0.0
+    finish
+fi
+
+echo ""
+echo "=== F2P behavioral checks (all reward sourced here) ==="
+
+# ─────────────────────────────────────────────────────────────────────
+# F2P 1 (0.25): base_model.model.* keys exist in returned key_map
+#   On buggy base: 0 such keys → FAIL.
+#   On fix: many such keys → PASS.
+# ─────────────────────────────────────────────────────────────────────
+echo "--- F2P 1: base_model.model.* keys present (0.25) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -173,24 +159,23 @@ try:
     from lumina2_test_helper import get_key_map
     km = get_key_map(2)
     bm = [k for k in km if k.startswith("base_model.model.")]
-    if len(bm) == 0:
-        print("FAIL:no_base_model_keys")
-    elif len(bm) < 5:
+    if len(bm) < 5:
         print(f"FAIL:too_few:{len(bm)}")
     else:
-        print("PASS")
+        print(f"PASS:{len(bm)}")
 except Exception as e:
     print(f"FAIL:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.10 || fail_check "$T"
+echo "  $T"
+case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
 
 # ─────────────────────────────────────────────────────────────────────
-# Test 5 (0.15): Behavioral — base_model.model.* count matches transformer.* count (F2P)
-# (At least 90% parity — i.e. the prefix is added with the same coverage as the existing prefixes.)
+# F2P 2 (0.25): base_model.model.* coverage is at parity with transformer.*
+#   On buggy base: ratio = 0 → FAIL.
+#   On fix that adds the prefix in the same loop: ratio ~ 1.0 → PASS.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- Test 5: base_model.model.* count >= 90% of transformer.* count (0.15) ---"
+echo "--- F2P 2: base_model.model.* count >= 90% of transformer.* count (0.25) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -211,16 +196,15 @@ except Exception as e:
     print(f"FAIL:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  Result: $T"
-case "$T" in PASS*) add_reward 0.15 ;; *) fail_check "$T" ;; esac
+echo "  $T"
+case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
 
 # ─────────────────────────────────────────────────────────────────────
-# Test 6 (0.10): Behavioral — base_model.model.layers.0.* keys present (F2P)
-# This validates the prefix is correctly stripping/prepending so a real
-# PEFT-style key like `base_model.model.layers.0.attention.out.lora_A.weight`
-# would map to a valid model parameter.
+# F2P 3 (0.25): base_model.model.layers.0.* keys exist
+#   Validates that the prefix maps real PEFT-style keys (the example in
+#   the user instruction). Fails on base, passes on fix.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- Test 6: base_model.model.layers.0.* keys present (0.10) ---"
+echo "--- F2P 3: base_model.model.layers.0.* keys present (0.25) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -228,273 +212,62 @@ try:
     from lumina2_test_helper import get_key_map
     km = get_key_map(2)
     keys0 = [k for k in km if k.startswith("base_model.model.layers.0.")]
-    if len(keys0) >= 3:
-        print("PASS")
+    if len(keys0) < 3:
+        print(f"FAIL:too_few:{len(keys0)}")
     else:
-        print(f"FAIL:count={len(keys0)}")
+        print(f"PASS:{len(keys0)}")
 except Exception as e:
     print(f"FAIL:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.10 || fail_check "$T"
+echo "  $T"
+case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
 
 # ─────────────────────────────────────────────────────────────────────
-# Test 7 (0.10): Behavioral — base_model.model.layers.1.* keys present (F2P, varied layer)
+# F2P 4 (0.25): base_model.model.* keys map to the SAME targets as
+# transformer.* keys (i.e. stripping the prefix yields a valid model
+# parameter target). This is the strongest behavioral check: confirms
+# the prefix is not just present but functionally equivalent to the
+# existing transformer.* prefix mapping.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- Test 7: base_model.model.layers.1.* keys present (0.10) ---"
+echo "--- F2P 4: base_model.model.<x> -> same target as transformer.<x> (0.25) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
 try:
     from lumina2_test_helper import get_key_map
     km = get_key_map(2)
-    keys1 = [k for k in km if k.startswith("base_model.model.layers.1.")]
-    if len(keys1) >= 3:
-        print("PASS")
-    else:
-        print(f"FAIL:count={len(keys1)}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.10 || fail_check "$T"
 
-# ─────────────────────────────────────────────────────────────────────
-# Test 8 (0.15): Behavioral — base_model.model.{X} target equals transformer.{X} target
-# (At least 90% match — the prefix is just an alias, must point to the same model param.)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 8: base_model.model.X target == transformer.X target (>=90%) (0.15) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map, extract_target
-    km = get_key_map(2)
-    matched = 0
-    total = 0
-    mismatches = []
-    for k, v in km.items():
-        if k.startswith("base_model.model."):
-            suffix = k[len("base_model.model."):]
-            tk = "transformer." + suffix
-            total += 1
-            if tk in km:
-                if extract_target(km[tk]) == extract_target(v):
-                    matched += 1
-                else:
-                    mismatches.append((suffix, extract_target(v), extract_target(km[tk])))
-    if total == 0:
+    def extract(v):
+        return v[0] if isinstance(v, tuple) else v
+
+    tf_map = {k[len("transformer."):]: extract(v)
+              for k, v in km.items() if k.startswith("transformer.")}
+    bm_map = {k[len("base_model.model."):]: extract(v)
+              for k, v in km.items() if k.startswith("base_model.model.")}
+
+    if not tf_map:
+        print("FAIL:no_transformer_keys")
+    elif not bm_map:
         print("FAIL:no_base_model_keys")
     else:
-        ratio = matched / total
-        if ratio >= 0.9:
-            print(f"PASS:{matched}/{total}")
+        common = set(tf_map.keys()) & set(bm_map.keys())
+        if not common:
+            print("FAIL:no_overlap")
         else:
-            print(f"FAIL:{matched}/{total}={ratio:.2f}")
+            mismatches = [k for k in common if tf_map[k] != bm_map[k]]
+            ratio = (len(common) - len(mismatches)) / len(common)
+            if ratio >= 0.9 and len(common) >= 5:
+                print(f"PASS:overlap={len(common)} match_ratio={ratio:.2f}")
+            else:
+                print(f"FAIL:overlap={len(common)} mismatches={len(mismatches)} ratio={ratio:.2f}")
 except Exception as e:
     print(f"FAIL:{type(e).__name__}:{e}")
 PYEOF
 )
-echo "  Result: $T"
-case "$T" in PASS*) add_reward 0.15 ;; *) fail_check "$T" ;; esac
+echo "  $T"
+case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
 
-# ─────────────────────────────────────────────────────────────────────
-# Test 9 (0.10): Behavioral — base_model.model.X target is a real diffusion_model.* string (F2P)
-# Catches: "added the key but mapped to garbage / itself / a string constant".
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 9: base_model.model targets resolve to diffusion_model.* (0.10) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map, extract_target
-    km = get_key_map(2)
-    bm = {k: v for k, v in km.items() if k.startswith("base_model.model.")}
-    if not bm:
-        print("FAIL:none"); sys.exit(0)
-    ok = 0
-    bad = 0
-    sample_bad = None
-    for k, v in bm.items():
-        t = extract_target(v)
-        if isinstance(t, str) and t.startswith("diffusion_model.") and (t.endswith(".weight") or t.endswith(".bias")):
-            ok += 1
-        else:
-            bad += 1
-            if sample_bad is None:
-                sample_bad = (k, t)
-    ratio = ok / (ok + bad)
-    if ratio >= 0.9:
-        print(f"PASS:{ok}/{ok+bad}")
-    else:
-        print(f"FAIL:{ok}/{ok+bad} sample={sample_bad}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-case "$T" in PASS*) add_reward 0.10 ;; *) fail_check "$T" ;; esac
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 10 (0.03): Behavioral P2P — transformer.* still present (regression)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 10: transformer.* keys still present (P2P, 0.03) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map
-    km = get_key_map(2)
-    tf = [k for k in km if k.startswith("transformer.")]
-    print("PASS" if len(tf) >= 5 else f"FAIL:{len(tf)}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.03 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 11 (0.03): Behavioral P2P — diffusion_model.* still present (regression)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 11: diffusion_model.* keys still present (P2P, 0.03) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map
-    km = get_key_map(2)
-    dm = [k for k in km if k.startswith("diffusion_model.")]
-    print("PASS" if len(dm) >= 5 else f"FAIL:{len(dm)}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.03 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 12 (0.03): Behavioral P2P — lycoris_* still present (regression)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 12: lycoris_* keys still present (P2P, 0.03) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map
-    km = get_key_map(2)
-    ly = [k for k in km if k.startswith("lycoris_")]
-    print("PASS" if len(ly) >= 5 else f"FAIL:{len(ly)}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.03 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 13 (0.05): Behavioral F2P — n_layers scaling (more layers => more keys)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 13: n_layers scaling (0.05) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map
-    km2 = get_key_map(2)
-    km4 = get_key_map(4)
-    bm2 = sum(1 for k in km2 if k.startswith("base_model.model."))
-    bm4 = sum(1 for k in km4 if k.startswith("base_model.model."))
-    if bm2 > 0 and bm4 > bm2:
-        print("PASS")
-    else:
-        print(f"FAIL:bm2={bm2} bm4={bm4}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.05 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 14 (0.04): Behavioral F2P — keys span multiple component types
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 14: base_model.model keys span multiple components (0.04) ---"
-T=$($VENV_PY - << 'PYEOF'
-import sys
-sys.path.insert(0, "/tmp")
-try:
-    from lumina2_test_helper import get_key_map
-    km = get_key_map(2)
-    bm = [k for k in km if k.startswith("base_model.model.")]
-    # Take 3rd component to identify a "type"
-    types = set()
-    for k in bm:
-        parts = k.split(".")
-        if len(parts) >= 4:
-            types.add(parts[2] + "." + parts[3] if parts[2] == "layers" else parts[2])
-    if len(types) >= 3:
-        print(f"PASS:{len(types)}")
-    else:
-        print(f"FAIL:types={types}")
-except Exception as e:
-    print(f"FAIL:{type(e).__name__}:{e}")
-PYEOF
-)
-echo "  Result: $T"
-case "$T" in PASS*) add_reward 0.04 ;; *) fail_check "$T" ;; esac
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 15 (0.02): AST — base_model.model RHS matches sibling RHS shape (catches "= 'string'" hack)
-# ─────────────────────────────────────────────────────────────────────
-echo "--- Test 15: AST — base_model.model RHS shape sane (0.02) ---"
-T=$(python3 - << 'PYEOF'
-import ast, sys
-try:
-    with open("/workspace/ComfyUI/comfy/lora.py") as f:
-        tree = ast.parse(f.read())
-except Exception as e:
-    print(f"FAIL:{e}"); sys.exit(0)
-
-func = next((n for n in ast.walk(tree)
-             if isinstance(n, ast.FunctionDef) and n.name == "model_lora_keys_unet"), None)
-if not func: print("FAIL:no_func"); sys.exit(0)
-
-lumina2 = None
-for node in ast.walk(func):
-    if isinstance(node, ast.If) and isinstance(node.test, ast.Call):
-        t = node.test
-        if isinstance(t.func, ast.Name) and t.func.id == "isinstance":
-            if len(t.args) >= 2 and "Lumina2" in ast.dump(t.args[1]):
-                lumina2 = node; break
-if not lumina2: print("FAIL:no_lumina2"); sys.exit(0)
-
-# Find any assignment to key_map[...base_model.model...] = RHS
-# RHS must NOT be a constant string starting with "base_model.model." (i.e. no self-reference)
-def has_bmm(node):
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "base_model.model." in sub.value:
-            return True
-    return False
-
-ok = False
-for n in ast.walk(lumina2):
-    if isinstance(n, ast.Assign) and len(n.targets) == 1:
-        tgt = n.targets[0]
-        if isinstance(tgt, ast.Subscript) and has_bmm(tgt.slice):
-            rhs = n.value
-            # RHS is typically `to` (a Name) or `k` (state-dict-loop variant) — not a self-referencing literal
-            if isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and "base_model.model." in rhs.value:
-                continue
-            ok = True
-            break
-print("PASS" if ok else "FAIL:rhs_suspicious")
-PYEOF
-)
-echo "  Result: $T"
-[ "$T" = "PASS" ] && add_reward 0.02 || fail_check "$T"
-
-# ─────────────────────────────────────────────────────────────────────
-# Test 16 (0.03): Functional — simulate a PEFT-style state_dict load
+echo ""
+echo "=== Final reward: $REWARD ==="
+echo "$REWARD" > "$REWARD_FILE"

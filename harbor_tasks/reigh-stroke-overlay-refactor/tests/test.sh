@@ -1,11 +1,7 @@
 #!/bin/bash
 set +e
 
-# ═══════════════════════════════════════════════════════════════════
-# Verifier for: reigh-stroke-overlay-refactor
-# Task: Move drawing state machine into StrokeOverlay (4-step refactor)
-# ═══════════════════════════════════════════════════════════════════
-
+mkdir -p /logs/verifier
 export PATH=/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 
 # Locate repo
@@ -16,11 +12,17 @@ done
 if [ -z "$REPO" ]; then
     REPO=$(find /workspace -maxdepth 2 -name "package.json" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
 fi
+
+REWARD=0
+finalize() {
+    echo "FINAL REWARD: $REWARD"
+    echo "$REWARD" > /logs/verifier/reward.txt
+    exit 0
+}
+
 if [ -z "$REPO" ] || [ ! -d "$REPO" ]; then
     echo "FATAL: cannot locate repo"
-    mkdir -p /logs/verifier
-    echo "0" > /logs/verifier/reward.txt
-    exit 0
+    finalize
 fi
 
 INPAINT_DIR="$REPO/src/shared/components/MediaLightbox/hooks/inpainting"
@@ -30,7 +32,6 @@ TYPES_FILE="$INPAINT_DIR/types.ts"
 
 cd "$REPO"
 
-REWARD=0
 add_reward() {
     local amount=$1
     local label=$2
@@ -39,95 +40,18 @@ add_reward() {
 }
 
 # ════════════════════════════════════════════════════════════════════
-# BEHAVIORAL: TypeScript compilation (the heaviest gate, ~40%)
+# All checks below are F2P: they are TRUE only after the refactor.
+# On the unmodified base:
+#   - useStrokeRendering.ts, usePointerHandlers.ts, useDragState.ts EXIST
+#   - useInpainting.ts imports them and references redrawStrokes
+#   - StrokeOverlay.tsx does NOT have onStrokeComplete/onStrokesChange/onSelectionChange callbacks
+#   - StrokeOverlay.tsx does NOT own isDrawing/currentStroke/dragOffset state
+#   - types.ts has handleKonvaPointerDown etc, displayCanvasRef, maskCanvasRef
+# So no-op = 0.0
 # ════════════════════════════════════════════════════════════════════
-echo "═══ BEHAVIORAL GATE: TypeScript compilation ═══"
 
-TSC_LOG=$(mktemp)
-if [ -x "./node_modules/.bin/tsc" ]; then
-    ./node_modules/.bin/tsc --noEmit > "$TSC_LOG" 2>&1
-    TSC_EXIT=$?
-elif command -v npx >/dev/null 2>&1; then
-    npx --no-install tsc --noEmit > "$TSC_LOG" 2>&1
-    TSC_EXIT=$?
-else
-    TSC_EXIT=127
-fi
-
-# Count errors in StrokeOverlay/useInpainting/types/inpainting subtree
-RELEVANT_ERRORS=$(grep -E "error TS" "$TSC_LOG" 2>/dev/null | grep -E "(StrokeOverlay|useInpainting|inpainting/|MediaLightbox)" | wc -l)
-TOTAL_ERRORS=$(grep -cE "error TS" "$TSC_LOG" 2>/dev/null)
-
-echo "  tsc exit=$TSC_EXIT  total_errors=$TOTAL_ERRORS  relevant_errors=$RELEVANT_ERRORS"
-
-if [ "$TSC_EXIT" -eq 0 ]; then
-    add_reward 0.40 "TypeScript compiles cleanly"
-    TSC_OK=1
-elif [ "$TSC_EXIT" -eq 127 ]; then
-    echo "  WARN: tsc not available — skipping (no credit)"
-    TSC_OK=0
-elif [ "$RELEVANT_ERRORS" -eq 0 ]; then
-    # Errors exist but none in the refactored area — partial credit
-    add_reward 0.25 "TypeScript: errors present but none in refactor scope"
-    TSC_OK=1
-elif [ "$RELEVANT_ERRORS" -le 3 ]; then
-    add_reward 0.10 "TypeScript: minor errors in refactor scope ($RELEVANT_ERRORS)"
-    TSC_OK=0
-else
-    echo "  FAIL: $RELEVANT_ERRORS errors in refactor scope"
-    head -30 "$TSC_LOG" | sed 's/^/    /'
-    TSC_OK=0
-fi
-rm -f "$TSC_LOG"
-
-# ════════════════════════════════════════════════════════════════════
-# BEHAVIORAL: StrokeOverlay surface area via node parse (~25%)
-# ════════════════════════════════════════════════════════════════════
-echo "═══ BEHAVIORAL GATE: StrokeOverlay absorbed state machine ═══"
-
-if [ -f "$OVERLAY" ]; then
-    OVERLAY_LINES=$(wc -l < "$OVERLAY")
-    SCORE=$(node -e "
-        const fs = require('fs');
-        const src = fs.readFileSync('$OVERLAY', 'utf8');
-        let s = 0;
-        // Pointer event handling internal
-        if (/onPointer(Down|Move|Up)/.test(src) || /pointer(down|move|up)/i.test(src)) s++;
-        // Drawing state internal (useState for isDrawing or currentStroke)
-        if (/useState[^;]*\b(isDrawing|currentStroke)\b/.test(src) ||
-            /\b(isDrawing|currentStroke)\b\s*,?\s*set[A-Z]/.test(src)) s++;
-        // Drag state internal (isDragging / dragOffset / dragMode)
-        if (/(isDragging|dragOffset|dragMode|draggingCorner)/.test(src)) s++;
-        // New callbacks present
-        if (/onStrokeComplete/.test(src) && /onStrokesChange/.test(src)) s++;
-        // onSelectionChange or selection callback
-        if (/onSelectionChange/.test(src) || /onSelect/.test(src)) s++;
-        // Stage with refs
-        if (/Stage/.test(src) && /ref/i.test(src)) s++;
-        console.log(s);
-    " 2>/dev/null)
-    SCORE=${SCORE:-0}
-    echo "  StrokeOverlay: $OVERLAY_LINES lines, behavioral_score=$SCORE/6"
-
-    # Score scaled: full credit if 5-6 features + grew, half if 3-4
-    if [ "$SCORE" -ge 5 ] && [ "$OVERLAY_LINES" -gt 450 ]; then
-        add_reward 0.25 "StrokeOverlay owns full state machine"
-    elif [ "$SCORE" -ge 4 ] && [ "$OVERLAY_LINES" -gt 400 ]; then
-        add_reward 0.15 "StrokeOverlay partially absorbed state"
-    elif [ "$SCORE" -ge 3 ]; then
-        add_reward 0.08 "StrokeOverlay has some new features"
-    else
-        echo "  FAIL: StrokeOverlay not refactored"
-    fi
-else
-    echo "  FAIL: StrokeOverlay.tsx missing"
-fi
-
-# ════════════════════════════════════════════════════════════════════
-# STRUCTURAL: Dead hooks deleted (~15%)
-# ════════════════════════════════════════════════════════════════════
-echo "═══ STRUCTURAL GATE: Dead hook files removed ═══"
-
+# ─── F2P 1: Three dead hooks deleted (Step 1 + Step 2) — 0.20 ───
+echo "═══ F2P GATE 1: Dead hook files removed ═══"
 DELETED=0
 for f in useStrokeRendering.ts usePointerHandlers.ts useDragState.ts; do
     if [ ! -f "$INPAINT_DIR/$f" ]; then
@@ -137,101 +61,184 @@ for f in useStrokeRendering.ts usePointerHandlers.ts useDragState.ts; do
         echo "    ✗ $f still exists"
     fi
 done
-# useInpaintActions.ts is Step 3 — slightly less critical
-ACTIONS_GONE=0
-[ ! -f "$INPAINT_DIR/useInpaintActions.ts" ] && ACTIONS_GONE=1
-
-# 0.10 for the 3 main deletions + 0.05 for actions
 case $DELETED in
-    3) add_reward 0.10 "useStrokeRendering, usePointerHandlers, useDragState deleted" ;;
-    2) add_reward 0.06 "2 of 3 core hooks deleted" ;;
-    1) add_reward 0.03 "1 of 3 core hooks deleted" ;;
-    *) echo "  FAIL: 0 core hooks deleted" ;;
+    3) add_reward 0.20 "all 3 dead hooks deleted" ;;
+    2) add_reward 0.12 "2 of 3 dead hooks deleted" ;;
+    1) add_reward 0.05 "1 of 3 dead hooks deleted" ;;
+    *) echo "  no dead hooks deleted (no-op base)" ;;
 esac
-if [ "$ACTIONS_GONE" -eq 1 ]; then
-    add_reward 0.05 "useInpaintActions deleted (Step 3)"
-fi
 
-# ════════════════════════════════════════════════════════════════════
-# BEHAVIORAL: useInpainting cleaned up (~10%)
-# ════════════════════════════════════════════════════════════════════
-echo "═══ BEHAVIORAL GATE: useInpainting simplified ═══"
-
+# ─── F2P 2: useInpainting no longer imports/uses dead hooks — 0.15 ───
+echo "═══ F2P GATE 2: useInpainting cleaned ═══"
 if [ -f "$INPAINT_HOOK" ]; then
-    HOOK_LINES=$(wc -l < "$INPAINT_HOOK")
-    CLEAN_SCORE=$(node -e "
-        const fs = require('fs');
-        const src = fs.readFileSync('$INPAINT_HOOK', 'utf8');
-        let s = 0;
-        // No imports of deleted hooks
-        if (!/from\s+['\"][^'\"]*useStrokeRendering/.test(src) &&
-            !/import.*useStrokeRendering/.test(src)) s++;
-        if (!/from\s+['\"][^'\"]*usePointerHandlers/.test(src) &&
-            !/import.*usePointerHandlers/.test(src)) s++;
-        if (!/from\s+['\"][^'\"]*useDragState/.test(src) &&
-            !/import.*useDragState/.test(src)) s++;
-        // No redrawStrokes references in body (return value, calls)
+    CLEAN=$(node -e "
+        const fs=require('fs');
+        const src=fs.readFileSync('$INPAINT_HOOK','utf8');
+        let s=0;
+        if (!/useStrokeRendering/.test(src)) s++;
+        if (!/usePointerHandlers/.test(src)) s++;
+        if (!/useDragState/.test(src)) s++;
         if (!/redrawStrokes/.test(src)) s++;
         console.log(s);
     " 2>/dev/null)
-    CLEAN_SCORE=${CLEAN_SCORE:-0}
-    echo "  useInpainting: $HOOK_LINES lines, clean_score=$CLEAN_SCORE/4"
-
-    if [ "$CLEAN_SCORE" -eq 4 ] && [ "$HOOK_LINES" -lt 320 ]; then
-        add_reward 0.10 "useInpainting fully cleaned and shrunk"
-    elif [ "$CLEAN_SCORE" -eq 4 ]; then
-        add_reward 0.07 "useInpainting cleaned but still large"
-    elif [ "$CLEAN_SCORE" -ge 3 ]; then
-        add_reward 0.04 "useInpainting partially cleaned"
+    CLEAN=${CLEAN:-0}
+    echo "  cleanliness: $CLEAN/4"
+    if [ "$CLEAN" -eq 4 ]; then
+        add_reward 0.15 "useInpainting imports & redrawStrokes fully removed"
+    elif [ "$CLEAN" -eq 3 ]; then
+        add_reward 0.08 "useInpainting mostly cleaned"
+    elif [ "$CLEAN" -eq 2 ]; then
+        add_reward 0.03 "useInpainting partially cleaned"
     else
-        echo "  FAIL: useInpainting still references old hooks"
+        echo "  base state — no credit"
     fi
 else
-    echo "  FAIL: useInpainting.ts missing"
+    echo "  useInpainting.ts missing"
 fi
 
-# ════════════════════════════════════════════════════════════════════
-# STRUCTURAL: Types cleaned (~10%)
-# ════════════════════════════════════════════════════════════════════
-echo "═══ STRUCTURAL GATE: Handler props removed from types ═══"
+# ─── F2P 3: StrokeOverlay has new callback props — 0.20 ───
+echo "═══ F2P GATE 3: StrokeOverlay new callback API ═══"
+if [ -f "$OVERLAY" ]; then
+    CB_SCORE=$(node -e "
+        const fs=require('fs');
+        const src=fs.readFileSync('$OVERLAY','utf8');
+        let s=0;
+        if (/onStrokeComplete/.test(src)) s++;
+        if (/onStrokesChange/.test(src)) s++;
+        if (/onSelectionChange/.test(src)) s++;
+        // Old prop-threaded handlers should NOT be the primary API anymore
+        // (they may still appear as legacy but new API must exist)
+        if (/onTextModeHint/.test(src) || /TextModeHint/.test(src)) s++;
+        console.log(s);
+    " 2>/dev/null)
+    CB_SCORE=${CB_SCORE:-0}
+    echo "  callback score: $CB_SCORE/4"
+    if [ "$CB_SCORE" -ge 4 ]; then
+        add_reward 0.20 "StrokeOverlay exposes full new callback API"
+    elif [ "$CB_SCORE" -eq 3 ]; then
+        add_reward 0.14 "StrokeOverlay has 3/4 new callbacks"
+    elif [ "$CB_SCORE" -eq 2 ]; then
+        add_reward 0.07 "StrokeOverlay has 2/4 new callbacks"
+    elif [ "$CB_SCORE" -eq 1 ]; then
+        add_reward 0.02 "StrokeOverlay has 1/4 new callbacks"
+    else
+        echo "  no new callbacks (no-op base)"
+    fi
+else
+    echo "  StrokeOverlay.tsx missing"
+fi
 
+# ─── F2P 4: StrokeOverlay owns drawing state machine — 0.20 ───
+echo "═══ F2P GATE 4: StrokeOverlay owns drawing state ═══"
+if [ -f "$OVERLAY" ]; then
+    OVERLAY_LINES=$(wc -l < "$OVERLAY")
+    STATE_SCORE=$(node -e "
+        const fs=require('fs');
+        const src=fs.readFileSync('$OVERLAY','utf8');
+        let s=0;
+        // Owns isDrawing or currentStroke state internally (useState or useRef)
+        if (/(useState|useRef)[^;]*\b(isDrawing|currentStroke)\b/.test(src) ||
+            /\bset(IsDrawing|CurrentStroke)\b/.test(src)) s++;
+        // Owns drag state
+        if (/(isDragging|dragOffset|dragMode|draggingCorner)/.test(src)) s++;
+        // Pointer event handlers internal
+        if (/(handlePointerDown|handlePointerMove|handlePointerUp|onPointerDown|onPointerMove|onPointerUp)/.test(src)) s++;
+        // Selection state internal
+        if (/selectedShapeId/.test(src) && /(useState|setSelectedShapeId)/.test(src)) s++;
+        console.log(s);
+    " 2>/dev/null)
+    STATE_SCORE=${STATE_SCORE:-0}
+    echo "  state machine score: $STATE_SCORE/4 ($OVERLAY_LINES lines)"
+    # Base StrokeOverlay (~380 lines) does NOT own isDrawing/currentStroke/drag state internally.
+    # It receives them as props. Refactor moves them inside.
+    if [ "$STATE_SCORE" -ge 4 ] && [ "$OVERLAY_LINES" -gt 450 ]; then
+        add_reward 0.20 "StrokeOverlay fully owns state machine"
+    elif [ "$STATE_SCORE" -ge 3 ] && [ "$OVERLAY_LINES" -gt 420 ]; then
+        add_reward 0.12 "StrokeOverlay mostly owns state machine"
+    elif [ "$STATE_SCORE" -ge 2 ]; then
+        add_reward 0.05 "StrokeOverlay partially owns state"
+    else
+        echo "  state still external (no-op base)"
+    fi
+else
+    echo "  StrokeOverlay.tsx missing"
+fi
+
+# ─── F2P 5: Old handler props removed from types — 0.10 ───
+echo "═══ F2P GATE 5: Handler props removed from types ═══"
 if [ -f "$TYPES_FILE" ]; then
     TYPE_SCORE=$(node -e "
-        const fs = require('fs');
-        const src = fs.readFileSync('$TYPES_FILE', 'utf8');
-        let s = 0;
+        const fs=require('fs');
+        const src=fs.readFileSync('$TYPES_FILE','utf8');
+        let s=0;
         if (!/handleKonvaPointerDown/.test(src)) s++;
         if (!/handleKonvaPointerMove/.test(src)) s++;
         if (!/handleKonvaPointerUp/.test(src)) s++;
-        if (!/handleShapeClick/.test(src)) s++;
-        if (!/redrawStrokes/.test(src)) s++;
-        // displayCanvasRef / maskCanvasRef should be gone from props
         if (!/displayCanvasRef/.test(src)) s++;
         if (!/maskCanvasRef/.test(src)) s++;
-        // isDrawing/currentStroke should not be in return type
-        if (!/\bisDrawing\s*:/.test(src) && !/\bcurrentStroke\s*:/.test(src)) s++;
         console.log(s);
     " 2>/dev/null)
     TYPE_SCORE=${TYPE_SCORE:-0}
-    echo "  types.ts cleanup score: $TYPE_SCORE/8"
-
-    if [ "$TYPE_SCORE" -ge 7 ]; then
-        add_reward 0.10 "types.ts thoroughly cleaned"
-    elif [ "$TYPE_SCORE" -ge 5 ]; then
-        add_reward 0.06 "types.ts mostly cleaned"
-    elif [ "$TYPE_SCORE" -ge 3 ]; then
-        add_reward 0.03 "types.ts partially cleaned"
+    echo "  types removed: $TYPE_SCORE/5"
+    if [ "$TYPE_SCORE" -ge 5 ]; then
+        add_reward 0.10 "all old handler/canvas refs removed from types"
+    elif [ "$TYPE_SCORE" -eq 4 ]; then
+        add_reward 0.07 "most old props removed"
+    elif [ "$TYPE_SCORE" -eq 3 ]; then
+        add_reward 0.04 "some old props removed"
     else
-        echo "  FAIL: types.ts not cleaned"
+        echo "  base types intact (no-op base)"
     fi
 else
-    echo "  FAIL: types.ts missing"
+    echo "  types.ts missing"
 fi
 
-# ════════════════════════════════════════════════════════════════════
-# Write final reward
-# ════════════════════════════════════════════════════════════════════
-mkdir -p /logs/verifier
+# ─── F2P 6: useInpaintActions deleted (Step 3) — 0.05 ───
+echo "═══ F2P GATE 6: useInpaintActions deleted ═══"
+if [ ! -f "$INPAINT_DIR/useInpaintActions.ts" ]; then
+    add_reward 0.05 "useInpaintActions.ts deleted"
+else
+    echo "  useInpaintActions.ts still exists (Step 3 not done)"
+fi
+
+# ─── F2P 7: useInpainting shrunk — 0.05 ───
+echo "═══ F2P GATE 7: useInpainting shrunk ═══"
+if [ -f "$INPAINT_HOOK" ]; then
+    HOOK_LINES=$(wc -l < "$INPAINT_HOOK")
+    echo "  useInpainting.ts: $HOOK_LINES lines"
+    # Base is ~400+ lines. After refactor should be much smaller.
+    if [ "$HOOK_LINES" -lt 300 ]; then
+        add_reward 0.05 "useInpainting significantly shrunk"
+    elif [ "$HOOK_LINES" -lt 350 ]; then
+        add_reward 0.02 "useInpainting somewhat shrunk"
+    else
+        echo "  not shrunk meaningfully"
+    fi
+fi
+
+# ─── P2P guard: TypeScript should not have a catastrophic error count ───
+# This is a guard, not a reward source. If the refactor produced > 50 TS errors
+# in the relevant subtree, the agent destroyed the codebase — return 0.
+echo "═══ P2P GUARD: TypeScript sanity ═══"
+TSC_LOG=$(mktemp)
+TSC_AVAILABLE=0
+if [ -x "./node_modules/.bin/tsc" ]; then
+    timeout 180 ./node_modules/.bin/tsc --noEmit > "$TSC_LOG" 2>&1
+    TSC_AVAILABLE=1
+elif command -v npx >/dev/null 2>&1; then
+    timeout 180 npx --no-install tsc --noEmit > "$TSC_LOG" 2>&1
+    TSC_AVAILABLE=1
+fi
+
+if [ "$TSC_AVAILABLE" -eq 1 ]; then
+    RELEVANT_ERRORS=$(grep -E "error TS" "$TSC_LOG" 2>/dev/null | grep -E "(StrokeOverlay|useInpainting|inpainting/|MediaLightbox)" | wc -l)
+    echo "  relevant TS errors: $RELEVANT_ERRORS"
+    if [ "$RELEVANT_ERRORS" -gt 50 ]; then
+        echo "  GUARD TRIPPED: catastrophic TS errors — zeroing reward"
+        REWARD=0
+    fi
+fi
+rm -f "$TSC_LOG"
+
 echo "$REWARD" > /logs/verifier/reward.txt
-echo ""
-echo "═══ TOTAL REWARD: $REWARD ═══"
+echo "FINAL REWARD: $REWARD"

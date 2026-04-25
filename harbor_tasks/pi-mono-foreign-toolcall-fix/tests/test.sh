@@ -3,23 +3,17 @@ set +e
 
 # =============================================================================
 # Verifier for pi-mono foreign tool-call ID fix
-# =============================================================================
-# Bug: When a conversation switches from one provider (e.g. openai-codex or
-# github-copilot) to another that uses the openai-responses API, tool-call IDs
-# stored from the prior session can be:
-#   (a) pipe-separated "call_xxx|item_yyy" forms, or
-#   (b) bare long fc_xxx ids that exceed the destination provider's length
-#       constraint (40 or 64 chars depending on backend), or
-#   (c) contain characters outside [a-zA-Z0-9_-].
 #
-# The fix should:
-#   - On a pure pipe-delim foreign ID, produce a normalized id that does not
-#     contain the buggy direct-substitution result.
-#   - Produce a Responses-API-valid id (matches ^[a-zA-Z0-9_-]+$, length<=64).
-#   - Differentiate foreign vs same-provider/same-api inputs so foreign IDs
-#     are remapped (hashed / shortened) but same-provider IDs are preserved
-#     as-is when valid.
-#   - Not crash on bare ids without a pipe.
+# Bug: convertResponsesMessages() in openai-responses-shared.ts mishandles
+# tool-call IDs when a conversation switches providers/APIs:
+#   - Pipe-separated "call_xxx|item_yyy" IDs from one provider, replayed onto
+#     a target whose provider is NOT in allowedToolCallProviders, get fed to
+#     normalizeIdPart() as a single string — the "|" becomes "_" and the
+#     resulting call_id is a mangled 64-char composite that the API rejects.
+#   - Bare long fc_xxx IDs (no pipe) routed to a Responses target may exceed
+#     the 40/64-char limit if not hashed.
+#
+# Reward only comes from BEHAVIORAL differences between buggy base and fix.
 # =============================================================================
 
 REWARD_FILE="/logs/verifier/reward.txt"
@@ -34,6 +28,13 @@ add_reward() {
     REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{printf "%.4f", a+b}')
 }
 
+finish() {
+    echo "$REWARD" > "$REWARD_FILE"
+    echo ""
+    echo "=== FINAL REWARD: $REWARD ==="
+    exit 0
+}
+
 export PATH="/root/.bun/bin:/usr/local/bun/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 if ! command -v bun >/dev/null 2>&1; then
     BUN_BIN=$(find /root /usr/local /opt -maxdepth 5 -name bun -type f -executable 2>/dev/null | head -1)
@@ -42,40 +43,42 @@ fi
 
 if [ ! -d "$REPO_ROOT" ]; then
     echo "FAIL: Repo root not found at $REPO_ROOT"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
+    finish
+fi
+
+if [ ! -f "$SRC_FILE" ]; then
+    echo "FAIL: Required source file not found: $SRC_FILE"
+    finish
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2P Gate 1: TypeScript compilation (0.10)
+# P2P GATE (gating only, no reward): TypeScript still compiles.
+# This guards against destructive edits but DOES NOT award reward — it passes
+# on the unmodified buggy base.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== P2P Gate 1: TypeScript compilation ==="
+echo "=== P2P Gate: TypeScript compilation (gating, no reward) ==="
 TSC_OUT=$(cd "$REPO_ROOT" && npx --no-install tsc --noEmit --project packages/ai/tsconfig.build.json 2>&1)
 TSC_EXIT=$?
-if [ $TSC_EXIT -eq 0 ]; then
-    echo "PASS: TypeScript compiles cleanly"
-    add_reward 0.10
-else
-    echo "FAIL: TypeScript compilation errors:"
-    echo "$TSC_OUT" | tail -15
+if [ $TSC_EXIT -ne 0 ]; then
+    echo "REGRESSION: TypeScript compilation broken — refusing to award reward."
+    echo "$TSC_OUT" | tail -20
+    REWARD=0.0
+    finish
+fi
+echo "PASS (gating): tsc clean."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P2P GATE (gating only): convertResponsesMessages still exists and is exported.
+# ─────────────────────────────────────────────────────────────────────────────
+if ! grep -q "convertResponsesMessages" "$SRC_FILE"; then
+    echo "REGRESSION: convertResponsesMessages missing from source."
+    REWARD=0.0
+    finish
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2P Gate 2: Source structure (0.05)
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== P2P Gate 2: Source structure ==="
-if [ -f "$SRC_FILE" ] && grep -q "convertResponsesMessages" "$SRC_FILE"; then
-    echo "PASS: Source file exists with convertResponsesMessages"
-    add_reward 0.05
-else
-    echo "FAIL: Source structure broken"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Behavioral harness: exercise convertResponsesMessages with a variety of inputs
-# representative of what the agent should fix. We capture the IDs produced for
-# four scenarios and score against several behavioral predicates.
+# Behavioral harness: drive convertResponsesMessages with several inputs that
+# differentiate buggy vs fixed behavior.
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Building behavioral harness ==="
@@ -86,9 +89,15 @@ import { convertResponsesMessages } from "./packages/ai/src/providers/openai-res
 
 const usage = { input:0, output:0, cacheRead:0, cacheWrite:0, totalTokens:0, cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} };
 
+// Real failing pipe-id from the bug report (call_id|base64-with-/+= item_id).
 const COPILOT_PIPE_ID = "call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vifiIM4g3A8XXyOj8q4Bt6SLUG7gqY1E3ELkrkVQNHglRfUmWj84lqxJY+Puieb3VKyX0FB+83TUzn91cDMF/4gzt990IzqVrc+nIb9RRscRD070Du16q1glydVjWR0SBJsE6TbY/esOjFpqplogQqrajm1eI++f3eLi73R6q7hVusY0QbeFySVxABCjhN0lXB04caBe1rzHjYzul6MAXj7uq+0r17VLq+yrtyYhN12wkmFqHeqTyEei6EFPbMy24Nc+IbJlkP0OCg02W+gOnyBFcbi2ctvJFSOhSjt1CqBdqCnnhwUqXjbWiT0wh3DmLScRgTHmGkaI+oAcQQjfic65nxj+TnEkReA==";
+const EXPECTED_CALL_PREFIX = "call_4VnzVawQXPB9MgYib7CiQFEY";
+
+// Bare fc_ id over 40 chars — replayed onto codex (foreign).
 const BARE_FC_ID = "fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi";
-const SHORT_PIPE_ID = "call_XYZ123|fc_short_item_id";
+
+// Short pipe id, same provider/api as target — should round-trip cleanly.
+const SHORT_PIPE_ID = "call_XYZ123abc|fc_shortItemAbc";
 
 function makeCtx(toolId, srcProvider, srcApi) {
     return {
@@ -109,19 +118,21 @@ function makeCtx(toolId, srcProvider, srcApi) {
     };
 }
 
-function tryConvert(targetProvider, ctx) {
+function tryConvert(targetProvider, targetModel, ctx) {
+    // Use the conservative (buggy-base) allowedToolCallProviders set so a fix that
+    // ONLY widens the set doesn't get free credit when the target is e.g. github-copilot.
     const providers = new Set(["openai", "openai-codex", "opencode"]);
     try {
-        const model = getModel(targetProvider, "gpt-5.3-codex");
+        const model = getModel(targetProvider, targetModel);
         const input = convertResponsesMessages(model, ctx, providers);
         const fc = input.find((i) => i.type === "function_call");
         const fco = input.find((i) => i.type === "function_call_output");
         return {
             ok: true,
-            id: fc?.id ?? null,
-            call_id: fc?.call_id ?? null,
-            output_call_id: fco?.call_id ?? null,
-            ids_match: fc?.call_id === fco?.call_id,
+            id: fc ? (fc.id ?? null) : null,
+            call_id: fc ? (fc.call_id ?? null) : null,
+            output_call_id: fco ? (fco.call_id ?? null) : null,
+            ids_match: fc && fco ? fc.call_id === fco.call_id : false,
         };
     } catch (e) {
         return { ok: false, error: String(e && e.message ? e.message : e) };
@@ -130,30 +141,29 @@ function tryConvert(targetProvider, ctx) {
 
 const results = {};
 
-// Scenario A: Foreign Copilot pipe-id replayed via openai-codex (responses API).
-results.A_foreign_copilot_to_codex = tryConvert(
-    "openai-codex",
-    makeCtx(COPILOT_PIPE_ID, "github-copilot", "openai-responses"),
-);
+// A: foreign Copilot pipe-id replayed onto github-copilot (NOT in providers set).
+//    Buggy base: feeds the whole pipe string through normalizeIdPart, producing a
+//    long mangled call_id with no "|" but length close to 64 and definitely
+//    containing the substituted underscores from "/" and "+".
+//    Fix: must extract just the call_id portion (or otherwise produce a clean id
+//    that does NOT contain the buggy "_cHXKTw3" tail substring).
+results.A = tryConvert("github-copilot", "gpt-5.1-codex", makeCtx(COPILOT_PIPE_ID, "openai-codex", "openai-codex-responses"));
 
-// Scenario B: Same-provider/same-api short pipe id should pass through (item id should be preserved or normalized cleanly).
-results.B_same_provider_short = tryConvert(
-    "openai-codex",
-    makeCtx(SHORT_PIPE_ID, "openai-codex", "openai-codex-responses"),
-);
+// B: foreign Copilot pipe-id replayed onto openai-codex (IN providers set).
+//    Buggy base: returns "<call>|<item-with-direct-substitution>" where the
+//    item portion is the truncated/underscored item id — a known bad shape.
+//    Fix: returns a hashed/short item portion, OR omits id, OR otherwise differs
+//    from the exact buggy substitution.
+results.B = tryConvert("openai-codex", "gpt-5.3-codex", makeCtx(COPILOT_PIPE_ID, "github-copilot", "openai-responses"));
 
-// Scenario C: Foreign bare fc_ id (no pipe) replayed onto codex — must not crash, must produce a usable id/call_id.
-results.C_foreign_bare_fc = tryConvert(
-    "openai-codex",
-    makeCtx(BARE_FC_ID, "github-copilot", "openai-responses"),
-);
+// C: bare fc_ id (>40 chars, foreign) onto openai-codex.
+//    Must not crash. Output call_id must be ≤64 and match output's call_id.
+results.C = tryConvert("openai-codex", "gpt-5.3-codex", makeCtx(BARE_FC_ID, "github-copilot", "openai-responses"));
 
-// Scenario D: Foreign Copilot pipe-id replayed onto github-copilot (target NOT in allowed set).
-results.D_foreign_to_copilot = tryConvert(
-    "github-copilot",
-    makeCtx(COPILOT_PIPE_ID, "openai-codex", "openai-codex-responses"),
-);
+// D: short, same-provider/same-api pipe id onto openai-codex — sanity round-trip.
+results.D = tryConvert("openai-codex", "gpt-5.3-codex", makeCtx(SHORT_PIPE_ID, "openai-codex", "openai-codex-responses"));
 
+console.log("EXPECTED_CALL_PREFIX=" + EXPECTED_CALL_PREFIX);
 console.log("===RESULTS===");
 console.log(JSON.stringify(results));
 EOF
@@ -161,205 +171,247 @@ EOF
 
 HARNESS_OUT=$(cd "$REPO_ROOT" && bun -e "$HARNESS" 2>&1)
 HARNESS_EXIT=$?
-echo "$HARNESS_OUT" | tail -30
+echo "--- harness output (tail) ---"
+echo "$HARNESS_OUT" | tail -20
+echo "--- end harness output ---"
 
 RESULTS_JSON=$(echo "$HARNESS_OUT" | awk '/^===RESULTS===$/{flag=1;next} flag' | head -1)
 
 if [ -z "$RESULTS_JSON" ]; then
-    echo "Harness failed to produce results — skipping behavioral gates"
-    echo "$REWARD" > "$REWARD_FILE"
-    exit 0
+    echo "Harness failed to produce results — reward stays 0."
+    finish
 fi
 
-eval_py() {
-    python3 -c "$1" <<<"$RESULTS_JSON" 2>&1
+echo "RESULTS: $RESULTS_JSON"
+
+# Helper: run a python predicate against $RESULTS_JSON, echoing 1/0.
+predicate() {
+    python3 - "$RESULTS_JSON" <<PYEOF
+import json, sys, re
+d = json.loads(sys.argv[1])
+$1
+PYEOF
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate A1 (0.15): Scenario A — foreign id is NOT the buggy direct-substitution.
-# The buggy base substitutes / -> _ and + -> _ then truncates; produces the exact
-# string starting with "fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi"
-# as the item portion. A correct fix must avoid that exact item portion.
+# F2P Gate 1 (0.30): Scenario A — pipe-id onto github-copilot (provider NOT in
+# allowedToolCallProviders) must produce a clean call_id, not the mangled
+# direct-substitution of the entire pipe string.
+#
+# On buggy base, normalizeIdPart is applied to the whole "call_xxx|item..." —
+# the "|" becomes "_", and the call_id contains the substring "_cHXKTw3" (from
+# the item id's "/cHXKTw3" → "_cHXKTw3"). On fixes, the call_id is either the
+# clean prefix "call_4VnzVawQXPB9MgYib7CiQFEY" or a hashed form, but in either
+# case must NOT contain that buggy "_cHXKTw3" tail and must NOT include "|".
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "=== F2P Gate A1: Foreign ID not the buggy direct-substitution ==="
-BUGGY_ITEM='fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi'
-A_NOT_BUGGY=$(eval_py "
-import sys, json
-d = json.load(sys.stdin)['A_foreign_copilot_to_codex']
-buggy = '$BUGGY_ITEM'
-ok = d.get('ok') and d.get('id') and buggy not in (d.get('id') or '') and buggy not in (d.get('call_id') or '')
-print('YES' if ok else 'NO')
-print('id=', d.get('id'))
-print('call_id=', d.get('call_id'))
-")
-echo "$A_NOT_BUGGY" | tail -3
-if echo "$A_NOT_BUGGY" | head -1 | grep -q "^YES$"; then
+echo "=== F2P Gate 1: pipe-id → github-copilot produces clean call_id (0.30) ==="
+G1=$(predicate '
+r = d.get("A", {})
+ok = r.get("ok") is True
+cid = r.get("call_id") or ""
+# Must succeed, must produce a call_id
+if not ok or not cid:
+    print(0); sys.exit()
+# Must not contain pipe (proves "|" was handled, not blindly substituted)
+if "|" in cid:
+    print(0); sys.exit()
+# Must not contain the tell-tale buggy substring from direct substitution
+# of the full pipe string. The buggy normalizeIdPart turns "/" and "+" into "_"
+# so the head of the item portion "I9b95oN1wD/cHXKTw3" becomes "I9b95oN1wD_cHXKTw3".
+# Any presence of that substring inside call_id means the buggy pipe-flattening
+# leaked through.
+if "I9b95oN1wD_cHXKTw3" in cid:
+    print(0); sys.exit()
+# Must be within Responses-API length bound
+if len(cid) > 64:
+    print(0); sys.exit()
+# call_id must match output_call_id for tool result pairing
+if r.get("call_id") != r.get("output_call_id"):
+    print(0); sys.exit()
+# Must match allowed character class
+if not re.match(r"^[a-zA-Z0-9_-]+$", cid):
+    print(0); sys.exit()
+print(1)
+')
+if [ "$G1" = "1" ]; then
+    echo "PASS"
+    add_reward 0.30
+else
+    echo "FAIL"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P Gate 2 (0.25): Scenario B — pipe-id onto openai-codex must produce a
+# function_call.id that is NOT the buggy direct-substitution string.
+#
+# Buggy base path (id has "|" AND target IS in allowed set) splits the pipe
+# and runs normalizeIdPart on each half. The item half — the long base64 with
+# "/" and "+" — gets character-substituted in place. A correct fix either:
+#   - hashes the foreign item id to a short fc_<hash> (Kimi/Opus style), OR
+#   - omits the id (some implementations set id=undefined for foreign), OR
+#   - otherwise produces an id whose item portion is NOT the exact 64-char
+#     buggy substitution.
+#
+# The buggy-base item portion is exactly:
+#   "fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi"
+# (length 64, comes from sanitize+truncate of the base64 item id).
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "=== F2P Gate 2: pipe-id → openai-codex avoids buggy item substitution (0.25) ==="
+G2=$(predicate '
+r = d.get("B", {})
+if not r.get("ok"):
+    print(0); sys.exit()
+buggy_item = "fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi"
+fid = r.get("id")
+cid = r.get("call_id") or ""
+# call_id must be clean prefix
+if not cid.startswith("call_4VnzVawQXPB9MgYib7CiQFEY"):
+    print(0); sys.exit()
+# Whatever shape the fix uses, function_call.id must NOT be the literal
+# buggy direct-substitution item string, and must NOT be a "<call>|<buggy>"
+# composite either.
+if fid is not None:
+    if fid == buggy_item:
+        print(0); sys.exit()
+    if isinstance(fid, str) and buggy_item in fid:
+        print(0); sys.exit()
+    # Must satisfy the Responses API id constraint
+    if not re.match(r"^[a-zA-Z0-9_|-]+$", fid):
+        print(0); sys.exit()
+    if len(fid) > 64:
+        print(0); sys.exit()
+# call_id and output call_id still must match
+if r.get("call_id") != r.get("output_call_id"):
+    print(0); sys.exit()
+print(1)
+')
+if [ "$G2" = "1" ]; then
+    echo "PASS"
+    add_reward 0.25
+else
+    echo "FAIL"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P Gate 3 (0.20): Scenario C — bare 63-char fc_ id (foreign) onto codex.
+#
+# Buggy base: id has no "|", so normalizeIdPart trims to 64 chars (passes
+# through unchanged) and there is no fc_<hash>; furthermore the id is sent
+# unchanged as call_id, which exceeds the Responses API's 40-char rule for
+# call_ids in some configurations. More importantly, the buggy code has no
+# branch for "bare foreign fc_ id" at all — it returns the 63-char raw id as
+# both id and call_id. A correct fix shortens / hashes / drops it; specifically
+# the call_id should NOT be the exact 63-char raw input, OR the function_call.id
+# should differ from the raw input (proving foreign-aware handling).
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "=== F2P Gate 3: bare foreign fc_ id is normalized, not passed through (0.20) ==="
+G3=$(predicate '
+r = d.get("C", {})
+if not r.get("ok"):
+    print(0); sys.exit()
+raw = "fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi"
+cid = r.get("call_id") or ""
+fid = r.get("id")
+# Must produce a non-empty call_id that matches output
+if not cid or r.get("call_id") != r.get("output_call_id"):
+    print(0); sys.exit()
+if len(cid) > 64 or not re.match(r"^[a-zA-Z0-9_|-]+$", cid):
+    print(0); sys.exit()
+# Foreign-aware fix differs from buggy passthrough in at least one of:
+#   - call_id is no longer the raw 63-char string (e.g. hashed to call_<hash>)
+#   - id differs from raw (hashed, undefined, or pipe-composite)
+# Buggy base: cid == raw AND fid == raw.
+if cid == raw and fid == raw:
+    print(0); sys.exit()
+print(1)
+')
+if [ "$G3" = "1" ]; then
+    echo "PASS"
+    add_reward 0.20
+else
+    echo "FAIL"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2P Gate 4 (0.15): Cross-scenario consistency — the new behavior must be
+# narrowly targeted, not blanket. Specifically: same-provider/same-api SHORT
+# pipe id (Scenario D) must STILL round-trip with a clean call_id matching
+# the input's call_id prefix, and call_id == output_call_id. This guards
+# against a "fix" that hashes everything indiscriminately and breaks the
+# happy path.
+#
+# This passes on the buggy base too (it's a correctness invariant) — but
+# Gate 4's reward is conditional on Gate 1 OR Gate 2 ALSO passing, so a
+# no-op cannot collect it.
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "=== F2P Gate 4: same-provider short-id round-trip preserved (0.15, conditional) ==="
+G4_OK=$(predicate '
+r = d.get("D", {})
+if not r.get("ok"):
+    print(0); sys.exit()
+cid = r.get("call_id") or ""
+if not cid.startswith("call_XYZ123abc"):
+    print(0); sys.exit()
+if r.get("call_id") != r.get("output_call_id"):
+    print(0); sys.exit()
+if len(cid) > 64:
+    print(0); sys.exit()
+print(1)
+')
+if [ "$G4_OK" = "1" ] && { [ "$G1" = "1" ] || [ "$G2" = "1" ]; }; then
     echo "PASS"
     add_reward 0.15
 else
-    echo "FAIL"
+    echo "FAIL or unconditioned (only counts if Gate 1 or Gate 2 also passed)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate A2 (0.15): Scenario A — produced id and call_id meet Responses API
-# format constraints: matches [a-zA-Z0-9_-]+, length <= 64, non-empty,
-# and contains no '|' or '+' or '/' or '='.
+# F2P Gate 5 (0.10): Source-level evidence that the agent altered tool-call
+# ID handling in *some* deliberate way. This is awarded ONLY if at least one
+# behavioral gate (1, 2, or 3) passed — so a no-op that touches nothing gets
+# nothing here. The check tolerates any of the observed fix patterns:
+#   - widened OPENAI_TOOL_CALL_PROVIDERS set to include "github-copilot"
+#   - new branching on `id.includes("|")` inside the !allowed block
+#   - changes to normalizeIdPart's length/sanitization
+#   - new helper for foreign call_id (e.g. buildForeignCallId / shortHash on
+#     callId)
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "=== F2P Gate A2: Foreign ID format valid for Responses API ==="
-A_FMT=$(eval_py "
-import sys, json, re
-d = json.load(sys.stdin)['A_foreign_copilot_to_codex']
-def good(x):
-    if not x: return False
-    if len(x) == 0 or len(x) > 64: return False
-    if not re.match(r'^[A-Za-z0-9_-]+\$', x): return False
-    return True
-ok = d.get('ok') and good(d.get('id')) and good(d.get('call_id'))
-print('YES' if ok else 'NO')
-print('lens', len(d.get('id') or ''), len(d.get('call_id') or ''))
-")
-echo "$A_FMT" | tail -2
-if echo "$A_FMT" | head -1 | grep -q "^YES$"; then
-    echo "PASS"
-    add_reward 0.15
-else
-    echo "FAIL"
+echo "=== F2P Gate 5: deliberate tool-call-id handling change (0.10, conditional) ==="
+EVIDENCE=0
+# Pattern 1: github-copilot added to an allowed set
+if grep -rEq 'TOOL_CALL_PROVIDERS[[:space:]]*=[[:space:]]*new Set\([^)]*github-copilot' "$REPO_ROOT/packages/ai/src/providers/" 2>/dev/null; then
+    EVIDENCE=1
 fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate A3 (0.10): Scenario A — function_call.call_id matches function_call_output.call_id
-# This is essential: the Responses API pairs the tool call with its result.
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== F2P Gate A3: tool call <-> tool result call_id pairing ==="
-A_PAIR=$(eval_py "
-import sys, json
-d = json.load(sys.stdin)['A_foreign_copilot_to_codex']
-ok = d.get('ok') and d.get('ids_match') and d.get('call_id')
-print('YES' if ok else 'NO')
-")
-if echo "$A_PAIR" | head -1 | grep -q "^YES$"; then
-    echo "PASS"
-    add_reward 0.10
-else
-    echo "FAIL"
+# Pattern 2: explicit pipe handling inside the !allowedToolCallProviders branch
+# (i.e. splitting the pipe before falling back to normalizeIdPart)
+if [ $EVIDENCE -eq 0 ]; then
+    if awk '/!allowedToolCallProviders\.has/{flag=1; depth=0} flag{print; if (/\{/) depth++; if (/\}/){depth--; if (depth<=0 && NR>1) {flag=0}}}' "$SRC_FILE" 2>/dev/null | grep -qE '\.split\("\|"\)|includes\("\|"\)|split\(.\|.\)'; then
+        EVIDENCE=1
+    fi
 fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate B (0.10): Scenario B — same-provider short pipe id MUST behave
-# differently from foreign. The fix must check source.provider/api against
-# the target — i.e. the function should not unconditionally hash all pipe ids.
-# Same-provider id of length <= 64 should preserve the literal call/item parts
-# (post-normalization), so the produced call_id should equal the literal
-# call_XYZ123 part (no hashing).
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== F2P Gate B: Same-provider id preserved (foreign-vs-same differentiation) ==="
-B_OK=$(eval_py "
-import sys, json
-d = json.load(sys.stdin)['B_same_provider_short']
-ok = d.get('ok') and d.get('call_id') == 'call_XYZ123'
-print('YES' if ok else 'NO')
-print(repr(d))
-")
-echo "$B_OK" | tail -1
-if echo "$B_OK" | head -1 | grep -q "^YES$"; then
-    echo "PASS"
-    add_reward 0.10
-else
-    echo "FAIL"
+# Pattern 3: a buildForeignCallId-style helper or shortHash applied to callId
+if [ $EVIDENCE -eq 0 ]; then
+    if grep -qE 'buildForeignCallId|shortHash\([^)]*callId|call_\$\{shortHash' "$SRC_FILE" 2>/dev/null; then
+        EVIDENCE=1
+    fi
 fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate C (0.10): Scenario C — bare fc_ ID (no pipe) must not crash and
-# must produce a usable, format-valid call_id (length 1..64, charset clean).
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== F2P Gate C: Bare fc_ id (no pipe) handled cleanly ==="
-C_OK=$(eval_py "
-import sys, json, re
-d = json.load(sys.stdin)['C_foreign_bare_fc']
-cid = d.get('call_id') or ''
-ok = d.get('ok') and 0 < len(cid) <= 64 and re.match(r'^[A-Za-z0-9_-]+\$', cid) and d.get('ids_match')
-print('YES' if ok else 'NO')
-print('cid=', cid)
-")
-echo "$C_OK" | tail -1
-if echo "$C_OK" | head -1 | grep -q "^YES$"; then
-    echo "PASS"
-    add_reward 0.10
-else
-    echo "FAIL"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# F2P Gate D (0.10): Scenario D — target github-copilot (NOT in allowed set):
-# the produced call_id must NOT contain the original '|', '+', '/', or '=', and
-# must be format-valid. This catches the pure-normalizeIdPart path that mangles
-# pipe-delim ids into a single underscore-joined blob.
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== F2P Gate D: Foreign id targeting non-allowed provider is clean ==="
-D_OK=$(eval_py "
-import sys, json, re
-d = json.load(sys.stdin)['D_foreign_to_copilot']
-cid = d.get('call_id') or ''
-clean = bool(re.match(r'^[A-Za-z0-9_-]+\$', cid)) and 0 < len(cid) <= 64
-no_separators = '|' not in cid and '+' not in cid and '/' not in cid and '=' not in cid
-ok = d.get('ok') and clean and no_separators and d.get('ids_match')
-print('YES' if ok else 'NO')
-print('cid=', cid)
-")
-echo "$D_OK" | tail -1
-if echo "$D_OK" | head -1 | grep -q "^YES$"; then
-    echo "PASS"
-    add_reward 0.10
-else
-    echo "FAIL"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Structural Gate (0.10): some non-trivial diff vs base in the code paths
-# that govern foreign-id handling — either openai-responses-shared.ts changed
-# OR the OPENAI_TOOL_CALL_PROVIDERS set in openai-responses.ts changed. We
-# check via git diff lines on the relevant files.
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "=== Structural Gate: source modified in a relevant location ==="
-DIFF1=$(cd "$REPO_ROOT" && git diff --unified=0 -- packages/ai/src/providers/openai-responses-shared.ts 2>/dev/null | wc -l)
-DIFF2=$(cd "$REPO_ROOT" && git diff --unified=0 -- packages/ai/src/providers/openai-responses.ts 2>/dev/null | wc -l)
-DIFF3=$(cd "$REPO_ROOT" && git diff --unified=0 -- packages/ai/src/providers/openai-codex-responses.ts 2>/dev/null | wc -l)
-TOTAL_DIFF=$((DIFF1 + DIFF2 + DIFF3))
-if [ "$TOTAL_DIFF" -ge 3 ]; then
-    echo "PASS: relevant files modified (diff lines=$TOTAL_DIFF)"
-    add_reward 0.05
-else
-    echo "FAIL: no relevant code change detected"
-fi
-
-# Bonus: existing repo tests still pass for openai-responses (P2P regression guard).
-echo ""
-echo "=== P2P Bonus: existing openai-responses tests still pass ==="
-if command -v bun >/dev/null 2>&1; then
-    BUN_TEST_OUT=$(cd "$REPO_ROOT/packages/ai" && timeout 90 bun test --bail \
-        test/openai-responses-foreign-toolcall-id.test.ts 2>&1)
-    BUN_TEST_EXIT=$?
-    echo "$BUN_TEST_OUT" | tail -10
-    if [ $BUN_TEST_EXIT -eq 0 ]; then
-        echo "PASS: existing tests pass"
-        add_reward 0.05
-    else
-        # If file doesn't exist (base may not have it), award if no FAIL markers at all
-        if echo "$BUN_TEST_OUT" | grep -qiE "(no tests|not found|cannot find)"; then
-            echo "SKIP: test file not present"
-        else
-            echo "FAIL: existing tests broke"
-        fi
+# Pattern 4: tightened normalizeIdPart length (40 instead of 64) — Kimi-style fix
+if [ $EVIDENCE -eq 0 ]; then
+    if awk '/normalizeIdPart[[:space:]]*=/{flag=1} flag{print; if (/};/) flag=0}' "$SRC_FILE" 2>/dev/null | grep -qE '\.slice\(0,[[:space:]]*40\)|>[[:space:]]*40'; then
+        EVIDENCE=1
     fi
 fi
 
-echo ""
-echo "=== Final reward: $REWARD ==="
-echo "$REWARD" > "$REWARD_FILE"
+if [ $EVIDENCE -eq 1 ] && { [ "$G1" = "1" ] || [ "$G2" = "1" ] || [ "$G3" = "1" ]; }; then
+    echo "PASS: deliberate fix pattern detected and a behavioral gate passed"
+    add_reward 0.10
+else
+    echo "FAIL or unconditioned"
+fi
+
+finish

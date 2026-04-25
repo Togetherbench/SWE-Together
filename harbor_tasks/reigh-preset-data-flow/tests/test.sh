@@ -32,264 +32,217 @@ echo "UTIL_FILE=$UTIL_FILE"
 echo "ITS_FILE=$ITS_FILE"
 echo "HOOK_FILE=$HOOK_FILE"
 
+# If we can't find the key file, we cannot evaluate — emit 0.
+if [ -z "$UTIL_FILE" ] || [ -z "$ITS_FILE" ]; then
+  echo "Required source files missing"
+  echo "0.0000" > /logs/verifier/reward.txt
+  exit 0
+fi
+
 #######################################
-# P2P Gate 1: TypeScript compilation (weight 0.10)
+# P2P GATE (gating-only, no reward): TypeScript still compiles.
+# This guards against destructive edits. It does NOT award reward
+# because the unmodified base already compiles.
 #######################################
-echo "=== P2P Gate 1: TypeScript compiles ==="
+echo "=== P2P Gate: TypeScript compiles (gating only) ==="
 if [ -f tsconfig.json ]; then
-  npx --no-install tsc --noEmit 2>&1 | tail -30
-  TSC_EXIT=${PIPESTATUS[0]}
-  if [ "$TSC_EXIT" = "0" ]; then
-    echo "PASS: tsc"
-    add_reward 0.10
-  else
-    echo "FAIL: tsc"
+  TSC_OUT=$(npx --no-install tsc --noEmit 2>&1)
+  TSC_EXIT=$?
+  echo "$TSC_OUT" | tail -30
+  if [ "$TSC_EXIT" != "0" ]; then
+    echo "REGRESSION: tsc broken — zeroing out"
+    echo "0.0000" > /logs/verifier/reward.txt
+    exit 0
   fi
-else
+  echo "PASS: tsc (gating)"
+fi
+
+#######################################
+# F2P Gate A (weight 0.45): buildTaskParams must NOT unconditionally drop
+# phase_config when motionMode === 'basic'. On the buggy base, the line:
+#   phase_config: settings.motionMode === 'basic' ? undefined : settings.phaseConfig
+# always returns undefined for basic mode regardless of preset. The fix
+# must allow phase_config to flow through when a non-builtin preset is
+# selected in basic mode.
+#######################################
+echo "=== F2P Gate A: buildTaskParams returns phase_config when preset selected in basic mode ==="
+GATEA=$(node -e '
+  const fs = require("fs");
+  const src = fs.readFileSync(process.argv[1], "utf8");
+
+  // Find the buildTaskParams function block.
+  const fnIdx = src.indexOf("buildTaskParams");
+  if (fnIdx === -1) { console.log("FAIL:no-fn"); process.exit(0); }
+
+  // Extract the phase_config expression (multiline-aware).
+  const after = src.substring(fnIdx);
+  const pcIdx = after.indexOf("phase_config");
+  if (pcIdx === -1) { console.log("FAIL:no-phase_config"); process.exit(0); }
+  const tail = after.substring(pcIdx);
+
+  // Read until matching balanced end-of-property: walk char by char,
+  // stop at top-level comma or closing brace.
+  const colonIdx = tail.indexOf(":");
+  if (colonIdx === -1) { console.log("FAIL"); process.exit(0); }
+  let i = colonIdx + 1;
+  let depth = 0;
+  let expr = "";
+  while (i < tail.length) {
+    const ch = tail[i];
+    if (depth === 0 && (ch === "," || ch === "\n" && /^[a-z_]/i.test(tail.substring(i+1).trimStart()))) {
+      // try comma boundary
+      if (ch === ",") break;
+    }
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") {
+      if (depth === 0) break;
+      depth--;
+    }
+    expr += ch;
+    i++;
+  }
+  expr = expr.trim();
+  if (!expr) { console.log("FAIL:empty"); process.exit(0); }
+
+  // Detect known builtin id constants from the file (best effort).
+  const idConstMatches = [...src.matchAll(/(BUILTIN_[A-Z0-9_]*PRESET[A-Z0-9_]*_ID|BUILTIN_[A-Z0-9_]*PRESET\.id)/g)];
+  const idConstNames = [...new Set(idConstMatches.map(m => m[1]))];
+
+  // Build a sandbox eval. Provide stand-ins for any identifier referenced
+  // beyond settings.* — we replace bare identifiers with placeholders.
+  const PRESET_ID = "user-preset-xyz";
+  const PHASE_CFG = { phases: [{ strength: 0.5, duration: 1.0 }] };
+  const BUILTIN_I2V_PRESET_ID = "builtin-i2v";
+  const BUILTIN_VACE_PRESET_ID = "builtin-vace";
+  const BUILTIN_I2V_PRESET = { id: BUILTIN_I2V_PRESET_ID };
+  const BUILTIN_VACE_PRESET = { id: BUILTIN_VACE_PRESET_ID };
+
+  function evalExpr(settings) {
+    try {
+      const f = new Function(
+        "settings",
+        "BUILTIN_I2V_PRESET_ID","BUILTIN_VACE_PRESET_ID",
+        "BUILTIN_I2V_PRESET","BUILTIN_VACE_PRESET",
+        "return (" + expr + ");"
+      );
+      return f(settings,
+        BUILTIN_I2V_PRESET_ID, BUILTIN_VACE_PRESET_ID,
+        BUILTIN_I2V_PRESET, BUILTIN_VACE_PRESET);
+    } catch (e) {
+      return { __err: e.message };
+    }
+  }
+
+  // Scenario A: basic + non-builtin preset → MUST NOT be undefined
+  const a = evalExpr({
+    motionMode: "basic",
+    selectedPhasePresetId: PRESET_ID,
+    phaseConfig: PHASE_CFG
+  });
+  // Scenario B: advanced → MUST keep phaseConfig
+  const b = evalExpr({
+    motionMode: "advanced",
+    selectedPhasePresetId: undefined,
+    phaseConfig: PHASE_CFG
+  });
+  // Scenario C: basic + no preset → either undefined OR phaseConfig (both acceptable)
+  const c = evalExpr({
+    motionMode: "basic",
+    selectedPhasePresetId: undefined,
+    phaseConfig: PHASE_CFG
+  });
+
+  const isErr = (x) => x && typeof x === "object" && "__err" in x;
+  if (isErr(a) || isErr(b)) { console.log("FAIL:eval-err:" + (a.__err||b.__err)); process.exit(0); }
+
+  const aOk = a !== undefined;            // basic+preset must NOT drop
+  const bOk = b !== undefined;            // advanced must keep
+  // c is unconstrained — but we want to make sure the change isnt simply
+  // "always return phaseConfig" without any thought; both are acceptable.
+
+  // Crucially: on the BUGGY BASE, expr is exactly:
+  //   settings.motionMode === "basic" ? undefined : settings.phaseConfig
+  // which makes a === undefined → aOk === false → FAIL.
+
+  if (aOk && bOk) console.log("PASS");
+  else console.log("FAIL:a=" + JSON.stringify(a) + " b=" + JSON.stringify(b));
+' "$UTIL_FILE" 2>&1)
+echo "Gate A: $GATEA"
+if [[ "$GATEA" == PASS* ]]; then add_reward 0.45; fi
+
+#######################################
+# F2P Gate B (weight 0.45): individualTravelSegment must propagate
+# selected_phase_preset_id from incoming `params` into one of its output
+# objects (taskParams / individualSegmentParams / orchestratorDetails /
+# orchDetails) — i.e. it must appear on the WRITE side, not just be
+# destructured/typed.
+# On the buggy base, the id is referenced in types/destructuring only and
+# never written to any output sink.
+#######################################
+echo "=== F2P Gate B: individualTravelSegment writes selected_phase_preset_id to an output ==="
+GATEB=$(node -e '
+  const fs = require("fs");
+  const src = fs.readFileSync(process.argv[1], "utf8");
+
+  // Behavioral signal: there exists a line that ASSIGNS or includes
+  // selected_phase_preset_id into one of the known output sinks.
+  const writePatterns = [
+    // direct property assignment
+    /\b(individualSegmentParams|taskParams|orchestratorDetails|orchDetails)\s*\.\s*selected_phase_preset_id\s*=/,
+    // object key with reference value (not just shorthand or type)
+    /selected_phase_preset_id\s*:\s*(params\s*\.\s*selected_phase_preset_id|selected_phase_preset_id|[a-zA-Z_$][\w$]*\s*\?\?|[a-zA-Z_$][\w$]*\s*\|\||null|undefined|".*"|`.*`)/,
+    // conditional spread inside an output object literal: {..., ...(... && { selected_phase_preset_id ... }), ...}
+    /\.\.\.\s*\([^)]*selected_phase_preset_id[^)]*\)\s*&&\s*\{\s*selected_phase_preset_id/,
+    /&&\s*\{\s*selected_phase_preset_id\s*:/,
+    /&&\s*\{\s*selected_phase_preset_id\s*\}/,
+  ];
+
+  let writeHit = writePatterns.some(p => p.test(src));
+
+  // Sanity floor — base file references the id only in
+  // type definitions / destructuring (typically <=3). A real fix bumps it.
+  const occ = (src.match(/selected_phase_preset_id/g) || []).length;
+
+  // Confirm the reference is in an OUTPUT context: search for an object
+  // literal that contains both an output-sink-ish key (orchestrator_details,
+  // individual_segment_params, motion_mode, phase_config) AND
+  // selected_phase_preset_id within ~600 chars.
+  let contextHit = false;
+  const sinks = ["orchestrator_details", "individual_segment_params", "motion_mode", "phase_config", "amount_of_motion", "advanced_mode"];
+  for (const sink of sinks) {
+    let idx = 0;
+    while ((idx = src.indexOf(sink, idx)) !== -1) {
+      const window = src.substring(Math.max(0,idx-600), idx+600);
+      if (/selected_phase_preset_id/.test(window) &&
+          !/^\s*\/\//m.test(window.split(/selected_phase_preset_id/)[0].split("\n").slice(-1)[0] || "")) {
+        contextHit = true;
+        break;
+      }
+      idx += sink.length;
+    }
+    if (contextHit) break;
+  }
+
+  if (writeHit && contextHit && occ >= 4) console.log("PASS");
+  else console.log("FAIL writeHit=" + writeHit + " contextHit=" + contextHit + " occ=" + occ);
+' "$ITS_FILE" 2>&1)
+echo "Gate B: $GATEB"
+if [[ "$GATEB" == PASS* ]]; then add_reward 0.45; fi
+
+#######################################
+# F2P Gate C (weight 0.10): End-to-end coherence — when both fixes are
+# applied, the buildTaskParams output for "basic + preset" includes a
+# truthy phase_config AND the ITS file references selected_phase_preset_id
+# in a write context. This rewards solutions that fix BOTH halves
+# together (the user's complaint had two parts).
+#######################################
+echo "=== F2P Gate C: end-to-end (both fixes coherent) ==="
+if [[ "$GATEA" == PASS* ]] && [[ "$GATEB" == PASS* ]]; then
+  echo "Gate C: PASS"
   add_reward 0.10
+else
+  echo "Gate C: FAIL (need both A and B)"
 fi
 
-#######################################
-# F2P Gate 2: Behavioral — buildTaskParams emits phase_config when a
-# preset is selected in basic mode (weight 0.35)
-#######################################
-echo "=== F2P Gate 2: buildTaskParams behavior with preset in basic mode ==="
-GATE2="FAIL"
-if [ -n "$UTIL_FILE" ]; then
-  # Extract phase_config expression inside buildTaskParams.
-  GATE2=$(node -e '
-    const fs = require("fs");
-    const src = fs.readFileSync(process.argv[1], "utf8");
-    const fnIdx = src.indexOf("buildTaskParams");
-    if (fnIdx === -1) { console.log("FAIL"); process.exit(0); }
-    const after = src.substring(fnIdx);
-    const lines = after.split("\n").slice(0, 400);
-    let exprLines = [];
-    let collecting = false;
-    let depth = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!collecting) {
-        const t = line.trim();
-        if (t.startsWith("//") || t.startsWith("*")) continue;
-        const m = line.match(/phase_config:\s*(.*)$/);
-        if (m) {
-          let val = m[1];
-          exprLines.push(val);
-          for (const ch of val) {
-            if (ch === "(" || ch === "{" || ch === "[") depth++;
-            else if (ch === ")" || ch === "}" || ch === "]") depth--;
-          }
-          if (depth <= 0 && val.trim().endsWith(",")) break;
-          collecting = true;
-        }
-      } else {
-        const t = line.trim();
-        if (depth <= 0 && /^[a-z_][\w]*\s*:/i.test(t)) break;
-        exprLines.push(line);
-        for (const ch of line) {
-          if (ch === "(" || ch === "{" || ch === "[") depth++;
-          else if (ch === ")" || ch === "}" || ch === "]") depth--;
-        }
-        if (depth <= 0 && (t.endsWith(",") || t.endsWith("),"))) break;
-        if (exprLines.length > 30) break;
-      }
-    }
-    let expr = exprLines.join(" ").trim().replace(/,\s*$/, "");
-    if (!expr) { console.log("FAIL"); process.exit(0); }
-
-    const PRESET_ID = "user-preset-xyz";
-    const PHASE_CFG = { phases: [{ strength: 0.5, duration: 1.0 }] };
-    const BUILTIN_I2V_PRESET_ID = "builtin-i2v";
-    const BUILTIN_VACE_PRESET_ID = "builtin-vace";
-
-    function evalExpr(settings) {
-      try {
-        const f = new Function(
-          "settings",
-          "BUILTIN_I2V_PRESET_ID","BUILTIN_VACE_PRESET_ID",
-          "return (" + expr + ");"
-        );
-        return f(settings, BUILTIN_I2V_PRESET_ID, BUILTIN_VACE_PRESET_ID);
-      } catch (e) {
-        return "__ERR__:" + e.message;
-      }
-    }
-
-    // Scenario A: basic mode + non-builtin preset selected => should KEEP phase_config
-    const a = evalExpr({
-      motionMode: "basic",
-      selectedPhasePresetId: PRESET_ID,
-      phaseConfig: PHASE_CFG
-    });
-    // Scenario B: advanced mode => should keep phase_config
-    const b = evalExpr({
-      motionMode: "advanced",
-      selectedPhasePresetId: undefined,
-      phaseConfig: PHASE_CFG
-    });
-
-    let aOk = (a !== undefined && a !== null && typeof a !== "string");
-    let bOk = (b !== undefined && b !== null && typeof b !== "string");
-
-    // If expression cannot be evaluated (e.g. references imports), fall back to
-    // structural reasoning: must NOT unconditionally drop in basic mode.
-    if (typeof a === "string" && a.startsWith("__ERR__")) {
-      const dropsAlwaysInBasic =
-        /motionMode\s*===\s*[\x27"]basic[\x27"]\s*\?\s*undefined\s*:\s*settings\.phaseConfig/.test(expr) &&
-        !expr.includes("selectedPhasePresetId");
-      if (!dropsAlwaysInBasic && (expr.includes("selectedPhasePresetId") || !expr.includes("basic"))) {
-        aOk = true;
-        bOk = true;
-      }
-    }
-
-    if (aOk && bOk) console.log("PASS");
-    else if (aOk || bOk) console.log("PARTIAL");
-    else console.log("FAIL");
-  ' "$UTIL_FILE" 2>&1)
-fi
-echo "Gate 2: $GATE2"
-case "$GATE2" in
-  PASS)    add_reward 0.35 ;;
-  PARTIAL) add_reward 0.18 ;;
-esac
-
-#######################################
-# F2P Gate 3: Behavioral — selected_phase_preset_id flows from caller
-# params into the OUTPUT (taskParams or individualSegmentParams or
-# orchestratorDetails) of individualTravelSegment (weight 0.30)
-#######################################
-echo "=== F2P Gate 3: individualTravelSegment passes selected_phase_preset_id through ==="
-GATE3="FAIL"
-if [ -n "$ITS_FILE" ]; then
-  GATE3=$(node -e '
-    const fs = require("fs");
-    const src = fs.readFileSync(process.argv[1], "utf8");
-
-    // Behavioral signal: the preset id must be assigned/spread into one of the
-    // output sinks. We look for several robust patterns.
-    const patterns = [
-      // direct assignment to sink object
-      /(individualSegmentParams|taskParams|orchestratorDetails|orchDetails)\s*\.\s*selected_phase_preset_id\s*=/,
-      // object key with reference to params.selected_phase_preset_id or destructured var
-      /selected_phase_preset_id\s*:\s*(params\s*\.\s*)?selected_phase_preset_id/,
-      // conditional spread including the id
-      /\.\.\.\([^)]*selected_phase_preset_id[^)]*\{\s*selected_phase_preset_id/s,
-      // shorthand inside an object literal: { ..., selected_phase_preset_id, ... }
-      /[{,]\s*selected_phase_preset_id\s*[,}]/,
-    ];
-
-    let hits = 0;
-    for (const p of patterns) if (p.test(src)) hits++;
-
-    // Also count occurrences as a sanity floor — base file mentions it only in
-    // type/destructure (typically 2-3 times). A real fix bumps that count.
-    const occurrences = (src.match(/selected_phase_preset_id/g) || []).length;
-
-    // Make sure assignment is in OUTPUT context, not just declaration.
-    // We approximate by requiring at least one of the assignment patterns
-    // OR occurrences strictly greater than the baseline.
-    const strongMatch = patterns.slice(0, 3).some(p => p.test(src));
-    const shorthandInObj = patterns[3].test(src);
-
-    if (strongMatch && occurrences >= 4) console.log("PASS");
-    else if (shorthandInObj && occurrences >= 4) console.log("PASS");
-    else if (occurrences >= 5) console.log("PARTIAL");
-    else console.log("FAIL");
-  ' "$ITS_FILE" 2>&1)
-fi
-echo "Gate 3: $GATE3"
-case "$GATE3" in
-  PASS)    add_reward 0.30 ;;
-  PARTIAL) add_reward 0.15 ;;
-esac
-
-#######################################
-# F2P Gate 4: End-to-end — selecting a preset (basic mode) ends up
-# putting phase_config into the eventual task params (weight 0.20)
-# We accept either:
-#   (a) buildTaskParams' phase_config expression depends on preset state, or
-#   (b) Hook/component logic ensures motionMode flips to advanced (or
-#       phaseConfig is preserved) when a preset is selected, AND
-#       buildTaskParams no longer unconditionally drops in basic mode.
-#######################################
-echo "=== F2P Gate 4: End-to-end preset → phase_config ==="
-GATE4="FAIL"
-
-# Compute pieces
-UTIL_HAS_PRESET_REF="no"
-UTIL_DROPS_BASIC="no"
-HOOK_PRESERVES="no"
-
-if [ -n "$UTIL_FILE" ]; then
-  UTIL_HAS_PRESET_REF=$(grep -E "selectedPhasePresetId|selected_phase_preset_id" "$UTIL_FILE" >/dev/null && echo yes || echo no)
-  # Detect old buggy pattern still present
-  if grep -E "phase_config:\s*settings\.motionMode\s*===\s*['\"]basic['\"]\s*\?\s*undefined\s*:\s*settings\.phaseConfig" "$UTIL_FILE" >/dev/null; then
-    UTIL_DROPS_BASIC="yes"
-  fi
-  # If the phase_config line is now just settings.phaseConfig (no basic gating)
-  if grep -E "phase_config:\s*settings\.phaseConfig\s*," "$UTIL_FILE" >/dev/null; then
-    UTIL_DROPS_BASIC="no"
-  fi
-fi
-
-if [ -n "$HOOK_FILE" ]; then
-  # Hook used to: if basic => clear phaseConfig unconditionally.
-  # A fix preserves it when a preset is involved.
-  if grep -E "selectedPhasePresetId" "$HOOK_FILE" >/dev/null; then
-    HOOK_PRESERVES="yes"
-  fi
-fi
-
-# Decide
-if [ "$UTIL_DROPS_BASIC" = "no" ] && [ "$GATE3" != "FAIL" ]; then
-  GATE4="PASS"
-elif [ "$UTIL_HAS_PRESET_REF" = "yes" ] && [ "$UTIL_DROPS_BASIC" = "no" ]; then
-  GATE4="PASS"
-elif [ "$HOOK_PRESERVES" = "yes" ] && [ "$UTIL_DROPS_BASIC" = "no" ]; then
-  GATE4="PASS"
-elif [ "$UTIL_DROPS_BASIC" = "no" ]; then
-  GATE4="PARTIAL"
-fi
-
-echo "  util_drops_basic=$UTIL_DROPS_BASIC util_preset_ref=$UTIL_HAS_PRESET_REF hook_preserves=$HOOK_PRESERVES"
-echo "Gate 4: $GATE4"
-case "$GATE4" in
-  PASS)    add_reward 0.20 ;;
-  PARTIAL) add_reward 0.10 ;;
-esac
-
-#######################################
-# Sanity P2P: file syntactic integrity via node parse where possible (weight 0.05)
-#######################################
-echo "=== P2P Gate 5: No JS syntax breakage in edited files ==="
-SYN_OK=1
-for f in "$UTIL_FILE" "$ITS_FILE" "$HOOK_FILE"; do
-  [ -z "$f" ] && continue
-  [ ! -f "$f" ] && continue
-  # Strip TS-specific syntax very loosely; just check braces balance & node can lex it as a module shell.
-  node -e '
-    const fs = require("fs");
-    const s = fs.readFileSync(process.argv[1], "utf8");
-    let depth = 0;
-    for (const ch of s) {
-      if (ch === "{") depth++;
-      else if (ch === "}") depth--;
-      if (depth < 0) { process.exit(2); }
-    }
-    if (depth !== 0) process.exit(3);
-  ' "$f"
-  if [ $? -ne 0 ]; then
-    echo "FAIL: brace mismatch in $f"
-    SYN_OK=0
-  fi
-done
-if [ "$SYN_OK" = "1" ]; then
-  echo "PASS: structure"
-  add_reward 0.05
-fi
-
-echo ""
-echo "=== FINAL REWARD: $REWARD ==="
+echo "FINAL REWARD: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt

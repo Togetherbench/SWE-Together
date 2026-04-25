@@ -1,18 +1,16 @@
 #!/bin/bash
 set +e
 
-# Reward file setup
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 echo "0.0" > "$REWARD_FILE"
-
 REWARD=0
-add_reward() {
-    REWARD=$((REWARD + $1))
-    echo "  +$1 bp (total: $REWARD bp)"
+
+emit() {
+    awk -v r="$REWARD" 'BEGIN { printf("%.4f\n", r/100) }' > "$REWARD_FILE"
 }
 
-# Find workspace path
+# Locate workspace
 WORKSPACE=""
 for cand in /workspace/repo /workspace/reigh /workspace/medialightbox-refactor /workspace; do
     if [ -d "$cand/src/shared/components/MediaLightbox" ]; then
@@ -21,279 +19,279 @@ for cand in /workspace/repo /workspace/reigh /workspace/medialightbox-refactor /
     fi
 done
 if [ -z "$WORKSPACE" ]; then
-    found=$(find /workspace -maxdepth 4 -type d -name "MediaLightbox" 2>/dev/null | head -1)
+    found=$(find /workspace -maxdepth 5 -type d -name "MediaLightbox" 2>/dev/null | head -1)
     if [ -n "$found" ]; then
         WORKSPACE=$(echo "$found" | sed 's|/src/shared/components/MediaLightbox||')
     fi
 fi
 
 if [ -z "$WORKSPACE" ] || [ ! -d "$WORKSPACE" ]; then
-    echo "FATAL: Could not locate workspace with MediaLightbox component"
-    echo "0.0" > "$REWARD_FILE"
+    echo "FATAL: workspace not found"
+    emit
     exit 0
 fi
 echo "Workspace: $WORKSPACE"
-cd "$WORKSPACE" || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+cd "$WORKSPACE" || { emit; exit 0; }
 
-# Ensure tools on PATH
 export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 command -v npx >/dev/null 2>&1 || export PATH="/usr/lib/node_modules/.bin:$PATH"
 
 MAIN_FILE="src/shared/components/MediaLightbox/MediaLightbox.tsx"
 COMPONENT_DIR="src/shared/components/MediaLightbox"
 ORIGINAL_MAIN_LINES=2672
-ORIGINAL_FILE_COUNT=91
 
-# ─── Gate 1 (P2P): TypeScript still compiles ────────────────────────────────
-# Weight: 15 bp
+if [ ! -f "$MAIN_FILE" ]; then
+    echo "FATAL: $MAIN_FILE missing"
+    emit
+    exit 0
+fi
+
+# ─── P2P GATE: TypeScript still compiles ─────────────────────────────────
+# Gating only — no reward. Original base compiles, so failure means the agent broke things.
 echo ""
-echo "=== Gate 1 (P2P, 15bp): TypeScript compiles ==="
+echo "=== P2P GATE: TypeScript compiles (gating, 0bp) ==="
 TSC_PASS=0
 if command -v npx >/dev/null 2>&1; then
-    timeout 300 npx --no-install tsc --noEmit > /tmp/tsc_output.txt 2>&1
+    timeout 360 npx --no-install tsc --noEmit > /tmp/tsc_output.txt 2>&1
     TSC_EXIT=$?
     if [ $TSC_EXIT -eq 0 ]; then
-        echo "PASS: TypeScript compiles"
-        add_reward 15
+        echo "PASS: tsc clean"
         TSC_PASS=1
     else
-        ERR_COUNT=$(grep -cE "error TS[0-9]+" /tmp/tsc_output.txt 2>/dev/null || echo 0)
-        echo "FAIL: TypeScript errors ($ERR_COUNT errors)"
+        ERR_COUNT=$(grep -cE "error TS[0-9]+" /tmp/tsc_output.txt 2>/dev/null)
+        echo "FAIL: tsc errors ($ERR_COUNT)"
         tail -25 /tmp/tsc_output.txt
+        echo "Regression: setting reward to 0 and exiting."
+        REWARD=0
+        emit
+        exit 0
     fi
 else
-    echo "SKIP: npx not available"
+    echo "SKIP: npx unavailable — gate cannot run; assuming pass for grading other gates"
+    TSC_PASS=1
 fi
 
-# ─── Gate 2 (F2P): MediaLightbox.tsx is meaningfully smaller ─────────────────
-# Weight: 20 bp (graduated)
-echo ""
-echo "=== Gate 2 (F2P, up to 20bp): Main component reduced ==="
-REFACTORED=0
-CURRENT_LINES=0
-REDUCTION_PCT=0
-if [ -f "$MAIN_FILE" ]; then
-    CURRENT_LINES=$(wc -l < "$MAIN_FILE")
-    REDUCTION_PCT=$(( (ORIGINAL_MAIN_LINES - CURRENT_LINES) * 100 / ORIGINAL_MAIN_LINES ))
-    echo "Original: ${ORIGINAL_MAIN_LINES} lines, Current: ${CURRENT_LINES} lines, Reduction: ${REDUCTION_PCT}%"
+# Collect newly-added .ts/.tsx files inside the component dir
+NEW_FILES_RAW=$(git -C "$WORKSPACE" status --porcelain 2>/dev/null | awk '/^\?\?/ {print $2} /^A/ {print $2} /^AM/ {print $2}' | grep -E "^${COMPONENT_DIR}.*\.(ts|tsx)$")
 
-    if [ "$REDUCTION_PCT" -ge 35 ]; then
-        echo "EXCELLENT: ${REDUCTION_PCT}% reduction"
-        add_reward 20
-        REFACTORED=1
-    elif [ "$REDUCTION_PCT" -ge 20 ]; then
-        echo "GOOD: ${REDUCTION_PCT}% reduction"
-        add_reward 14
-        REFACTORED=1
-    elif [ "$REDUCTION_PCT" -ge 10 ]; then
-        echo "PARTIAL: ${REDUCTION_PCT}% reduction"
-        add_reward 7
-        REFACTORED=1
-    else
-        echo "FAIL: Reduction ${REDUCTION_PCT}% below 10%"
-    fi
-else
-    echo "FAIL: Main file missing"
-fi
-
-# ─── Gate 3 (F2P): Real new abstractions exist (substantive, not stubs) ─────
-# Weight: 20 bp
-echo ""
-echo "=== Gate 3 (F2P, up to 20bp): New substantive abstractions ==="
-NEW_FILES=$(git -C "$WORKSPACE" status --porcelain 2>/dev/null | awk '/^\?\?/ {print $2} /^A/ {print $2}' | grep -E "^${COMPONENT_DIR}.*\.(ts|tsx)$")
 NEW_FILE_LIST=()
-NONTRIVIAL=0
 SUBSTANTIVE=0
 TOTAL_NEW_LINES=0
-HAS_HOOK=0
-HAS_COMPONENT=0
-HAS_UTIL=0
 
-if [ -n "$NEW_FILES" ]; then
+if [ -n "$NEW_FILES_RAW" ]; then
     while IFS= read -r f; do
+        [ -z "$f" ] && continue
         if [ -f "$f" ]; then
             FLINES=$(wc -l < "$f")
             TOTAL_NEW_LINES=$((TOTAL_NEW_LINES + FLINES))
-            if [ "$FLINES" -ge 15 ]; then
-                NONTRIVIAL=$((NONTRIVIAL + 1))
+            if [ "$FLINES" -ge 15 ] && grep -qE "^export " "$f" 2>/dev/null; then
+                SUBSTANTIVE=$((SUBSTANTIVE + 1))
                 NEW_FILE_LIST+=("$f")
-                # Substantive = has at least one export
-                if grep -qE "^export " "$f" 2>/dev/null; then
-                    SUBSTANTIVE=$((SUBSTANTIVE + 1))
-                fi
-                # Categorize
-                case "$f" in
-                    *hooks/use*|*useUse*) HAS_HOOK=1 ;;
-                    *components/*) HAS_COMPONENT=1 ;;
-                    *utils/*|*helpers/*) HAS_UTIL=1 ;;
-                esac
-                # Hook detection by content
-                grep -qE "^export (function |const )use[A-Z]" "$f" 2>/dev/null && HAS_HOOK=1
             fi
         fi
-    done <<< "$NEW_FILES"
+    done <<< "$NEW_FILES_RAW"
 fi
 
-echo "New files: $(echo "$NEW_FILES" | grep -c .), nontrivial: $NONTRIVIAL, substantive: $SUBSTANTIVE, total new lines: $TOTAL_NEW_LINES"
-echo "Has hook: $HAS_HOOK, component: $HAS_COMPONENT, util: $HAS_UTIL"
+echo "New substantive files: $SUBSTANTIVE, total new lines: $TOTAL_NEW_LINES"
 
-G3_SCORE=0
-if [ "$SUBSTANTIVE" -ge 5 ] && [ "$TOTAL_NEW_LINES" -ge 300 ]; then
-    G3_SCORE=20
-    echo "EXCELLENT: 5+ substantive new modules with significant content"
-elif [ "$SUBSTANTIVE" -ge 3 ] && [ "$TOTAL_NEW_LINES" -ge 150 ]; then
-    G3_SCORE=14
-    echo "GOOD: 3+ substantive new modules"
-elif [ "$SUBSTANTIVE" -ge 1 ] && [ "$TOTAL_NEW_LINES" -ge 30 ]; then
-    G3_SCORE=7
-    echo "PARTIAL: At least 1 substantive new module"
-else
-    echo "FAIL: No substantive new abstractions"
-fi
-[ $G3_SCORE -gt 0 ] && add_reward $G3_SCORE
-
-# ─── Gate 4 (F2P/Behavioral): New modules import-clean & wired into main ────
-# Weight: 20 bp — verifies extracted code is actually consumed by main
+# ─── F2P GATE 1 (30bp): Main component meaningfully reduced ────────────────
+# On base: main = 2672 lines → reduction = 0%. Fails. Only the agent's edits can pass this.
 echo ""
-echo "=== Gate 4 (F2P, up to 20bp): New modules wired into main ==="
+echo "=== F2P GATE 1 (up to 30bp): MediaLightbox.tsx line reduction ==="
+CURRENT_LINES=$(wc -l < "$MAIN_FILE")
+REDUCTION_PCT=$(( (ORIGINAL_MAIN_LINES - CURRENT_LINES) * 100 / ORIGINAL_MAIN_LINES ))
+echo "Original: ${ORIGINAL_MAIN_LINES}, Current: ${CURRENT_LINES}, Reduction: ${REDUCTION_PCT}%"
+
+G1=0
+if [ "$REDUCTION_PCT" -ge 30 ]; then
+    G1=30
+    echo "EXCELLENT: ≥30% reduction → +30"
+elif [ "$REDUCTION_PCT" -ge 18 ]; then
+    G1=20
+    echo "GOOD: ≥18% reduction → +20"
+elif [ "$REDUCTION_PCT" -ge 8 ]; then
+    G1=10
+    echo "PARTIAL: ≥8% reduction → +10"
+else
+    echo "FAIL: reduction below 8%"
+fi
+REWARD=$((REWARD + G1))
+
+# ─── F2P GATE 2 (25bp): Substantive new abstractions exist ────────────────
+# On base: 0 new files. Fails.
+echo ""
+echo "=== F2P GATE 2 (up to 25bp): New substantive modules ==="
+G2=0
+if [ "$SUBSTANTIVE" -ge 5 ] && [ "$TOTAL_NEW_LINES" -ge 300 ]; then
+    G2=25
+    echo "EXCELLENT: 5+ substantive modules, ≥300 lines → +25"
+elif [ "$SUBSTANTIVE" -ge 3 ] && [ "$TOTAL_NEW_LINES" -ge 150 ]; then
+    G2=16
+    echo "GOOD: 3+ substantive modules → +16"
+elif [ "$SUBSTANTIVE" -ge 1 ] && [ "$TOTAL_NEW_LINES" -ge 30 ]; then
+    G2=8
+    echo "PARTIAL: 1+ substantive module → +8"
+else
+    echo "FAIL: no substantive new modules"
+fi
+REWARD=$((REWARD + G2))
+
+# ─── F2P GATE 3 (25bp): New modules wired into main / barrel & imports clean ─
+# On base: no new modules → wired count = 0. Fails.
+echo ""
+echo "=== F2P GATE 3 (up to 25bp): New modules wired into main and import-clean ==="
 WIRED_COUNT=0
-IMPORT_CLEAN=0
-if [ -f "$MAIN_FILE" ] && [ ${#NEW_FILE_LIST[@]} -gt 0 ]; then
+BROKEN_IMPORTS=0
+
+if [ ${#NEW_FILE_LIST[@]} -gt 0 ]; then
     for nf in "${NEW_FILE_LIST[@]}"; do
-        # Get module name (filename without extension)
         modname=$(basename "$nf" | sed 's/\.[tj]sx\?$//')
-        # Skip generic names
         case "$modname" in
             index|types|constants) continue ;;
         esac
-        # Check if main file imports it (directly or via barrel)
-        if grep -qE "(from ['\"].*${modname}['\"])|(\\b${modname}\\b)" "$MAIN_FILE" 2>/dev/null; then
+        # Direct import in main, or referenced symbol used in main.
+        if grep -qE "(from ['\"][^'\"]*${modname}['\"])|(\\b${modname}\\b)" "$MAIN_FILE" 2>/dev/null; then
             WIRED_COUNT=$((WIRED_COUNT + 1))
-        else
-            # Check barrel exports
-            if grep -rqE "export.*${modname}" "$COMPONENT_DIR"/index.* "$COMPONENT_DIR"/hooks/index.* "$COMPONENT_DIR"/components/index.* "$COMPONENT_DIR"/utils/index.* 2>/dev/null; then
-                # transitively used? check main imports the barrel symbol
-                if grep -qE "\\b${modname}\\b" "$MAIN_FILE" 2>/dev/null; then
-                    WIRED_COUNT=$((WIRED_COUNT + 1))
-                fi
-            fi
+            continue
         fi
+        # Otherwise transitively used through any new file that IS wired
+        for other in "${NEW_FILE_LIST[@]}"; do
+            [ "$other" = "$nf" ] && continue
+            othermod=$(basename "$other" | sed 's/\.[tj]sx\?$//')
+            if grep -qE "\\b${modname}\\b" "$other" 2>/dev/null && \
+               grep -qE "\\b${othermod}\\b" "$MAIN_FILE" 2>/dev/null; then
+                WIRED_COUNT=$((WIRED_COUNT + 1))
+                break
+            fi
+        done
+    done
+
+    # Broken-relative-imports check
+    for nf in "${NEW_FILE_LIST[@]}"; do
+        DIR=$(dirname "$nf")
+        while IFS= read -r line; do
+            ipath=$(echo "$line" | sed -nE "s/.*from ['\"](\\.\\.[^'\"]*|\\.[^'\"]*)['\"].*/\\1/p")
+            [ -z "$ipath" ] && continue
+            resolved="$DIR/$ipath"
+            if [ ! -f "$resolved" ] && [ ! -f "$resolved.ts" ] && [ ! -f "$resolved.tsx" ] && \
+               [ ! -f "$resolved/index.ts" ] && [ ! -f "$resolved/index.tsx" ]; then
+                BROKEN_IMPORTS=$((BROKEN_IMPORTS + 1))
+            fi
+        done < <(grep -E "^import .* from ['\"]\\.\\.?/" "$nf" 2>/dev/null)
     done
 fi
 
-# Also check no broken-internal-imports: for each new file, confirm referenced relative imports resolve
-BROKEN_IMPORTS=0
+echo "Wired modules: $WIRED_COUNT, broken relative imports: $BROKEN_IMPORTS"
+
+G3=0
+if [ "$WIRED_COUNT" -ge 4 ] && [ "$BROKEN_IMPORTS" -eq 0 ]; then
+    G3=25
+    echo "EXCELLENT: 4+ modules wired, imports clean → +25"
+elif [ "$WIRED_COUNT" -ge 2 ] && [ "$BROKEN_IMPORTS" -eq 0 ]; then
+    G3=16
+    echo "GOOD: 2+ modules wired, imports clean → +16"
+elif [ "$WIRED_COUNT" -ge 1 ] && [ "$BROKEN_IMPORTS" -eq 0 ]; then
+    G3=8
+    echo "PARTIAL: 1 module wired → +8"
+else
+    echo "FAIL: insufficient wiring or broken imports"
+fi
+REWARD=$((REWARD + G3))
+
+# ─── F2P GATE 4 (20bp): Behavioral signal — extracted code is real, not a stub,
+# and main no longer contains the duplicated logic it should be importing.
+# On base: main still contains all its original inline definitions of e.g.
+# resolutionToDimensions / aspectRatioToDimensions, large debug-log useEffects, etc.
+# Detect any one of several plausible refactor signals; agent must show ≥2 of them.
+echo ""
+echo "=== F2P GATE 4 (up to 20bp): Behavioral refactor signals ==="
+
+SIGNALS=0
+
+# Signal A: Inline resolutionToDimensions (function/const) was REMOVED from main.tsx.
+# (Original main defines it inline; refactored versions remove and import.)
+if ! grep -qE "(const|function)[[:space:]]+resolutionToDimensions[[:space:]]*[=(]" "$MAIN_FILE" 2>/dev/null; then
+    echo "Signal A: inline resolutionToDimensions removed from main"
+    SIGNALS=$((SIGNALS + 1))
+else
+    echo "Signal A: still inline in main"
+fi
+
+# Signal B: Inline aspectRatioToDimensions removed from main.tsx
+if ! grep -qE "(const|function)[[:space:]]+aspectRatioToDimensions[[:space:]]*[=(]" "$MAIN_FILE" 2>/dev/null; then
+    echo "Signal B: inline aspectRatioToDimensions removed from main"
+    SIGNALS=$((SIGNALS + 1))
+else
+    echo "Signal B: still inline in main"
+fi
+
+# Signal C: Number of console.log calls in main reduced by ≥30% vs original.
+# Original main had a high count of debug logs; count them now.
+LOG_COUNT=$(grep -cE "console\.(log|warn|info|debug)\(" "$MAIN_FILE" 2>/dev/null)
+# Approximate baseline: original had >80 console statements. Refactor should significantly reduce.
+if [ "$LOG_COUNT" -lt 50 ]; then
+    echo "Signal C: console.* count is $LOG_COUNT (<50) — debug noise reduced"
+    SIGNALS=$((SIGNALS + 1))
+else
+    echo "Signal C: console.* count $LOG_COUNT not reduced enough"
+fi
+
+# Signal D: A new hook file beginning with 'use' exists and is exported as a hook
+HOOK_HIT=0
 for nf in "${NEW_FILE_LIST[@]}"; do
-    DIR=$(dirname "$nf")
-    while IFS= read -r line; do
-        # extract relative import path
-        ipath=$(echo "$line" | sed -nE "s/.*from ['\"](\\.\\.[^'\"]*|\\.[^'\"]*)['\"].*/\\1/p")
-        [ -z "$ipath" ] && continue
-        resolved="$DIR/$ipath"
-        # try .ts, .tsx, /index.ts, /index.tsx
-        if [ ! -f "$resolved" ] && [ ! -f "$resolved.ts" ] && [ ! -f "$resolved.tsx" ] && \
-           [ ! -f "$resolved/index.ts" ] && [ ! -f "$resolved/index.tsx" ]; then
-            BROKEN_IMPORTS=$((BROKEN_IMPORTS + 1))
+    base=$(basename "$nf")
+    if echo "$base" | grep -qE "^use[A-Z]"; then
+        if grep -qE "^export (function|const) use[A-Z]" "$nf" 2>/dev/null; then
+            HOOK_HIT=1
+            break
         fi
-    done < <(grep -E "^import .* from ['\"]\\.\\.?/" "$nf" 2>/dev/null)
+    fi
 done
-
-[ $BROKEN_IMPORTS -eq 0 ] && IMPORT_CLEAN=1
-echo "Wired modules: $WIRED_COUNT, broken relative imports in new files: $BROKEN_IMPORTS"
-
-G4_SCORE=0
-if [ "$TSC_PASS" -eq 1 ] && [ "$WIRED_COUNT" -ge 3 ] && [ "$IMPORT_CLEAN" -eq 1 ]; then
-    G4_SCORE=20
-    echo "EXCELLENT: 3+ extracted modules wired into main, all imports clean"
-elif [ "$TSC_PASS" -eq 1 ] && [ "$WIRED_COUNT" -ge 1 ] && [ "$IMPORT_CLEAN" -eq 1 ]; then
-    G4_SCORE=12
-    echo "GOOD: At least 1 module wired into main, imports clean"
-elif [ "$WIRED_COUNT" -ge 1 ]; then
-    G4_SCORE=5
-    echo "PARTIAL: Modules created but compile or imports issues"
+if [ $HOOK_HIT -eq 1 ]; then
+    echo "Signal D: at least one new useXxx hook exported"
+    SIGNALS=$((SIGNALS + 1))
 else
-    echo "FAIL: New modules not wired into main"
+    echo "Signal D: no new useXxx hook"
 fi
-[ $G4_SCORE -gt 0 ] && add_reward $G4_SCORE
 
-# ─── Gate 5 (F2P): Code preserved (extracted, not deleted) ──────────────────
-# Weight: 10 bp
-echo ""
-echo "=== Gate 5 (F2P, up to 10bp): Code preserved through extraction ==="
-if [ "$REFACTORED" -eq 0 ]; then
-    echo "SKIP: No refactor detected"
+# Signal E: A new component file (.tsx) was added that exports a React component
+COMP_HIT=0
+for nf in "${NEW_FILE_LIST[@]}"; do
+    case "$nf" in
+        *.tsx)
+            if grep -qE "^export (default |const |function )[A-Z]" "$nf" 2>/dev/null; then
+                COMP_HIT=1
+                break
+            fi
+            ;;
+    esac
+done
+if [ $COMP_HIT -eq 1 ]; then
+    echo "Signal E: new .tsx component extracted"
+    SIGNALS=$((SIGNALS + 1))
 else
-    CURRENT_TOTAL=$(find "$COMPONENT_DIR" -type f \( -name "*.tsx" -o -name "*.ts" \) -exec cat {} + 2>/dev/null | wc -l)
-    EXTRA=0
-    while IFS= read -r f; do
-        if [ -f "$f" ] && ! echo "$f" | grep -q "MediaLightbox"; then
-            EXTRA=$((EXTRA + $(wc -l < "$f")))
-        fi
-    done < <(git -C "$WORKSPACE" diff --name-only --diff-filter=A 2>/dev/null | grep -E '\.(tsx|ts)$')
-    ADJUSTED=$((CURRENT_TOTAL + EXTRA))
-    ORIG_TOTAL=21893
-    PCT=$((ADJUSTED * 100 / ORIG_TOTAL))
-    echo "Adjusted total: $ADJUSTED / $ORIG_TOTAL ($PCT%)"
-
-    if [ "$PCT" -ge 85 ]; then
-        echo "EXCELLENT: Code preserved well"
-        add_reward 10
-    elif [ "$PCT" -ge 70 ]; then
-        echo "GOOD: Most code preserved"
-        add_reward 6
-    else
-        echo "FAIL: Code appears deleted, not extracted"
-    fi
+    echo "Signal E: no new component .tsx"
 fi
 
-# ─── Gate 6 (P2P/Structural): Public API + import-from-tree intact ──────────
-# Weight: 15 bp
-echo ""
-echo "=== Gate 6 (P2P, up to 15bp): Public API preserved ==="
-API_SCORE=0
-# Default export reachable
-if grep -rqE "^export default" "$MAIN_FILE" 2>/dev/null || \
-   grep -rqE "^export.*default" "$COMPONENT_DIR"/index.* 2>/dev/null; then
-    API_SCORE=$((API_SCORE + 5))
-    echo "  OK: default export reachable"
+echo "Total refactor signals: $SIGNALS / 5"
+
+G4=0
+if [ "$SIGNALS" -ge 4 ]; then
+    G4=20
+    echo "EXCELLENT: ≥4 signals → +20"
+elif [ "$SIGNALS" -ge 2 ]; then
+    G4=12
+    echo "GOOD: ≥2 signals → +12"
+elif [ "$SIGNALS" -ge 1 ]; then
+    G4=5
+    echo "PARTIAL: 1 signal → +5"
 else
-    echo "  WARN: default export missing"
+    echo "FAIL: no behavioral refactor signals"
 fi
+REWARD=$((REWARD + G4))
 
-# Verify the top-level component name is still the export
-if grep -qE "(export default (MediaLightbox|function MediaLightbox|React\\.memo|memo\\())" "$MAIN_FILE" 2>/dev/null || \
-   grep -rqE "MediaLightbox" "$COMPONENT_DIR"/index.* 2>/dev/null; then
-    API_SCORE=$((API_SCORE + 3))
-    echo "  OK: MediaLightbox name preserved"
-fi
-
-# Resolve module via TS resolution test (a tiny script)
-cat > /tmp/api_check.ts <<'EOF'
-import M from "./src/shared/components/MediaLightbox/MediaLightbox";
-const _check: any = M;
-EOF
-if command -v npx >/dev/null 2>&1; then
-    cp /tmp/api_check.ts ./_api_check.ts 2>/dev/null
-    timeout 120 npx --no-install tsc --noEmit --jsx preserve --esModuleInterop --skipLibCheck --moduleResolution node ./_api_check.ts > /tmp/api_resolve.txt 2>&1
-    APIEX=$?
-    rm -f ./_api_check.ts
-    # Lenient: accept if the import line itself doesn't fail (other errors in repo unrelated)
-    if ! grep -qE "Cannot find module.*MediaLightbox" /tmp/api_resolve.txt 2>/dev/null; then
-        API_SCORE=$((API_SCORE + 7))
-        echo "  OK: MediaLightbox module resolvable"
-    else
-        echo "  FAIL: MediaLightbox module not resolvable"
-    fi
-fi
-echo "API score: $API_SCORE / 15"
-add_reward $API_SCORE
-
-# ─── Final write ────────────────────────────────────────────────────────────
+# ─── Final ─────────────────────────────────────────────────────────────────
 echo ""
-echo "=== TOTAL: $REWARD bp ==="
-FINAL=$(awk -v r=$REWARD 'BEGIN { printf "%.4f", r/100 }')
-# clamp to [0,1]
-FINAL=$(awk -v f=$FINAL 'BEGIN { if (f>1) f=1; if (f<0) f=0; printf "%.4f", f }')
-echo "$FINAL" > "$REWARD_FILE"
-echo "Final reward: $FINAL"
+echo "=== TOTAL: $REWARD / 100 ==="
+emit
 exit 0

@@ -1,11 +1,9 @@
 #!/bin/bash
 set +e
 
-# Test for pi-mono: write tool not showing errors in TUI
-# The write tool block in tool-execution.ts should display errors like the edit block does.
-
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
+REWARD=0
 
 REPO_DIR="/workspace/pi-mono"
 TARGET_FILE="$REPO_DIR/packages/coding-agent/src/modes/interactive/components/tool-execution.ts"
@@ -13,8 +11,6 @@ CHANGELOG="$REPO_DIR/packages/coding-agent/CHANGELOG.md"
 PKG_DIR="$REPO_DIR/packages/coding-agent"
 
 git config --global --add safe.directory "$REPO_DIR" 2>/dev/null || true
-
-# Ensure bun is on PATH if installed
 export PATH="$PATH:/root/.bun/bin:/usr/local/bin:/usr/bin"
 if ! command -v bun >/dev/null 2>&1; then
     for d in /root/.bun/bin /home/*/.bun/bin /usr/local/bun/bin; do
@@ -22,240 +18,180 @@ if ! command -v bun >/dev/null 2>&1; then
     done
 fi
 
-score=0
-details=""
-
-add_result() {
-    local name="$1"
-    local weight="$2"
-    local pass="$3"
-    local tag="$4"
-    if [ "$pass" -eq 1 ]; then
-        score=$(awk "BEGIN { printf \"%.4f\", $score + $weight }")
-        details="${details}PASS ($weight) [$tag]: $name\n"
-    else
-        details="${details}FAIL ($weight) [$tag]: $name\n"
-    fi
+finish() {
+    echo "$REWARD" > "$REWARD_FILE"
+    exit 0
 }
 
 # ---- GATE: target file must exist ----
 if [ ! -f "$TARGET_FILE" ]; then
-    echo "GATE FAIL: Target file not found at $TARGET_FILE"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
+    echo "GATE FAIL: target file missing"
+    REWARD=0
+    finish
 fi
 
-# Extract the write block once for reuse
+# ---- GATE (P2P): TypeScript still parses/transpiles cleanly ----
+# This protects against destructive edits but awards no reward.
+TRANSPILE_OK=0
+if command -v bun >/dev/null 2>&1; then
+    (cd "$PKG_DIR" && bun build src/modes/interactive/components/tool-execution.ts --no-bundle --outfile /tmp/tool-exec-check.js >/tmp/bun.out 2>&1)
+    [ $? -eq 0 ] && TRANSPILE_OK=1
+else
+    # If bun unavailable, fall back to a node-based syntax sanity check via stripping types is unreliable.
+    # Treat as pass to avoid false negatives.
+    TRANSPILE_OK=1
+fi
+if [ "$TRANSPILE_OK" -ne 1 ]; then
+    echo "GATE FAIL: target file does not transpile cleanly (regression)"
+    REWARD=0
+    finish
+fi
+
+# ---- Extract write & edit blocks ----
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$TARGET_FILE', 'utf8');
-// Find write block
-const writeRe = /else\s+if\s*\(\s*this\.toolName\s*===\s*['\"]write['\"]/;
-const writeMatch = src.match(writeRe);
-if (!writeMatch) { fs.writeFileSync('/tmp/write_block.txt',''); process.exit(0); }
-const writeStart = writeMatch.index;
-// Find matching closing brace by tracking braces from first '{' after match
-let i = writeStart + writeMatch[0].length;
-while (i < src.length && src[i] !== '{') i++;
-if (i >= src.length) { fs.writeFileSync('/tmp/write_block.txt',''); process.exit(0); }
-let depth = 0;
-let start = i;
-for (; i < src.length; i++) {
+function extractBlock(re) {
+  const m = src.match(re);
+  if (!m) return '';
+  let i = m.index + m[0].length;
+  while (i < src.length && src[i] !== '{') i++;
+  if (i >= src.length) return '';
+  let depth = 0, start = m.index;
+  for (; i < src.length; i++) {
     if (src[i] === '{') depth++;
     else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+  }
+  return src.substring(start, i);
 }
-const block = src.substring(writeStart, i);
-fs.writeFileSync('/tmp/write_block.txt', block);
-
-// Also extract edit block
-const editRe = /else\s+if\s*\(\s*this\.toolName\s*===\s*['\"]edit['\"]/;
-const editMatch = src.match(editRe);
-if (editMatch) {
-    let j = editMatch.index + editMatch[0].length;
-    while (j < src.length && src[j] !== '{') j++;
-    let d = 0, es = editMatch.index;
-    for (; j < src.length; j++) {
-        if (src[j] === '{') d++;
-        else if (src[j] === '}') { d--; if (d === 0) { j++; break; } }
-    }
-    fs.writeFileSync('/tmp/edit_block.txt', src.substring(es, j));
-}
+const writeRe = /(else\s+)?if\s*\(\s*this\.toolName\s*===\s*['\"]write['\"]/;
+const editRe  = /(else\s+)?if\s*\(\s*this\.toolName\s*===\s*['\"]edit['\"]/;
+fs.writeFileSync('/tmp/write_block.txt', extractBlock(writeRe));
+fs.writeFileSync('/tmp/edit_block.txt',  extractBlock(editRe));
 " 2>/dev/null
 
 WRITE_BLOCK=$(cat /tmp/write_block.txt 2>/dev/null)
 EDIT_BLOCK=$(cat /tmp/edit_block.txt 2>/dev/null)
 
-# ============================================================
-# TEST 1 (P2P, 0.05): TypeScript transpiles cleanly
-# ============================================================
-T1=0
-if command -v bun >/dev/null 2>&1; then
-    BUN_OUT=$(cd "$PKG_DIR" && bun build src/modes/interactive/components/tool-execution.ts --no-bundle --outfile /tmp/tool-exec-check.js 2>&1)
-    [ $? -eq 0 ] && T1=1
-elif command -v npx >/dev/null 2>&1; then
-    # Fallback: tsc syntax-only check
-    NPX_OUT=$(cd "$PKG_DIR" && npx --yes -p typescript tsc --noEmit --allowJs --skipLibCheck src/modes/interactive/components/tool-execution.ts 2>&1)
-    [ $? -eq 0 ] && T1=1
-else
-    # Fallback: node parse via esbuild-like parser; use basic syntactic check
-    node -e "
-    const fs=require('fs');
-    const s=fs.readFileSync('$TARGET_FILE','utf8');
-    // strip TS-only syntax superficially and try parse... too unreliable. Just pass if file non-empty.
-    process.exit(s.length>100?0:1);
-    " && T1=1
+if [ -z "$WRITE_BLOCK" ]; then
+    echo "GATE FAIL: could not locate write block"
+    REWARD=0
+    finish
 fi
-echo "T1 (transpile): $T1"
-add_result "TypeScript transpiles cleanly" 0.05 "$T1" "P2P"
 
 # ============================================================
-# TEST 2 (F2P, 0.30): Write block contains error-handling logic
-# Behavioral via AST-ish inspection: must reference isError/error
-# AND must produce some text/output for that error path.
+# F2P TEST A (0.35): Write block introduces error-handling branch
+# On the buggy base, the write block has NO reference to isError
+# and no error-rendering code. After the fix it must reference an
+# error indicator AND have a conditional branch on it.
 # ============================================================
-T2=0
-if [ -n "$WRITE_BLOCK" ]; then
-    node -e "
-    const block = require('fs').readFileSync('/tmp/write_block.txt','utf8');
-    const hasErrorCheck = /isError|\.error\b|result\.isError|result\?\.isError|errorText|getTextOutput/i.test(block);
-    const hasOutputProduction = /text\s*[+]?=|\.fg\s*\(|errorText|getTextOutput|Text\.|\\\$\{.*error/i.test(block);
-    process.exit((hasErrorCheck && hasOutputProduction) ? 0 : 1);
-    "
-    [ $? -eq 0 ] && T2=1
-fi
-echo "T2 (error handling present): $T2"
-add_result "Write block has error-handling logic with output" 0.30 "$T2" "F2P"
+TA=0
+node -e "
+const block = require('fs').readFileSync('/tmp/write_block.txt','utf8');
+const hasErrorRef = /\bisError\b|\.error\b|errorText/.test(block);
+const hasConditional = /if\s*\([^)]*(isError|\.error)\b/.test(block) || /(isError|\.error)\s*\?/.test(block);
+process.exit((hasErrorRef && hasConditional) ? 0 : 1);
+" 2>/dev/null
+[ $? -eq 0 ] && TA=1
+echo "A (error branch present in write): $TA"
 
 # ============================================================
-# TEST 3 (F2P, 0.25): Write block conditionally renders error text
-# Must have a conditional (if/ternary) keyed on error AND must
-# accumulate/return text content for it.
+# F2P TEST B (0.30): Write block produces error output text
+# After the fix, the error path must produce visible text content
+# (assignment to text / errorText / Text. component / fg color).
+# Buggy base only emits a success line; this should fail there.
 # ============================================================
-T3=0
-if [ -n "$WRITE_BLOCK" ]; then
-    node -e "
-    const block = require('fs').readFileSync('/tmp/write_block.txt','utf8');
-    const conditionalOnError = /if\s*\([^)]*(isError|\.error)|(\bisError\b|\.error\b)[^;{]*\?/i.test(block);
-    const addsErrorText = /text\s*\+?=[^;]*(error|Error)|getTextOutput|errorText\s*=|(error|Error)[^;]*\.fg\s*\(/i.test(block);
-    process.exit((conditionalOnError && addsErrorText) ? 0 : 1);
-    "
-    [ $? -eq 0 ] && T3=1
-fi
-echo "T3 (conditional error render): $T3"
-add_result "Write block conditionally renders error text" 0.25 "$T3" "F2P"
+TB=0
+node -e "
+const block = require('fs').readFileSync('/tmp/write_block.txt','utf8');
+// Must have at least one statement that emits error text.
+const emitsError =
+  /errorText\s*=/.test(block) ||
+  /text\s*\+?=[^;]*(error|Error|errorText)/.test(block) ||
+  /getTextOutput\s*\(/.test(block) ||
+  /(error|Error)[^;\n]*\.fg\s*\(/.test(block) ||
+  /Text[^;\n]*(error|Error)/.test(block);
+process.exit(emitsError ? 0 : 1);
+" 2>/dev/null
+[ $? -eq 0 ] && TB=1
+echo "B (error output emitted): $TB"
 
 # ============================================================
-# TEST 4 (F2P, 0.15): Behavior parity with edit block
-# The write block should look structurally similar to edit's error
-# handling — i.e. same kind of error-display pattern. Compare key
-# tokens used in edit block to ensure write adopted them.
+# F2P TEST C (0.20): Parity with edit block's error pattern
+# The edit block on base already handles errors. The fix should
+# adopt at least 2 of its error-pattern tokens inside the write
+# block. On no-op base, write has none of them → fails.
 # ============================================================
-T4=0
-if [ -n "$WRITE_BLOCK" ] && [ -n "$EDIT_BLOCK" ]; then
-    node -e "
-    const w = require('fs').readFileSync('/tmp/write_block.txt','utf8');
-    const e = require('fs').readFileSync('/tmp/edit_block.txt','utf8');
-    // Tokens that are likely part of the edit error-display pattern.
-    const candidates = ['isError','getTextOutput','errorText','error'];
-    let shared = 0;
-    for (const c of candidates) {
-        const inE = new RegExp('\\\\b'+c+'\\\\b','i').test(e);
-        const inW = new RegExp('\\\\b'+c+'\\\\b','i').test(w);
-        if (inE && inW) shared++;
-    }
-    // Need at least 2 shared error-pattern tokens
-    process.exit(shared >= 2 ? 0 : 1);
-    "
-    [ $? -eq 0 ] && T4=1
-fi
-echo "T4 (parity with edit block): $T4"
-add_result "Write block adopts edit-block error pattern (parity)" 0.15 "$T4" "F2P"
-
-# ============================================================
-# TEST 5 (F2P, 0.10): Simulated runtime — execute extracted snippet
-# Build a tiny harness that mimics the write block's error path
-# by inspecting whether feeding {isError:true, error/content} into
-# the file's logic produces non-empty error text. We do this by
-# requiring that strings related to error rendering exist AND that
-# the write block does NOT early-return success without checking.
-# ============================================================
-T5=0
-if [ -n "$WRITE_BLOCK" ]; then
-    node -e "
-    const block = require('fs').readFileSync('/tmp/write_block.txt','utf8');
-    // The write block (buggy original) produced only a success message.
-    // After fix, when isError is truthy, output must differ.
-    // We approximate by confirming there are at least TWO distinct text
-    // assignments / branches in the write block.
-    const textAssigns = (block.match(/text\s*\+?=|return\s+[^;]*Text|Text\./g) || []).length;
-    const branchCount = (block.match(/\bif\s*\(/g) || []).length + (block.match(/\?\s*[^:]+:/g) || []).length;
-    process.exit((textAssigns >= 2 && branchCount >= 1) ? 0 : 1);
-    "
-    [ $? -eq 0 ] && T5=1
-fi
-echo "T5 (branching for error vs success): $T5"
-add_result "Write block branches for error vs success output" 0.10 "$T5" "F2P"
-
-# ============================================================
-# TEST 6 (P2P, 0.05): Edit block regression guard
-# ============================================================
-T6=0
+TC=0
 if [ -n "$EDIT_BLOCK" ]; then
-    node -e "
-    const e = require('fs').readFileSync('/tmp/edit_block.txt','utf8');
-    const ok = /isError/.test(e) && /error/i.test(e) && /getTextOutput|text\s*\+?=/i.test(e);
-    process.exit(ok ? 0 : 1);
-    "
-    [ $? -eq 0 ] && T6=1
+node -e "
+const w = require('fs').readFileSync('/tmp/write_block.txt','utf8');
+const e = require('fs').readFileSync('/tmp/edit_block.txt','utf8');
+const candidates = ['isError','getTextOutput','errorText'];
+let shared = 0;
+for (const c of candidates) {
+  const re = new RegExp('\\\\b'+c+'\\\\b');
+  if (re.test(e) && re.test(w)) shared++;
+}
+// Also count generic 'error' token only if both have it AND write has a conditional on it
+const wHasErrCond = /if\s*\([^)]*\berror\b/i.test(w) || /\berror\b\s*\?/.test(w);
+const eHasErr = /\berror\b/i.test(e);
+if (wHasErrCond && eHasErr) shared++;
+process.exit(shared >= 2 ? 0 : 1);
+" 2>/dev/null
+[ $? -eq 0 ] && TC=1
 fi
-echo "T6 (edit regression): $T6"
-add_result "Edit block error handling preserved" 0.05 "$T6" "P2P"
+echo "C (parity with edit error pattern): $TC"
 
 # ============================================================
-# TEST 7 (F2P, 0.05): tool-execution.ts was modified
+# F2P TEST D (0.15): CHANGELOG updated mentioning write/error fix
+# Buggy base has no such entry → fails. Any reasonable wording in
+# CHANGELOG that references the write tool and error/display fix.
 # ============================================================
-T7=0
-cd "$REPO_DIR" 2>/dev/null
-if git diff --name-only 2>/dev/null | grep -q 'tool-execution.ts'; then
-    T7=1
-elif git diff --cached --name-only 2>/dev/null | grep -q 'tool-execution.ts'; then
-    T7=1
-elif git log -1 --name-only --pretty=format: 2>/dev/null | grep -q 'tool-execution.ts'; then
-    T7=1
-fi
-echo "T7 (file modified): $T7"
-add_result "tool-execution.ts was modified" 0.05 "$T7" "F2P"
-
-# ============================================================
-# TEST 8 (F2P, 0.05): CHANGELOG updated with relevant entry
-# ============================================================
-T8=0
+TD=0
 if [ -f "$CHANGELOG" ]; then
-    cd "$REPO_DIR"
-    CHANGELOG_DIFF=$( { git diff -- "$CHANGELOG"; git diff --cached -- "$CHANGELOG"; git log -1 -p -- "$CHANGELOG"; } 2>/dev/null )
-    if [ -n "$CHANGELOG_DIFF" ]; then
-        if echo "$CHANGELOG_DIFF" | grep -qiE '(write.*(error|fail)|error.*write|tool.*error|silent|swallow|#856)'; then
-            T8=1
-        elif echo "$CHANGELOG_DIFF" | grep -qiE '(write|error)' && echo "$CHANGELOG_DIFF" | grep -qE '^\+'; then
-            # Weak partial: any added line mentioning write or error
-            T8=1
-        fi
-    fi
+    # Must mention "write" AND something error-related, and not be the
+    # unchanged base (we approximate by requiring both tokens together
+    # near each other).
+    node -e "
+    const fs = require('fs');
+    const t = fs.readFileSync('$CHANGELOG','utf8').toLowerCase();
+    // find lines mentioning write tool and error visibility
+    const lines = t.split('\n');
+    let ok = false;
+    for (const ln of lines) {
+      if (/\bwrite\b/.test(ln) && /(error|fail|swallow|display|show|surface)/.test(ln)) { ok = true; break; }
+    }
+    // also accept paragraph proximity
+    if (!ok) {
+      for (let i = 0; i < lines.length; i++) {
+        if (/\bwrite\b/.test(lines[i])) {
+          const window = lines.slice(Math.max(0,i-2), i+3).join(' ');
+          if (/(error|fail|swallow|display|show|surface)/.test(window)) { ok = true; break; }
+        }
+      }
+    }
+    process.exit(ok ? 0 : 1);
+    " 2>/dev/null
+    [ $? -eq 0 ] && TD=1
 fi
-echo "T8 (changelog): $T8"
-add_result "CHANGELOG updated with write/error fix entry" 0.05 "$T8" "F2P"
+echo "D (CHANGELOG updated): $TD"
 
 # ============================================================
-# Total weights:
-# T1 0.05 P2P, T2 0.30 F2P, T3 0.25 F2P, T4 0.15 F2P, T5 0.10 F2P,
-# T6 0.05 P2P, T7 0.05 F2P, T8 0.05 F2P  = 1.00
-# Behavioral F2P (T2+T3+T4+T5) = 0.80
+# Aggregate F2P weights
 # ============================================================
+add_w() {
+    local pass="$1"; local w="$2"
+    if [ "$pass" -eq 1 ]; then
+        REWARD=$(awk "BEGIN { printf \"%.4f\", $REWARD + $w }")
+    fi
+}
 
-REWARD=$(awk "BEGIN { printf \"%.2f\", $score }")
-echo "==============================="
-echo -e "$details"
-echo "FINAL REWARD: $REWARD"
-echo "==============================="
+add_w "$TA" 0.35
+add_w "$TB" 0.30
+add_w "$TC" 0.20
+add_w "$TD" 0.15
+
+echo "Final reward: $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
 exit 0
