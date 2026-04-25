@@ -500,6 +500,44 @@ server.serve_forever()
         self._log_user_decision(logging_dir, turn, decision, completing)
         return decision
 
+    async def _capture_git_diff(self, environment, turn: int) -> None:
+        """Snapshot `git diff HEAD` for every git repo under /workspace.
+
+        Writes to <logs_dir>/patches/turn-<N>.patch. The final turn's patch is
+        also copied to <logs_dir>/final.patch for easy access. Best-effort —
+        silently no-ops if /workspace has no git repos or exec fails.
+        """
+        cmd = (
+            'set +e; cd /workspace 2>/dev/null && '
+            'for d in */; do '
+            '  if [ -d "$d/.git" ]; then '
+            '    echo "=== $d ==="; '
+            '    (cd "$d" && git --no-pager diff HEAD 2>&1); '
+            '  fi; '
+            'done'
+        )
+        try:
+            result = await environment.exec(
+                command=cmd,
+                cwd="/workspace",
+                env={},
+                timeout_sec=60,
+            )
+        except Exception as e:
+            log.debug("git diff capture failed at turn %d: %s", turn, e)
+            return
+
+        if not result.stdout:
+            return
+
+        patches_dir = self.logs_dir / "patches"
+        patches_dir.mkdir(parents=True, exist_ok=True)
+        patch_path = patches_dir / f"turn-{turn}.patch"
+        patch_path.write_text(result.stdout)
+        # Mirror to final.patch — overwritten each turn so it always reflects
+        # the most recent state (== the agent's final candidate at trial end).
+        (self.logs_dir / "final.patch").write_text(result.stdout)
+
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
         decision: UserDecision, completing: bool,
@@ -574,6 +612,9 @@ server.serve_forever()
             if result.stderr:
                 (command_dir / "stderr.txt").write_text(result.stderr)
 
+        # Snapshot the candidate patch after the agent's first attempt (turn 0).
+        await self._capture_git_diff(environment, turn=0)
+
         # Multi-turn: resume loop
         session_id = self._find_session_id()
         if not session_id:
@@ -630,6 +671,9 @@ server.serve_forever()
                     (command_dir / "stdout.txt").write_text(result.stdout)
                 if result.stderr:
                     (command_dir / "stderr.txt").write_text(result.stderr)
+
+            # Snapshot patch state after this turn's resume completes.
+            await self._capture_git_diff(environment, turn=turn)
 
         # Post-run: build trajectory from session logs
         try:
