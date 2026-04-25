@@ -36,15 +36,14 @@ echo "SPARSE=$SPARSE"
 
 if [ -z "$TARGET" ]; then
     echo "FATAL: target not found"
-    echo "0.0" > "$REWARD_FILE"
+    echo "0.0000" > "$REWARD_FILE"
     exit 0
 fi
 
 export TARGET SPARSE
 
 # ════════════════════════════════════════════════════════════
-# P2P GATE (no reward): file still parses & has expected functions.
-# If broken => regression => exit with 0.0.
+# P2P GATE (no reward): file still parses & has expected funcs.
 # ════════════════════════════════════════════════════════════
 echo ""
 echo "=== P2P GATE: parse & structure ==="
@@ -77,17 +76,13 @@ if [ "$GATE" != "PASS" ]; then
 fi
 
 # ════════════════════════════════════════════════════════════
-# F2P 1 (0.50): The buggy chained scalar*tensor pattern
-#   qk = <expr> * q_scale * k_scale   (or reversed)
-# must NOT remain in the target file. This is the line called out
-# in the AMD MLIR error. On the unmodified base this pattern IS
-# present → fails on base, passes on fix.
-#
-# Accept any rewrite: parenthesized combine, precomputed scale var,
-# moved load, etc. The check is purely "buggy chain absent".
+# F2P 1 (0.20): Buggy chained scalar*tensor pattern eliminated
+# in TARGET. Specifically the line
+#   qk = tl.dot(q, k).to(tl.float32) * q_scale * k_scale
+# This is the line called out in the AMD MLIR error. Buggy on base.
 # ════════════════════════════════════════════════════════════
 echo ""
-echo "=== F2P 1 (0.50): buggy chained-mult eliminated in TARGET ==="
+echo "=== F2P 1 (0.20): buggy chained-mult eliminated in TARGET ==="
 F1=$(python3 << 'PYEOF'
 import os, ast, sys
 
@@ -128,12 +123,12 @@ print("PASS")
 PYEOF
 )
 echo "  F1=$F1"
-[ "$F1" = "PASS" ] && add_reward 0.50
+[ "$F1" = "PASS" ] && add_reward 0.20
 
 # ════════════════════════════════════════════════════════════
-# F2P 2 (0.20): Same fix applied in the SPARSE companion file
-#   (if it exists). Buggy base has same chained pattern there.
-#   If file doesn't exist on this checkout, skip (no reward, no penalty).
+# F2P 2 (0.20): Same fix in SPARSE companion file (completeness).
+# Buggy base has same chained pattern there.
+# If file doesn't exist on this checkout: NO REWARD (penalize incomplete checkouts handled by no file).
 # ════════════════════════════════════════════════════════════
 echo ""
 echo "=== F2P 2 (0.20): buggy chained-mult eliminated in SPARSE ==="
@@ -142,7 +137,7 @@ import os, ast, sys
 
 sparse = os.environ.get("SPARSE","")
 if not sparse or not os.path.isfile(sparse):
-    print("SKIP"); sys.exit(0)
+    print("SKIP_NOFILE"); sys.exit(0)
 
 def is_buggy_chain(val):
     if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)):
@@ -167,8 +162,7 @@ for n in ast.walk(tree):
             if isinstance(t, ast.Name) and t.id == "qk":
                 qk_assigns.append(n)
 if not qk_assigns:
-    # No qk in sparse file at all – treat as skip (don't reward, don't penalize).
-    print("SKIP"); sys.exit(0)
+    print("FAIL:no_qk"); sys.exit(0)
 for a in qk_assigns:
     if is_buggy_chain(a.value):
         print("FAIL:buggy_chain_present"); sys.exit(0)
@@ -179,24 +173,21 @@ echo "  F2=$F2"
 [ "$F2" = "PASS" ] && add_reward 0.20
 
 # ════════════════════════════════════════════════════════════
-# F2P 3 (0.30): BEHAVIORAL — execute the qk-scaling logic of
-# _attn_fwd_inner under a tracing harness. We replace tl.dot's
-# result with a TensorProxy that records every scalar __mul__.
-# Buggy base => proxy receives TWO sequential scalar multiplications
-# (q_scale then k_scale, or vice versa) ⇒ FAIL.
-# Any correct fix collapses scaling to ONE scalar multiplication
-# applied to the tensor (combined scale, parenthesized, or
-# precomputed var) ⇒ PASS.
+# F2P 3 (0.30): BEHAVIORAL — simulate the qk-scaling expression
+# from the qk-assign in _attn_fwd_inner using a recording proxy.
 #
-# We synthesize a tiny driver that mirrors the relevant statements
-# of _attn_fwd_inner by extracting just the qk-related lines from
-# the function body via AST, then exec'ing them with a controlled
-# namespace.
+# We build a TensorProxy that records every __mul__/__rmul__ as
+# either tensor*scalar or scalar*tensor. Buggy chain
+#   T * q_scale * k_scale
+# yields TWO sequential tensor*scalar ops on the proxy.
+# A correct fix collapses to ONE tensor*scalar, where the scalar
+# operand is itself a (q_scale*k_scale) combination — i.e. only
+# one tensor-scaling op is applied.
 # ════════════════════════════════════════════════════════════
 echo ""
 echo "=== F2P 3 (0.30): behavioral scale-multiplication trace ==="
 F3=$(python3 << 'PYEOF'
-import os, ast, sys, types
+import os, ast, sys
 
 target = os.environ["TARGET"]
 src = open(target).read()
@@ -207,212 +198,112 @@ inner = next((n for n in ast.walk(tree)
 if inner is None:
     print("FAIL:no_inner"); sys.exit(0)
 
-# Collect statements in execution order: top-level body of the function,
-# plus any For-loop bodies (the qk computation lives inside the for-loop).
-stmts = []
-def collect(body):
-    for s in body:
-        if isinstance(s, ast.For):
-            collect(s.body)
-        elif isinstance(s, ast.If):
-            # take then-branch statements (best effort)
-            stmts.append(s)
-            collect(s.body)
-        else:
-            stmts.append(s)
-collect(inner.body)
-
-# Find index of qk assignment.
-qk_idx = None
-for i, s in enumerate(stmts):
-    if isinstance(s, ast.Assign):
-        for t in s.targets:
+# Find the qk = ... assignment expression (any qk assign whose RHS
+# involves tl.dot or *_scale).
+qk_expr = None
+for n in ast.walk(inner):
+    if isinstance(n, ast.Assign):
+        for t in n.targets:
             if isinstance(t, ast.Name) and t.id == "qk":
-                qk_idx = i
-                break
-        if qk_idx is not None:
+                # Pick the one that contains tl.dot or references k/q_scale
+                src_seg = ast.unparse(n.value) if hasattr(ast, "unparse") else ""
+                if "dot" in src_seg or "scale" in src_seg:
+                    qk_expr = n.value
+                    break
+        if qk_expr is not None:
             break
 
-if qk_idx is None:
-    print("FAIL:no_qk_assign"); sys.exit(0)
+if qk_expr is None:
+    print("FAIL:no_qk_expr"); sys.exit(0)
 
-# We want statements that may define scale-related names leading up to qk.
-# Keep only Assign statements (simple) up to and including qk_idx, and
-# skip those whose RHS we cannot evaluate. We'll try to exec them in a
-# permissive namespace; on NameError for an unknown name, we inject a
-# benign sentinel and retry.
-relevant = [s for s in stmts[:qk_idx+1] if isinstance(s, ast.Assign)]
+# Also collect any preceding assignments in the loop that define
+# helper scale variables (e.g. `scale = q_scale * k_scale`).
+helper_assigns = []
+def walk_collect_helpers(node):
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.For):
+            for stmt in sub.body:
+                if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
+                   and isinstance(stmt.targets[0], ast.Name) \
+                   and stmt.targets[0].id != "qk":
+                    src_seg = ast.unparse(stmt.value) if hasattr(ast, "unparse") else ""
+                    if "scale" in src_seg or "q_scale" in src_seg or "k_scale" in src_seg:
+                        helper_assigns.append(stmt)
+walk_collect_helpers(inner)
 
-# Build a small module containing just these statements as a function.
-fn_ast = ast.FunctionDef(
-    name="_run",
-    args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-    body=relevant + [ast.Return(value=ast.Name(id="qk", ctx=ast.Load()))],
-    decorator_list=[],
-    returns=None,
-    type_comment=None,
-)
-mod = ast.Module(body=[fn_ast], type_ignores=[])
-ast.fix_missing_locations(mod)
-
-# Tracer
+# Build proxy.
 class TensorProxy:
-    def __init__(self, scalar_mul_count=0):
-        self.scalar_mul_count = scalar_mul_count
-    def _wrap(self, other):
-        # Multiplying by anything that isn't another TensorProxy counts as
-        # a scalar mul on the tensor.
+    def __init__(self, name="T"):
+        self.name = name
+        self.scalar_mults = 0  # how many times a scalar was applied
+    def __mul__(self, other):
         if isinstance(other, TensorProxy):
-            return TensorProxy(self.scalar_mul_count + other.scalar_mul_count)
-        return TensorProxy(self.scalar_mul_count + 1)
-    def __mul__(self, o): return self._wrap(o)
-    def __rmul__(self, o): return self._wrap(o)
-    def __add__(self, o): return self
-    def __radd__(self, o): return self
-    def __sub__(self, o): return self
-    def __rsub__(self, o): return self
-    def __truediv__(self, o): return self
-    def __rtruediv__(self, o): return self
-    def to(self, *a, **kw): return self
-    def __getitem__(self, k): return self
-    def __neg__(self): return self
+            return TensorProxy(self.name + "*" + other.name)
+        # scalar * tensor
+        new = TensorProxy(self.name)
+        new.scalar_mults = self.scalar_mults + 1
+        return new
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    def to(self, *a, **kw):
+        return self
+    def __add__(self, other):
+        return self
+    def __radd__(self, other):
+        return self
+    def __sub__(self, other):
+        return self
+    def __truediv__(self, other):
+        return self
 
 class FakeTL:
+    @staticmethod
+    def dot(a, b):
+        return TensorProxy("dot")
+    class language:
+        float32 = "float32"
     float32 = "float32"
-    float16 = "float16"
-    int32 = "int32"
     @staticmethod
-    def dot(a, b, *args, **kwargs):
-        return TensorProxy()
-    @staticmethod
-    def load(ptr, *args, **kwargs):
-        # Scalar load (q_scale / k_scale style) — return a plain float.
-        return 1.0
-    @staticmethod
-    def arange(a, b): return 0
-    @staticmethod
-    def maximum(a, b): return a
-    @staticmethod
-    def minimum(a, b): return a
-    @staticmethod
-    def exp(a): return a
-    @staticmethod
-    def exp2(a): return a
-    @staticmethod
-    def log2(a): return a
-    @staticmethod
-    def sum(a, axis=None): return a
-    @staticmethod
-    def max(a, axis=None): return a
-    @staticmethod
-    def where(c, a, b): return a
-    @staticmethod
-    def zeros(shape, dtype=None): return TensorProxy()
-    @staticmethod
-    def full(shape, value, dtype=None): return TensorProxy()
-    @staticmethod
-    def cdiv(a, b): return 1
-    @staticmethod
-    def program_id(axis): return 0
-    @staticmethod
-    def num_programs(axis): return 1
-    @staticmethod
-    def static_assert(*a, **kw): return None
-    @staticmethod
-    def static_print(*a, **kw): return None
-    @staticmethod
-    def trans(a, *args): return a
-    @staticmethod
-    def view(a, *args): return a
-    @staticmethod
-    def reshape(a, *args): return a
-    @staticmethod
-    def broadcast_to(a, *args): return a
+    def load(*a, **kw):
+        # Returns scalar-like float
+        return 1.5
 
-# Compile
-try:
-    code = compile(mod, "<extracted>", "exec")
-except Exception as e:
-    print(f"FAIL:compile:{e}"); sys.exit(0)
-
-# Try executing with a permissive namespace, auto-injecting unknown names
-# as benign scalars. q_scale / k_scale are real floats so chained
-# multiplications are detectable on the TensorProxy.
-attempts = 0
 ns = {
     "tl": FakeTL,
-    "q": TensorProxy(),
-    "k": TensorProxy(),
-    "v": TensorProxy(),
-    "q_scale": 1.0,
-    "k_scale": 1.0,
-    "Q_scale_ptr": 0,
-    "K_scale_ptr": 0,
-    "K_ptrs": 0,
-    "V_ptrs": 0,
-    "Q_ptrs": 0,
-    "k_mask": True,
-    "v_mask": True,
-    "q_mask": True,
-    "offs_m": TensorProxy(),
-    "offs_n": TensorProxy(),
-    "start_n": 0,
-    "STAGE": 1,
-    "BLOCK_M": 64,
-    "BLOCK_N": 64,
-    "HEAD_DIM": 64,
-    "N_CTX": 64,
-    "stride_kn": 1, "stride_kk": 1,
-    "stride_vn": 1, "stride_vk": 1,
-    "stride_qm": 1, "stride_qk": 1,
-    "lo": 0, "hi": 0,
-    "m_i": TensorProxy(), "l_i": TensorProxy(), "acc": TensorProxy(),
-    "qk_scale": 1.0,
-    "n": TensorProxy(), "m": TensorProxy(),
-    "True": True, "False": False, "None": None,
-    "scale": 1.0,
-    "combined_scale": 1.0,
-    "qk": TensorProxy(),
+    "q": TensorProxy("q"),
+    "k": TensorProxy("k"),
+    "q_scale": 1.7,
+    "k_scale": 2.3,
 }
 
-result = None
-last_err = None
-for attempt in range(60):
-    try:
-        local_ns = {}
-        exec(code, ns, local_ns)
-        result = local_ns["_run"]()
-        break
-    except NameError as e:
-        # Extract missing name from message: "name 'X' is not defined"
-        msg = str(e)
-        import re
-        m = re.search(r"'([^']+)'", msg)
-        if not m:
-            last_err = e; break
-        missing = m.group(1)
-        if missing in ns:
-            last_err = e; break
-        ns[missing] = 1.0  # benign scalar
-    except Exception as e:
-        last_err = e
-        break
+# Execute helper assigns first (in order)
+import copy
+try:
+    for h in helper_assigns:
+        mod = ast.Module(body=[h], type_ignores=[])
+        exec(compile(mod, "<helper>", "exec"), ns)
+except Exception as e:
+    # Helpers might depend on things we don't have; ignore failures.
+    pass
 
-if result is None:
-    print(f"FAIL:exec:{type(last_err).__name__}:{last_err}"); sys.exit(0)
+# Now evaluate the qk RHS expression
+try:
+    expr = ast.Expression(body=qk_expr)
+    result = eval(compile(expr, "<qk>", "eval"), ns)
+except Exception as e:
+    print(f"FAIL:eval:{e}"); sys.exit(0)
 
 if not isinstance(result, TensorProxy):
-    print(f"FAIL:not_tensor:{type(result).__name__}"); sys.exit(0)
+    print(f"FAIL:not_tensor:{type(result)}"); sys.exit(0)
 
-# Buggy form: tensor multiplied by q_scale then by k_scale separately
-# => scalar_mul_count >= 2.
-# Correct fix: scales combined first => scalar_mul_count == 1
-# (one tensor*scalar applied to the dot result).
-n = result.scalar_mul_count
-if n <= 1:
-    print(f"PASS:n={n}")
+# A correct fix applies the scalar to the tensor exactly ONCE.
+# Buggy chain applies it TWICE.
+if result.scalar_mults == 1:
+    print(f"PASS:scalar_mults={result.scalar_mults}")
+elif result.scalar_mults == 0:
+    print(f"FAIL:no_scaling")
 else:
-    print(f"FAIL:scalar_muls={n}")
+    print(f"FAIL:chained_scalar_mults={result.scalar_mults}")
 PYEOF
 )
 echo "  F3=$F3"
@@ -420,6 +311,219 @@ case "$F3" in
     PASS*) add_reward 0.30 ;;
 esac
 
+# ════════════════════════════════════════════════════════════
+# F2P 4 (0.15): Same behavioral check on SPARSE file's qk expr.
+# This rewards completeness behaviorally (not just textually).
+# ════════════════════════════════════════════════════════════
 echo ""
-echo "Final reward: $REWARD"
+echo "=== F2P 4 (0.15): behavioral scale-mult trace in SPARSE ==="
+F4=$(python3 << 'PYEOF'
+import os, ast, sys
+
+sparse = os.environ.get("SPARSE","")
+if not sparse or not os.path.isfile(sparse):
+    print("SKIP_NOFILE"); sys.exit(0)
+
+src = open(sparse).read()
+try:
+    tree = ast.parse(src)
+except Exception as e:
+    print(f"FAIL:parse:{e}"); sys.exit(0)
+
+# Find any function with a qk assign that uses *_scale
+candidate_funcs = []
+for n in ast.walk(tree):
+    if isinstance(n, ast.FunctionDef):
+        for sub in ast.walk(n):
+            if isinstance(sub, ast.Assign):
+                for t in sub.targets:
+                    if isinstance(t, ast.Name) and t.id == "qk":
+                        seg = ast.unparse(sub.value) if hasattr(ast, "unparse") else ""
+                        if "scale" in seg:
+                            candidate_funcs.append((n, sub))
+
+if not candidate_funcs:
+    print("FAIL:no_qk_scale_assign"); sys.exit(0)
+
+# Use the first one
+fn, qk_assign = candidate_funcs[0]
+qk_expr = qk_assign.value
+
+# Collect helper scale assigns inside fn (preceding qk in source order, broadly)
+helper_assigns = []
+for sub in ast.walk(fn):
+    if isinstance(sub, ast.Assign) and len(sub.targets) == 1 \
+       and isinstance(sub.targets[0], ast.Name) \
+       and sub.targets[0].id not in ("qk",):
+        seg = ast.unparse(sub.value) if hasattr(ast, "unparse") else ""
+        if "q_scale" in seg and "k_scale" in seg:
+            helper_assigns.append(sub)
+
+class TensorProxy:
+    def __init__(self, name="T"):
+        self.name = name
+        self.scalar_mults = 0
+    def __mul__(self, other):
+        if isinstance(other, TensorProxy):
+            return TensorProxy(self.name + "*" + other.name)
+        new = TensorProxy(self.name)
+        new.scalar_mults = self.scalar_mults + 1
+        return new
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    def to(self, *a, **kw):
+        return self
+
+class FakeTL:
+    @staticmethod
+    def dot(a, b):
+        return TensorProxy("dot")
+    float32 = "float32"
+    @staticmethod
+    def load(*a, **kw):
+        return 1.5
+
+ns = {
+    "tl": FakeTL,
+    "q": TensorProxy("q"),
+    "k": TensorProxy("k"),
+    "q_scale": 1.7,
+    "k_scale": 2.3,
+}
+
+try:
+    for h in helper_assigns:
+        mod = ast.Module(body=[h], type_ignores=[])
+        exec(compile(mod, "<helper>", "exec"), ns)
+except Exception:
+    pass
+
+try:
+    expr = ast.Expression(body=qk_expr)
+    result = eval(compile(expr, "<qk>", "eval"), ns)
+except Exception as e:
+    print(f"FAIL:eval:{e}"); sys.exit(0)
+
+if not isinstance(result, TensorProxy):
+    print(f"FAIL:not_tensor"); sys.exit(0)
+
+if result.scalar_mults == 1:
+    print(f"PASS:scalar_mults={result.scalar_mults}")
+elif result.scalar_mults == 0:
+    print(f"FAIL:no_scaling")
+else:
+    print(f"FAIL:chained_scalar_mults={result.scalar_mults}")
+PYEOF
+)
+echo "  F4=$F4"
+case "$F4" in
+    PASS*) add_reward 0.15 ;;
+esac
+
+# ════════════════════════════════════════════════════════════
+# F2P 5 (0.15): Combined-scale evidence — the fix should produce
+# a single combined scalar applied to the tensor. We check via
+# AST that the tensor*scalar product, after symbolic simplification
+# of the qk RHS, multiplies the tensor by an expression that
+# REFERENCES BOTH q_scale and k_scale (either directly or through
+# a precomputed helper var).
+#
+# This rewards real fixes (parenthesized combine, helper var,
+# load-once-then-multiply) and rejects "did nothing real" patches
+# like fake decorators or unrelated edits.
+# ════════════════════════════════════════════════════════════
+echo ""
+echo "=== F2P 5 (0.15): combined-scale references both q_scale and k_scale ==="
+F5=$(python3 << 'PYEOF'
+import os, ast, sys
+
+target = os.environ["TARGET"]
+src = open(target).read()
+tree = ast.parse(src)
+
+inner = next((n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
+if inner is None:
+    print("FAIL:no_inner"); sys.exit(0)
+
+# Find qk assign with scale references
+qk_assign = None
+for n in ast.walk(inner):
+    if isinstance(n, ast.Assign):
+        for t in n.targets:
+            if isinstance(t, ast.Name) and t.id == "qk":
+                seg = ast.unparse(n.value) if hasattr(ast, "unparse") else ""
+                if "scale" in seg or "dot" in seg:
+                    qk_assign = n
+                    break
+        if qk_assign is not None:
+            break
+
+if qk_assign is None:
+    print("FAIL:no_qk"); sys.exit(0)
+
+# Collect helper scale-defining assigns in inner (any assign whose value
+# references q_scale or k_scale, target is a Name)
+helper_defs = {}  # name -> (refs_q, refs_k)
+def refs(expr, target_name):
+    for sub in ast.walk(expr):
+        if isinstance(sub, ast.Name) and sub.id == target_name:
+            return True
+    return False
+
+for n in ast.walk(inner):
+    if isinstance(n, ast.Assign) and len(n.targets) == 1 \
+       and isinstance(n.targets[0], ast.Name):
+        nm = n.targets[0].id
+        if nm == "qk":
+            continue
+        rq = refs(n.value, "q_scale")
+        rk = refs(n.value, "k_scale")
+        if rq or rk:
+            helper_defs[nm] = (rq, rk)
+
+# Now in the qk RHS, expand all referenced names: collect all Name ids.
+referenced = set()
+for sub in ast.walk(qk_assign.value):
+    if isinstance(sub, ast.Name):
+        referenced.add(sub.id)
+
+# Determine if the qk RHS, transitively through helpers, references both.
+def transitive_refs(start_expr, helpers):
+    seen_names = set()
+    rq = rk = False
+    stack = []
+    for sub in ast.walk(start_expr):
+        if isinstance(sub, ast.Name):
+            stack.append(sub.id)
+    while stack:
+        nm = stack.pop()
+        if nm in seen_names: continue
+        seen_names.add(nm)
+        if nm == "q_scale": rq = True
+        elif nm == "k_scale": rk = True
+        elif nm in helpers:
+            hq, hk = helpers[nm]
+            if hq: rq = True
+            if hk: rk = True
+            # No further expansion of helper bodies needed — we already
+            # captured what helpers reference into helper_defs.
+    return rq, rk
+
+rq, rk = transitive_refs(qk_assign.value, helper_defs)
+
+if rq and rk:
+    print("PASS")
+else:
+    print(f"FAIL:rq={rq},rk={rk}")
+PYEOF
+)
+echo "  F5=$F5"
+[ "$F5" = "PASS" ] && add_reward 0.15
+
+# ════════════════════════════════════════════════════════════
+# Final
+# ════════════════════════════════════════════════════════════
+echo ""
+echo "=== FINAL REWARD: $REWARD ==="
 echo "$REWARD" > "$REWARD_FILE"

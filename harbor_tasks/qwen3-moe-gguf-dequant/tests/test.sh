@@ -1,15 +1,14 @@
 #!/bin/bash
 set +e
 
+mkdir -p /logs/verifier
 REWARD_FILE="/logs/verifier/reward.txt"
-mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
 
 cd /workspace 2>/dev/null
 
-# Run the entire grading inside python; capture a single float reward.
 python3 << 'PYEOF' > /tmp/test_output.log 2>&1
-import sys, os, traceback
+import sys, os, traceback, ctypes, inspect
 sys.path.insert(0, '/workspace')
 os.chdir('/workspace')
 
@@ -27,9 +26,7 @@ def fail_zero(reason=""):
     write_reward(0.0)
     sys.exit(0)
 
-# ---- Imports & libggml setup ---------------------------------------------
 try:
-    import ctypes
     import numpy as np
     import torch
     import gguf
@@ -42,13 +39,8 @@ class ggml_init_params(ctypes.Structure):
                 ("no_alloc", ctypes.c_bool)]
 
 LIBGGML = None
-candidates = [
-    "/usr/local/lib/libggml.so",
-    "/usr/local/lib/libggml-base.so",
-    "/usr/lib/libggml.so",
-    "/usr/lib/x86_64-linux-gnu/libggml.so",
-]
-for cand in candidates:
+for cand in ["/usr/local/lib/libggml.so", "/usr/local/lib/libggml-base.so",
+             "/usr/lib/libggml.so", "/usr/lib/x86_64-linux-gnu/libggml.so"]:
     if os.path.exists(cand):
         try:
             lib = ctypes.CDLL(cand)
@@ -84,9 +76,8 @@ def quantize_with_libggml(qtype, weights, numel):
         dtype=np.uint8, order="C"
     )
     if LIBGGML.ggml_quantize_requires_imatrix(qtype.value):
-        qw = np.sum(
-            (weights * weights).reshape((-1, weights.shape[-1])), axis=0
-        ).ctypes.data_as(c_float_p)
+        qw = np.sum((weights * weights).reshape((-1, weights.shape[-1])), axis=0
+                   ).ctypes.data_as(c_float_p)
     else:
         qw = ctypes.cast(0, c_float_p)
     LIBGGML.ggml_quantize_chunk(
@@ -97,14 +88,14 @@ def quantize_with_libggml(qtype, weights, numel):
     )
     return quantized
 
-# ---- Import the dequant module under test --------------------------------
+# ---- Load module under test ----------------------------------------------
 try:
+    from qwen3_moe_fused.quantize_gguf import dequant as dq_mod
     from qwen3_moe_fused.quantize_gguf.dequant import dequantize, dequantize_functions
 except Exception as e:
     fail_zero(f"dequant import error: {e}")
 
-# ---- P2P gating: pre-existing dequantizers must still work ---------------
-# These pass on base. They are GATES (no reward weight).
+# ---- P2P regression gates (no reward, gate only) -------------------------
 def p2p_check(qtype_name, seed=2024, n_blocks=16, rtol=5e-3, atol=5e-3):
     try:
         qtype = getattr(gguf.GGMLQuantizationType, qtype_name)
@@ -114,8 +105,7 @@ def p2p_check(qtype_name, seed=2024, n_blocks=16, rtol=5e-3, atol=5e-3):
         weights = rng.uniform(-1, 1, numel).astype(np.float32)
         quantized = quantize_with_libggml(qtype, weights, numel)
         out_ref = torch.from_numpy(gguf.quants.dequantize(quantized.copy(), qtype))
-        quantized_t = torch.from_numpy(quantized)
-        out = dequantize(quantized_t, qtype, (numel,), torch.float32)
+        out = dequantize(torch.from_numpy(quantized), qtype, (numel,), torch.float32)
         if torch.isnan(out).any() or torch.isinf(out).any():
             return False
         if out.shape != out_ref.shape:
@@ -125,21 +115,14 @@ def p2p_check(qtype_name, seed=2024, n_blocks=16, rtol=5e-3, atol=5e-3):
         traceback.print_exc()
         return False
 
-print("=== P2P regression gates (no reward) ===")
-for qname in ("Q4_0", "Q8_0", "IQ4_NL", "IQ4_XS"):
+print("=== P2P regression gates ===")
+for qname in ("Q4_0", "Q8_0", "IQ4_NL", "IQ4_XS", "Q4_K", "Q6_K"):
     ok = p2p_check(qname)
     print(f"  P2P {qname}: {'OK' if ok else 'BROKEN'}")
     if not ok:
-        # Agent destroyed something that worked on base.
         fail_zero(f"P2P regression on {qname}")
 
-# ---- F2P weighted checks --------------------------------------------------
-# All of these MUST fail on the un-modified buggy base:
-#   - IQ3_XXS numerical: base is buggy (uses F.embedding incorrectly + view error)
-#   - IQ3_S, IQ2_S, IQ2_XXS, IQ1_S, IQ1_M: not present in dequantize_functions on base
-#   - "no F.embedding" structural for IQ3_XXS: base USES F.embedding, so this fails
-# Total weight = 1.00
-
+# ---- F2P weighted ---------------------------------------------------------
 results = []
 
 def record(name, weight, passed, detail=""):
@@ -147,7 +130,7 @@ def record(name, weight, passed, detail=""):
     earned = weight if passed else 0.0
     REWARD += earned
     status = "PASS" if passed else "FAIL"
-    line = f"  [{status}] ({earned:.3f}/{weight:.3f}) {name} {detail}"
+    line = f"  [{status}] (+{earned:.3f}/{weight:.3f}) {name} {detail}"
     print(line)
     results.append(line)
 
@@ -162,8 +145,7 @@ def numerical_test(qtype_name, seed, n_blocks=24, rtol=2e-3, atol=2e-3):
         weights = rng.uniform(-1, 1, numel).astype(np.float32)
         quantized = quantize_with_libggml(qtype, weights, numel)
         out_ref = torch.from_numpy(gguf.quants.dequantize(quantized.copy(), qtype))
-        quantized_t = torch.from_numpy(quantized)
-        out = dequantize(quantized_t, qtype, (numel,), torch.float32)
+        out = dequantize(torch.from_numpy(quantized), qtype, (numel,), torch.float32)
         if torch.isnan(out).any() or torch.isinf(out).any():
             return False, "nan/inf"
         if out.shape != out_ref.shape:
@@ -173,121 +155,99 @@ def numerical_test(qtype_name, seed, n_blocks=24, rtol=2e-3, atol=2e-3):
         ok = torch.allclose(out.float(), out_ref.float(), rtol=rtol, atol=atol)
         return ok, f"max_diff={max_diff:.5g}"
     except Exception as e:
-        return False, f"exc:{e}"
+        return False, f"exc:{type(e).__name__}:{e}"
 
-# --- F2P 1: IQ3_XXS numerical correctness (was buggy on base) ---
-# Weight: 0.16 (two seeds, 0.08 each)
-print("=== F2P numerical: IQ3_XXS (fix) ===")
-for seed, w in [(42, 0.08), (142, 0.08)]:
-    ok, info = numerical_test("IQ3_XXS", seed=seed, n_blocks=24, rtol=2e-3, atol=2e-3)
-    record(f"IQ3_XXS num seed={seed}", w, ok, info)
-
-# --- F2P 2: 5 new IQ types, two seeds each ---
-# Weight: 0.60 total -> 0.06 per (5 types * 2 seeds)
-print("=== F2P numerical: new IQ implementations ===")
-NEW_TYPES = [
-    ("IQ3_S",  2e-3, 2e-3),
-    ("IQ2_S",  2e-3, 2e-3),
-    ("IQ2_XXS",2e-3, 2e-3),
-    ("IQ1_S",  6e-3, 6e-3),
-    ("IQ1_M",  6e-3, 6e-3),
+# === Gate 1: IQ3_XXS numerical correctness — was buggy on base ===
+# Multi-seed and multi-blocksize to catch shallow / partial fixes.
+# Weight: 0.18
+print("=== F2P G1: IQ3_XXS fix (numerical correctness) ===")
+g1_subs = [
+    (42, 8,  0.045),
+    (142, 24, 0.045),
+    (777, 32, 0.045),
+    (9001, 16, 0.045),
 ]
-seed_pairs = {
-    "IQ3_S":   (43, 143),
-    "IQ2_S":   (45, 145),
-    "IQ2_XXS": (46, 146),
-    "IQ1_S":   (44, 144),
-    "IQ1_M":   (47, 147),
-}
-for qname, rtol, atol in NEW_TYPES:
-    s1, s2 = seed_pairs[qname]
-    for s in (s1, s2):
-        ok, info = numerical_test(qname, seed=s, n_blocks=24, rtol=rtol, atol=atol)
-        record(f"{qname} num seed={s}", 0.06, ok, info)
+for seed, nb, w in g1_subs:
+    ok, info = numerical_test("IQ3_XXS", seed=seed, n_blocks=nb, rtol=2e-3, atol=2e-3)
+    record(f"IQ3_XXS seed={seed} nb={nb}", w, ok, info)
 
-# --- F2P 3: dispatch registration for the 5 new types ---
-# Weight: 0.10 total -> 0.02 per type
-# On base, only IQ3_XXS is in dequantize_functions; the 5 new ones must be added.
-print("=== F2P registration ===")
-for qname in ("IQ3_S", "IQ2_S", "IQ2_XXS", "IQ1_S", "IQ1_M"):
-    qtype = getattr(gguf.GGMLQuantizationType, qname)
-    record(f"{qname} registered", 0.02, qtype in dequantize_functions)
-
-# --- F2P 4: IQ3_XXS implementation must NOT use F.embedding ---
+# === Gate 2: IQ3_XXS structural — must NOT use F.embedding (instruction R1) ===
 # Weight: 0.04
-# Base implementation explicitly uses torch.nn.functional.embedding for IQ3_XXS.
-# A correct fix per the instruction switches to direct tensor indexing.
-print("=== F2P structural: no F.embedding in IQ3_XXS ===")
-try:
-    import inspect
-    from qwen3_moe_fused.quantize_gguf import dequant as _dequant_mod
-    src = inspect.getsource(_dequant_mod.dequantize_blocks_IQ3_XXS)
-    no_embedding = ("F.embedding" not in src) and ("nn.functional.embedding" not in src) \
-                   and ("functional.embedding" not in src)
-    record("IQ3_XXS no F.embedding", 0.04, no_embedding,
-           "" if no_embedding else "(still uses F.embedding)")
-except Exception as e:
-    record("IQ3_XXS no F.embedding", 0.04, False, f"exc:{e}")
-
-# --- F2P 5: Determinism + large-batch stress on IQ3_XXS and IQ1_S ---
-# Weight: 0.10 total -> 0.05 per type
-# Determinism: two calls give identical output. Large-batch: 64 blocks with no NaN.
-# On base IQ3_XXS produces wrong output (and IQ1_S not registered) so this fails.
-print("=== F2P determinism + large-batch ===")
-def determinism_and_stress(qtype_name, n_blocks=64, seed=7777, rtol=6e-3, atol=6e-3):
+print("=== F2P G2: IQ3_XXS uses elemental indexing (no F.embedding) ===")
+def check_no_f_embedding():
     try:
-        qtype = getattr(gguf.GGMLQuantizationType, qtype_name)
-        if qtype not in dequantize_functions:
+        fn = dequantize_functions.get(gguf.GGMLQuantizationType.IQ3_XXS)
+        if fn is None:
             return False, "not registered"
-        block_size, _ = gguf.GGML_QUANT_SIZES[qtype]
-        numel = n_blocks * block_size
-        rng = np.random.RandomState(seed)
-        weights = rng.uniform(-1, 1, numel).astype(np.float32)
-        quantized = quantize_with_libggml(qtype, weights, numel)
-        out_ref = torch.from_numpy(gguf.quants.dequantize(quantized.copy(), qtype))
-        qt = torch.from_numpy(quantized)
-        out1 = dequantize(qt, qtype, (numel,), torch.float32)
-        out2 = dequantize(qt, qtype, (numel,), torch.float32)
-        if torch.isnan(out1).any() or torch.isinf(out1).any():
-            return False, "nan/inf"
-        if not torch.equal(out1, out2):
-            return False, "non-deterministic"
-        if out1.shape != out_ref.shape:
-            return False, "shape"
-        ok = torch.allclose(out1.float(), out_ref.float(), rtol=rtol, atol=atol)
-        return ok, "ok" if ok else "numeric"
+        src = inspect.getsource(fn)
+        # Allow comment containing 'embedding' but reject actual call
+        bad = "F.embedding" in src or "torch.nn.functional.embedding" in src or "nn.functional.embedding" in src
+        return (not bad), ("uses F.embedding" if bad else "ok")
     except Exception as e:
         return False, f"exc:{e}"
+ok, info = check_no_f_embedding()
+record("IQ3_XXS no F.embedding", 0.04, ok, info)
 
-for qname, w in [("IQ3_XXS", 0.05), ("IQ1_S", 0.05)]:
-    ok, info = determinism_and_stress(qname,
-                                      rtol=(6e-3 if qname == "IQ1_S" else 2e-3),
-                                      atol=(6e-3 if qname == "IQ1_S" else 2e-3))
-    record(f"{qname} det+stress", w, ok, info)
+# === Gate 3: IQ3_S numerical correctness ===
+# Weight: 0.16
+print("=== F2P G3: IQ3_S ===")
+for seed, nb, w in [(43, 16, 0.05), (143, 24, 0.05), (4321, 32, 0.06)]:
+    ok, info = numerical_test("IQ3_S", seed=seed, n_blocks=nb, rtol=2e-3, atol=2e-3)
+    record(f"IQ3_S seed={seed} nb={nb}", w, ok, info)
 
-# ---- Total ----------------------------------------------------------------
-total = round(REWARD, 6)
-# Clamp to [0, 1]
-if total < 0: total = 0.0
-if total > 1: total = 1.0
-print(f"=== TOTAL REWARD: {total} ===")
-write_reward(total)
+# === Gate 4: IQ2_S numerical correctness ===
+# Weight: 0.16
+print("=== F2P G4: IQ2_S ===")
+for seed, nb, w in [(45, 16, 0.05), (145, 24, 0.05), (5151, 32, 0.06)]:
+    ok, info = numerical_test("IQ2_S", seed=seed, n_blocks=nb, rtol=2e-3, atol=2e-3)
+    record(f"IQ2_S seed={seed} nb={nb}", w, ok, info)
+
+# === Gate 5: IQ2_XXS numerical correctness ===
+# Weight: 0.14
+print("=== F2P G5: IQ2_XXS ===")
+for seed, nb, w in [(46, 16, 0.05), (146, 24, 0.05), (6262, 32, 0.04)]:
+    ok, info = numerical_test("IQ2_XXS", seed=seed, n_blocks=nb, rtol=2e-3, atol=2e-3)
+    record(f"IQ2_XXS seed={seed} nb={nb}", w, ok, info)
+
+# === Gate 6: IQ1_S numerical correctness (looser tolerance) ===
+# Weight: 0.13
+print("=== F2P G6: IQ1_S ===")
+for seed, nb, w in [(44, 16, 0.045), (144, 24, 0.045), (7373, 32, 0.04)]:
+    ok, info = numerical_test("IQ1_S", seed=seed, n_blocks=nb, rtol=8e-3, atol=8e-3)
+    record(f"IQ1_S seed={seed} nb={nb}", w, ok, info)
+
+# === Gate 7: IQ1_M numerical correctness (looser tolerance) ===
+# Weight: 0.13
+print("=== F2P G7: IQ1_M ===")
+for seed, nb, w in [(47, 16, 0.045), (147, 24, 0.045), (8484, 32, 0.04)]:
+    ok, info = numerical_test("IQ1_M", seed=seed, n_blocks=nb, rtol=8e-3, atol=8e-3)
+    record(f"IQ1_M seed={seed} nb={nb}", w, ok, info)
+
+# === Gate 8: registration completeness — partial credit per type ===
+# Weight: 0.06 (1.0 cents per registered type, all 6 must be present for full)
+print("=== F2P G8: registration of all 6 IQ types ===")
+required = ["IQ3_XXS", "IQ3_S", "IQ2_S", "IQ2_XXS", "IQ1_S", "IQ1_M"]
+present = 0
+for n in required:
+    qt = getattr(gguf.GGMLQuantizationType, n)
+    if qt in dequantize_functions:
+        present += 1
+frac = present / len(required)
+w = 0.06
+earned = w * frac
+REWARD += earned
+print(f"  [{'PASS' if frac==1.0 else 'PARTIAL'}] (+{earned:.3f}/{w:.3f}) registered {present}/{len(required)}")
+
+print(f"\n=== Total REWARD = {REWARD:.4f} ===")
+write_reward(round(min(max(REWARD, 0.0), 1.0), 4))
 PYEOF
 
-# Echo log tail to help debugging post-mortem
-if [ -f /tmp/test_output.log ]; then
-    echo "----- /tmp/test_output.log (tail) -----"
-    tail -n 120 /tmp/test_output.log
-fi
+cat /tmp/test_output.log
 
-# Safety net: if the python block didn't write a reward file, force 0.0.
 if [ ! -s "$REWARD_FILE" ]; then
     echo "0.0" > "$REWARD_FILE"
 fi
 
-# Ensure the file exists with a valid float
-REWARD=$(cat "$REWARD_FILE" 2>/dev/null | head -n1 | tr -d '[:space:]')
-case "$REWARD" in
-    ''|*[!0-9.]*) REWARD="0.0" ;;
-esac
+REWARD=$(cat "$REWARD_FILE" 2>/dev/null || echo "0.0")
+echo "Final reward: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt

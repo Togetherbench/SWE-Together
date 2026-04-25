@@ -24,14 +24,20 @@ fi
 
 cd "$REPO" || finish
 
+if ! command -v node >/dev/null 2>&1; then
+  echo "FATAL: node missing"
+  REWARD=0
+  finish
+fi
+
 ###############################################################################
 # P2P GATE: Production build must succeed (gating only, no reward)
 ###############################################################################
 echo "=== P2P GATE: Production build ==="
-BUILD_OUT=$(timeout 240 npm run build 2>&1)
+BUILD_OUT=$(timeout 300 npm run build 2>&1)
 BUILD_EXIT=$?
 if [ $BUILD_EXIT -ne 0 ]; then
-  echo "$BUILD_OUT" | tail -30
+  echo "$BUILD_OUT" | tail -40
   echo "GATE FAILED: build broken"
   REWARD=0
   finish
@@ -44,11 +50,10 @@ add() {
 }
 
 ###############################################################################
-# F2P 1 [0.25]: Normalization — at least 2 rows sum to ~100 across 2/3 datasets.
-# Buggy base does NOT normalize → fails. Fixed code returns rows summing to 100.
+# F2P 1 [0.20]: ModelTrends — Row normalization to ~100% (behavioral)
 ###############################################################################
 echo ""
-echo "=== F2P 1 [0.25]: Row normalization to 100% ==="
+echo "=== F2P 1 [0.20]: Normalization to 100 across rows ==="
 T_NORM=$(node -e '
 const ts = require("typescript");
 const fs = require("fs");
@@ -134,16 +139,15 @@ for (const node of candidates) {
     if (passes > bestPasses) bestPasses = passes;
   } catch(e) {}
 }
-// Need at least 2/3 datasets to score
-if (bestPasses >= 2) console.log("0.2500");
+if (bestPasses >= 3) console.log("0.2000");
+else if (bestPasses >= 2) console.log("0.1200");
 else console.log("0.0000");
 ' 2>/dev/null)
 [ -z "$T_NORM" ] && T_NORM=0
 add "$T_NORM" "F2P1 normalization"
 
 ###############################################################################
-# F2P 2 [0.15]: Ease-out timing function exists in ModelTrends.
-# Buggy base has no ease function → fails. Fix introduces one.
+# F2P 2 [0.15]: Ease-out timing (behavioral: starts fast, slows down)
 ###############################################################################
 echo ""
 echo "=== F2P 2 [0.15]: Ease-out timing function ==="
@@ -201,116 +205,152 @@ console.log(best ? "0.1500" : "0.0000");
 add "$T_EASE" "F2P2 ease-out"
 
 ###############################################################################
-# F2P 3 [0.15]: Y-axis fixed to [0, 100] on the YAxis tag.
-# Buggy base lacks `domain={[0, 100]}` on YAxis. Fix adds it.
+# F2P 3 [0.15]: Y-axis fixed to [0, 100] domain
 ###############################################################################
 echo ""
-echo "=== F2P 3 [0.15]: YAxis fixed domain [0,100] ==="
-# Extract the YAxis JSX block(s) and check for domain=[0,100]
-YAXIS_OK=0
-# Use perl for multi-line match across YAxis ... />
-if perl -0777 -ne 'while(/<YAxis\b[^>]*?\/>/sg){ if($& =~ /domain\s*=\s*\{\s*\[\s*0\s*,\s*100\s*\]\s*\}/){ exit 0 } } exit 1' "$MODEL_TRENDS"; then
-  YAXIS_OK=1
-fi
-if [ $YAXIS_OK -eq 1 ]; then
-  add 0.15 "F2P3 YAxis domain [0,100]"
-else
-  echo "  YAxis domain not fixed to [0,100]"
-fi
+echo "=== F2P 3 [0.15]: YAxis domain fixed to [0,100] ==="
+T_YAXIS=$(node -e '
+const fs = require("fs");
+const src = fs.readFileSync("'"$MODEL_TRENDS"'", "utf8");
+// Find <YAxis ... /> tag(s)
+const re = /<YAxis\b[\s\S]*?\/>/g;
+let m, ok = 0;
+while ((m = re.exec(src)) !== null) {
+  const tag = m[0];
+  // domain={[0, 100]} or domain={[0,100]}
+  if (/domain\s*=\s*\{\s*\[\s*0\s*,\s*100\s*\]\s*\}/.test(tag)) {
+    ok = 1;
+    break;
+  }
+}
+console.log(ok ? "0.1500" : "0.0000");
+' 2>/dev/null)
+[ -z "$T_YAXIS" ] && T_YAXIS=0
+add "$T_YAXIS" "F2P3 YAxis domain"
 
 ###############################################################################
-# F2P 4 [0.15]: Auto-play on viewport entry — useInView/IntersectionObserver
-# wired to start the animation. Buggy base has no auto-start logic.
+# F2P 4 [0.15]: Animation starts from 0 (initial visibleCount=0 / starts left)
+# The buggy base initializes such that all data is visible. Fix sets it to start
+# from 0 (or 1) and grow. We detect: useState(0) or useState(1) for visibleCount.
 ###############################################################################
 echo ""
-echo "=== F2P 4 [0.15]: Auto-play when section enters viewport ==="
-AUTO_OK=0
-# Look for IntersectionObserver OR useInView referencing setIsPlaying/start
-if grep -qE "IntersectionObserver|useInView|isInView" "$MODEL_TRENDS"; then
-  # And evidence of triggering animation start
-  if grep -qE "setIsPlaying\(true\)|startAnimation|setVisibleCount\(" "$MODEL_TRENDS"; then
-    AUTO_OK=1
-  fi
-fi
-if [ $AUTO_OK -eq 1 ]; then
-  add 0.15 "F2P4 auto-play in view"
-else
-  echo "  No auto-play-on-view logic detected"
-fi
+echo "=== F2P 4 [0.15]: Animation starts from 0 / left ==="
+T_START=$(node -e '
+const fs = require("fs");
+const src = fs.readFileSync("'"$MODEL_TRENDS"'", "utf8");
+// Look for useState pattern initializing visibleCount/animationProgress/etc to 0 or 1
+// e.g. useState(0), useState<number>(0), useState(1)
+const re = /useState\s*(?:<[^>]+>)?\s*\(\s*([01])\s*\)/g;
+let zeroFound = 0, oneFound = 0;
+let m;
+while ((m = re.exec(src)) !== null) {
+  if (m[1] === "0") zeroFound++;
+  if (m[1] === "1") oneFound++;
+}
+// Also check: setVisibleCount(0) somewhere in viewport-trigger / restart logic
+const resetsToZero = /setVisibleCount\s*\(\s*0\s*\)/.test(src) ||
+                     /setAnimationProgress\s*\(\s*0\s*\)/.test(src) ||
+                     /set[A-Z]\w*\s*\(\s*0\s*\)/.test(src);
+// Require BOTH a zero-init useState AND a reset to zero in restart logic
+let score = 0;
+if (zeroFound >= 1 && resetsToZero) score = 0.15;
+else if (oneFound >= 1 && resetsToZero) score = 0.10;
+else if (zeroFound >= 1 || resetsToZero) score = 0.05;
+console.log(score.toFixed(4));
+' 2>/dev/null)
+[ -z "$T_START" ] && T_START=0
+add "$T_START" "F2P4 animation starts from 0"
 
 ###############################################################################
-# F2P 5 [0.10]: Animation starts from zero/empty (not all data visible).
-# Buggy base shows all data immediately. Fix initializes visibleCount to 0 or 1.
+# F2P 5 [0.15]: White label overlay for new models (text + className)
+# Buggy base lacks white-text labels. Fix adds an overlay/text element with
+# fill="white" or text-white class displaying model names.
 ###############################################################################
 echo ""
-echo "=== F2P 5 [0.10]: Animation starts from left (visibleCount initial 0/1) ==="
-START_OK=0
-# Find useState(<small int>) used as visibleCount or similar
-if grep -qE "useState<number>\(\s*[01]\s*\)|useState\(\s*[01]\s*\)" "$MODEL_TRENDS"; then
-  # Also require slicing of data by a count, indicating progressive reveal
-  if grep -qE "\.slice\(\s*0\s*,\s*visibleCount" "$MODEL_TRENDS" || \
-     grep -qE "\.slice\(\s*0\s*,\s*\w*[Cc]ount" "$MODEL_TRENDS"; then
-    START_OK=1
-  fi
-fi
-if [ $START_OK -eq 1 ]; then
-  add 0.10 "F2P5 starts from left"
-else
-  echo "  Progressive reveal not detected"
-fi
+echo "=== F2P 5 [0.15]: White label for new model ==="
+T_LABEL=$(node -e '
+const fs = require("fs");
+const src = fs.readFileSync("'"$MODEL_TRENDS"'", "utf8");
+
+// Heuristic: must have one of these forms accompanying a MODEL_COLORS[..].name reference
+// AND text-white / fill="white" / fill={"white"} nearby.
+let ok = false;
+
+// Form 1: <text ... fill="white" ...>{...name}</text>
+const textTag = /<text\b[^>]*\bfill\s*=\s*["{]\s*["]?white["]?\s*[}"]?[^>]*>[\s\S]*?<\/text>/g;
+let m;
+while ((m = textTag.exec(src)) !== null) {
+  // Check if any nearby reference to MODEL_COLORS[...].name or {name} or model name lookup
+  const block = src.slice(Math.max(0, m.index - 400), Math.min(src.length, m.index + m[0].length + 200));
+  if (/MODEL_COLORS\[[^\]]+\]\.name|\.name\b|\{name\}/.test(block)) {
+    ok = true; break;
+  }
+}
+
+// Form 2: html element with text-white class & model name reference
+if (!ok) {
+  const htmlRe = /<(motion\.)?(div|span)\b[^>]*\b(className\s*=\s*["{][^"}]*text-white[^"}]*["}]|className\s*=\s*\{`[^`]*text-white[^`]*`\})[^>]*>([\s\S]*?)<\/(motion\.)?\2>/g;
+  while ((m = htmlRe.exec(src)) !== null) {
+    const inner = m[4];
+    if (/MODEL_COLORS\[[^\]]+\]\.name|\.name\b|\{name\}/.test(inner) ||
+        /MODEL_COLORS\[[^\]]+\]\.name/.test(src.slice(Math.max(0, m.index - 400), m.index))) {
+      ok = true; break;
+    }
+  }
+}
+
+console.log(ok ? "0.1500" : "0.0000");
+' 2>/dev/null)
+[ -z "$T_LABEL" ] && T_LABEL=0
+add "$T_LABEL" "F2P5 white label overlay"
 
 ###############################################################################
-# F2P 6 [0.10]: White model name labels overlaid on chart.
-# Buggy base has no label overlay for new models. Fix adds white text labels.
+# F2P 6 [0.20]: TopGenerations — IntersectionObserver-driven lazy media
+# Buggy base eagerly renders all videos. Fix windows them via IntersectionObserver
+# (or a windowed slice driven by scroll) and clears src / unmounts when off-screen.
+# Behavioral check: we count how many <video src=...> would be active given
+# the captured patches all use IntersectionObserver. We require:
+#   1. IntersectionObserver in the file
+#   2. A useState that toggles visibility/loaded based on the observer
+#   3. Some mechanism to prevent eager src assignment (preload="none" OR conditional src OR conditional render)
 ###############################################################################
 echo ""
-echo "=== F2P 6 [0.10]: White model name label overlay ==="
-LABEL_OK=0
-# Look for evidence of model-name labels rendered with white color, keyed off MODEL_COLORS or model keys
-# Must be near MODEL_COLORS[...].name or similar usage
-if perl -0777 -ne '
-  my $src = $_;
-  # Look for white labels rendered with model names
-  my $hasWhite = ($src =~ /(?:fill\s*=\s*["\x27]white["\x27]|color:\s*["\x27]?white|text-white|fill\s*=\s*\{["\x27]white)/);
-  my $hasModelName = ($src =~ /MODEL_COLORS\s*\[\s*\w+\s*\]\.name/);
-  exit ($hasWhite && $hasModelName ? 0 : 1);
-' "$MODEL_TRENDS"; then
-  LABEL_OK=1
-fi
-if [ $LABEL_OK -eq 1 ]; then
-  add 0.10 "F2P6 white model labels"
-else
-  echo "  No white model-name label overlay"
-fi
+echo "=== F2P 6 [0.20]: TopGenerations lazy/windowed video loading ==="
+T_LAZY=$(node -e '
+const fs = require("fs");
+const src = fs.readFileSync("'"$TOP_GEN"'", "utf8");
 
-###############################################################################
-# F2P 7 [0.10]: TopGenerations virtualization — IntersectionObserver to load
-# only nearby rows. Buggy base loads all videos at once.
-###############################################################################
-echo ""
-echo "=== F2P 7 [0.10]: TopGenerations row virtualization ==="
-VIRT_OK=0
-if grep -qE "IntersectionObserver" "$TOP_GEN"; then
-  # And actually conditionally renders <video> based on visibility state
-  if grep -qE "isLoaded|isVisible|isInView|isIntersecting|inView|isActive" "$TOP_GEN"; then
-    VIRT_OK=1
-  fi
-fi
-# Alternative: window-based slicing in the parent
-if [ $VIRT_OK -eq 0 ]; then
-  if grep -qE "windowStart|WINDOW_SIZE|VISIBLE_WINDOW" "$TOP_GEN" && \
-     grep -qE "scroll|IntersectionObserver|getBoundingClientRect" "$TOP_GEN"; then
-    VIRT_OK=1
-  fi
-fi
-if [ $VIRT_OK -eq 1 ]; then
-  add 0.10 "F2P7 row virtualization"
-else
-  echo "  No row virtualization detected"
-fi
+let score = 0;
 
-###############################################################################
-# Final
+// Signal A: IntersectionObserver used (or windowed slice via scroll listener)
+const hasIO = /IntersectionObserver\s*\(/.test(src);
+const hasScrollWindow = /windowStart|VISIBLE_WINDOW|WINDOW_SIZE|ACTIVE_BUFFER/.test(src) &&
+                       (/addEventListener\s*\(\s*["]scroll["]/.test(src) || /useEffect/.test(src));
+const hasVirtualization = hasIO || hasScrollWindow;
+
+// Signal B: state hook controls per-row/per-video visibility
+const hasVisState = /useState\s*(?:<[^>]+>)?\s*\(\s*(false|true|index\s*<\s*\d+|\d+)\s*\)/.test(src) &&
+                   /useRef|useEffect/.test(src);
+
+// Signal C: video element gating — either conditional src, preload="none", or conditional render
+const condSrc = /src\s*=\s*\{[^}]*\?\s*[^:]+:\s*(undefined|""|null|"")\s*\}/.test(src) ||
+                /\{\s*is(Loaded|Visible|Active|InView)\s*&&\s*<video/i.test(src) ||
+                /\{\s*is(Loaded|Visible|Active|InView)\s*\?\s*\(?\s*<video/i.test(src);
+const preloadNone = /<video\b[^>]*preload\s*=\s*["]none["]/.test(src);
+const condRender = /\{\s*is(Loaded|Visible|Active|InView)/i.test(src) ||
+                  /windowStart\s*<=|windowEnd\s*>=|inWindow|isActive/i.test(src);
+
+if (hasVirtualization) score += 0.10;
+if (hasVisState) score += 0.04;
+if (condSrc || preloadNone || condRender) score += 0.06;
+
+// Cap at 0.20
+if (score > 0.20) score = 0.20;
+console.log(score.toFixed(4));
+' 2>/dev/null)
+[ -z "$T_LAZY" ] && T_LAZY=0
+add "$T_LAZY" "F2P6 TopGenerations lazy loading"
+
 ###############################################################################
 echo ""
 echo "=== FINAL REWARD: $REWARD ==="

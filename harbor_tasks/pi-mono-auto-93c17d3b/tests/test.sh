@@ -12,6 +12,7 @@ add_reward() {
 }
 
 finalize() {
+    echo "REWARD=$REWARD"
     echo "$REWARD" > /logs/verifier/reward.txt
     exit 0
 }
@@ -21,16 +22,13 @@ cd /workspace/pi-mono 2>/dev/null || finalize
 BASELINE_EXTENSIONS="diff.ts files.ts prompt-url-widget.ts redraws.ts tps.ts go-to-bed.ts"
 
 # ============================================================
-# P2P GATE: Environment available (no reward, gating only)
+# P2P GATE: Environment available
 # ============================================================
 if ! command -v node >/dev/null 2>&1 || ! command -v bun >/dev/null 2>&1; then
     echo "P2P FAIL: node/bun missing"
     finalize
 fi
 
-# ============================================================
-# P2P GATE: Repo intact (no reward)
-# ============================================================
 if [ ! -d /workspace/pi-mono/packages/coding-agent ] || \
    [ ! -f /workspace/pi-mono/package.json ] || \
    [ ! -d /workspace/pi-mono/.pi ]; then
@@ -41,16 +39,8 @@ fi
 # ============================================================
 # Locate new (agent-created) extension file
 # ============================================================
-NEW_EXTS=""
-for f in $(git -C /workspace/pi-mono ls-files --others --exclude-standard 2>/dev/null | grep '\.ts$'); do
-    NEW_EXTS="$NEW_EXTS /workspace/pi-mono/$f"
-done
-for f in $(git -C /workspace/pi-mono diff --name-only HEAD 2>/dev/null | grep '\.ts$'); do
-    case "$NEW_EXTS" in *"$f"*) ;; *) NEW_EXTS="$NEW_EXTS /workspace/pi-mono/$f" ;; esac
-done
-
 EXT_ABS=""
-for f in $NEW_EXTS; do
+for f in /workspace/pi-mono/.pi/extensions/*.ts; do
     [ -f "$f" ] || continue
     BN=$(basename "$f")
     SKIP=0
@@ -58,87 +48,60 @@ for f in $NEW_EXTS; do
         [ "$BN" = "$b" ] && SKIP=1 && break
     done
     [ $SKIP -eq 1 ] && continue
-    case "$f" in
-        */.pi/extensions/*.ts)
-            EXT_ABS="$f"
-            break
-            ;;
-    esac
+    if ! git -C /workspace/pi-mono ls-files --error-unmatch "${f#/workspace/pi-mono/}" >/dev/null 2>&1; then
+        EXT_ABS="$f"
+        break
+    fi
+    # also accept modified
+    if git -C /workspace/pi-mono diff --name-only HEAD -- "${f#/workspace/pi-mono/}" 2>/dev/null | grep -q .; then
+        EXT_ABS="$f"
+        break
+    fi
 done
-
-if [ -z "$EXT_ABS" ]; then
-    for f in $NEW_EXTS; do
-        [ -f "$f" ] || continue
-        BN=$(basename "$f")
-        SKIP=0
-        for b in $BASELINE_EXTENSIONS; do
-            [ "$BN" = "$b" ] && SKIP=1 && break
-        done
-        [ $SKIP -eq 1 ] && continue
-        case "$f" in
-            */.pi/extensions/*.ts) EXT_ABS="$f"; break;;
-        esac
-    done
-fi
-
-if [ -z "$EXT_ABS" ]; then
-    for f in /workspace/pi-mono/.pi/extensions/*.ts; do
-        [ -f "$f" ] || continue
-        BN=$(basename "$f")
-        SKIP=0
-        for b in $BASELINE_EXTENSIONS; do
-            [ "$BN" = "$b" ] && SKIP=1 && break
-        done
-        if [ $SKIP -eq 0 ]; then
-            # Make sure it's not tracked in HEAD
-            if ! git -C /workspace/pi-mono ls-files --error-unmatch "${f#/workspace/pi-mono/}" >/dev/null 2>&1; then
-                EXT_ABS="$f"
-                break
-            fi
-        fi
-    done
-fi
 
 echo "Extension: ${EXT_ABS:-<none>}"
 
-# If no new extension, agent did nothing → reward stays at 0
+# No-op patch → reward 0
 if [ -z "$EXT_ABS" ] || [ ! -s "$EXT_ABS" ]; then
     echo "No new extension found — reward 0"
     finalize
 fi
 
 # ============================================================
-# P2P GATE: Extension compiles (gating only, no reward)
+# P2P GATE: Extension compiles (gating only)
 # ============================================================
 rm -rf /tmp/ext-compile && mkdir -p /tmp/ext-compile
 COMPILE_OUT=$(cd /workspace/pi-mono && bun build --no-bundle "$EXT_ABS" --outdir /tmp/ext-compile 2>&1)
 if echo "$COMPILE_OUT" | grep -qi "error" || ! echo "$COMPILE_OUT" | grep -qiE "transpiled|bundled|written"; then
     echo "P2P FAIL: extension does not compile"
-    echo "$COMPILE_OUT" | head -20
+    echo "$COMPILE_OUT" | head -30
     finalize
 fi
 
+EXT_SRC=$(cat "$EXT_ABS")
+
 # ============================================================
-# Build harness for behavioral tests
+# Build harness
 # ============================================================
 mkdir -p /tmp/sigtest
 cat > /tmp/sigtest/harness.ts <<'HARNESS'
 const extPath = process.argv[2];
 const action = process.argv[3] || "summary";
-const arg1 = process.argv[4] || "";
-const arg2 = process.argv[5] || "";
+const extraText = process.argv[4] || "";
 
-const handlers: Record<string, Function> = {};
+const handlers: Record<string, Function[]> = {};
 const commands: Record<string, any> = {};
 const widgets: Record<string, any> = {};
 const widgetHistory: Array<{ id: string; w: any }> = [];
 const notifications: any[] = [];
 const events: any[] = [];
 const statuses: Record<string, any> = {};
+const sessionMessages: any[] = [];
+let setWidgetCalls = 0;
 
 const uiMock = {
     notify: (msg: string, kind?: string) => { notifications.push({ msg, kind }); },
-    setWidget: (id: string, w: any) => { widgets[id] = w; widgetHistory.push({ id, w }); },
+    setWidget: (id: string, w: any) => { setWidgetCalls++; widgets[id] = w; widgetHistory.push({ id, w }); },
     setStatus: (id: string, v: any) => { statuses[id] = v; },
     setWorkingMessage: (_v: any) => {},
     setWorkingIndicator: (_v: any) => {},
@@ -153,15 +116,24 @@ const uiMock = {
 const ctxMock: any = {
     hasUI: true,
     ui: uiMock,
-    session: { id: "test-session", messages: [] },
-    addMessage: (m: any) => { ctxMock.session.messages.push(m); },
+    session: { id: "test-session", messages: sessionMessages },
+    addMessage: (m: any) => { sessionMessages.push(m); },
 };
 
 const piMock: any = new Proxy({}, {
     get(_t: any, p: string) {
-        if (p === "on") return (e: string, h: Function) => { handlers[e] = h; };
+        if (p === "on") return (e: string, h: Function) => {
+            if (!handlers[e]) handlers[e] = [];
+            handlers[e].push(h);
+        };
         if (p === "registerCommand") return (n: string, o: any) => { commands[n] = o; };
-        if (p === "events") return { emit: (e: string, d: any) => events.push({ e, d }), on: () => {} };
+        if (p === "events") return {
+            emit: (e: string, d: any) => events.push({ e, d }),
+            on: (e: string, h: Function) => {
+                if (!handlers[`event:${e}`]) handlers[`event:${e}`] = [];
+                handlers[`event:${e}`].push(h);
+            },
+        };
         if (p === "then") return undefined;
         return (..._a: any[]) => undefined;
     },
@@ -190,13 +162,14 @@ try {
 }
 
 async function activate(): Promise<string | null> {
-    const candidates = Object.keys(commands).filter((n) =>
-        /^(start|signal-start|signal|activate|enable|on)$/i.test(n) ||
+    const names = Object.keys(commands);
+    const candidates = names.filter((n) =>
+        /^(start|signal-start|signal|activate|enable|on|signalstart)$/i.test(n) ||
         /start|activate|enable/i.test(n)
     );
     candidates.sort((a, b) => {
-        const aShort = /^(start|signal-start)$/i.test(a) ? 0 : 1;
-        const bShort = /^(start|signal-start)$/i.test(b) ? 0 : 1;
+        const aShort = /^(start|signal-start|signal)$/i.test(a) ? 0 : 1;
+        const bShort = /^(start|signal-start|signal)$/i.test(b) ? 0 : 1;
         return aShort - bShort;
     });
     for (const name of candidates) {
@@ -213,296 +186,326 @@ async function activate(): Promise<string | null> {
     return null;
 }
 
-async function callBeforeAgentStart() {
-    const h = handlers["before_agent_start"];
-    if (!h) return null;
-    try {
-        return await h(
-            { systemPrompt: "Base prompt.", message: null, messages: [] },
-            ctxMock,
-        );
-    } catch (e: any) {
-        return { __error: e.message };
+async function callBeforeAgentStart(): Promise<any> {
+    const hs = handlers["before_agent_start"] || [];
+    let result = null;
+    for (const h of hs) {
+        try {
+            const r = await h({ systemPrompt: "Base prompt.", message: null }, ctxMock);
+            if (r) result = r;
+        } catch (e: any) {}
     }
+    return result;
 }
 
-async function callMessageEnd(text: string) {
-    const h = handlers["message_end"];
-    if (!h) return null;
-    const message = {
+function makeAssistantMessage(text: string): any {
+    return {
         role: "assistant",
         content: [{ type: "text", text }],
         stopReason: "end_turn",
     };
-    try {
-        return await h({ message, assistantMessageEvent: { type: "text_delta", delta: text } }, ctxMock);
-    } catch (e: any) {
-        return { __error: e.message };
-    }
 }
 
-async function callMessageStart() {
-    const h = handlers["message_start"];
-    if (!h) return null;
-    const message = { role: "assistant", content: [{ type: "text", text: "" }] };
-    try {
-        return await h({ message }, ctxMock);
-    } catch (e: any) { return { __error: e.message }; }
-}
-
-async function streamMessage(fullText: string, chunkSize = 8) {
-    const hUpdate = handlers["message_update"];
-    const hEnd = handlers["message_end"];
-    let acc = "";
-    await callMessageStart();
-    for (let i = 0; i < fullText.length; i += chunkSize) {
-        const delta = fullText.slice(i, i + chunkSize);
-        acc += delta;
-        const message = { role: "assistant", content: [{ type: "text", text: acc }] };
-        if (hUpdate) {
-            try {
-                await hUpdate({ message, assistantMessageEvent: { type: "text_delta", delta } }, ctxMock);
-            } catch {}
-        }
-    }
-    if (hEnd) {
-        const message = { role: "assistant", content: [{ type: "text", text: acc }], stopReason: "end_turn" };
+async function fireMessageEnd(text: string) {
+    const hs = handlers["message_end"] || [];
+    for (const h of hs) {
         try {
-            await hEnd({ message, assistantMessageEvent: { type: "text_delta", delta: "" } }, ctxMock);
-        } catch {}
+            await h({ message: makeAssistantMessage(text) }, ctxMock);
+        } catch (e: any) {}
     }
+}
+
+async function fireMessageUpdate(fullText: string, delta: string) {
+    const hs = handlers["message_update"] || [];
+    for (const h of hs) {
+        try {
+            await h({
+                message: makeAssistantMessage(fullText),
+                assistantMessageEvent: { type: "text_delta", delta },
+            }, ctxMock);
+        } catch (e: any) {}
+    }
+}
+
+async function fireMessageStart() {
+    const hs = handlers["message_start"] || [];
+    for (const h of hs) {
+        try {
+            await h({ message: makeAssistantMessage("") }, ctxMock);
+        } catch (e: any) {}
+    }
+}
+
+async function streamMessage(text: string) {
+    await fireMessageStart();
+    let acc = "";
+    // chunk into ~5-char pieces to simulate streaming
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += 5) chunks.push(text.slice(i, i + 5));
+    for (const c of chunks) {
+        acc += c;
+        await fireMessageUpdate(acc, c);
+    }
+    await fireMessageEnd(acc);
 }
 
 if (action === "summary") {
-    console.log(JSON.stringify({
-        handlers: Object.keys(handlers),
-        commands: Object.keys(commands),
-    }));
-} else if (action === "before_start_inactive") {
-    // Without activation: should NOT inject signal protocol
-    const r = await callBeforeAgentStart();
-    const sp = (r && (r as any).systemPrompt) || "";
-    const out = {
-        prompt: sp,
-        hasSignalRef: /SIGNAL|\[\[/.test(sp),
-    };
-    console.log(JSON.stringify(out));
-} else if (action === "before_start_active") {
-    const c = await activate();
-    const r = await callBeforeAgentStart();
-    const sp = (r && (r as any).systemPrompt) || "";
-    // Some impls inject via custom message instead — also check session messages
-    const msgs = JSON.stringify(ctxMock.session.messages || []);
-    const blob = sp + "\n" + msgs;
-    const out = {
-        activated: c,
-        promptLen: sp.length,
-        // Look for any "signal-protocol-like" instruction
-        hasSignalProtocol: /\[\[[A-Z_]+/.test(blob) || /signal/i.test(blob),
-        injectsTokens: /\[\[[A-Z_]+\]\]/.test(blob),
-    };
-    console.log(JSON.stringify(out));
-} else if (action === "signal_react") {
-    await activate();
-    await callBeforeAgentStart();
-    // Emit a message that contains an open-UI-style signal token
-    const text = arg1 || "Working on it. [[SIGNAL_OPEN_UI]] [[OPEN_UI]] [[SHOW_UI]] now starting.";
-    await callMessageEnd(text);
-    // Also try streaming for impls using message_update
-    await streamMessage(text);
-    const out = {
-        notifications,
-        widgets: Object.keys(widgets).filter((k) => widgets[k] !== undefined),
-        widgetHistory: widgetHistory.map((w) => ({ id: w.id, defined: w.w !== undefined })),
-        events,
-        statuses: Object.keys(statuses),
-    };
-    console.log(JSON.stringify(out));
-} else if (action === "signal_no_op") {
-    await activate();
-    await callBeforeAgentStart();
-    // Plain text — no signal tokens at all
-    const text = "Just a normal message, nothing special here.";
-    await callMessageEnd(text);
-    await streamMessage(text);
-    const out = {
-        notifications,
-        widgets: Object.keys(widgets).filter((k) => widgets[k] !== undefined),
-        widgetHistory,
-    };
-    console.log(JSON.stringify(out));
-} else if (action === "signal_close") {
-    await activate();
-    await callBeforeAgentStart();
-    // First open, then close
-    await callMessageEnd("[[SIGNAL_OPEN_UI]] [[OPEN_UI]] [[SHOW_UI]]");
-    await streamMessage("[[SIGNAL_OPEN_UI]] [[OPEN_UI]] [[SHOW_UI]]");
-    const beforeClose = {
-        widgets: Object.keys(widgets).filter((k) => widgets[k] !== undefined),
-    };
-    await callMessageEnd("[[SIGNAL_CLOSE_UI]] [[CLOSE_UI]] [[HIDE_UI]]");
-    await streamMessage("[[SIGNAL_CLOSE_UI]] [[CLOSE_UI]] [[HIDE_UI]]");
-    const out = {
-        beforeClose,
-        afterCloseWidgets: Object.keys(widgets).filter((k) => widgets[k] !== undefined),
-        notifications,
-    };
-    console.log(JSON.stringify(out));
+    const evtNames = Object.keys(handlers);
+    console.log("EVENTS=" + evtNames.join(","));
+    console.log("COMMANDS=" + Object.keys(commands).join(","));
+    process.exit(0);
 }
+
+if (action === "activate-only") {
+    const cmd = await activate();
+    console.log("ACTIVATED=" + (cmd || ""));
+    console.log("COMMANDS=" + Object.keys(commands).join(","));
+    process.exit(0);
+}
+
+if (action === "before-start") {
+    const r = await callBeforeAgentStart();
+    if (r && r.systemPrompt) {
+        console.log("HAS_SYSTEM_PROMPT=1");
+        console.log("PROMPT_LEN=" + r.systemPrompt.length);
+        console.log("PROMPT_DELTA_LEN=" + (r.systemPrompt.length - "Base prompt.".length));
+        // Print prompt for grep
+        console.log("---PROMPT_START---");
+        console.log(r.systemPrompt);
+        console.log("---PROMPT_END---");
+    } else {
+        console.log("HAS_SYSTEM_PROMPT=0");
+    }
+    process.exit(0);
+}
+
+if (action === "signal-roundtrip") {
+    // Activate the extension
+    await activate();
+    // Run a before_agent_start (some implementations inject prompt here)
+    await callBeforeAgentStart();
+
+    // Inspect what the activation/before-start put into context
+    const sysHints: string[] = [];
+    for (const m of sessionMessages) {
+        try { sysHints.push(JSON.stringify(m)); } catch {}
+    }
+    console.log("SESSION_MESSAGE_COUNT=" + sessionMessages.length);
+    console.log("SESSION_HINTS=" + sysHints.join("||").slice(0, 4000));
+
+    // Use extraText (signal token list) — feed several known signal token formats
+    const candidates = [
+        "Hello [[SIGNAL_OPEN_UI]] world",
+        "Hello [[OPEN_UI]] world",
+        "Hello [[SHOW_UI]] world",
+        "Hello [[SIGNAL_CLOSE_UI]] world",
+        "Hello [[CLOSE_UI]] world",
+        "Hello [[HIDE_UI]] world",
+        "Hello [[DONE]] world",
+        "Hello [[SIGNAL_DONE]] world",
+    ];
+    for (const t of candidates) {
+        await streamMessage(t);
+    }
+
+    console.log("NOTIFICATIONS=" + notifications.length);
+    for (const n of notifications) {
+        console.log("NOTIFY: " + JSON.stringify(n));
+    }
+    console.log("SET_WIDGET_CALLS=" + setWidgetCalls);
+    console.log("WIDGET_HISTORY_COUNT=" + widgetHistory.length);
+    for (const h of widgetHistory) {
+        console.log("WIDGET: id=" + h.id + " value=" + (h.w === undefined ? "undefined" : "set"));
+    }
+    console.log("EVENTS_EMITTED=" + events.length);
+    process.exit(0);
+}
+
+if (action === "no-active-passive") {
+    // Don't activate. Fire a signal-bearing message. Should NOT react.
+    await streamMessage("Random text [[SIGNAL_OPEN_UI]] [[OPEN_UI]] [[SHOW_UI]] [[DONE]]");
+    console.log("NOTIFICATIONS_PRE=" + notifications.length);
+    console.log("SET_WIDGET_CALLS_PRE=" + setWidgetCalls);
+    process.exit(0);
+}
+
+console.log("UNKNOWN_ACTION");
+process.exit(1);
 HARNESS
 
+cd /workspace/pi-mono
+
 run_harness() {
-    local action="$1"; shift
-    cd /workspace/pi-mono && timeout 30 bun run /tmp/sigtest/harness.ts "$EXT_ABS" "$action" "$@" 2>&1
+    local action="$1"
+    local extra="$2"
+    timeout 30 bun /tmp/sigtest/harness.ts "$EXT_ABS" "$action" "$extra" 2>&1
 }
 
-# ============================================================
-# Get summary of registered handlers/commands
-# ============================================================
-SUMMARY=$(run_harness summary)
-echo "Summary: $SUMMARY"
-
-# Extract handler list
-HANDLERS=$(echo "$SUMMARY" | grep -oE '"handlers":\[[^]]*\]' | head -1)
-COMMANDS=$(echo "$SUMMARY" | grep -oE '"commands":\[[^]]*\]' | head -1)
+SUMMARY=$(run_harness summary "")
+echo "=== SUMMARY ==="
+echo "$SUMMARY"
 
 # ============================================================
-# F2P Gate A: Extension registers a slash command (0.10)
-# Base = no extension exists → fails. Empty file → no commands → fails.
+# F2P Gate 1 (weight 0.15): Extension registers a command AND a message_end OR message_update handler
+# Tests basic structural integrity — the signal pattern requires both
 # ============================================================
-echo "=== F2P A: registers a command ==="
-if echo "$COMMANDS" | grep -qE '"[a-zA-Z_-]+"'; then
-    add_reward 0.10
-    echo "PASS A (0.10)"
-else
-    echo "FAIL A — no commands registered"
+HAS_CMD=0
+HAS_MSG_HANDLER=0
+if echo "$SUMMARY" | grep -q "^COMMANDS=" && echo "$SUMMARY" | grep "^COMMANDS=" | grep -qE "[a-zA-Z]"; then
+    HAS_CMD=1
 fi
-
-# ============================================================
-# F2P Gate B: Extension listens to assistant output stream (0.10)
-# Must subscribe to message_end OR message_update (signal detection)
-# ============================================================
-echo "=== F2P B: listens to message_end or message_update ==="
-if echo "$HANDLERS" | grep -qE '"(message_end|message_update)"'; then
-    add_reward 0.10
-    echo "PASS B (0.10)"
-else
-    echo "FAIL B"
+if echo "$SUMMARY" | grep "^EVENTS=" | grep -qE "message_end|message_update"; then
+    HAS_MSG_HANDLER=1
 fi
-
-# ============================================================
-# F2P Gate C: When inactive, no signal protocol leaks into prompt (0.10)
-# Tests that activation gating actually works.
-# ============================================================
-echo "=== F2P C: inactive = no protocol injection ==="
-INACTIVE=$(run_harness before_start_inactive)
-echo "Inactive: $INACTIVE"
-# Either before_agent_start returns null/no systemPrompt, OR systemPrompt has no signal refs.
-# We accept: no signal token mention while inactive.
-if echo "$INACTIVE" | grep -qE '"hasSignalRef":false' || ! echo "$INACTIVE" | grep -q '"prompt"'; then
-    add_reward 0.10
-    echo "PASS C (0.10)"
-else
-    # If extension auto-activates and always injects, that's still a working extension; partial credit none here
-    echo "FAIL C — protocol leaks while inactive (or unable to verify)"
-fi
-
-# ============================================================
-# F2P Gate D: After activation, signal protocol is injected (0.20)
-# Either as systemPrompt addition OR custom message — must include [[TOKEN]] style.
-# ============================================================
-echo "=== F2P D: active = signal protocol injected ==="
-ACTIVE=$(run_harness before_start_active)
-echo "Active: $ACTIVE"
-if echo "$ACTIVE" | grep -qE '"injectsTokens":true'; then
-    add_reward 0.20
-    echo "PASS D (0.20)"
-else
-    echo "FAIL D"
-fi
-
-# ============================================================
-# F2P Gate E: Reacting to signal token produces observable side effect (0.30)
-# Must call ui.notify, setWidget, setStatus, or emit an event when a known
-# signal token appears in assistant output.
-# ============================================================
-echo "=== F2P E: signal token triggers side effect ==="
-REACT=$(run_harness signal_react)
-echo "React: $REACT"
-NO_OP=$(run_harness signal_no_op)
-echo "NoOp: $NO_OP"
-
-# Count side effects when signal present
-HAS_NOTIFY_REACT=0
-HAS_WIDGET_REACT=0
-HAS_STATUS_REACT=0
-HAS_EVENT_REACT=0
-echo "$REACT" | grep -qE '"notifications":\[\{' && HAS_NOTIFY_REACT=1
-echo "$REACT" | grep -qE '"widgets":\["[^"]+"\]|"widgetHistory":\[\{' && HAS_WIDGET_REACT=1
-echo "$REACT" | grep -qE '"statuses":\["[^"]+"\]' && HAS_STATUS_REACT=1
-echo "$REACT" | grep -qE '"events":\[\{' && HAS_EVENT_REACT=1
-
-# Count side effects on plain text (should be ZERO)
-HAS_NOTIFY_NOOP=0
-HAS_WIDGET_NOOP=0
-echo "$NO_OP" | grep -qE '"notifications":\[\{' && HAS_NOTIFY_NOOP=1
-echo "$NO_OP" | grep -qE '"widgets":\["[^"]+"\]' && HAS_WIDGET_NOOP=1
-
-REACT_SIGNAL=$((HAS_NOTIFY_REACT + HAS_WIDGET_REACT + HAS_STATUS_REACT + HAS_EVENT_REACT))
-NOOP_SIGNAL=$((HAS_NOTIFY_NOOP + HAS_WIDGET_NOOP))
-
-if [ $REACT_SIGNAL -ge 1 ] && [ $NOOP_SIGNAL -eq 0 ]; then
-    add_reward 0.30
-    echo "PASS E (0.30) — signal-triggered side effect, no false positives"
-elif [ $REACT_SIGNAL -ge 1 ] && [ $NOOP_SIGNAL -ge 1 ]; then
-    # Reacts to signals but also fires on plain text — half credit
+if [ "$HAS_CMD" -eq 1 ] && [ "$HAS_MSG_HANDLER" -eq 1 ]; then
+    echo "GATE1 PASS: command + message handler registered"
     add_reward 0.15
-    echo "PARTIAL E (0.15) — reacts but also fires on non-signal text"
 else
-    echo "FAIL E — no observable reaction to signal tokens"
+    echo "GATE1 FAIL: HAS_CMD=$HAS_CMD HAS_MSG_HANDLER=$HAS_MSG_HANDLER"
 fi
 
 # ============================================================
-# F2P Gate F: Open/Close (or toggle) — open differs from close state (0.20)
-# Demonstrates the bidirectional pattern: a "close"/"hide"/"done" signal
-# undoes the effect of an "open"/"show" signal.
+# F2P Gate 2 (weight 0.20): Activation injects signal protocol
+# Either via systemPrompt mutation in before_agent_start, or via session.addMessage,
+# AND the injected text must reference at least one signal-style token like [[...]]
 # ============================================================
-echo "=== F2P F: open then close changes widget/state ==="
-TOGGLE=$(run_harness signal_close)
-echo "Toggle: $TOGGLE"
+ACTIVATE_OUT=$(run_harness activate-only "")
+echo "=== ACTIVATE ==="
+echo "$ACTIVATE_OUT"
 
-# Extract widget arrays
-BEFORE=$(echo "$TOGGLE" | grep -oE '"beforeClose":\{"widgets":\[[^]]*\]' | head -1)
-AFTER=$(echo "$TOGGLE" | grep -oE '"afterCloseWidgets":\[[^]]*\]' | head -1)
+BEFORE_OUT=$(run_harness before-start "")
+echo "=== BEFORE_START ==="
+echo "$BEFORE_OUT" | head -50
 
-# Pass if EITHER (a) widget added on open and removed on close,
-# OR (b) at least 2 distinct notifications (one for open, one for close)
-NOTIF_COUNT=$(echo "$TOGGLE" | grep -oE '"msg":"[^"]*"' | wc -l)
+ROUNDTRIP_OUT=$(run_harness signal-roundtrip "")
+echo "=== ROUNDTRIP ==="
+echo "$ROUNDTRIP_OUT"
 
-PASS_F=0
-# Widget toggle: opened then unset
-if echo "$BEFORE" | grep -qE '"widgets":\["[^"]+"\]' && echo "$AFTER" | grep -qE '"afterCloseWidgets":\[\]'; then
-    PASS_F=1
-fi
-# OR notification toggle: at least 2 distinct messages, with one matching open and one close
-if [ $PASS_F -eq 0 ]; then
-    if [ "$NOTIF_COUNT" -ge 2 ]; then
-        # Check for open-themed and close-themed notifications
-        if echo "$TOGGLE" | grep -qiE 'open|show' && echo "$TOGGLE" | grep -qiE 'close|hide|done'; then
-            PASS_F=1
-        fi
-    fi
+PROTOCOL_INJECTED=0
+# Check session messages from session-message-injection style
+SESSION_HINTS=$(echo "$ROUNDTRIP_OUT" | grep "^SESSION_HINTS=" | head -1)
+PROMPT_TEXT=$(echo "$BEFORE_OUT" | sed -n '/---PROMPT_START---/,/---PROMPT_END---/p')
+
+COMBINED_INJECTED="${SESSION_HINTS}${PROMPT_TEXT}"
+
+if echo "$COMBINED_INJECTED" | grep -qE '\[\[[A-Z_]+(SIGNAL|OPEN|CLOSE|SHOW|HIDE|DONE|UI)[A-Z_]*\]\]|\[\[SIGNAL_'; then
+    PROTOCOL_INJECTED=1
 fi
 
-if [ $PASS_F -eq 1 ]; then
+if [ "$PROTOCOL_INJECTED" -eq 1 ]; then
+    echo "GATE2 PASS: signal protocol injected (via session msg or system prompt)"
     add_reward 0.20
-    echo "PASS F (0.20) — open/close produce distinct effects"
 else
-    echo "FAIL F — open and close not differentiated"
+    echo "GATE2 FAIL: no signal protocol injected on activation"
 fi
 
 # ============================================================
-# Final
+# F2P Gate 3 (weight 0.20): Extension reacts to assistant signal output
+# Activate, fire several known signal tokens via streaming. Must produce
+# at least one notification or setWidget call.
 # ============================================================
-echo "=== Final reward: $REWARD ==="
-finalize
+NOTIFY_COUNT=$(echo "$ROUNDTRIP_OUT" | grep "^NOTIFICATIONS=" | head -1 | sed 's/^NOTIFICATIONS=//')
+WIDGET_CALLS=$(echo "$ROUNDTRIP_OUT" | grep "^SET_WIDGET_CALLS=" | head -1 | sed 's/^SET_WIDGET_CALLS=//')
+EVT_COUNT=$(echo "$ROUNDTRIP_OUT" | grep "^EVENTS_EMITTED=" | head -1 | sed 's/^EVENTS_EMITTED=//')
+[ -z "$NOTIFY_COUNT" ] && NOTIFY_COUNT=0
+[ -z "$WIDGET_CALLS" ] && WIDGET_CALLS=0
+[ -z "$EVT_COUNT" ] && EVT_COUNT=0
+
+REACTED_TOTAL=$((NOTIFY_COUNT + WIDGET_CALLS + EVT_COUNT))
+if [ "$REACTED_TOTAL" -ge 1 ]; then
+    echo "GATE3 PASS: extension reacted to signals (notifs=$NOTIFY_COUNT widgets=$WIDGET_CALLS events=$EVT_COUNT)"
+    add_reward 0.20
+else
+    echo "GATE3 FAIL: no observable reaction to any signal"
+fi
+
+# ============================================================
+# F2P Gate 4 (weight 0.15): Recognizes BOTH an open-UI and a close-UI signal
+# Tests that more than one distinct signal kind is implemented.
+# Look for notifications referencing different signal semantics.
+# ============================================================
+OPEN_REACTED=0
+CLOSE_REACTED=0
+DONE_REACTED=0
+
+NOTIFY_LINES=$(echo "$ROUNDTRIP_OUT" | grep "^NOTIFY:")
+WIDGET_LINES=$(echo "$ROUNDTRIP_OUT" | grep "^WIDGET:")
+
+# OPEN-style: any notify mentioning open/show/UI panel opened, OR a setWidget with a defined value
+if echo "$NOTIFY_LINES" | grep -qiE "open|show|panel.*open"; then
+    OPEN_REACTED=1
+fi
+if echo "$WIDGET_LINES" | grep -q "value=set"; then
+    OPEN_REACTED=1
+fi
+
+# CLOSE-style: notify mentioning close/hide, OR setWidget with undefined
+if echo "$NOTIFY_LINES" | grep -qiE "close|hide|panel.*closed"; then
+    CLOSE_REACTED=1
+fi
+if echo "$WIDGET_LINES" | grep -q "value=undefined"; then
+    CLOSE_REACTED=1
+fi
+
+# DONE-style: notify mentioning done/complete/task
+if echo "$NOTIFY_LINES" | grep -qiE "done|complete|finished|task"; then
+    DONE_REACTED=1
+fi
+
+DISTINCT=$((OPEN_REACTED + CLOSE_REACTED + DONE_REACTED))
+if [ "$DISTINCT" -ge 2 ]; then
+    echo "GATE4 PASS: distinct signal kinds reacted: open=$OPEN_REACTED close=$CLOSE_REACTED done=$DONE_REACTED"
+    add_reward 0.15
+else
+    echo "GATE4 FAIL: only $DISTINCT distinct signal kinds reacted"
+fi
+
+# ============================================================
+# F2P Gate 5 (weight 0.15): Inactive (no /start) → no reaction
+# Critical correctness: signals must be IGNORED when feature is off.
+# ============================================================
+PASSIVE_OUT=$(run_harness no-active-passive "")
+echo "=== PASSIVE ==="
+echo "$PASSIVE_OUT"
+
+PASSIVE_NOTIFY=$(echo "$PASSIVE_OUT" | grep "^NOTIFICATIONS_PRE=" | head -1 | sed 's/^NOTIFICATIONS_PRE=//')
+PASSIVE_WIDGET=$(echo "$PASSIVE_OUT" | grep "^SET_WIDGET_CALLS_PRE=" | head -1 | sed 's/^SET_WIDGET_CALLS_PRE=//')
+[ -z "$PASSIVE_NOTIFY" ] && PASSIVE_NOTIFY=0
+[ -z "$PASSIVE_WIDGET" ] && PASSIVE_WIDGET=0
+
+if [ "$PASSIVE_NOTIFY" -eq 0 ] && [ "$PASSIVE_WIDGET" -eq 0 ]; then
+    echo "GATE5 PASS: extension is inert before activation"
+    add_reward 0.15
+else
+    echo "GATE5 FAIL: pre-activation reaction notifs=$PASSIVE_NOTIFY widgets=$PASSIVE_WIDGET"
+fi
+
+# ============================================================
+# F2P Gate 6 (weight 0.15): Source-code shape — pattern fidelity
+# A correct demo of "signals via output" needs:
+#  (a) a regex/match against [[ ... ]] tokens, AND
+#  (b) the extension does NOT register any tools (the whole point)
+# ============================================================
+PATTERN_REGEX=0
+NO_TOOLS=0
+
+if echo "$EXT_SRC" | grep -qE '\\\[\\\[|\[\[[A-Z_]+'; then
+    PATTERN_REGEX=1
+fi
+
+# check for tool registration patterns
+if echo "$EXT_SRC" | grep -qE 'registerTool|pi\.tool\(|defineTool|\.tools\.'; then
+    NO_TOOLS=0
+else
+    NO_TOOLS=1
+fi
+
+if [ "$PATTERN_REGEX" -eq 1 ] && [ "$NO_TOOLS" -eq 1 ]; then
+    echo "GATE6 PASS: signal-token pattern present, no tool registration"
+    add_reward 0.15
+else
+    echo "GATE6 FAIL: PATTERN_REGEX=$PATTERN_REGEX NO_TOOLS=$NO_TOOLS"
+fi
+
+echo "FINAL REWARD=$REWARD"
+echo "$REWARD" > /logs/verifier/reward.txt

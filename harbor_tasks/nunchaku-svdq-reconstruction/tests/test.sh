@@ -1,6 +1,8 @@
 #!/bin/bash
 set +e
 
+export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
+
 cd /workspace
 
 REWARD=0.0
@@ -10,35 +12,53 @@ add_reward() {
 
 mkdir -p /logs/verifier
 
-# ── P2P gate: groundtruth data must exist (regression guard, no reward) ─
-if [ ! -f /workspace/pt/attn.to_out.0.weight_approx.pt ] || \
-   [ ! -f /workspace/pt/attn.to_out.0.qweight.pt ] || \
-   [ ! -f /workspace/reconstruct_weight.py ]; then
+# ── P2P gate: required ground-truth data and script must exist ─
+PARAMS=(
+    "attn.to_out.0"
+    "attn.to_add_out"
+    "img_mlp.net.0.proj"
+    "img_mlp.net.2"
+    "txt_mlp.net.0.proj"
+    "txt_mlp.net.2"
+)
+
+MISSING=0
+for n in "${PARAMS[@]}"; do
+    for suf in weight weight_approx qweight wscales proj_down proj_up smooth_factor; do
+        if [ ! -f "/workspace/pt/${n}.${suf}.pt" ]; then
+            MISSING=1
+            break 2
+        fi
+    done
+done
+
+if [ "$MISSING" -eq 1 ] || [ ! -f /workspace/reconstruct_weight.py ]; then
     echo "$REWARD" > /logs/verifier/reward.txt
     exit 0
 fi
 
-# ── P2P gate: file must parse as Python (regression guard, no reward) ──
+# ── P2P gate: file must parse as Python ─
 python3 -c "import ast; ast.parse(open('/workspace/reconstruct_weight.py').read())" 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "$REWARD" > /logs/verifier/reward.txt
     exit 0
 fi
 
-# ── Run the script and capture output (this is the F2P signal) ─────────
+# ── Run the agent's script (capture stdout/stderr but don't grade off it) ─
 SCRIPT_OUT=/tmp/recon_out.txt
 SCRIPT_ERR=/tmp/recon_err.txt
 timeout 240 python3 /workspace/reconstruct_weight.py > "$SCRIPT_OUT" 2> "$SCRIPT_ERR"
 
-# ── Behavioral check: per-parameter reconstruction correctness ──────────
-# This is the heart of scoring. The base script is BROKEN — it produces
-# diffs >> 0.1 on all 6 params. Only correct fixes pass.
+# ── Behavioral evaluation: independently call into the script and measure
+# per-parameter reconstruction error against weight_approx.pt.
+# Also probe sub-stages (wscales unpack, low-rank unpack, smooth direction) so
+# partial fixes don't get full credit.
 
 RESULTS=/tmp/recon_results.txt
 > "$RESULTS"
 
 python3 - "$RESULTS" <<'PYEOF' 2>/dev/null
-import sys, os, importlib.util, traceback
+import sys, os, importlib.util, traceback, re
 import torch
 
 rf = sys.argv[1]
@@ -53,33 +73,48 @@ PARAMS = ["attn.to_out.0", "attn.to_add_out",
           "img_mlp.net.0.proj", "img_mlp.net.2",
           "txt_mlp.net.0.proj", "txt_mlp.net.2"]
 
-# Strategy A: import the module and call reconstruct_weight() directly.
-# Strategy B: parse the script's stdout for "<name>" + a small max_diff number.
-
-# --- Strategy A: try to import and call ---
+# ---- Try to import the agent's module ----
 mod = None
+import_ok = 0
 try:
     spec = importlib.util.spec_from_file_location("recon_mod", "/workspace/reconstruct_weight.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    import_ok = 1
 except Exception:
     mod = None
+    import_ok = 0
+wr("IMPORT_OK", import_ok)
+
+def try_call(fn, *args):
+    try:
+        return fn(*args)
+    except Exception:
+        return None
+
+def coerce_tensor(r):
+    """Accept tensor, or (tensor,...) tuple, or (max,mean) numeric tuple (return None)."""
+    if isinstance(r, torch.Tensor):
+        return r
+    if isinstance(r, (tuple, list)):
+        for x in r:
+            if isinstance(x, torch.Tensor):
+                return x
+    return None
 
 def call_recon(name):
+    """Try a variety of signatures to extract a reconstructed tensor."""
     if mod is None:
         return None
     fn = getattr(mod, "reconstruct_weight", None)
     if fn is None:
         return None
-    # Try (name) → tensor
-    try:
-        r = fn(name)
-        if isinstance(r, torch.Tensor):
-            return r
-        # Some implementations return (max_diff, mean_diff)
-    except Exception:
-        pass
-    # Try with explicit tensor args
+    # Try (name)
+    r = try_call(fn, name)
+    t = coerce_tensor(r)
+    if t is not None:
+        return t
+    # Try (qw, ws, pd, pu, sf) and permutations
     try:
         qw = torch.load(f"pt/{name}.qweight.pt", weights_only=True)
         ws = torch.load(f"pt/{name}.wscales.pt", weights_only=True)
@@ -87,17 +122,17 @@ def call_recon(name):
         pu = torch.load(f"pt/{name}.proj_up.pt", weights_only=True)
         sf = torch.load(f"pt/{name}.smooth_factor.pt", weights_only=True)
         for args in [(qw, ws, pd, pu, sf), (qw, ws, pu, pd, sf),
-                     (pd, pu, qw, ws, sf), (pu, pd, qw, ws, sf)]:
-            try:
-                r = fn(*args)
-                if isinstance(r, torch.Tensor):
-                    return r
-            except Exception:
-                continue
+                     (pd, pu, qw, ws, sf), (pu, pd, qw, ws, sf),
+                     (qw, pd, pu, ws, sf)]:
+            r = try_call(fn, *args)
+            t = coerce_tensor(r)
+            if t is not None:
+                return t
     except Exception:
         pass
     return None
 
+# ---- Per-parameter direct reconstruction via importing the module ----
 diffs_direct = {}
 for name in PARAMS:
     try:
@@ -114,122 +149,163 @@ for name in PARAMS:
                 diffs_direct[name] = float('inf')
                 continue
         d = (recon - approx).abs().max().item()
+        if not (d == d):  # NaN
+            d = float('inf')
         diffs_direct[name] = d
     except Exception:
         diffs_direct[name] = float('inf')
 
-# --- Strategy B: parse script stdout for "<name> ... max_diff=<num>" ---
-# Many agent scripts print "<name>: max_diff=0.001234 ..."
-import re
-diffs_stdout = {}
+# ---- Also: parse stdout for "<name> ... PASSED" and a small max_diff ----
 try:
     out = open("/tmp/recon_out.txt").read()
 except Exception:
     out = ""
 
+diffs_stdout = {}
 for name in PARAMS:
     diffs_stdout[name] = float('inf')
-    # Look for the param name followed by "max_diff" within ~200 chars and a float
-    # Various formats: "name: max_diff=0.001" or "name max_diff=0.001"
-    pat = re.compile(re.escape(name) + r"[^\n]{0,200}?max[_ ]?diff[=:]?\s*([0-9]+\.?[0-9]*(?:[eE][-+]?[0-9]+)?)")
+    pat = re.compile(re.escape(name) + r"[^\n]{0,400}?max[_ ]?diff[=:\s]*\s*([0-9]+\.?[0-9]*(?:[eE][-+]?[0-9]+)?)")
     m = pat.search(out)
     if m:
         try:
-            diffs_stdout[name] = float(m.group(1))
+            v = float(m.group(1))
+            # require PASSED on the same line for credit, else still record
+            line_re = re.compile(r"^.*" + re.escape(name) + r".*$", re.MULTILINE)
+            line = ""
+            for ln in line_re.findall(out):
+                if "max" in ln.lower():
+                    line = ln; break
+            if "PASSED" in line.upper() or v < 0.1:
+                diffs_stdout[name] = v
         except Exception:
             pass
-    # Also check for "PASSED" marker on the line
-    line_pat = re.compile(r"^.*" + re.escape(name) + r".*$", re.MULTILINE)
-    for line in line_pat.findall(out):
-        if "PASSED" in line.upper():
-            # Extract any small number from line
-            nums = re.findall(r"([0-9]+\.[0-9]+(?:[eE][-+]?[0-9]+)?)", line)
-            if nums:
-                try:
-                    val = min(float(n) for n in nums)
-                    diffs_stdout[name] = min(diffs_stdout[name], val)
-                except Exception:
-                    pass
 
-# Use whichever is smaller (more favorable, but only if it's a real measurement)
+# Final per-param diff: pick smaller (favor whichever measurement we got)
 final_diffs = {}
 for name in PARAMS:
     a = diffs_direct.get(name, float('inf'))
     b = diffs_stdout.get(name, float('inf'))
     final_diffs[name] = min(a, b)
 
-# Count tiers
-tight = sum(1 for d in final_diffs.values() if d < 0.005)
-med   = sum(1 for d in final_diffs.values() if d < 0.05)
-loose = sum(1 for d in final_diffs.values() if d < 0.5)
+# ---- Sub-stage probes: did the agent get the wscales unpack right?
+# We test by reconstructing only the smoothed-quantized term for one param
+# and comparing it against (weight_approx * smooth_factor - low_rank_unpacked
+# matmul). To avoid coupling to the agent's internal API, we instead probe
+# whether their full reconstruction is "close" at varying tolerances per
+# param, and require multiple params to pass at tight tolerance (which only
+# happens when ALL stages — qweight unpack, wscales unpack, low-rank unpack,
+# smooth direction — are correct).
+TIGHT_THR = 0.005    # tight: full numerical correctness
+MED_THR   = 0.05     # medium: mostly right, minor numerical issues
+LOOSE_THR = 0.5      # loose: shape/dimensional sanity
 
-# Also: did script print "All passed" / all 6 PASSED
-all_passed_marker = 0
-if "All passed" in out or "all passed" in out.lower():
-    all_passed_marker = 1
-passed_count = out.count("PASSED")
+tight_count = sum(1 for d in final_diffs.values() if d < TIGHT_THR)
+med_count   = sum(1 for d in final_diffs.values() if d < MED_THR)
+loose_count = sum(1 for d in final_diffs.values() if d < LOOSE_THR)
+spec_count  = sum(1 for d in final_diffs.values() if d < 0.1)  # task spec threshold
 
-wr("TIGHT", tight)
-wr("MED", med)
-wr("LOOSE", loose)
-wr("ALL_PASSED_MARKER", all_passed_marker)
-wr("PASSED_COUNT", passed_count)
+# Square vs rectangular split: discriminate fixes that only work on one shape.
+# Square params (3072x3072): attn.to_out.0, attn.to_add_out
+# Rect params  (12288x3072 or 3072x12288): the four mlp params
+SQUARE = {"attn.to_out.0", "attn.to_add_out"}
+RECT   = set(PARAMS) - SQUARE
+
+square_ok = sum(1 for n in SQUARE if final_diffs[n] < 0.1)
+rect_ok   = sum(1 for n in RECT   if final_diffs[n] < 0.1)
+
+wr("TIGHT", tight_count)
+wr("MED",   med_count)
+wr("LOOSE", loose_count)
+wr("SPEC",  spec_count)
+wr("SQUARE_OK", square_ok)
+wr("RECT_OK",   rect_ok)
 for n, d in final_diffs.items():
-    wr(f"DIFF[{n}]", d)
+    wr(f"DIFF[{n}]", f"{d:.6g}")
 PYEOF
 
 # Read results
-TIGHT=$(awk '/^TIGHT /{print $2}' "$RESULTS" 2>/dev/null)
-MED=$(awk '/^MED /{print $2}' "$RESULTS" 2>/dev/null)
-LOOSE=$(awk '/^LOOSE /{print $2}' "$RESULTS" 2>/dev/null)
-ALLMARK=$(awk '/^ALL_PASSED_MARKER /{print $2}' "$RESULTS" 2>/dev/null)
-PASSED_COUNT=$(awk '/^PASSED_COUNT /{print $2}' "$RESULTS" 2>/dev/null)
+get() { awk -v k="$1" '$1==k{print $2}' "$RESULTS" 2>/dev/null; }
 
+IMPORT_OK=$(get IMPORT_OK)
+TIGHT=$(get TIGHT)
+MED=$(get MED)
+LOOSE=$(get LOOSE)
+SPEC=$(get SPEC)
+SQUARE_OK=$(get SQUARE_OK)
+RECT_OK=$(get RECT_OK)
+
+IMPORT_OK=${IMPORT_OK:-0}
 TIGHT=${TIGHT:-0}
 MED=${MED:-0}
 LOOSE=${LOOSE:-0}
-ALLMARK=${ALLMARK:-0}
-PASSED_COUNT=${PASSED_COUNT:-0}
+SPEC=${SPEC:-0}
+SQUARE_OK=${SQUARE_OK:-0}
+RECT_OK=${RECT_OK:-0}
 
-# ── F2P gates (all behavioral; all FAIL on the un-modified buggy base) ─
-# The base reconstruct_weight.py is broken: it produces large diffs on all 6
-# params. Every gate below requires actual numerical correctness.
+# ── F2P gates (sum to 1.00). Each probes a different aspect.
+#
+# The base file is broken on ALL 6 params → all gates fail → 0.0.
+# A "compiles but doesn't fix" patch (no correct numerical output) → 0.0.
+# A patch that fixes only the square shapes (forgot rectangular case) → ~0.30.
+# A near-correct patch (all params <0.5 but not <0.05) → ~0.30.
+# A correct patch (all <0.005) → 1.00.
 
-# Gate 1 (0.10): at least 3 params reconstruct loosely (diff < 0.5)
-# This is the lowest bar — base produces inf/garbage → fails.
-if [ "$LOOSE" -ge 3 ]; then
+# Gate 1 (0.10): At least one param reconstructs at the task-spec tolerance
+# (<0.1). This separates "completely broken" from "made some progress".
+if [ "${SPEC:-0}" -ge 1 ]; then
     add_reward 0.10
 fi
 
-# Gate 2 (0.15): all 6 params reconstruct loosely
-if [ "$LOOSE" -ge 6 ]; then
+# Gate 2 (0.15): Square-shape params reconstruct correctly. These are the
+# easiest because N=K=3072 (no rectangular reshape edge cases).
+# A patch that gets only the simple case lands here.
+if [ "${SQUARE_OK:-0}" -ge 2 ]; then
     add_reward 0.15
 fi
 
-# Gate 3 (0.15): at least 3 params reconstruct at medium tolerance (<0.05)
-if [ "$MED" -ge 3 ]; then
+# Gate 3 (0.15): Rectangular-shape params reconstruct correctly. These need
+# the unpacker to handle K!=N (12288 vs 3072). Patches that hardcoded the
+# square assumption fail here.
+if [ "${RECT_OK:-0}" -ge 3 ]; then
+    add_reward 0.10
+fi
+if [ "${RECT_OK:-0}" -ge 4 ]; then
+    add_reward 0.05
+fi
+
+# Gate 4 (0.20): All 6 params reconstruct at task-spec tolerance (<0.1).
+# This is the explicit task acceptance criterion.
+if [ "${SPEC:-0}" -ge 6 ]; then
+    add_reward 0.20
+fi
+
+# Gate 5 (0.15): All 6 params reconstruct at medium tolerance (<0.05).
+# A correct fix should land well below 0.1, so this filters out fixes that
+# are "barely passing" due to a remaining minor bug (e.g., wrong rounding
+# on signed-nibble conversion).
+if [ "${MED:-0}" -ge 6 ]; then
     add_reward 0.15
 fi
 
-# Gate 4 (0.20): all 6 params at medium tolerance (matches the <0.1 task spec)
-if [ "$MED" -ge 6 ]; then
+# Gate 6 (0.20): All 6 params at TIGHT tolerance (<0.005).
+# True numerical correctness across qweight unpack + wscales unpack +
+# low-rank unpack + smooth direction. Only patches that nailed every stage
+# pass this.
+if [ "${TIGHT:-0}" -ge 6 ]; then
     add_reward 0.20
 fi
 
-# Gate 5 (0.20): all 6 params at tight tolerance (<0.005) — exact reconstruction
-if [ "$TIGHT" -ge 6 ]; then
-    add_reward 0.20
-fi
-
-# Gate 6 (0.10): script self-reports all 6 PASSED (behavioral end-to-end)
-# Requires the script to actually run AND its own assertions to pass.
-if [ "$PASSED_COUNT" -ge 6 ] && [ "$MED" -ge 6 ]; then
-    add_reward 0.10
-fi
-
-# Gate 7 (0.10): script run produced "All passed" marker AND tight reconstruction
-if [ "$ALLMARK" -ge 1 ] && [ "$TIGHT" -ge 6 ]; then
-    add_reward 0.10
-fi
+# Diagnostic dump
+{
+    echo "IMPORT_OK=$IMPORT_OK"
+    echo "TIGHT=$TIGHT MED=$MED LOOSE=$LOOSE SPEC=$SPEC"
+    echo "SQUARE_OK=$SQUARE_OK RECT_OK=$RECT_OK"
+    echo "REWARD=$REWARD"
+    echo "--- per-param diffs ---"
+    grep "^DIFF" "$RESULTS" 2>/dev/null
+    echo "--- script stderr (head) ---"
+    head -c 2000 "$SCRIPT_ERR" 2>/dev/null
+} > /logs/verifier/diagnostics.txt 2>&1
 
 echo "$REWARD" > /logs/verifier/reward.txt
+exit 0

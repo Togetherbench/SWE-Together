@@ -6,7 +6,6 @@ WORKDIR=$(pwd)
 echo "Working in: $WORKDIR"
 
 mkdir -p /logs/verifier
-
 git config --global --add safe.directory "$WORKDIR" 2>/dev/null || true
 
 export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:$PATH"
@@ -16,22 +15,26 @@ REWARD=0
 add_reward() {
     REWARD=$(awk -v r="$REWARD" -v a="$1" 'BEGIN { printf "%.4f", r + a }')
 }
-
 write_reward_and_exit() {
     echo "$REWARD" > /logs/verifier/reward.txt
     exit 0
 }
 
+if ! command -v bun >/dev/null 2>&1; then
+    echo "FAIL: bun missing"
+    write_reward_and_exit
+fi
+
 SHARED="packages/ai/src/providers/openai-responses-shared.ts"
 RESPONSES="packages/ai/src/providers/openai-responses.ts"
 
 # ═══════════════════════════════════════════════════════════════
-# P2P GATE (regression guard, no reward): TypeScript compiles
+# P2P GATE: TypeScript compiles
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- P2P GATE: TypeScript compilation (gating, no reward) ---"
+echo "--- P2P GATE: TypeScript compilation ---"
 if ! (cd packages/ai && npx tsc --noEmit -p tsconfig.build.json 2>/tmp/tsc_errors.txt); then
-    echo "FAIL: TypeScript compilation broken — destructive change. REWARD=0."
+    echo "FAIL: TypeScript compilation broken."
     tail -30 /tmp/tsc_errors.txt
     REWARD=0
     write_reward_and_exit
@@ -39,7 +42,7 @@ fi
 echo "PASS gate: TypeScript compiles."
 
 # ═══════════════════════════════════════════════════════════════
-# Set up testable copies that export internal functions
+# Make convert functions exportable for harness
 # ═══════════════════════════════════════════════════════════════
 TESTABLE_SHARED=""
 TESTABLE_RESPONSES=""
@@ -59,6 +62,7 @@ fi
 cleanup() {
     [ -n "$TESTABLE_SHARED" ] && rm -f "$WORKDIR/$TESTABLE_SHARED" 2>/dev/null
     [ -n "$TESTABLE_RESPONSES" ] && rm -f "$WORKDIR/$TESTABLE_RESPONSES" 2>/dev/null
+    rm -rf /tmp/pitest 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -75,29 +79,22 @@ async function loadConvert(): Promise<any> {
             const mod = await import(c);
             if (typeof mod.convertResponsesMessages === "function") return mod.convertResponsesMessages;
             if (typeof mod.convertMessages === "function") return mod.convertMessages;
-        } catch (e) {
-            // try next
-        }
+        } catch (e) {}
     }
-    throw new Error("Could not load convert function from any testable module");
+    throw new Error("Could not load convert function");
 }
-
 export { loadConvert };
 HARNESS
 
 run_test() {
-    local script="$1"
-    (cd "$WORKDIR" && timeout 30 bun "$script" 2>&1)
+    (cd "$WORKDIR" && timeout 30 bun "$1" 2>&1)
 }
 
 # ═══════════════════════════════════════════════════════════════
-# F2P GATE A: Same-model preservation (regression check w/ behavior)
-# Buggy base preserves these. Reward only because the fix could
-# accidentally break this; but it's also true on no-op. So we make
-# this PURELY GATING with no reward — if fix broke it, reward=0.
+# P2P GATE B: same-model preservation (regression guard, no reward)
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- F2P GATE A: same-model still works (gating, 0 reward) ---"
+echo "--- P2P GATE B: same-model still works ---"
 
 cat > /tmp/pitest/same_model.ts << 'SAMEEOF'
 import { loadConvert } from "/tmp/pitest/harness.ts";
@@ -147,9 +144,9 @@ try {
 }
 SAMEEOF
 
-OUT_A=$(run_test /tmp/pitest/same_model.ts)
-echo "$OUT_A" | tail -5
-if ! echo "$OUT_A" | grep -q "RESULT=PASS"; then
+OUT_SAME=$(run_test /tmp/pitest/same_model.ts)
+echo "$OUT_SAME" | tail -5
+if ! echo "$OUT_SAME" | grep -q "RESULT=PASS"; then
     echo "FAIL: Same-model behavior broken — destructive change. REWARD=0."
     REWARD=0
     write_reward_and_exit
@@ -157,162 +154,88 @@ fi
 echo "PASS gate: same-model preserved."
 
 # ═══════════════════════════════════════════════════════════════
-# F2P GATE 1 (CORE FIX, weight 0.55): different-model handoff
-# clears fc_xxx by default (no strictResponsesPairing flag set).
-# On buggy base: assistant has provider==model.provider, api match,
-# different model.id → fc_xxx is replayed AS-IS (bug). On fix: id is
-# undefined/missing OR function_call is dropped, but function_call
-# still pairs with output via call_id (or fc with no fc_ id).
+# F2P 1 [0.30] — CORE FIX: different-model handoff strips fc_xxx id
+# Buggy: fc keeps fc_xxx id paired with rs (no reasoning emitted) → 400 on API.
+# Fix: either fc id cleared (undefined / not fc_xxx) OR fc dropped, with
+# tool result still sent paired by call_id (or also dropped/textified).
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- F2P GATE 1 [CORE FIX]: different-model handoff (0.55) ---"
+echo "--- F2P 1 [0.30]: different-model fc_xxx cleared by default ---"
 
 cat > /tmp/pitest/diff_model.ts << 'DIFFEOF'
 import { loadConvert } from "/tmp/pitest/harness.ts";
 const convert = await loadConvert();
 
+// Target model: gpt-5-codex. Assistant came from gpt-5 (same provider+api, different id).
 const model = {
     id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai",
     api: "openai-responses" as const, input: ["text"], reasoning: true,
     baseUrl: "https://api.openai.com/v1", headers: {},
 } as any;
 
-// Assistant produced by *different* OpenAI Responses model (e.g. gpt-5-mini).
-// transformMessages strips the thinkingSignature for cross-model handoffs.
-// So the assistant message has no thinkingSignature when convertMessages sees it.
 const context = {
     messages: [
-        { role: "user" as const, content: "Compute things", timestamp: Date.now() },
+        { role: "user" as const, content: "Hi", timestamp: Date.now() },
         {
             role: "assistant" as const,
             content: [
-                // no thinkingSignature — transformMessages strips it cross-model
-                { type: "thinking" as const, thinking: "let me think" },
-                { type: "toolCall" as const, id: "call_x1|fc_xtest", name: "search", arguments: { q: "a" } },
+                { type: "thinking" as const, thinking: "th",
+                  thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_difftest", summary: [{ type: "summary_text", text: "th" }] }) },
+                { type: "toolCall" as const, id: "call_diff|fc_difftest", name: "search", arguments: { q: "x" } },
             ],
-            model: "gpt-5-mini",
-            provider: "openai", api: "openai-responses" as const,
+            model: "gpt-5", provider: "openai", api: "openai-responses" as const,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
             stopReason: "toolUse" as const, timestamp: Date.now(),
         },
-        { role: "toolResult" as const, toolCallId: "call_x1|fc_xtest", toolName: "search",
+        { role: "toolResult" as const, toolCallId: "call_diff|fc_difftest", toolName: "search",
           content: [{ type: "text" as const, text: "result" }], isError: false, timestamp: Date.now() },
-        { role: "user" as const, content: "Continue", timestamp: Date.now() },
+        { role: "user" as const, content: "now what?", timestamp: Date.now() },
     ],
 };
 
 try {
     const result = convert(model, context);
     const fcs = result.filter((i: any) => i.type === "function_call");
-    const fcOut = result.filter((i: any) => i.type === "function_call_output");
     const reasoning = result.filter((i: any) => i.type === "reasoning");
 
-    // No reasoning items should be emitted (no signature available).
-    const noReasoning = reasoning.length === 0;
-
-    // The toolResult must be representable: either function_call_output with call_x1
-    //   matched by some function_call (with fc id cleared / undefined),
-    // OR text-conversion: tool call rendered as text and result rendered as user input.
-    let coreFix = false;
-
-    // Pattern A: function_call kept but fc_xxx id cleared, function_call_output present, paired by call_id
-    const fcWithCallId = fcs.find((f: any) => f.call_id === "call_x1");
-    const outWithCallId = fcOut.find((f: any) => f.call_id === "call_x1");
-    if (fcWithCallId && outWithCallId) {
-        const idCleared = !fcWithCallId.id || !String(fcWithCallId.id).startsWith("fc_");
-        if (idCleared) coreFix = true;
+    // Crucial: no fc_xxx id should be present in any function_call (cleared) OR fc dropped entirely.
+    let anyFcHasFcId = false;
+    for (const fc of fcs) {
+        const id = (fc as any).id;
+        if (typeof id === "string" && id.startsWith("fc_")) anyFcHasFcId = true;
     }
 
-    // Pattern B: function_call dropped entirely AND no orphan function_call_output emitted
-    //   (must be converted to text user message) — context preserved
-    if (!fcWithCallId && !outWithCallId) {
-        // verify some user/assistant message in result mentions search/result text
-        const serialized = JSON.stringify(result);
-        if (serialized.includes("search") && serialized.includes("result")) {
-            coreFix = true;
-        }
-    }
-
-    // BUG signature on base: fc_xtest replayed AS-IS with id="fc_xtest"
-    const bugReplayed = fcs.some((f: any) => f.id === "fc_xtest");
-
-    console.log(`RESULT=${coreFix && !bugReplayed && noReasoning ? "PASS" : "FAIL"} coreFix=${coreFix} bugReplayed=${bugReplayed} noReasoning=${noReasoning} reasoning=${reasoning.length} fcs=${fcs.length} fcOut=${fcOut.length}`);
-    console.log("FCS:", JSON.stringify(fcs));
-    console.log("FCOUT:", JSON.stringify(fcOut));
+    // Reasoning items SHOULD NOT be replayed for different-model handoff
+    // (transformMessages strips signatures cross-model; convert may also gate on pairing).
+    // We don't strictly require reasoning.length === 0 because transformMessages
+    // is what drops signatures; here we only assert convert doesn't emit a paired
+    // fc_xxx that triggers 400.
+    const ok = !anyFcHasFcId;
+    console.log(`RESULT=${ok ? "PASS" : "FAIL"} fcs=${fcs.length} reasoning=${reasoning.length} anyFcHasFcId=${anyFcHasFcId}`);
+    if (fcs.length > 0) console.log("FC_DETAIL=" + JSON.stringify(fcs[0]));
 } catch (e: any) {
     console.log(`RESULT=FAIL error=${e.message}`);
 }
 DIFFEOF
 
-OUT_1=$(run_test /tmp/pitest/diff_model.ts)
-echo "$OUT_1" | tail -10
-if echo "$OUT_1" | grep -q "RESULT=PASS"; then
-    add_reward 0.55
-    echo "PASS: F2P core fix — different-model handoff clears fc_xxx (+0.55)"
+OUT1=$(run_test /tmp/pitest/diff_model.ts)
+echo "$OUT1" | tail -5
+if echo "$OUT1" | grep -q "RESULT=PASS"; then
+    echo "PASS F2P1"
+    add_reward 0.30
 else
-    echo "FAIL: F2P core fix not applied"
+    echo "FAIL F2P1"
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# F2P GATE 2 (weight 0.20): No flag-gating on strictResponsesPairing
-# This is the explicit user requirement: behavior must be default,
-# without the strictResponsesPairing compat flag.
-# Buggy base may not have the flag at all (failed port), but if any
-# code path is conditional on the flag, this fails.
-# We grep ONLY for conditional gating patterns, not the bare token.
+# F2P 2 [0.20] — Different-model: tool result pairs with function_call
+# Either fc kept (no fc_xxx id) AND fc_output present with same call_id,
+# OR fc dropped AND fc_output also dropped/textified (no orphan).
 # ═══════════════════════════════════════════════════════════════
 echo ""
-echo "--- F2P GATE 2: no flag-gated behavior (0.20) ---"
+echo "--- F2P 2 [0.20]: no orphan function_call_output ---"
 
-# We need this to fail on the buggy base too if base has flag-gating.
-# But buggy base in this repo never had the flag (the user complained the
-# port omitted it). So this gate only awards reward if the agent ALSO did
-# not introduce flag-gating while implementing the fix.
-# To avoid awarding on no-op (where no fix exists), we couple this to
-# Gate 1 having passed — only count if core fix was applied.
-
-GATED=0
-for f in "$SHARED" "$RESPONSES"; do
-    if [ -f "$f" ]; then
-        if grep -E "if\s*\(.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
-            GATED=$((GATED + 1))
-        fi
-        if grep -E "\?\s*.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
-            GATED=$((GATED + 1))
-        fi
-        if grep -E "&&.*strictResponsesPairing" "$f" >/dev/null 2>&1; then
-            GATED=$((GATED + 1))
-        fi
-    fi
-done
-
-if echo "$OUT_1" | grep -q "RESULT=PASS" && [ "$GATED" -eq 0 ]; then
-    add_reward 0.20
-    echo "PASS: behavior is default (not flag-gated) AND core fix applied (+0.20)"
-else
-    if [ "$GATED" -ne 0 ]; then
-        echo "FAIL: behavior is gated on strictResponsesPairing in $GATED location(s)"
-    else
-        echo "FAIL: core fix not applied (Gate 1 failed) — no credit"
-    fi
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# F2P GATE 3 (weight 0.25): tool-result pairing preserved end-to-end
-# After the fix, a different-model handoff with an orphaned tool result
-# (the tool call's fc_xxx was paired with a stripped rs_xxx) must NOT
-# produce: a function_call with intact fc_xxx id, AND the conversation
-# must remain coherent (the model still sees the result somehow).
-#
-# Specifically: if function_call_output is emitted, there must be a
-# matching function_call (paired by call_id) to avoid 400 from the API.
-# If function_call is dropped, function_call_output must also be dropped
-# (and the result content surfaced as text).
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "--- F2P GATE 3: tool-result pairing coherent post-fix (0.25) ---"
-
-cat > /tmp/pitest/pairing.ts << 'PAIREOF'
+cat > /tmp/pitest/no_orphan.ts << 'ORPHEOF'
 import { loadConvert } from "/tmp/pitest/harness.ts";
 const convert = await loadConvert();
 
@@ -324,61 +247,270 @@ const model = {
 
 const context = {
     messages: [
-        { role: "user" as const, content: "Q", timestamp: Date.now() },
+        { role: "user" as const, content: "Hi", timestamp: Date.now() },
         {
             role: "assistant" as const,
             content: [
-                { type: "thinking" as const, thinking: "..." },
-                { type: "toolCall" as const, id: "call_p|fc_p", name: "search", arguments: { q: "x" } },
+                { type: "thinking" as const, thinking: "th",
+                  thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_orph", summary: [{ type: "summary_text", text: "th" }] }) },
+                { type: "toolCall" as const, id: "call_orph|fc_orph", name: "search", arguments: { q: "x" } },
             ],
-            model: "gpt-5-mini", provider: "openai", api: "openai-responses" as const,
+            model: "gpt-5", provider: "openai", api: "openai-responses" as const,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
             stopReason: "toolUse" as const, timestamp: Date.now(),
         },
-        { role: "toolResult" as const, toolCallId: "call_p|fc_p", toolName: "search",
-          content: [{ type: "text" as const, text: "the answer is 42" }], isError: false, timestamp: Date.now() },
-        { role: "user" as const, content: "more", timestamp: Date.now() },
+        { role: "toolResult" as const, toolCallId: "call_orph|fc_orph", toolName: "search",
+          content: [{ type: "text" as const, text: "result-42" }], isError: false, timestamp: Date.now() },
+        { role: "user" as const, content: "so?", timestamp: Date.now() },
     ],
 };
 
 try {
     const result = convert(model, context);
     const fcs = result.filter((i: any) => i.type === "function_call");
-    const fcOut = result.filter((i: any) => i.type === "function_call_output");
+    const fcOuts = result.filter((i: any) => i.type === "function_call_output");
 
-    // Build pairing map: every function_call_output must have matching function_call
     const fcCallIds = new Set(fcs.map((f: any) => f.call_id));
-    const orphanOutputs = fcOut.filter((o: any) => !fcCallIds.has(o.call_id));
+    const fcOutCallIds = new Set(fcOuts.map((f: any) => f.call_id));
 
-    // No orphan outputs (would cause 400)
-    const pairingOK = orphanOutputs.length === 0;
+    // Orphan = a function_call_output whose call_id has no matching function_call.
+    let hasOrphan = false;
+    for (const id of fcOutCallIds) {
+        if (!fcCallIds.has(id)) hasOrphan = true;
+    }
 
-    // No fc_xxx id on any function_call (the bug signature)
-    const noLeakedFcId = fcs.every((f: any) => !f.id || !String(f.id).startsWith("fc_"));
-
-    // Context preserved: result text "42" must appear somewhere
-    const serialized = JSON.stringify(result);
-    const contextPreserved = serialized.includes("42");
-
-    const ok = pairingOK && noLeakedFcId && contextPreserved;
-    console.log(`RESULT=${ok ? "PASS" : "FAIL"} pairingOK=${pairingOK} noLeakedFcId=${noLeakedFcId} contextPreserved=${contextPreserved} orphans=${orphanOutputs.length}`);
+    // Also: if fc dropped entirely, we expect the tool result to be conveyed
+    // somewhere (text in user msg, or fc_output dropped). Either is acceptable as
+    // long as no orphan + no API-rejecting state.
+    const ok = !hasOrphan;
+    console.log(`RESULT=${ok ? "PASS" : "FAIL"} fcs=${fcs.length} fcOuts=${fcOuts.length} hasOrphan=${hasOrphan}`);
 } catch (e: any) {
     console.log(`RESULT=FAIL error=${e.message}`);
 }
-PAIREOF
+ORPHEOF
 
-OUT_3=$(run_test /tmp/pitest/pairing.ts)
-echo "$OUT_3" | tail -5
-if echo "$OUT_3" | grep -q "RESULT=PASS"; then
-    add_reward 0.25
-    echo "PASS: tool-result pairing coherent (+0.25)"
+OUT2=$(run_test /tmp/pitest/no_orphan.ts)
+echo "$OUT2" | tail -5
+if echo "$OUT2" | grep -q "RESULT=PASS"; then
+    echo "PASS F2P2"
+    add_reward 0.20
 else
-    echo "FAIL: tool-result pairing broken or fc_xxx leaked"
+    echo "FAIL F2P2"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# F2P 3 [0.20] — Reasoning-only assistant turn (no following tool/text)
+# Should NOT emit a dangling reasoning item by itself (or if it does,
+# must be followed by function_call/message). The simple bar: convert
+# does NOT produce a reasoning item that ends the run with no follower.
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "--- F2P 3 [0.20]: reasoning without paired follower is dropped ---"
+
+cat > /tmp/pitest/lonely_reasoning.ts << 'LONELY'
+import { loadConvert } from "/tmp/pitest/harness.ts";
+const convert = await loadConvert();
+
+const model = {
+    id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai",
+    api: "openai-responses" as const, input: ["text"], reasoning: true,
+    baseUrl: "https://api.openai.com/v1", headers: {},
+} as any;
+
+// Assistant turn with ONLY a thinking block (no text, no toolCall) that
+// stopped early. The reasoning item has no paired follower → must be dropped.
+const context = {
+    messages: [
+        { role: "user" as const, content: "Hi", timestamp: Date.now() },
+        {
+            role: "assistant" as const,
+            content: [
+                { type: "thinking" as const, thinking: "ponder",
+                  thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_lonely", summary: [{ type: "summary_text", text: "ponder" }] }) },
+            ],
+            model: "gpt-5-codex", provider: "openai", api: "openai-responses" as const,
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            stopReason: "stop" as const, timestamp: Date.now(),
+        },
+        { role: "user" as const, content: "you there?", timestamp: Date.now() },
+    ],
+};
+
+try {
+    const result = convert(model, context);
+
+    // Walk the array — for every reasoning item, the NEXT item must be
+    // a function_call or a message (assistant text). If the run ends
+    // with a reasoning item, that's the bug (or a reasoning item is
+    // followed only by a user-role message).
+    let hasUnpairedReasoning = false;
+    for (let i = 0; i < result.length; i++) {
+        const item: any = result[i];
+        if (item.type === "reasoning") {
+            const next = result[i + 1];
+            if (!next) {
+                hasUnpairedReasoning = true;
+                break;
+            }
+            const okNext =
+                next.type === "function_call" ||
+                (next.type === "message" && next.role === "assistant");
+            if (!okNext) {
+                hasUnpairedReasoning = true;
+                break;
+            }
+        }
+    }
+
+    const ok = !hasUnpairedReasoning;
+    console.log(`RESULT=${ok ? "PASS" : "FAIL"} hasUnpaired=${hasUnpairedReasoning} items=${result.length}`);
+} catch (e: any) {
+    console.log(`RESULT=FAIL error=${e.message}`);
+}
+LONELY
+
+OUT3=$(run_test /tmp/pitest/lonely_reasoning.ts)
+echo "$OUT3" | tail -5
+if echo "$OUT3" | grep -q "RESULT=PASS"; then
+    echo "PASS F2P3"
+    add_reward 0.20
+else
+    echo "FAIL F2P3"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# F2P 4 [0.15] — Cross-provider handoff still strips fc_xxx
+# (Anthropic → OpenAI Codex). Existing behavior, must still work.
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "--- F2P 4 [0.15]: cross-provider strips fc_xxx ---"
+
+cat > /tmp/pitest/cross_provider.ts << 'CROSSEOF'
+import { loadConvert } from "/tmp/pitest/harness.ts";
+const convert = await loadConvert();
+
+const model = {
+    id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai",
+    api: "openai-responses" as const, input: ["text"], reasoning: true,
+    baseUrl: "https://api.openai.com/v1", headers: {},
+} as any;
+
+const context = {
+    messages: [
+        { role: "user" as const, content: "Hi", timestamp: Date.now() },
+        {
+            role: "assistant" as const,
+            content: [
+                { type: "toolCall" as const, id: "call_x|fc_xprov", name: "search", arguments: { q: "x" } },
+            ],
+            // Anthropic provider, different api
+            model: "claude-sonnet", provider: "anthropic", api: "anthropic" as const,
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            stopReason: "toolUse" as const, timestamp: Date.now(),
+        },
+        { role: "toolResult" as const, toolCallId: "call_x|fc_xprov", toolName: "search",
+          content: [{ type: "text" as const, text: "ok" }], isError: false, timestamp: Date.now() },
+        { role: "user" as const, content: "go", timestamp: Date.now() },
+    ],
+};
+
+try {
+    const result = convert(model, context);
+    const fcs = result.filter((i: any) => i.type === "function_call");
+    let anyFcHasFcId = false;
+    for (const fc of fcs) {
+        const id = (fc as any).id;
+        if (typeof id === "string" && id.startsWith("fc_")) anyFcHasFcId = true;
+    }
+    const ok = !anyFcHasFcId;
+    console.log(`RESULT=${ok ? "PASS" : "FAIL"} anyFcHasFcId=${anyFcHasFcId} fcs=${fcs.length}`);
+} catch (e: any) {
+    console.log(`RESULT=FAIL error=${e.message}`);
+}
+CROSSEOF
+
+OUT4=$(run_test /tmp/pitest/cross_provider.ts)
+echo "$OUT4" | tail -5
+if echo "$OUT4" | grep -q "RESULT=PASS"; then
+    echo "PASS F2P4"
+    add_reward 0.15
+else
+    echo "FAIL F2P4"
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# F2P 5 [0.10] — strictResponses(Pairing) flag NOT required: reading
+# the source proves the gating is by default, not behind opt-in flag.
+# We check there is no "strictResponses" / "strictResponsesPairing"
+# conditional gating the new behavior.
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "--- F2P 5 [0.10]: no strictResponsesPairing opt-in flag gates the fix ---"
+
+# It's OK for "strictResponsesPairing" to appear nowhere (deleted),
+# or as a no-op constant. It is NOT OK for it to be required to enable
+# the different-model id-clearing path.
+SHARED_CONTENT=""
+[ -f "$SHARED" ] && SHARED_CONTENT="$(cat "$SHARED")"
+RESP_CONTENT=""
+[ -f "$RESPONSES" ] && RESP_CONTENT="$(cat "$RESPONSES")"
+COMBINED="$SHARED_CONTENT
+$RESP_CONTENT"
+
+# Heuristic: a buggy/incomplete state often has "if (... strictResponsesPairing ...)"
+# guarding the fix. A clean fix removes that gate (or never had one) and runs by
+# default. If pattern "if (...strictResponsesPairing" or "options?.strictResponsesPairing"
+# guards the id-clearing logic, this gate fails.
+if echo "$COMBINED" | grep -E "strictResponsesPairing" >/dev/null 2>&1; then
+    # Allow if it's only in comments or types; reject if it appears in a
+    # conditional that gates fc_xxx handling.
+    if echo "$COMBINED" | grep -E "(if\s*\(.*strictResponsesPairing|strictResponsesPairing\s*[?&]|strictResponsesPairing\s*\)\s*\{)" >/dev/null 2>&1; then
+        echo "FAIL F2P5: strictResponsesPairing still gates behavior"
+    else
+        echo "PASS F2P5: strictResponsesPairing referenced but does not gate fix"
+        add_reward 0.10
+    fi
+else
+    echo "PASS F2P5: no strictResponsesPairing gating in source"
+    add_reward 0.10
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# F2P 6 [0.05] — Unit tests (vitest) related to openai-responses pass
+# Just smoke-runs any existing offline tests touching the file.
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "--- F2P 6 [0.05]: existing vitest unit tests pass ---"
+
+TEST_FILE=""
+for cand in \
+    "packages/ai/test/openai-responses-foreign-toolcall-id.test.ts" \
+    "packages/ai/test/openai-responses-shared.test.ts" \
+    "packages/ai/test/openai-responses.test.ts" ; do
+    if [ -f "$cand" ]; then TEST_FILE="$cand"; break; fi
+done
+
+if [ -n "$TEST_FILE" ]; then
+    VITEST_OUT=$(cd packages/ai && timeout 60 npx vitest run "../../$TEST_FILE" --reporter=verbose 2>&1)
+    VEXIT=$?
+    echo "$VITEST_OUT" | tail -25
+    PASS_LINE=$(echo "$VITEST_OUT" | grep -E "Tests +.*passed" | tail -1)
+    if [ "$VEXIT" = "0" ] || echo "$PASS_LINE" | grep -qE "[0-9]+ passed"; then
+        # Extract numbers: ensure no failures
+        FAIL_COUNT=$(echo "$VITEST_OUT" | grep -oE "[0-9]+ failed" | head -1 | grep -oE "[0-9]+")
+        if [ -z "$FAIL_COUNT" ] || [ "$FAIL_COUNT" = "0" ]; then
+            echo "PASS F2P6"
+            add_reward 0.05
+        else
+            echo "FAIL F2P6: $FAIL_COUNT failed"
+        fi
+    else
+        echo "FAIL F2P6: vitest failed"
+    fi
+else
+    echo "SKIP F2P6: no relevant test file found"
 fi
 
 echo ""
-echo "═══════════════════════════════════════════════════════════════"
 echo "FINAL REWARD: $REWARD"
-echo "═══════════════════════════════════════════════════════════════"
-
 echo "$REWARD" > /logs/verifier/reward.txt

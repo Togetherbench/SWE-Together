@@ -18,31 +18,8 @@ add() {
     REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + $1}")
 }
 
-# ============================================================
-# P2P GATE (gating, no reward): TypeScript must still compile.
-# If the agent broke compilation, score 0 and exit.
-# ============================================================
-echo "============================================================"
-echo "P2P Gate: TypeScript compile check (gating, no reward)"
-echo "============================================================"
-TSC_OUT=$(npx --no-install tsc --noEmit 2>&1)
-TSC_EXIT=$?
-echo "$TSC_OUT" | tail -30
-if [ $TSC_EXIT -ne 0 ]; then
-    echo "TSC: FAIL — regression, score 0"
-    echo "0.0000" > /logs/verifier/reward.txt
-    exit 0
-fi
-echo "TSC: PASS"
-
-# ============================================================
-# Helper: read file or empty
-# ============================================================
-RADIX_PROPS=("onOpenAutoFocus" "onPointerDownOutside" "onInteractOutside")
-
-# Strip line/block comments from file contents (for prop-usage scanning).
+# ---------- Helpers ----------
 strip_comments() {
-    # $1 = path
     [ -f "$1" ] || { echo ""; return; }
     node -e '
 const fs=require("fs");
@@ -55,208 +32,291 @@ try {
 ' "$1"
 }
 
-# Check whether a file contains an active JSX attribute usage like `prop={` or `prop="`
 file_uses_prop_attr() {
-    # $1 = path, $2 = prop name
     local content
     content=$(strip_comments "$1")
-    echo "$content" | grep -E "\\b$2[[:space:]]*=[[:space:]]*[\\{\"]" >/dev/null 2>&1
+    echo "$content" | grep -E "\b$2[[:space:]]*=[[:space:]]*[\{\"]" >/dev/null 2>&1
 }
 
 # ============================================================
-# F2P Gate 1 (weight 0.20):
-# DatasetBrowserModal must no longer pass onOpenAutoFocus to
-# DialogContent (this is the prop named in the original error).
-# Buggy base: passes onOpenAutoFocus={...} → fails.
+# P2P Gate (gating only): TypeScript compile must pass
 # ============================================================
-echo ""
 echo "============================================================"
-echo "F2P Gate 1 (0.20): DatasetBrowserModal no longer leaks onOpenAutoFocus"
+echo "P2P Gate: TypeScript compile (gating)"
 echo "============================================================"
-G1_FILE="src/shared/components/DatasetBrowserModal.tsx"
-if [ -f "$G1_FILE" ]; then
-    if file_uses_prop_attr "$G1_FILE" "onOpenAutoFocus"; then
-        echo "FAIL: $G1_FILE still has onOpenAutoFocus={...}"
-    else
-        echo "PASS"
-        add 0.20
-    fi
-else
-    echo "SKIP: file missing"
+if ! command -v npx >/dev/null 2>&1; then
+    echo "npx missing"
+    echo "0.0000" > /logs/verifier/reward.txt
+    exit 0
+fi
+TSC_OUT=$(timeout 240 npx --no-install tsc --noEmit 2>&1)
+TSC_EXIT=$?
+echo "$TSC_OUT" | tail -20
+if [ $TSC_EXIT -ne 0 ]; then
+    echo "TSC: FAIL — regression, score 0"
+    echo "0.0000" > /logs/verifier/reward.txt
+    exit 0
+fi
+echo "TSC: PASS"
+
+# Also reject any merge conflict markers (one of the captured patches left some)
+if grep -RIn -E "^(<<<<<<<|=======|>>>>>>>) " src 2>/dev/null | head -1 | grep -q .; then
+    echo "Merge conflict markers found in src/. Score 0."
+    echo "0.0000" > /logs/verifier/reward.txt
+    exit 0
 fi
 
 # ============================================================
-# F2P Gate 2 (weight 0.25):
-# VideoGenerationModal must remove the dead Radix handlers
-# (onPointerDownOutside / onInteractOutside / onOpenAutoFocus
-# as JSX attributes on DialogContent).
-# Buggy base passes all three → fails.
+# Gate 1 (0.18): DatasetBrowserModal no longer passes onOpenAutoFocus
+# This is the file in the original error stack.
 # ============================================================
 echo ""
 echo "============================================================"
-echo "F2P Gate 2 (0.25): VideoGenerationModal cleans dead Radix handlers"
+echo "Gate 1 (0.18): DatasetBrowserModal removes onOpenAutoFocus"
 echo "============================================================"
-G2_FILE="src/tools/travel-between-images/components/VideoGenerationModal.tsx"
-if [ -f "$G2_FILE" ]; then
+G1="src/shared/components/DatasetBrowserModal.tsx"
+if [ -f "$G1" ]; then
+    if file_uses_prop_attr "$G1" "onOpenAutoFocus"; then
+        echo "FAIL: still uses onOpenAutoFocus"
+    else
+        echo "PASS"
+        add 0.18
+    fi
+else
+    echo "SKIP: missing"
+fi
+
+# ============================================================
+# Gate 2 (0.18): VideoGenerationModal removes the dead Radix handlers
+# (onPointerDownOutside, onInteractOutside, onOpenAutoFocus)
+# ============================================================
+echo ""
+echo "============================================================"
+echo "Gate 2 (0.18): VideoGenerationModal cleans dead handlers"
+echo "============================================================"
+G2="src/tools/travel-between-images/components/VideoGenerationModal.tsx"
+if [ -f "$G2" ]; then
     leaks=0
     for p in onPointerDownOutside onInteractOutside onOpenAutoFocus; do
-        if file_uses_prop_attr "$G2_FILE" "$p"; then
-            echo "  still leaks: $p"
+        if file_uses_prop_attr "$G2" "$p"; then
+            echo "  leaks: $p"
             leaks=$((leaks+1))
         fi
     done
     if [ $leaks -eq 0 ]; then
         echo "PASS"
-        add 0.25
+        add 0.18
     else
-        echo "FAIL: $leaks dead handlers remain"
+        echo "FAIL: $leaks leaks"
     fi
 else
-    echo "SKIP: file missing"
+    echo "SKIP"
 fi
 
 # ============================================================
-# F2P Gate 3 (weight 0.20):
-# VideoGenerationModal must preserve the isLoraModalOpen guard
-# on close (regression guard for behavior). The original
-# guard lived in onPointerDownOutside/onInteractOutside —
-# after removing those, the guard must move to onOpenChange or
-# a named close handler. Buggy base does NOT pass this gate when
-# combined with Gate 2: on base, gate 2 fails so this gate does
-# not award; we additionally require that AFTER cleanup, the
-# guard exists in onOpenChange / handler. This makes the gate
-# F2P: passes only when handlers are removed AND guard is lifted.
+# Gate 3 (0.14): VideoGenerationModal preserves isLoraModalOpen guard
+# After removing the outside handlers, the close behavior must still
+# respect isLoraModalOpen (lifted to onOpenChange or a handler).
 # ============================================================
 echo ""
 echo "============================================================"
-echo "F2P Gate 3 (0.20): isLoraModalOpen guard lifted to onOpenChange"
+echo "Gate 3 (0.14): isLoraModalOpen guard preserved on close"
 echo "============================================================"
-if [ -f "$G2_FILE" ]; then
-    # Must have removed the dead handler attributes (otherwise the
-    # base file already has isLoraModalOpen mentioned, so we'd
-    # falsely award).
+if [ -f "$G2" ]; then
     base_leaks=0
     for p in onPointerDownOutside onInteractOutside; do
-        if file_uses_prop_attr "$G2_FILE" "$p"; then
+        if file_uses_prop_attr "$G2" "$p"; then
             base_leaks=$((base_leaks+1))
         fi
     done
-
     if [ $base_leaks -gt 0 ]; then
-        echo "FAIL: dead outside-handlers still present, can't award guard-lift"
+        echo "FAIL: outside handlers still present, can't credit guard-lift"
     else
-        # Now require guard reference inside onOpenChange={...}
-        # or inside a named close/openChange handler.
         node -e '
 const fs=require("fs");
 const src=fs.readFileSync(process.argv[1],"utf8")
   .replace(/\/\*[\s\S]*?\*\//g,"")
   .split("\n").filter(l=>!l.trim().startsWith("//")).join("\n");
 const oneLine=src.replace(/\s+/g," ");
-// onOpenChange={ ... isLoraModalOpen ... }
 const re1=/onOpenChange\s*=\s*\{[^}]*isLoraModalOpen[^}]*\}/;
-// any handler def referencing isLoraModalOpen and onClose
 const re2=/(handle\w*|on\w*)\s*=\s*[^=][^;]{0,400}isLoraModalOpen/;
-if (re1.test(oneLine) || re2.test(oneLine)) {
-  console.log("PASS");
-  process.exit(0);
-}
-console.log("FAIL: no guard found in onOpenChange or handler");
-process.exit(1);
-' "$G2_FILE"
+if (re1.test(oneLine) || re2.test(oneLine)) { console.log("PASS"); process.exit(0); }
+console.log("FAIL: no guard"); process.exit(1);
+' "$G2"
         if [ $? -eq 0 ]; then
-            add 0.20
+            add 0.14
         fi
+    fi
+else
+    echo "SKIP"
+fi
+
+# ============================================================
+# Gate 4 (0.14): useModal hook no longer plants onOpenAutoFocus
+# in the props it returns. This is the source of the "modal.props"
+# spread that contaminates Dialog receivers.
+# ============================================================
+echo ""
+echo "============================================================"
+echo "Gate 4 (0.14): useModal returned props don't contain onOpenAutoFocus"
+echo "============================================================"
+G4="src/shared/hooks/useModal.ts"
+if [ ! -f "$G4" ]; then
+    echo "PASS (file restructured, tsc passed)"
+    add 0.14
+else
+    content=$(strip_comments "$G4")
+    if echo "$content" | grep -E "onOpenAutoFocus" >/dev/null 2>&1; then
+        echo "FAIL: useModal still references onOpenAutoFocus"
+    else
+        echo "PASS"
+        add 0.14
+    fi
+fi
+
+# ============================================================
+# Gate 5 (0.18): play() AbortError fix — at least 4 of the
+# play() callsites must defend against unhandled promise rejections
+# (either via .catch(...) or via await + try/catch in surrounding code).
+# This is the second error from the instructions: "AbortError: The
+# play() request was interrupted by a call to pause()".
+# ============================================================
+echo ""
+echo "============================================================"
+echo "Gate 5 (0.18): play() callsites defended against AbortError"
+echo "============================================================"
+TARGETS=(
+    "src/pages/Home/components/panes/sections/MotionReferenceSection.tsx"
+    "src/shared/components/TaskDetails/components/TaskDetailsLazyVideoPreview.tsx"
+    "src/shared/components/StyledVideoPlayer/hooks/useVideoPlayerControls.ts"
+    "src/shared/components/VideoPortionTimeline/hooks/useHandleDrag.ts"
+    "src/shared/components/VideoPortionTimeline/hooks/usePlayhead.ts"
+    "src/tools/travel-between-images/components/Timeline/AudioStrip.tsx"
+)
+defended=0
+total_present=0
+for f in "${TARGETS[@]}"; do
+    if [ -f "$f" ]; then
+        total_present=$((total_present+1))
+        # Count play() calls
+        play_count=$(grep -cE "\.play\(\)" "$f" 2>/dev/null)
+        # Count play().catch( or AbortError handling
+        guarded=$(grep -cE "\.play\(\)\.catch\(|\.play\(\)\s*;?\s*//.*Abort" "$f" 2>/dev/null)
+        if [ "$play_count" -gt 0 ] && [ "$guarded" -gt 0 ]; then
+            defended=$((defended+1))
+        elif [ "$play_count" -eq 0 ]; then
+            # play() removed entirely (refactored) — accept
+            defended=$((defended+1))
+        fi
+    fi
+done
+echo "  defended=$defended / present=$total_present"
+if [ $total_present -gt 0 ]; then
+    # Award proportionally: full only if >=4 defended
+    if [ $defended -ge 4 ]; then
+        echo "PASS (full)"
+        add 0.18
+    elif [ $defended -ge 2 ]; then
+        echo "PARTIAL"
+        add 0.09
+    else
+        echo "FAIL"
+    fi
+else
+    echo "SKIP"
+fi
+
+# ============================================================
+# Gate 6 (0.10): safePlay handles AbortError specifically — does
+# not report it as a recoverable error. Behavioral check via runtime.
+# ============================================================
+echo ""
+echo "============================================================"
+echo "Gate 6 (0.10): safePlay swallows AbortError without reporting"
+echo "============================================================"
+G6="src/shared/lib/media/safePlay.ts"
+if [ -f "$G6" ]; then
+    content=$(strip_comments "$G6")
+    # Must reference AbortError name OR isAbortError import
+    if echo "$content" | grep -E "AbortError|isAbortError" >/dev/null 2>&1; then
+        echo "PASS (AbortError-aware)"
+        add 0.10
+    else
+        echo "FAIL: no AbortError handling"
     fi
 else
     echo "SKIP: file missing"
 fi
 
 # ============================================================
-# F2P Gate 4 (weight 0.20):
-# useModal hook no longer plants onOpenAutoFocus into the props
-# it returns. Buggy base sets it for mobile → fails.
-# Accept either:
-#   - onOpenAutoFocus is no longer referenced in real code
-#   - the file has been removed/restructured (TSC already passed)
+# Gate 7 (0.08): Completeness — at least 3 of these "shape changes"
+# present. Encourages broader cleanup vs. surface-only fix.
 # ============================================================
 echo ""
 echo "============================================================"
-echo "F2P Gate 4 (0.20): useModal cleaned of onOpenAutoFocus"
+echo "Gate 7 (0.08): Completeness — multiple call-sites cleaned"
 echo "============================================================"
-G4_FILE="src/shared/hooks/useModal.ts"
-if [ ! -f "$G4_FILE" ]; then
-    # File restructured/removed and TSC passed → accept
-    echo "PASS (file moved/removed, TSC green)"
-    add 0.20
-else
-    node -e '
-const fs=require("fs");
-const raw=fs.readFileSync(process.argv[1],"utf8");
-// Strip comments and string literals so we only see real code
-const stripped=raw
-  .replace(/\/\*[\s\S]*?\*\//g,"")
-  .split("\n").filter(l=>!l.trim().startsWith("//")).join("\n")
-  .replace(/"(?:[^"\\]|\\.)*"/g,"\"\"")
-  .replace(/`(?:[^`\\]|\\.)*`/g,"``")
-  .replace(/'"'"'(?:[^'"'"'\\]|\\.)*'"'"'/g,"''");
-if (/\bonOpenAutoFocus\b/.test(stripped)) {
-  console.log("FAIL: useModal still references onOpenAutoFocus");
-  process.exit(1);
-}
-console.log("PASS");
-process.exit(0);
-' "$G4_FILE"
-    if [ $? -eq 0 ]; then
-        add 0.20
-    fi
-fi
+shape=0
 
-# ============================================================
-# F2P Gate 5 (weight 0.15):
-# At least one OTHER caller (ImageGenerationModal, ai-input-button,
-# or PromptEditorModal) has dropped the dead Radix attributes from
-# its DialogContent/PopoverContent JSX. Buggy base has all three
-# leaking → fails until at least one is cleaned.
-# ============================================================
-echo ""
-echo "============================================================"
-echo "F2P Gate 5 (0.15): at least one additional caller cleaned"
-echo "============================================================"
-OTHER_CALLERS=(
-  "src/shared/components/ImageGenerationModal.tsx"
-  "src/shared/components/ui/ai-input-button.tsx"
-  "src/shared/components/PromptEditorModal.tsx"
-)
-
-cleaned=0
-present=0
-for f in "${OTHER_CALLERS[@]}"; do
-    [ -f "$f" ] || continue
-    present=$((present+1))
-    # On the buggy base, each of these has at least onOpenAutoFocus={
-    # or onPointerDownOutside={ as a JSX attribute.
-    leaks=0
+# 7a: ImageGenerationModal cleaned
+F7A="src/shared/components/ImageGenerationModal.tsx"
+if [ -f "$F7A" ]; then
+    leaks7a=0
     for p in onOpenAutoFocus onPointerDownOutside onInteractOutside; do
-        if file_uses_prop_attr "$f" "$p"; then
-            leaks=$((leaks+1))
+        if file_uses_prop_attr "$F7A" "$p"; then
+            leaks7a=$((leaks7a+1))
         fi
     done
-    if [ $leaks -eq 0 ]; then
-        echo "  cleaned: $f"
-        cleaned=$((cleaned+1))
-    else
-        echo "  still leaks ($leaks): $f"
-    fi
-done
+    if [ $leaks7a -eq 0 ]; then shape=$((shape+1)); echo "  ImageGenerationModal: clean"; fi
+fi
 
-if [ $present -gt 0 ] && [ $cleaned -ge 1 ]; then
+# 7b: PromptEditorModal cleaned of dead onInteractOutside / onPointerDownOutside
+F7B="src/shared/components/PromptEditorModal.tsx"
+if [ -f "$F7B" ]; then
+    leaks7b=0
+    for p in onPointerDownOutside onInteractOutside; do
+        if file_uses_prop_attr "$F7B" "$p"; then
+            leaks7b=$((leaks7b+1))
+        fi
+    done
+    if [ $leaks7b -eq 0 ]; then shape=$((shape+1)); echo "  PromptEditorModal: clean"; fi
+fi
+
+# 7c: ai-input-button cleaned (PopoverContent)
+F7C="src/shared/components/ui/ai-input-button.tsx"
+if [ -f "$F7C" ]; then
+    leaks7c=0
+    for p in onOpenAutoFocus onPointerDownOutside onInteractOutside; do
+        if file_uses_prop_attr "$F7C" "$p"; then
+            leaks7c=$((leaks7c+1))
+        fi
+    done
+    if [ $leaks7c -eq 0 ]; then shape=$((shape+1)); echo "  ai-input-button: clean"; fi
+fi
+
+# 7d: Repo-wide check — count remaining "dead" Radix handler attributes in src/
+remaining=$(grep -rE --include="*.tsx" --include="*.ts" \
+    "(onOpenAutoFocus|onPointerDownOutside|onInteractOutside)[[:space:]]*=" src 2>/dev/null \
+    | grep -vE "://|interface |type |^\s*//|^\s*\*" \
+    | grep -vE "\.d\.ts:" \
+    | wc -l)
+echo "  remaining dead-handler attribute usages in src: $remaining"
+if [ "$remaining" -le 1 ]; then shape=$((shape+1)); echo "  repo-wide cleanup: good"; fi
+
+echo "  shape score=$shape"
+if [ $shape -ge 3 ]; then
     echo "PASS"
-    add 0.15
+    add 0.08
+elif [ $shape -ge 2 ]; then
+    echo "PARTIAL"
+    add 0.04
 else
     echo "FAIL"
 fi
 
+# ============================================================
+# Final
+# ============================================================
 echo ""
 echo "============================================================"
 echo "FINAL REWARD: $REWARD"

@@ -6,13 +6,14 @@ mkdir -p /logs/verifier
 REWARD="0.0"
 echo "$REWARD" > "$REWARD_FILE"
 
+export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
 cd /workspace/pi-mono 2>/dev/null || {
     echo "FATAL: /workspace/pi-mono missing"
     echo "0.0" > "$REWARD_FILE"
     exit 0
 }
 
-export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 command -v node >/dev/null 2>&1 || { echo "FATAL: node missing"; echo "0.0" > "$REWARD_FILE"; exit 0; }
 
 TUI_DIR="packages/tui"
@@ -20,16 +21,17 @@ TI_FILE="$TUI_DIR/src/terminal-image.ts"
 TUI_FILE="$TUI_DIR/src/tui.ts"
 MD_FILE="$TUI_DIR/src/components/markdown.ts"
 BOX_FILE="$TUI_DIR/src/components/box.ts"
+TI_TEST="$TUI_DIR/test/terminal-image.test.ts"
 
-# Required source files must exist
 for f in "$TI_FILE" "$TUI_FILE" "$MD_FILE" "$BOX_FILE"; do
     [ -f "$f" ] || { echo "FATAL: $f missing"; echo "0.0" > "$REWARD_FILE"; exit 0; }
 done
 
 # ============================================================
-# P2P GATE (gating only, no reward): No unresolved merge conflict
-# markers. If present, the patch is broken — exit with 0.0.
+# P2P GATES (gating only)
 # ============================================================
+
+# (a) No unresolved merge conflict markers
 for f in "$TI_FILE" "$TUI_FILE" "$MD_FILE" "$BOX_FILE"; do
     if grep -qE '^(<<<<<<< |>>>>>>> |=======$)' "$f"; then
         echo "GATE FAIL: unresolved merge conflict markers in $f"
@@ -38,10 +40,7 @@ for f in "$TI_FILE" "$TUI_FILE" "$MD_FILE" "$BOX_FILE"; do
     fi
 done
 
-# ============================================================
-# P2P GATE (gating only): tui.ts file must be syntactically loadable
-# via tsx. If broken, exit with 0.0. (This passes on base too.)
-# ============================================================
+# (b) tui.ts must parse/import successfully via tsx
 node --import tsx -e "import('./$TUI_FILE').then(()=>{console.log('OK')}).catch(e=>{console.error(e.message);process.exit(1)})" >/tmp/parse.out 2>&1
 if [ $? -ne 0 ] || ! grep -q OK /tmp/parse.out; then
     echo "GATE FAIL: tui.ts does not parse/import"
@@ -50,34 +49,59 @@ if [ $? -ne 0 ] || ! grep -q OK /tmp/parse.out; then
     exit 0
 fi
 
-# ============================================================
-# F2P scoring — all weight comes from behavioral changes that
-# fail on the unmodified buggy base and pass on the correct revert.
-# Total weight = 1.00
-# ============================================================
-TOTAL=0
-EARNED=0
+# (c) terminal-image.ts must parse/import
+node --import tsx -e "import('./$TI_FILE').then(()=>{console.log('OK')}).catch(e=>{console.error(e.message);process.exit(1)})" >/tmp/parse2.out 2>&1
+if [ $? -ne 0 ] || ! grep -q OK /tmp/parse2.out; then
+    echo "GATE FAIL: terminal-image.ts does not parse/import"
+    cat /tmp/parse2.out | head -20
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
+fi
 
-add() {
-    local w=$1
-    local pass=$2  # 0 or 1
-    local label=$3
-    TOTAL=$((TOTAL + w))
+# (d) markdown.ts must parse/import
+node --import tsx -e "import('./$MD_FILE').then(()=>{console.log('OK')}).catch(e=>{console.error(e.message);process.exit(1)})" >/tmp/parse3.out 2>&1
+if [ $? -ne 0 ] || ! grep -q OK /tmp/parse3.out; then
+    echo "GATE FAIL: markdown.ts does not parse/import"
+    cat /tmp/parse3.out | head -20
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
+fi
+
+# (e) box.ts must parse/import
+node --import tsx -e "import('./$BOX_FILE').then(()=>{console.log('OK')}).catch(e=>{console.error(e.message);process.exit(1)})" >/tmp/parse4.out 2>&1
+if [ $? -ne 0 ] || ! grep -q OK /tmp/parse4.out; then
+    echo "GATE FAIL: box.ts does not parse/import"
+    cat /tmp/parse4.out | head -20
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
+fi
+
+# ============================================================
+# F2P scoring — total weight = 1.00
+# Six gates probing different slices of correctness.
+# ============================================================
+
+# Use awk to do float math
+add_to_earned() {
+    EARNED=$(awk -v e="$EARNED" -v w="$1" 'BEGIN{printf "%.4f", e+w}')
+}
+
+EARNED="0.0000"
+TOTAL="1.0000"
+
+emit() {
+    local pass=$1 w=$2 label=$3
     if [ "$pass" = "1" ]; then
-        EARNED=$((EARNED + w))
+        add_to_earned "$w"
         echo "  [+$w] $label"
     else
-        echo "  [ 0/$w] $label"
+        echo "  [ 0 /$w] $label"
     fi
 }
 
-# ------------------------------------------------------------
-# F2P #1 (weight 25): Buggy export `isImageLine` from
-# terminal-image.ts must be REMOVED. On buggy base it exists,
-# on correct revert it does not.
-# ------------------------------------------------------------
+# ---------- F2P #1 (0.15): isImageLine export REMOVED from terminal-image.ts ----------
 echo ""
-echo "=== F2P 1: isImageLine export removed from terminal-image.ts ==="
+echo "=== F2P 1 (0.15): isImageLine export removed ==="
 RES1=$(node --import tsx -e "
 import('./$TI_FILE').then((m) => {
     console.log(JSON.stringify({has: typeof m.isImageLine === 'function'}));
@@ -85,135 +109,157 @@ import('./$TI_FILE').then((m) => {
 " 2>&1)
 echo "  $RES1"
 P1=0
-if echo "$RES1" | grep -q '"has":false'; then
-    P1=1
-fi
-add 25 $P1 "isImageLine no longer exported"
+echo "$RES1" | grep -q '"has":false' && P1=1
+emit $P1 0.15 "isImageLine no longer exported from terminal-image.ts"
 
-# ------------------------------------------------------------
-# F2P #2 (weight 15): tui.ts must NOT import isImageLine from
-# terminal-image. On base it does; on revert it doesn't.
-# ------------------------------------------------------------
+# ---------- F2P #2 (0.10): tui.ts no longer imports isImageLine ----------
 echo ""
-echo "=== F2P 2: tui.ts does not import isImageLine ==="
-P2=0
-if ! grep -qE 'import\s*\{[^}]*\bisImageLine\b[^}]*\}\s*from\s*["'\''][^"'\'']*terminal-image' "$TUI_FILE"; then
-    P2=1
-fi
-add 15 $P2 "tui.ts no longer imports isImageLine"
+echo "=== F2P 2 (0.10): tui.ts does not import isImageLine ==="
+P2=1
+grep -qE 'import\s*\{[^}]*\bisImageLine\b[^}]*\}\s*from\s*["'\''][^"'\'']*terminal-image' "$TUI_FILE" && P2=0
+emit $P2 0.10 "tui.ts does not import isImageLine"
 
-# ------------------------------------------------------------
-# F2P #3 (weight 15): markdown.ts must NOT import isImageLine.
-# On base it does; on revert it doesn't.
-# ------------------------------------------------------------
+# ---------- F2P #3 (0.10): markdown.ts no longer imports isImageLine ----------
 echo ""
-echo "=== F2P 3: markdown.ts does not import isImageLine ==="
-P3=0
-if ! grep -qE 'import\s*\{[^}]*\bisImageLine\b[^}]*\}\s*from\s*["'\''][^"'\'']*terminal-image' "$MD_FILE"; then
-    P3=1
-fi
-add 15 $P3 "markdown.ts no longer imports isImageLine"
+echo "=== F2P 3 (0.10): markdown.ts does not import isImageLine ==="
+P3=1
+grep -qE 'import\s*\{[^}]*\bisImageLine\b[^}]*\}\s*from\s*["'\''][^"'\'']*terminal-image' "$MD_FILE" && P3=0
+emit $P3 0.10 "markdown.ts does not import isImageLine"
 
-# ------------------------------------------------------------
-# F2P #4 (weight 25): tui.ts has an inline image-detection check
-# using includes() against BOTH kitty (\x1b_G) and iTerm2
-# (\x1b]1337;File=) sequences. This is the behavioral signature
-# of the correct revert. On base, tui.ts uses isImageLine() and
-# does not contain these literals + includes() pattern.
-# ------------------------------------------------------------
+# ---------- F2P #4 (0.25): tui.ts has containsImage method that BEHAVIORALLY
+# detects both kitty and iterm2 sequences via includes(), independent of
+# any capability/getCapabilities call. Build a tiny harness that calls
+# the method on real strings.
+# ----------
 echo ""
-echo "=== F2P 4: tui.ts has inline includes()-based image detection ==="
+echo "=== F2P 4 (0.25): containsImage behavior on synthetic inputs ==="
 P4=0
-# Use python or node to do a precise regex on the file content,
-# since bash regex with \x1b literals across both prefixes is fragile.
-DETECT=$(node -e "
-const fs = require('fs');
-const src = fs.readFileSync('$TUI_FILE', 'utf8');
-// Look for includes('\x1b_G') and includes('\x1b]1337;File=')
-const reKitty = /includes\s*\(\s*[\"'\`](?:\\\\x1b|\\\\u001b|\u001b)_G[\"'\`]\s*\)/;
-const reIterm = /includes\s*\(\s*[\"'\`](?:\\\\x1b|\\\\u001b|\u001b)\]1337;File=[\"'\`]\s*\)/;
-const k = reKitty.test(src);
-const i = reIterm.test(src);
-console.log(JSON.stringify({kitty:k, iterm:i}));
-" 2>&1)
-echo "  $DETECT"
-if echo "$DETECT" | grep -q '"kitty":true' && echo "$DETECT" | grep -q '"iterm":true'; then
+HARNESS=$(cat <<'EOF'
+import { TUI } from './packages/tui/src/tui.ts';
+const t = new TUI();
+// containsImage is private; access dynamically
+const fn = (t as any).containsImage?.bind(t);
+if (typeof fn !== 'function') {
+    console.log(JSON.stringify({err:'containsImage missing'}));
+    process.exit(0);
+}
+const KITTY = "\x1b_Gf=32,t=d,a=T;AAAA\x1b\\";
+const ITERM = "\x1b]1337;File=size=10:AAAA\x07";
+const KITTY_INDENT = "    \x1b_Gf=32,t=d,a=T;AAAA\x1b\\";
+const ITERM_INDENT = "  \x1b]1337;File=inline=1:AAAA\x07";
+const MULTIROW = "\x1b[1A\x1b_Gf=32,t=d;data\x1b\\";
+const PLAIN = "hello world";
+const FAKE = "/path/to/File_1337/foo.png";
+const out = {
+    kitty: fn(KITTY),
+    iterm: fn(ITERM),
+    kittyIndent: fn(KITTY_INDENT),
+    itermIndent: fn(ITERM_INDENT),
+    multirow: fn(MULTIROW),
+    plain: fn(PLAIN),
+    fake: fn(FAKE),
+};
+console.log(JSON.stringify(out));
+EOF
+)
+echo "$HARNESS" > /tmp/harness4.ts
+RES4=$(node --import tsx /tmp/harness4.ts 2>&1)
+echo "  $RES4"
+# Required: kitty=true, iterm=true, kittyIndent=true, itermIndent=true,
+# multirow=true, plain=false, fake=false.
+if echo "$RES4" | grep -q '"kitty":true' \
+   && echo "$RES4" | grep -q '"iterm":true' \
+   && echo "$RES4" | grep -q '"kittyIndent":true' \
+   && echo "$RES4" | grep -q '"itermIndent":true' \
+   && echo "$RES4" | grep -q '"multirow":true' \
+   && echo "$RES4" | grep -q '"plain":false' \
+   && echo "$RES4" | grep -q '"fake":false'; then
     P4=1
 fi
-add 25 $P4 "tui.ts contains inline includes()-based detection for both protocols"
+emit $P4 0.25 "containsImage detects single-row, multi-row, indented; rejects plain/fake"
 
-# ------------------------------------------------------------
-# F2P #5 (weight 20): Behavioral test — extract and exercise
-# tui.ts's image-detection logic on inputs the buggy version
-# would mishandle. The buggy isImageLine in terminal-image.ts
-# (a) returns false when getImageEscapePrefix() is null and
-# (b) used startsWith for the "fast path" but the issue from
-# PR #1091 is that detection was tied to terminal capability.
-#
-# We construct a behavioral check: simulate a no-capability
-# environment and verify that the correct fix's detection
-# function still returns true for image-bearing lines (it
-# is a pure string check), while the buggy version (which
-# called getImageEscapePrefix() and returned false when null)
-# would not.
-#
-# Strategy: read the file source and look for a pattern where
-# detection is purely string-based (no call to
-# getImageEscapePrefix / getCapabilities inside the detection
-# path). On base, isImageLine in terminal-image.ts uses
-# capability gating. On revert, tui.ts has containsImage that
-# is a pure string check.
-# ------------------------------------------------------------
+# ---------- F2P #5 (0.15): Detection is NOT capability-gated.
+# The buggy isImageLine in terminal-image.ts called getImageEscapePrefix()
+# which depended on getCapabilities(). The fix puts the detection back in
+# tui.ts as a pure string check. Verify by reading the tui.ts source and
+# confirming containsImage's body does NOT reference getCapabilities or
+# getImageEscapePrefix, AND the file uses includes() against the literal
+# escape sequences.
+# ----------
 echo ""
-echo "=== F2P 5: detection path is pure string-based (not capability-gated) ==="
+echo "=== F2P 5 (0.15): containsImage is pure string check (not capability-gated) ==="
 P5=0
 PURITY=$(node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$TUI_FILE', 'utf8');
-// Find any method/function whose body contains both prefix literals
-// (\x1b_G and \x1b]1337;File=) and uses includes(). Then check that
-// the same method body does NOT call getImageEscapePrefix or
-// getCapabilities (which would gate on terminal support).
-const lines = src.split('\n');
-// crude bracket scan: find lines containing 'x1b_G' (kitty literal)
-let found = false;
-let pure = false;
-// Look for an arrow / function block containing the kitty literal
-// and capture a window of lines around it.
-for (let i = 0; i < lines.length; i++) {
-    if (lines[i].indexOf('\\\\x1b_G') !== -1 || lines[i].indexOf('\u001b_G') !== -1) {
-        found = true;
-        // window: 5 lines before to 5 lines after
-        const start = Math.max(0, i - 8);
-        const end = Math.min(lines.length, i + 8);
-        const window = lines.slice(start, end).join('\n');
-        const hasIterm = window.indexOf('1337;File=') !== -1;
-        const hasIncludes = /\.includes\s*\(/.test(window);
-        const callsCap = /getImageEscapePrefix\s*\(|getCapabilities\s*\(/.test(window);
-        if (hasIterm && hasIncludes && !callsCap) {
-            pure = true;
-            break;
-        }
-    }
-}
-console.log(JSON.stringify({found, pure}));
+// Find the containsImage method body.
+const re = /containsImage\s*\([^)]*\)\s*:\s*boolean\s*\{([\s\S]*?)\n\t\}/;
+const m = src.match(re);
+if (!m) { console.log(JSON.stringify({found:false})); process.exit(0); }
+const body = m[1];
+const callsCaps = /getCapabilities|getImageEscapePrefix/.test(body);
+const usesIncludes = /\.includes\s*\(/.test(body);
+const hasKitty = body.indexOf('\u001b_G') >= 0;
+const hasIterm = body.indexOf('\u001b]1337;File=') >= 0;
+console.log(JSON.stringify({found:true, callsCaps, usesIncludes, hasKitty, hasIterm}));
 " 2>&1)
 echo "  $PURITY"
-if echo "$PURITY" | grep -q '"pure":true'; then
+if echo "$PURITY" | grep -q '"found":true' \
+   && echo "$PURITY" | grep -q '"callsCaps":false' \
+   && echo "$PURITY" | grep -q '"usesIncludes":true' \
+   && echo "$PURITY" | grep -q '"hasKitty":true' \
+   && echo "$PURITY" | grep -q '"hasIterm":true'; then
     P5=1
 fi
-add 20 $P5 "Detection is pure string check (no capability gating)"
+emit $P5 0.15 "containsImage body is pure string check using includes(), no capability gating"
+
+# ---------- F2P #6 (0.15): Box cache reverted to explicit fields
+# (cachedWidth / cachedChildLines / cachedBgSample / cachedLines) AND
+# does NOT use a single RenderCache object. This catches "didn't revert
+# the box.ts changes from #1084".
+# ----------
+echo ""
+echo "=== F2P 6 (0.15): Box cache reverted to explicit fields ==="
+P6=0
+BOXCHECK=$(node -e "
+const fs = require('fs');
+const src = fs.readFileSync('$BOX_FILE', 'utf8');
+const hasCachedWidth = /private\s+cachedWidth\??\s*:/.test(src);
+const hasCachedChildLines = /private\s+cachedChildLines\??\s*:/.test(src);
+const hasCachedBgSample = /private\s+cachedBgSample\??\s*:/.test(src);
+const hasCachedLines = /private\s+cachedLines\??\s*:/.test(src);
+const hasRenderCacheType = /type\s+RenderCache\b/.test(src);
+const hasSingleCacheField = /private\s+cache\?\s*:\s*RenderCache/.test(src);
+const usesJoinKey = /childLines\.join\s*\(\s*[\"'\`]\\\\n[\"'\`]\s*\)/.test(src);
+console.log(JSON.stringify({hasCachedWidth, hasCachedChildLines, hasCachedBgSample, hasCachedLines, hasRenderCacheType, hasSingleCacheField, usesJoinKey}));
+" 2>&1)
+echo "  $BOXCHECK"
+if echo "$BOXCHECK" | grep -q '"hasCachedWidth":true' \
+   && echo "$BOXCHECK" | grep -q '"hasCachedChildLines":true' \
+   && echo "$BOXCHECK" | grep -q '"hasCachedBgSample":true' \
+   && echo "$BOXCHECK" | grep -q '"hasCachedLines":true' \
+   && echo "$BOXCHECK" | grep -q '"hasRenderCacheType":false' \
+   && echo "$BOXCHECK" | grep -q '"hasSingleCacheField":false'; then
+    P6=1
+fi
+emit $P6 0.15 "Box uses explicit cached* fields, no RenderCache type"
+
+# ---------- F2P #7 (0.10): markdown.ts no longer special-cases isImageLine
+# in its wrap loop. The reverted code wraps unconditionally; the buggy
+# code branched on isImageLine. ----------
+echo ""
+echo "=== F2P 7 (0.10): markdown.ts wraps lines unconditionally ==="
+P7=1
+# If markdown.ts still has any reference to isImageLine, fail.
+grep -qE '\bisImageLine\b' "$MD_FILE" && P7=0
+emit $P7 0.10 "markdown.ts has no remaining references to isImageLine"
 
 # ============================================================
-# Compute final reward
+# Final reward
 # ============================================================
 echo ""
-echo "=== Summary: $EARNED / $TOTAL ==="
-if [ "$TOTAL" -gt 0 ]; then
-    REWARD=$(awk -v e="$EARNED" -v t="$TOTAL" 'BEGIN{printf "%.3f", e/t}')
-else
-    REWARD="0.0"
-fi
-echo "Reward: $REWARD"
+echo "EARNED=$EARNED / TOTAL=$TOTAL"
+REWARD=$(awk -v e="$EARNED" -v t="$TOTAL" 'BEGIN{ if (t<=0) {print "0.0000"} else {r=e/t; if (r<0) r=0; if (r>1) r=1; printf "%.4f", r}}')
+echo "REWARD=$REWARD"
 echo "$REWARD" > "$REWARD_FILE"
 exit 0

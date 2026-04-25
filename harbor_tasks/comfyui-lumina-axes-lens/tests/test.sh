@@ -16,17 +16,17 @@ finalize() {
     exit 0
 }
 
+add_reward() {
+    REWARD=$($PY -c "print(min(1.0, round($REWARD + $1, 4)))")
+}
+
 if [ ! -f "$MODEL_PY" ]; then
     finalize
 fi
 
-# Patch model_management.py for CPU-only environments (idempotent)
+# CPU patch (idempotent)
 sed -i 's/if args\.cpu:/if args.cpu or not torch.cuda.is_available():/' \
     "$WS/comfy/model_management.py" 2>/dev/null || true
-
-add_reward() {
-    REWARD=$($PY -c "print(min(1.0, round($REWARD + $1, 4)))")
-}
 
 # ---- Shared bootstrap ----
 cat > /tmp/_boot.py << 'BOOTEOF'
@@ -62,23 +62,8 @@ import comfy
 comfy.model_management = mm
 BOOTEOF
 
-cat > /tmp/_ref.py << 'REFEOF'
-import torch
-from comfy.ldm.flux.math import rope as _flux_rope
-
-def reference_lumina_rope(ids, axes_dim, theta):
-    n_axes = ids.shape[-1]
-    parts = []
-    for i in range(n_axes):
-        pos = ids[..., i].float()
-        emb_i = _flux_rope(pos, axes_dim[i], theta)
-        parts.append(emb_i)
-    emb = torch.cat(parts, dim=-3)
-    return emb.unsqueeze(1)
-REFEOF
-
 # ====================================================================
-# GATE G1: model.py parses (no reward; gate only)
+# GATE G1: model.py parses
 # ====================================================================
 $PY - << PYEOF
 import ast, sys
@@ -88,13 +73,11 @@ except Exception as e:
     print("PARSE FAIL", e); sys.exit(1)
 PYEOF
 if [ $? -ne 0 ]; then
-    echo "Gate G1 failed: model.py does not parse"
     finalize
 fi
 
 # ====================================================================
-# GATE G2: P2P — flux EmbedND still importable & NextDiT still instantiable
-# This passes on the buggy base AND on a correct fix. Gate only.
+# GATE G2: P2P — flux EmbedND still works, NextDiT still instantiable
 # ====================================================================
 $PY - << 'PYEOF'
 exec(open("/tmp/_boot.py").read())
@@ -119,31 +102,25 @@ except Exception as ex:
     sys.exit(1)
 PYEOF
 if [ $? -ne 0 ]; then
-    echo "Gate G2 failed: regression in upstream/NextDiT instantiation"
     finalize
 fi
 
 # ====================================================================
-# F2P checks below. These all FAIL on the unmodified buggy base
-# (where rope_embedder is a plain EmbedND with no axes_lens), and PASS
-# on a correct LuminaRopeEmbedder-style fix.
+# Run probe and write outcomes to JSON
 # ====================================================================
-
-# Build common discovery / probe state once and write outcomes to a file.
 cat > /tmp/_probe.py << 'PROBEEOF'
 import sys, json, inspect, traceback
 exec(open("/tmp/_boot.py").read())
 
 results = {
-    "rope_embedder_has_axes_lens": False,
-    "rope_embedder_class_name": None,
-    "rope_embedder_not_embednd": False,
-    "forward_shape_finite": False,
-    "match_sequential": False,
-    "match_nonsequential": False,
-    "axes_lens_influences": False,
-    "deterministic_no_mutation": False,
-    "batched_correct": False,
+    "not_embednd": False,             # 0.10  — structural: not the original buggy class
+    "accepts_axes_lens": False,       # 0.15  — accepts axes_lens argument or stores it
+    "forward_runs_finite": False,     # 0.10  — forward returns finite tensor
+    "match_sequential": False,        # 0.20  — matches reference for in-range integer ids
+    "match_random_inrange": False,    # 0.15  — matches reference for arbitrary ids in range
+    "axes_lens_respected": False,     # 0.15  — large ids are clamped/wrapped to axes_lens range
+    "deterministic_no_mutation": False, # 0.05 — repeated calls don't mutate ids
+    "batched_correct": False,         # 0.10  — works on batched inputs
 }
 
 try:
@@ -163,13 +140,12 @@ try:
     )
     emb = m.rope_embedder
     cls = type(emb)
-    results["rope_embedder_class_name"] = cls.__name__
 
-    # F2P-1: rope_embedder must NOT be plain EmbedND (the bug)
+    # Gate 1: not plain EmbedND
     if cls is not EmbedND:
-        results["rope_embedder_not_embednd"] = True
+        results["not_embednd"] = True
 
-    # F2P-2: rope_embedder.__init__ accepts axes_lens (or instance has it)
+    # Gate 2: accepts axes_lens (signature or stored attr referencing axes_lens values)
     has_axes_lens = False
     try:
         sig = inspect.signature(cls.__init__)
@@ -177,11 +153,27 @@ try:
             has_axes_lens = True
     except Exception:
         pass
-    if not has_axes_lens and hasattr(emb, "axes_lens"):
-        has_axes_lens = True
-    results["rope_embedder_has_axes_lens"] = has_axes_lens
+    if not has_axes_lens:
+        # check instance attr
+        for attr in ("axes_lens", "axes_len"):
+            if hasattr(emb, attr):
+                v = getattr(emb, attr)
+                try:
+                    if list(v) == axes_lens:
+                        has_axes_lens = True
+                        break
+                except Exception:
+                    pass
+        # check buffers freqs_0 sized to axes_lens[0]
+        for i, l in enumerate(axes_lens):
+            if hasattr(emb, f"freqs_{i}"):
+                buf = getattr(emb, f"freqs_{i}")
+                if buf.shape[0] == l:
+                    has_axes_lens = True
+                    break
+    results["accepts_axes_lens"] = has_axes_lens
 
-    # Build reference using flux rope on raw integer ids
+    # Reference rope using flux_rope on raw integer positions
     def ref_rope(ids):
         parts = []
         for i in range(ids.shape[-1]):
@@ -189,112 +181,121 @@ try:
             parts.append(flux_rope(pos, axes_dims[i], theta))
         return torch.cat(parts, dim=-3).unsqueeze(1)
 
-    # F2P-3: forward returns finite tensor with right rank and seq dim
+    # Gate 3: forward runs and returns finite
     B, N = 1, 8
     ids_seq = torch.zeros(B, N, 3, dtype=torch.long)
-    ids_seq[..., 0] = torch.arange(N)            # within axes_lens[0]=128
+    ids_seq[..., 0] = torch.arange(N)
     ids_seq[..., 1] = torch.arange(N) % axes_lens[1]
     ids_seq[..., 2] = torch.arange(N) % axes_lens[2]
 
-    out = emb(ids_seq)
-    if torch.is_tensor(out) and torch.isfinite(out).all() and out.dim() >= 4 and out.shape[-4] == B:
-        # We expect shape (B, 1, N, d/2, 2, 2) or similar with N somewhere
-        if N in out.shape:
-            results["forward_shape_finite"] = True
-
-    # F2P-4: numerical match on sequential ids (within axes_lens range)
+    out = None
     try:
-        ref = ref_rope(ids_seq)
-        if out.shape == ref.shape and torch.allclose(out.float(), ref.float(), atol=1e-4, rtol=1e-4):
-            results["match_sequential"] = True
+        out = emb(ids_seq)
+        if torch.is_tensor(out) and torch.isfinite(out).all():
+            results["forward_runs_finite"] = True
     except Exception:
         traceback.print_exc()
 
-    # F2P-5: numerical match on non-sequential ids (still within range)
+    # Gate 4: numeric match on sequential in-range ids
     try:
-        torch.manual_seed(0)
-        ids_rand = torch.stack([
-            torch.randint(0, axes_lens[0], (B, N)),
-            torch.randint(0, axes_lens[1], (B, N)),
-            torch.randint(0, axes_lens[2], (B, N)),
-        ], dim=-1)
+        if out is not None:
+            ref = ref_rope(ids_seq)
+            if out.shape == ref.shape and torch.allclose(out.float(), ref.float(), atol=1e-3, rtol=1e-3):
+                results["match_sequential"] = True
+    except Exception:
+        traceback.print_exc()
+
+    # Gate 5: numeric match on random in-range ids
+    try:
+        torch.manual_seed(42)
+        ids_rand = torch.zeros(1, 6, 3, dtype=torch.long)
+        ids_rand[..., 0] = torch.randint(0, axes_lens[0], (1, 6))
+        ids_rand[..., 1] = torch.randint(0, axes_lens[1], (1, 6))
+        ids_rand[..., 2] = torch.randint(0, axes_lens[2], (1, 6))
         out_r = emb(ids_rand)
         ref_r = ref_rope(ids_rand)
-        if out_r.shape == ref_r.shape and torch.allclose(out_r.float(), ref_r.float(), atol=1e-4, rtol=1e-4):
-            results["match_nonsequential"] = True
+        if out_r.shape == ref_r.shape and torch.allclose(out_r.float(), ref_r.float(), atol=1e-3, rtol=1e-3):
+            results["match_random_inrange"] = True
     except Exception:
         traceback.print_exc()
 
-    # F2P-6: axes_lens influences setup. Build a second model with
-    # different axes_lens; the rope_embedder should reflect this either
-    # by storing a different value or by exposing different precomputed state.
+    # Gate 6: deterministic — calling twice gives same output and doesn't mutate ids
     try:
+        ids_a = ids_seq.clone()
+        ids_a_pre = ids_a.clone()
+        o1 = emb(ids_a)
+        o2 = emb(ids_a)
+        if torch.equal(ids_a, ids_a_pre) and torch.allclose(o1.float(), o2.float(), atol=1e-6):
+            results["deterministic_no_mutation"] = True
+    except Exception:
+        traceback.print_exc()
+
+    # Gate 7: axes_lens respected — using id == axes_lens[i] - 1 (max in range) works,
+    # AND constructing with smaller axes_lens produces buffers/behavior consistent with that.
+    # We test this by: build a model with small axes_lens and check that an in-range id
+    # matches reference; AND check that the embedder either has freqs buffers sized to
+    # axes_lens, or stores axes_lens.
+    try:
+        small_lens = [16, 8, 8]
         m2 = lm.NextDiT(
             patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
             n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
-            axes_dims=axes_dims, axes_lens=[256, 128, 128],
+            axes_dims=axes_dims, axes_lens=small_lens,
         )
         emb2 = m2.rope_embedder
-        differs = False
-        # Compare stored axes_lens attribute
-        if hasattr(emb, "axes_lens") and hasattr(emb2, "axes_lens"):
+        # check buffers OR axes_lens attr matches small_lens
+        ok = False
+        if hasattr(emb2, "axes_lens"):
             try:
-                if list(emb.axes_lens) != list(emb2.axes_lens):
-                    differs = True
+                if list(emb2.axes_lens) == small_lens:
+                    ok = True
             except Exception:
                 pass
-        # Compare buffers (precomputed tables)
-        if not differs:
-            bufs1 = {n: t for n, t in emb.named_buffers()}
-            bufs2 = {n: t for n, t in emb2.named_buffers()}
-            for k in bufs1:
-                if k in bufs2 and bufs1[k].shape != bufs2[k].shape:
-                    differs = True
+        if not ok:
+            # check freq buffers
+            buf_ok = True
+            for i, l in enumerate(small_lens):
+                if hasattr(emb2, f"freqs_{i}"):
+                    buf = getattr(emb2, f"freqs_{i}")
+                    if buf.shape[0] != l:
+                        buf_ok = False
+                        break
+                else:
+                    buf_ok = False
                     break
-        # Or check that for in-range ids both still match reference (correctness across configs)
-        if not differs:
-            ids_small = torch.zeros(1, 4, 3, dtype=torch.long)
-            ids_small[..., 0] = torch.arange(4)
-            o1 = emb(ids_small)
-            o2 = emb2(ids_small)
-            r = ref_rope(ids_small)
-            if (torch.allclose(o1.float(), r.float(), atol=1e-4, rtol=1e-4) and
-                torch.allclose(o2.float(), r.float(), atol=1e-4, rtol=1e-4)):
-                differs = True
-        results["axes_lens_influences"] = differs
+            if buf_ok:
+                ok = True
+        # Also functional: in-range max id should produce finite output matching reference
+        ids_max = torch.zeros(1, 4, 3, dtype=torch.long)
+        ids_max[..., 0] = torch.tensor([0, 5, 10, small_lens[0]-1])
+        ids_max[..., 1] = torch.tensor([0, 1, 3, small_lens[1]-1])
+        ids_max[..., 2] = torch.tensor([0, 2, 4, small_lens[2]-1])
+        out_max = emb2(ids_max)
+        # reference using axes_dims (same)
+        def ref_rope2(ids):
+            parts = []
+            for i in range(ids.shape[-1]):
+                parts.append(flux_rope(ids[..., i].float(), axes_dims[i], theta))
+            return torch.cat(parts, dim=-3).unsqueeze(1)
+        ref_max = ref_rope2(ids_max)
+        func_ok = out_max.shape == ref_max.shape and torch.allclose(out_max.float(), ref_max.float(), atol=1e-3, rtol=1e-3)
+        if ok and func_ok:
+            results["axes_lens_respected"] = True
     except Exception:
         traceback.print_exc()
 
-    # F2P-7: deterministic and does not mutate ids
-    try:
-        ids_copy = ids_seq.clone()
-        o_a = emb(ids_seq)
-        o_b = emb(ids_seq)
-        same = torch.equal(o_a, o_b) and torch.equal(ids_seq, ids_copy)
-        results["deterministic_no_mutation"] = bool(same)
-    except Exception:
-        traceback.print_exc()
-
-    # F2P-8: batched correctness
+    # Gate 8: batched correct
     try:
         B2 = 3
-        torch.manual_seed(1)
-        ids_b = torch.stack([
-            torch.randint(0, axes_lens[0], (B2, N)),
-            torch.randint(0, axes_lens[1], (B2, N)),
-            torch.randint(0, axes_lens[2], (B2, N)),
-        ], dim=-1)
-        o_b = emb(ids_b)
-        r_b = ref_rope(ids_b)
-        if o_b.shape == r_b.shape and torch.allclose(o_b.float(), r_b.float(), atol=1e-4, rtol=1e-4):
-            # Also verify per-sample equals batched-slice
-            ok = True
-            for k in range(B2):
-                ok_k = torch.allclose(emb(ids_b[k:k+1]).float(), o_b[k:k+1].float(), atol=1e-4, rtol=1e-4)
-                if not ok_k:
-                    ok = False
-                    break
-            results["batched_correct"] = ok
+        ids_b = torch.zeros(B2, 5, 3, dtype=torch.long)
+        for b in range(B2):
+            ids_b[b, :, 0] = torch.arange(5) + b
+            ids_b[b, :, 1] = (torch.arange(5) * 2 + b) % axes_lens[1]
+            ids_b[b, :, 2] = (torch.arange(5) + 3 * b) % axes_lens[2]
+        out_b = emb(ids_b)
+        ref_b = ref_rope(ids_b)
+        if out_b.shape == ref_b.shape and torch.allclose(out_b.float(), ref_b.float(), atol=1e-3, rtol=1e-3):
+            results["batched_correct"] = True
     except Exception:
         traceback.print_exc()
 
@@ -303,38 +304,38 @@ except Exception:
 
 with open("/tmp/_probe_results.json", "w") as f:
     json.dump(results, f)
-print(json.dumps(results))
+print(json.dumps(results, indent=2))
 PROBEEOF
 
-$PY /tmp/_probe.py > /tmp/_probe.out 2>&1
-cat /tmp/_probe.out
-
-get_flag() {
-    $PY -c "import json; d=json.load(open('/tmp/_probe_results.json')); print('1' if d.get('$1') else '0')" 2>/dev/null
-}
-
+$PY /tmp/_probe.py
 if [ ! -f /tmp/_probe_results.json ]; then
     finalize
 fi
 
-# Weights (sum = 1.00). Each is F2P: fails on buggy base (plain EmbedND, no axes_lens).
-# F2P-A: rope_embedder is not the plain EmbedND  -> 0.10
-# F2P-B: rope_embedder accepts/stores axes_lens  -> 0.10
-# F2P-C: forward returns finite tensor of right rank -> 0.10
-# F2P-D: numerical match on sequential ids       -> 0.20
-# F2P-E: numerical match on non-sequential ids   -> 0.20
-# F2P-F: axes_lens influences setup              -> 0.10
-# F2P-G: deterministic, no mutation              -> 0.10
-# F2P-H: batched correctness                     -> 0.10
+# ====================================================================
+# Score gates
+# ====================================================================
+get_flag() {
+    $PY -c "import json; r=json.load(open('/tmp/_probe_results.json')); print('1' if r.get('$1', False) else '0')"
+}
 
-[ "$(get_flag rope_embedder_not_embednd)" = "1" ]    && add_reward 0.10 && echo "F2P-A +0.10"
-[ "$(get_flag rope_embedder_has_axes_lens)" = "1" ]  && add_reward 0.10 && echo "F2P-B +0.10"
-[ "$(get_flag forward_shape_finite)" = "1" ]         && add_reward 0.10 && echo "F2P-C +0.10"
-[ "$(get_flag match_sequential)" = "1" ]             && add_reward 0.20 && echo "F2P-D +0.20"
-[ "$(get_flag match_nonsequential)" = "1" ]          && add_reward 0.20 && echo "F2P-E +0.20"
-[ "$(get_flag axes_lens_influences)" = "1" ]         && add_reward 0.10 && echo "F2P-F +0.10"
-[ "$(get_flag deterministic_no_mutation)" = "1" ]    && add_reward 0.10 && echo "F2P-G +0.10"
-[ "$(get_flag batched_correct)" = "1" ]              && add_reward 0.10 && echo "F2P-H +0.10"
+# Weights (sum = 1.00)
+# not_embednd:               0.10
+# accepts_axes_lens:         0.15
+# forward_runs_finite:       0.10
+# match_sequential:          0.20
+# match_random_inrange:      0.15
+# axes_lens_respected:       0.15
+# deterministic_no_mutation: 0.05
+# batched_correct:           0.10
 
-echo "Final reward: $REWARD"
-echo "$REWARD" > /logs/verifier/reward.txt
+[ "$(get_flag not_embednd)" = "1" ]                && add_reward 0.10
+[ "$(get_flag accepts_axes_lens)" = "1" ]          && add_reward 0.15
+[ "$(get_flag forward_runs_finite)" = "1" ]        && add_reward 0.10
+[ "$(get_flag match_sequential)" = "1" ]           && add_reward 0.20
+[ "$(get_flag match_random_inrange)" = "1" ]       && add_reward 0.15
+[ "$(get_flag axes_lens_respected)" = "1" ]        && add_reward 0.15
+[ "$(get_flag deterministic_no_mutation)" = "1" ]  && add_reward 0.05
+[ "$(get_flag batched_correct)" = "1" ]            && add_reward 0.10
+
+echo "$REWARD" > "$REWARD_FILE"

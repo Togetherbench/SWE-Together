@@ -1,107 +1,140 @@
 #!/bin/bash
 set +e
 
-export PATH=/usr/local/cargo/bin:/root/.cargo/bin:$PATH
-
-# Find the repo directory
-if [ -d /workspace/hyperswitch ]; then
-    cd /workspace/hyperswitch
-elif [ -d /workspace/hyperswitch/hyperswitch_pool_5 ]; then
-    cd /workspace/hyperswitch/hyperswitch_pool_5
-else
-    echo "ERROR: Cannot find hyperswitch repo"
-    mkdir -p /logs/verifier
-    echo "0.00" > /logs/verifier/reward.txt
-    exit 0
-fi
+export PATH=/usr/local/cargo/bin:/root/.cargo/bin:/usr/local/bin:$PATH
 
 mkdir -p /logs/verifier
 REWARD="0.00"
 
 add_reward() {
     REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN {printf "%.2f", a + b}')
+    echo "[+${1}] reward now $REWARD ($2)"
 }
 
 finish_zero() {
-    echo "Regression / hard gate failed: $1"
+    echo "Hard gate failed: $1"
     echo "0.00" > /logs/verifier/reward.txt
     exit 0
 }
 
-###############################################################################
-# Quick structural pre-check: do the new column names exist anywhere in the
-# diesel_models schema_v2.rs? On the buggy base, none of these exist anywhere.
-# This is purely an F2P-style fast filter; we still verify behaviorally below.
-###############################################################################
-SCHEMA_V2="crates/diesel_models/src/schema_v2.rs"
-if [ ! -f "$SCHEMA_V2" ]; then
-    finish_zero "schema_v2.rs missing — cannot proceed"
+# Locate repo
+REPO=""
+for cand in /workspace/hyperswitch /workspace/hyperswitch_pool_5 /workspace/hyperswitch/hyperswitch_pool_5; do
+    if [ -d "$cand/crates/diesel_models" ]; then
+        REPO="$cand"
+        break
+    fi
+done
+
+if [ -z "$REPO" ]; then
+    # Try discovery
+    REPO=$(find /workspace -maxdepth 3 -type d -name diesel_models 2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname)
 fi
 
-# Confirm baseline: these markers are ABSENT on a no-op (buggy) state.
-# We don't reward grep matches; we just use them to decide whether to even try
-# the expensive cargo probes. If absent we skip straight to 0.
-HAS_COL_AAGI=$(grep -c 'active_attempts_group_id' "$SCHEMA_V2" 2>/dev/null)
-HAS_COL_AAIT=$(grep -c 'active_attempt_id_type' "$SCHEMA_V2" 2>/dev/null)
-HAS_COL_AGI=$(grep -c 'attempts_group_id' "$SCHEMA_V2" 2>/dev/null)
+if [ -z "$REPO" ] || [ ! -d "$REPO" ]; then
+    finish_zero "Cannot find hyperswitch repo"
+fi
 
-echo "schema_v2 markers: aagi=$HAS_COL_AAGI aait=$HAS_COL_AAIT agi=$HAS_COL_AGI"
+cd "$REPO" || finish_zero "Cannot cd to repo"
+echo "Repo: $REPO"
 
-if [ "$HAS_COL_AAGI" -eq 0 ] && [ "$HAS_COL_AAIT" -eq 0 ] && [ "$HAS_COL_AGI" -eq 0 ]; then
-    # Pure no-op state. Nothing was added. Reward must be 0.
-    echo "No-op detected: none of the new schema columns present."
+if ! command -v cargo >/dev/null 2>&1; then
+    finish_zero "cargo not on PATH"
+fi
+
+SCHEMA_V2="crates/diesel_models/src/schema_v2.rs"
+SCHEMA_V1="crates/diesel_models/src/schema.rs"
+PI_FILE="crates/diesel_models/src/payment_intent.rs"
+PA_FILE="crates/diesel_models/src/payment_attempt.rs"
+
+for f in "$SCHEMA_V2" "$PI_FILE" "$PA_FILE"; do
+    if [ ! -f "$f" ]; then
+        finish_zero "Required file missing: $f"
+    fi
+done
+
+###############################################################################
+# Pre-check: detect no-op state.
+# On the buggy base, NONE of the new column markers exist anywhere.
+###############################################################################
+HAS_AAGI=$(grep -l 'active_attempts_group_id' crates/diesel_models/src/ -r 2>/dev/null | wc -l)
+HAS_AAIT=$(grep -l 'active_attempt_id_type' crates/diesel_models/src/ -r 2>/dev/null | wc -l)
+HAS_AGI=$(grep -l 'attempts_group_id' crates/diesel_models/src/ -r 2>/dev/null | wc -l)
+
+echo "Marker file counts: aagi=$HAS_AAGI aait=$HAS_AAIT agi=$HAS_AGI"
+
+if [ "$HAS_AAGI" -eq 0 ] && [ "$HAS_AAIT" -eq 0 ] && [ "$HAS_AGI" -eq 0 ]; then
+    echo "No-op detected — none of the new identifiers introduced."
     echo "0.00" > /logs/verifier/reward.txt
     exit 0
 fi
 
 ###############################################################################
-# Compile diesel_models with v2 feature. This is the CORE behavioral check:
-# the buggy base compiles cleanly; the agent has added new columns/struct
-# fields, and to keep it compiling they must wire them through consistently.
-# But just compiling alone is also true on base — so we DO NOT reward base
-# compilation. Instead we reward "compiles AND new symbols are reachable",
-# which is impossible on the no-op base.
+# P2P regression gate: default-features build of diesel_models must still work.
+# This is gating-only (zero reward weight). If broken, agent regressed.
+###############################################################################
+echo ""
+echo "=== P2P [gating]: cargo check -p diesel_models (default features) ==="
+timeout 600 cargo check -p diesel_models 2>/tmp/cargo_default.log
+RC_DEFAULT=$?
+tail -15 /tmp/cargo_default.log
+if [ $RC_DEFAULT -ne 0 ]; then
+    finish_zero "diesel_models default build broke (P2P regression)"
+fi
+
+###############################################################################
+# Try to build diesel_models with v2 — required to evaluate behavioral gates.
 ###############################################################################
 echo ""
 echo "=== Compiling diesel_models --features v2 ==="
-timeout 600 cargo check -p diesel_models --features v2 2>/tmp/cargo_v2.log
-CARGO_V2=$?
-echo "cargo check v2 exit: $CARGO_V2"
-tail -20 /tmp/cargo_v2.log
+timeout 800 cargo check -p diesel_models --features v2 2>/tmp/cargo_v2.log
+RC_V2=$?
+echo "v2 exit: $RC_V2"
+tail -25 /tmp/cargo_v2.log
 
-echo ""
-echo "=== Compiling diesel_models default features ==="
-timeout 600 cargo check -p diesel_models 2>/tmp/cargo_v1.log
-CARGO_V1=$?
-echo "cargo check default exit: $CARGO_V1"
-tail -10 /tmp/cargo_v1.log
-
-# Hard regression gate: if default-feature build broke, the agent destroyed
-# pre-existing functionality. No partial credit.
-if [ $CARGO_V1 -ne 0 ]; then
-    finish_zero "diesel_models default build broke (regression)"
-fi
-
-# If v2 build is broken, no behavioral gates can pass. Reward stays 0.
-if [ $CARGO_V2 -ne 0 ]; then
-    echo "diesel_models v2 build failed — cannot evaluate behavioral gates."
-    echo "0.00" > /logs/verifier/reward.txt
-    exit 0
+V2_OK=0
+if [ $RC_V2 -eq 0 ]; then
+    V2_OK=1
 fi
 
 ###############################################################################
-# F2P Gate A (0.30): synthetic probe — schema columns reachable via dsl
-# On no-op base: FAILS (columns don't exist).
-# On correct fix: PASSES (all 3 columns exposed in table! macro).
+# F2P Gate 1 (0.10): schema_v2 has all THREE column declarations within
+# the right diesel::table! blocks (payment_intent + payment_attempt).
+# This catches the "I added a column to the wrong table" error.
 ###############################################################################
 echo ""
-echo "=== F2P Gate A [0.30]: synthetic probe — schema columns reachable ==="
-PROBE_OK=0
-PROBE_FILE="crates/diesel_models/src/_probe_split_payments.rs"
-cat > "$PROBE_FILE" <<'EOF'
+echo "=== F2P Gate 1 [0.10]: schema_v2 column placement ==="
+
+# Extract payment_intent block
+PI_BLOCK=$(awk '/payment_intent \(id\) \{/,/^    \}$/' "$SCHEMA_V2")
+PA_BLOCK=$(awk '/payment_attempt \(id\) \{/,/^    \}$/' "$SCHEMA_V2")
+
+G1_PI_AAGI=$(echo "$PI_BLOCK" | grep -c 'active_attempts_group_id')
+G1_PI_AAIT=$(echo "$PI_BLOCK" | grep -c 'active_attempt_id_type')
+G1_PA_AGI=$(echo "$PA_BLOCK" | grep -c 'attempts_group_id')
+
+echo "schema_v2 placement: pi.aagi=$G1_PI_AAGI pi.aait=$G1_PI_AAIT pa.agi=$G1_PA_AGI"
+
+if [ "$G1_PI_AAGI" -ge 1 ] && [ "$G1_PI_AAIT" -ge 1 ] && [ "$G1_PA_AGI" -ge 1 ]; then
+    add_reward 0.10 "Gate 1: schema_v2 column placement"
+else
+    echo "FAIL Gate 1"
+fi
+
+###############################################################################
+# F2P Gate 2 (0.15): schema columns reachable via dsl (synthetic probe).
+# Validates: not just text but actually compiled into the table! macro.
+# Requires V2 build success.
+###############################################################################
+echo ""
+echo "=== F2P Gate 2 [0.15]: schema dsl probe ==="
+G2_OK=0
+if [ $V2_OK -eq 1 ]; then
+    PROBE_FILE="crates/diesel_models/src/_probe_schema_split.rs"
+    cat > "$PROBE_FILE" <<'EOF'
 #![allow(dead_code, unused_imports)]
 #[cfg(feature = "v2")]
-mod probe {
+mod probe_schema_split {
     use crate::schema_v2::payment_intent::dsl as pi_dsl;
     use crate::schema_v2::payment_attempt::dsl as pa_dsl;
 
@@ -113,42 +146,44 @@ mod probe {
 }
 EOF
 
-LIB="crates/diesel_models/src/lib.rs"
-cp "$LIB" /tmp/lib.rs.bak
-{
-    echo ""
-    echo "#[cfg(feature = \"v2\")]"
-    echo "mod _probe_split_payments;"
-} >> "$LIB"
+    LIB="crates/diesel_models/src/lib.rs"
+    cp "$LIB" /tmp/lib.rs.bak
+    {
+        echo ""
+        echo "#[cfg(feature = \"v2\")]"
+        echo "mod _probe_schema_split;"
+    } >> "$LIB"
 
-timeout 300 cargo check -p diesel_models --features v2 2>/tmp/probe.log
-PRC=$?
+    timeout 400 cargo check -p diesel_models --features v2 2>/tmp/probe2.log
+    PRC=$?
 
-mv /tmp/lib.rs.bak "$LIB"
-rm -f "$PROBE_FILE"
+    cp /tmp/lib.rs.bak "$LIB"
+    rm -f "$PROBE_FILE" /tmp/lib.rs.bak
 
-if [ $PRC -eq 0 ]; then
-    PROBE_OK=1
-    echo "PASS Gate A"
-    add_reward 0.30
+    if [ $PRC -eq 0 ]; then
+        G2_OK=1
+        add_reward 0.15 "Gate 2: schema dsl probe"
+    else
+        echo "FAIL Gate 2"
+        tail -25 /tmp/probe2.log
+    fi
 else
-    echo "FAIL Gate A"
-    tail -25 /tmp/probe.log
+    echo "SKIP Gate 2 (v2 build broken)"
 fi
 
 ###############################################################################
-# F2P Gate B (0.30): synthetic probe — struct fields reachable on
-# PaymentIntent and PaymentAttempt v2 structs.
-# On no-op base: FAILS. On correct fix: PASSES.
+# F2P Gate 3 (0.20): PaymentIntent struct (v2) has BOTH new fields, and
+# PaymentAttempt struct (v2) has the new field — synthetic probe.
 ###############################################################################
 echo ""
-echo "=== F2P Gate B [0.30]: synthetic probe — struct fields exist ==="
-STRUCT_PROBE_OK=0
-PROBE_FILE="crates/diesel_models/src/_probe_struct_fields.rs"
-cat > "$PROBE_FILE" <<'EOF'
+echo "=== F2P Gate 3 [0.20]: struct field probe ==="
+G3_OK=0
+if [ $V2_OK -eq 1 ]; then
+    PROBE_FILE="crates/diesel_models/src/_probe_struct_split.rs"
+    cat > "$PROBE_FILE" <<'EOF'
 #![allow(dead_code, unused_imports, unused_variables)]
 #[cfg(feature = "v2")]
-mod probe2 {
+mod probe_struct_split {
     use crate::payment_intent::PaymentIntent;
     use crate::payment_attempt::PaymentAttempt;
 
@@ -163,139 +198,214 @@ mod probe2 {
 }
 EOF
 
-cp "$LIB" /tmp/lib.rs.bak
-{
-    echo ""
-    echo "#[cfg(feature = \"v2\")]"
-    echo "mod _probe_struct_fields;"
-} >> "$LIB"
+    LIB="crates/diesel_models/src/lib.rs"
+    cp "$LIB" /tmp/lib.rs.bak
+    {
+        echo ""
+        echo "#[cfg(feature = \"v2\")]"
+        echo "mod _probe_struct_split;"
+    } >> "$LIB"
 
-timeout 300 cargo check -p diesel_models --features v2 2>/tmp/probe2.log
-PRC=$?
+    timeout 400 cargo check -p diesel_models --features v2 2>/tmp/probe3.log
+    PRC=$?
 
-mv /tmp/lib.rs.bak "$LIB"
-rm -f "$PROBE_FILE"
+    cp /tmp/lib.rs.bak "$LIB"
+    rm -f "$PROBE_FILE" /tmp/lib.rs.bak
 
-if [ $PRC -eq 0 ]; then
-    STRUCT_PROBE_OK=1
-    echo "PASS Gate B"
-    add_reward 0.30
+    if [ $PRC -eq 0 ]; then
+        G3_OK=1
+        add_reward 0.20 "Gate 3: struct field probe"
+    else
+        echo "FAIL Gate 3"
+        tail -25 /tmp/probe3.log
+    fi
 else
-    echo "FAIL Gate B"
-    tail -25 /tmp/probe2.log
+    echo "SKIP Gate 3 (v2 build broken)"
 fi
 
 ###############################################################################
-# F2P Gate C (0.15): synthetic probe — PaymentIntentNew (Insertable) carries
-# the new fields too. This catches partial fixes that only touch the read
-# struct but forget the insert struct (which would break inserts).
-# On no-op base: FAILS. On correct fix: PASSES.
+# F2P Gate 4 (0.15): Insertable structs (PaymentIntentNew, PaymentAttemptNew)
+# carry the new fields. Catches partial fixes that update the read struct
+# but forget the insert struct (which would break inserts at runtime).
 ###############################################################################
 echo ""
-echo "=== F2P Gate C [0.15]: PaymentIntentNew has new fields ==="
-NEW_PROBE_OK=0
-PROBE_FILE="crates/diesel_models/src/_probe_new_struct.rs"
-cat > "$PROBE_FILE" <<'EOF'
+echo "=== F2P Gate 4 [0.15]: insertable struct fields ==="
+G4_OK=0
+if [ $V2_OK -eq 1 ]; then
+    PROBE_FILE="crates/diesel_models/src/_probe_new_split.rs"
+    cat > "$PROBE_FILE" <<'EOF'
 #![allow(dead_code, unused_imports, unused_variables)]
 #[cfg(feature = "v2")]
-mod probe3 {
+mod probe_new_split {
     use crate::payment_intent::PaymentIntentNew;
+    use crate::payment_attempt::PaymentAttemptNew;
 
     fn _pi_new_fields(pi: &PaymentIntentNew) {
         let _x = &pi.active_attempts_group_id;
         let _y = &pi.active_attempt_id_type;
     }
+
+    fn _pa_new_fields(pa: &PaymentAttemptNew) {
+        let _z = &pa.attempts_group_id;
+    }
 }
 EOF
 
-cp "$LIB" /tmp/lib.rs.bak
-{
-    echo ""
-    echo "#[cfg(feature = \"v2\")]"
-    echo "mod _probe_new_struct;"
-} >> "$LIB"
+    LIB="crates/diesel_models/src/lib.rs"
+    cp "$LIB" /tmp/lib.rs.bak
+    {
+        echo ""
+        echo "#[cfg(feature = \"v2\")]"
+        echo "mod _probe_new_split;"
+    } >> "$LIB"
 
-timeout 300 cargo check -p diesel_models --features v2 2>/tmp/probe3.log
-PRC=$?
+    timeout 400 cargo check -p diesel_models --features v2 2>/tmp/probe4.log
+    PRC=$?
 
-mv /tmp/lib.rs.bak "$LIB"
-rm -f "$PROBE_FILE"
+    cp /tmp/lib.rs.bak "$LIB"
+    rm -f "$PROBE_FILE" /tmp/lib.rs.bak
 
-if [ $PRC -eq 0 ]; then
-    NEW_PROBE_OK=1
-    echo "PASS Gate C"
-    add_reward 0.15
-else
-    echo "FAIL Gate C"
-    tail -25 /tmp/probe3.log
-fi
-
-###############################################################################
-# F2P Gate D (0.15): Migration files contain all 3 columns in up.sql AND a
-# matching down.sql. On no-op base: FAILS (no such migration exists). On
-# correct fix: PASSES.
-###############################################################################
-echo ""
-echo "=== F2P Gate D [0.15]: migration up+down cover all 3 columns ==="
-MIGRATION_UP_OK=0
-MIGRATION_DOWN_OK=0
-for mdir in migrations v2_migrations; do
-    [ -d "$mdir" ] || continue
-    for dir in "$mdir"/*/; do
-        UP="${dir}up.sql"
-        DOWN="${dir}down.sql"
-        [ -f "$UP" ] || continue
-        if grep -q 'active_attempts_group_id' "$UP" 2>/dev/null && \
-           grep -q 'active_attempt_id_type' "$UP" 2>/dev/null && \
-           grep -q 'attempts_group_id' "$UP" 2>/dev/null; then
-            MIGRATION_UP_OK=1
-            echo "  Found up.sql: $UP"
-            if [ -f "$DOWN" ] && \
-               grep -q 'active_attempts_group_id' "$DOWN" 2>/dev/null && \
-               grep -q 'attempts_group_id' "$DOWN" 2>/dev/null; then
-                MIGRATION_DOWN_OK=1
-                echo "  Found matching down.sql: $DOWN"
-            fi
-            break 2
-        fi
-    done
-done
-if [ $MIGRATION_UP_OK -eq 1 ] && [ $MIGRATION_DOWN_OK -eq 1 ]; then
-    echo "PASS Gate D"
-    add_reward 0.15
-elif [ $MIGRATION_UP_OK -eq 1 ]; then
-    echo "PARTIAL Gate D (up only)"
-    add_reward 0.07
-else
-    echo "FAIL Gate D"
-fi
-
-###############################################################################
-# F2P Gate E (0.10): Broader workspace sanity — hyperswitch_domain_models still
-# builds with v2 features. Adding fields to diesel structs commonly breaks
-# downstream destructuring; agents that did the work properly thread the new
-# fields through. On no-op base: this passes trivially (since no changes).
-#
-# Therefore we only AWARD this reward if Gates A and B already passed (i.e.
-# real changes happened). This way no-op cannot collect free credit here.
-###############################################################################
-echo ""
-echo "=== F2P Gate E [0.10]: hyperswitch_domain_models builds with v2 (post-change) ==="
-if [ $PROBE_OK -eq 1 ] && [ $STRUCT_PROBE_OK -eq 1 ]; then
-    timeout 900 cargo check -p hyperswitch_domain_models --features v2 2>/tmp/hdm_v2.log
-    HDM_RC=$?
-    if [ $HDM_RC -eq 0 ]; then
-        echo "PASS Gate E"
-        add_reward 0.10
+    if [ $PRC -eq 0 ]; then
+        G4_OK=1
+        add_reward 0.15 "Gate 4: insertable struct fields"
     else
-        echo "FAIL Gate E (downstream crate broke)"
-        tail -30 /tmp/hdm_v2.log
+        echo "FAIL Gate 4"
+        tail -25 /tmp/probe4.log
     fi
 else
-    echo "SKIP Gate E (preconditions A/B not met)"
+    echo "SKIP Gate 4 (v2 build broken)"
 fi
 
 ###############################################################################
+# F2P Gate 5 (0.10): SQL migration files exist with the right ALTER TABLE
+# statements. A complete DB-changes PR includes diesel migrations.
+###############################################################################
 echo ""
-echo "=== FINAL REWARD: $REWARD ==="
+echo "=== F2P Gate 5 [0.10]: migration files ==="
+G5_OK=0
+MIG_UPS=$(find migrations -mindepth 2 -maxdepth 2 -name 'up.sql' 2>/dev/null)
+HIT_AAGI=0
+HIT_AAIT=0
+HIT_AGI=0
+for f in $MIG_UPS; do
+    if grep -qiE 'ALTER[[:space:]]+TABLE[[:space:]]+payment_intent.*active_attempts_group_id' "$f" 2>/dev/null; then
+        HIT_AAGI=1
+    fi
+    if grep -qiE 'ALTER[[:space:]]+TABLE[[:space:]]+payment_intent.*active_attempt_id_type' "$f" 2>/dev/null; then
+        HIT_AAIT=1
+    fi
+    if grep -qiE 'ALTER[[:space:]]+TABLE[[:space:]]+payment_attempt.*attempts_group_id' "$f" 2>/dev/null; then
+        HIT_AGI=1
+    fi
+    # Also try multi-line within the same file
+    if grep -qi 'active_attempts_group_id' "$f" 2>/dev/null; then
+        # validate context: file mentions payment_intent
+        if grep -qi 'payment_intent' "$f" 2>/dev/null; then
+            HIT_AAGI=1
+        fi
+    fi
+    if grep -qi 'active_attempt_id_type' "$f" 2>/dev/null; then
+        if grep -qi 'payment_intent' "$f" 2>/dev/null; then
+            HIT_AAIT=1
+        fi
+    fi
+    if grep -qi 'attempts_group_id' "$f" 2>/dev/null && ! grep -qi 'active_attempts_group_id' "$f" 2>/dev/null; then
+        if grep -qi 'payment_attempt' "$f" 2>/dev/null; then
+            HIT_AGI=1
+        fi
+    fi
+done
+
+# More accurate AGI check (since active_attempts_group_id contains attempts_group_id substring)
+HIT_AGI=0
+for f in $MIG_UPS; do
+    # find lines with attempts_group_id but not active_attempts_group_id
+    if grep -E 'attempts_group_id' "$f" 2>/dev/null | grep -v 'active_attempts_group_id' | grep -qi 'payment_attempt\|attempts_group_id'; then
+        # just check the file mentions payment_attempt
+        if grep -qi 'payment_attempt' "$f"; then
+            HIT_AGI=1
+        fi
+    fi
+done
+
+echo "migration markers: pi.aagi=$HIT_AAGI pi.aait=$HIT_AAIT pa.agi=$HIT_AGI"
+
+if [ "$HIT_AAGI" -eq 1 ] && [ "$HIT_AAIT" -eq 1 ] && [ "$HIT_AGI" -eq 1 ]; then
+    G5_OK=1
+    add_reward 0.10 "Gate 5: complete migrations"
+elif [ "$HIT_AAGI" -eq 1 ] || [ "$HIT_AAIT" -eq 1 ] || [ "$HIT_AGI" -eq 1 ]; then
+    echo "PARTIAL Gate 5 (some migrations present) — no credit"
+else
+    echo "FAIL Gate 5"
+fi
+
+###############################################################################
+# F2P Gate 6 (0.15): full workspace propagation — domain models / services
+# / kafka destructuring need to handle the new fields, otherwise the rest of
+# the workspace breaks. Build a downstream crate.
+###############################################################################
+echo ""
+echo "=== F2P Gate 6 [0.15]: domain models compile with v2 ==="
+G6_OK=0
+if [ $V2_OK -eq 1 ]; then
+    timeout 900 cargo check -p hyperswitch_domain_models --features v2 2>/tmp/cargo_dom.log
+    RC_DOM=$?
+    echo "domain_models v2 exit: $RC_DOM"
+    tail -30 /tmp/cargo_dom.log
+    if [ $RC_DOM -eq 0 ]; then
+        G6_OK=1
+        add_reward 0.15 "Gate 6: domain_models v2 build"
+    else
+        echo "FAIL Gate 6"
+    fi
+else
+    echo "SKIP Gate 6 (v2 build broken upstream)"
+fi
+
+###############################################################################
+# F2P Gate 7 (0.15): full router build with v2 — final integration check.
+# Requires the agent to have propagated changes through ALL destructurings
+# (kafka events, retry helpers, sample data, etc.).
+###############################################################################
+echo ""
+echo "=== F2P Gate 7 [0.15]: router v2 build ==="
+G7_OK=0
+if [ $V2_OK -eq 1 ] && [ $G6_OK -eq 1 ]; then
+    timeout 1200 cargo check -p router --no-default-features --features "v2 olap oltp" 2>/tmp/cargo_router.log
+    RC_ROUTER=$?
+    echo "router v2 exit: $RC_ROUTER"
+    if [ $RC_ROUTER -ne 0 ]; then
+        # Try alternate feature combo
+        timeout 1200 cargo check -p router --features v2 2>/tmp/cargo_router2.log
+        RC_ROUTER2=$?
+        if [ $RC_ROUTER2 -eq 0 ]; then
+            RC_ROUTER=0
+        fi
+        tail -40 /tmp/cargo_router.log
+    fi
+    if [ $RC_ROUTER -eq 0 ]; then
+        G7_OK=1
+        add_reward 0.15 "Gate 7: router v2 build"
+    else
+        echo "FAIL Gate 7"
+    fi
+else
+    echo "SKIP Gate 7 (upstream broken)"
+fi
+
+###############################################################################
+# Summary
+###############################################################################
+echo ""
+echo "=== Summary ==="
+echo "V2 base build:    $V2_OK"
+echo "Gate 1 (schema):  $([ "$G1_PI_AAGI" -ge 1 ] && [ "$G1_PI_AAIT" -ge 1 ] && [ "$G1_PA_AGI" -ge 1 ] && echo OK || echo FAIL)"
+echo "Gate 2 (dsl):     $G2_OK"
+echo "Gate 3 (struct):  $G3_OK"
+echo "Gate 4 (insert):  $G4_OK"
+echo "Gate 5 (migrate): $G5_OK"
+echo "Gate 6 (domain):  $G6_OK"
+echo "Gate 7 (router):  $G7_OK"
+echo "Final reward:     $REWARD"
+
 echo "$REWARD" > /logs/verifier/reward.txt

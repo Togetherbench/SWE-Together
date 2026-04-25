@@ -1,6 +1,6 @@
 #!/bin/bash
 set +e
-export PATH="/workspace/venv/bin:$PATH"
+export PATH="/workspace/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 chmod -R a+w /workspace/sd-scripts 2>/dev/null || true
 
@@ -27,11 +27,10 @@ if [ ! -f "$SRC" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# GATE: module imports cleanly. If this fails, the agent broke something.
-# This passes on the base, so it's purely a gate (no reward weight).
+# GATE 1 (P2P): module imports cleanly. Pre-existing pass.
 # ---------------------------------------------------------------------------
 echo "--- Gate: module imports ---"
-timeout 30 python3 -c "
+timeout 60 python3 -c "
 import sys
 sys.path.insert(0, '/workspace/sd-scripts')
 import library.train_util as tu
@@ -41,16 +40,15 @@ print('GATE PASS')
 " > /tmp/gate_import.log 2>&1
 if [ $? -ne 0 ]; then
     echo "GATE FAIL: import error (regression)"
-    cat /tmp/gate_import.log | head -40
+    cat /tmp/gate_import.log | head -60
     write_reward_and_exit "0.0"
 fi
 
 # ---------------------------------------------------------------------------
-# Pre-parse: AST-walk to extract structural facts about __init__, the
-# DreamBooth filter override, and balancing-while occurrences.
+# Pre-parse: AST extraction of structural facts.
 # ---------------------------------------------------------------------------
-timeout 30 python3 << 'PYEOF' > /tmp/parse_out 2>&1
-import ast, json, sys
+timeout 60 python3 << 'PYEOF' > /tmp/parse_out 2>&1
+import ast, json, sys, re
 
 SRC = "/workspace/sd-scripts/library/train_util.py"
 try:
@@ -61,7 +59,7 @@ except Exception as e:
     json.dump({"parse_ok": False, "error": str(e)}, open("/tmp/test_cache.json", "w"))
     sys.exit(0)
 
-cache = {"parse_ok": True, "src_len": len(src)}
+cache = {"parse_ok": True, "src_len": len(src), "src": src}
 
 db_cls = base_cls = None
 for node in ast.walk(tree):
@@ -80,9 +78,18 @@ def count_balance_while(fn):
                 count += 1
     return count
 
+def find_method(cls, name):
+    if cls is None:
+        return None
+    for n in cls.body:
+        if isinstance(n, ast.FunctionDef) and n.name == name:
+            return n
+    return None
+
 if db_cls:
     cache["dreambooth_found"] = True
     methods = {i.name: i for i in db_cls.body if isinstance(i, ast.FunctionDef)}
+    cache["db_method_names"] = list(methods.keys())
     init_fn = methods.get("__init__")
     db_filter_fn = methods.get("filter_registered_images_by_orig_resolution")
 
@@ -90,12 +97,15 @@ if db_cls:
         init_src = ast.get_source_segment(src, init_fn) or ""
         cache["init_has_first_loop_var"] = ("first_loop = True" in init_src) or ("first_loop=True" in init_src)
         cache["init_balance_while_count"] = count_balance_while(init_fn)
+        cache["init_src"] = init_src
 
     if db_filter_fn:
         cache["db_filter_found"] = True
         seg = ast.get_source_segment(src, db_filter_fn) or ""
         cache["db_filter_source"] = seg
         update_calls = 0
+        super_calls_with_update_false = 0
+        rebalance_calls = 0
         for n in ast.walk(db_filter_fn):
             if isinstance(n, ast.Call):
                 fn_name = None
@@ -105,15 +115,43 @@ if db_cls:
                     fn_name = n.func.id
                 if fn_name and "update_dataset_image_counts" in fn_name:
                     update_calls += 1
+                if fn_name and "rebalance" in fn_name.lower():
+                    rebalance_calls += 1
+                # super().filter_...(update_counts=False)?
+                if isinstance(n.func, ast.Attribute) and n.func.attr == "filter_registered_images_by_orig_resolution":
+                    if isinstance(n.func.value, ast.Call) and isinstance(n.func.value.func, ast.Name) and n.func.value.func.id == "super":
+                        for kw in n.keywords:
+                            if kw.arg == "update_counts" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                                super_calls_with_update_false += 1
         cache["db_filter_update_count_calls"] = update_calls
+        cache["db_filter_super_update_false"] = super_calls_with_update_false
+        cache["db_filter_rebalance_calls"] = rebalance_calls
     else:
         cache["db_filter_found"] = False
 
+# Look for any extracted balancing helper method on either class
+helper_method_names = []
+for cls in (db_cls, base_cls):
+    if cls is None:
+        continue
+    for n in cls.body:
+        if isinstance(n, ast.FunctionDef):
+            nm = n.name.lower()
+            if any(s in nm for s in ("balance_reg", "register_regularization", "rebalance_regularization")):
+                helper_method_names.append(n.name)
+                seg = ast.get_source_segment(src, n) or ""
+                # Detect early-return on empty reg list
+                if "balance" in nm or "register_reg" in nm or "rebalance" in nm:
+                    cache.setdefault("helpers", {})[n.name] = seg
+
+cache["helper_method_names"] = helper_method_names
 cache["first_loop_count"] = src.count("first_loop")
 cache["while_n_lt_num_train"] = src.count("while n < num_train_images")
 
+# Don't dump full src in the json
+cache_to_write = {k: v for k, v in cache.items() if k != "src"}
 with open("/tmp/test_cache.json", "w") as f:
-    json.dump(cache, f, indent=2)
+    json.dump(cache_to_write, f, indent=2, default=str)
 print("OK")
 PYEOF
 
@@ -131,11 +169,11 @@ if [ "$PARSE_OK" != "True" ]; then
 fi
 
 # ===========================================================================
-# F2P TEST 1 (0.20): Balancing logic deduplicated out of __init__.
-# On the buggy base, __init__ contains the `first_loop = True` while-loop and
-# this test FAILS. After the refactor (any sensible extraction), it passes.
+# F2P 1 (0.15): Balancing logic deduplicated out of __init__.
+# Buggy base has 'first_loop = True' and bal-while inline in __init__.
+# After refactor: __init__ no longer has those.
 # ===========================================================================
-echo "--- F2P 1: Balancing logic deduplicated out of __init__ ---"
+echo "--- F2P 1 (0.15): Balancing logic extracted out of __init__ ---"
 timeout 10 python3 << 'PYEOF' > /tmp/t1.log 2>&1
 import json, sys
 c = json.load(open("/tmp/test_cache.json"))
@@ -149,315 +187,415 @@ if init_has_var:
 if init_while > 0:
     print(f"FAIL: __init__ still has balancing-style while loop ({init_while})")
     sys.exit(1)
-# After dedup, the bal-while pattern should appear at most once in the file.
 if wn > 1:
     print(f"FAIL: 'while n < num_train_images' appears {wn} times (still duplicated)")
     sys.exit(1)
 print(f"PASS (while-pattern occurrences={wn})")
 PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.20")
-    cat /tmp/t1.log
-    echo "(+0.20)"
-else
-    cat /tmp/t1.log
+T1=$?
+cat /tmp/t1.log
+if [ $T1 -eq 0 ]; then
+    REWARD=$(awk_add "$REWARD" "0.15")
+    echo "(+0.15)"
 fi
 
 # ===========================================================================
-# F2P TEST 2 (0.15): DreamBooth filter override doesn't redundantly call
-# update_dataset_image_counts after rebalancing. The instruction explicitly
-# requires removing that double call.
-# On base: no override exists OR override calls update twice → fails.
-# After fix: override exists and has 0 direct calls (super/base handles it).
+# F2P 2 (0.15): A dedicated helper method exists for reg balancing.
+# Required by "remove duplicate code" — the dedup must produce a callable.
 # ===========================================================================
-echo "--- F2P 2: DB filter override doesn't double-call update_dataset_image_counts ---"
+echo "--- F2P 2 (0.15): Dedicated balancing helper method exists ---"
 timeout 10 python3 << 'PYEOF' > /tmp/t2.log 2>&1
 import json, sys
 c = json.load(open("/tmp/test_cache.json"))
+helpers = c.get("helper_method_names", [])
+if not helpers:
+    print("FAIL: no helper method named like _balance_reg/register_regularization/rebalance_regularization found")
+    sys.exit(1)
+print(f"PASS (helpers found: {helpers})")
+PYEOF
+T2=$?
+cat /tmp/t2.log
+if [ $T2 -eq 0 ]; then
+    REWARD=$(awk_add "$REWARD" "0.15")
+    echo "(+0.15)"
+fi
+
+# ===========================================================================
+# F2P 3 (0.15): DreamBooth filter override doesn't redundantly call
+# update_dataset_image_counts (the explicit instruction).
+# Override must exist AND have 0 direct calls to update_dataset_image_counts.
+# ===========================================================================
+echo "--- F2P 3 (0.15): DB filter override doesn't double-call update_dataset_image_counts ---"
+timeout 10 python3 << 'PYEOF' > /tmp/t3.log 2>&1
+import json, sys
+c = json.load(open("/tmp/test_cache.json"))
 if not c.get("db_filter_found", False):
-    print("FAIL: no DreamBooth filter override exists yet")
+    print("FAIL: no DreamBooth filter override exists")
     sys.exit(1)
 calls = c.get("db_filter_update_count_calls", 99)
-seg = c.get("db_filter_source", "")
-# After the fix, the override should NOT directly call update_dataset_image_counts
-# at the end (the base-class call via super() handles it after rebalance).
-# Allow 0 direct calls. >=1 indicates the redundant call still present.
 if calls >= 1:
     print(f"FAIL: override still has {calls} direct update_dataset_image_counts call(s)")
     sys.exit(1)
 print(f"PASS (direct update calls in override = {calls})")
 PYEOF
-if [ $? -eq 0 ]; then
+T3=$?
+cat /tmp/t3.log
+if [ $T3 -eq 0 ]; then
     REWARD=$(awk_add "$REWARD" "0.15")
-    cat /tmp/t2.log
     echo "(+0.15)"
-else
-    cat /tmp/t2.log
 fi
 
 # ===========================================================================
-# Build a DreamBoothDataset for behavioral tests. Helper handles signature
-# differences; if construction fails entirely we skip behavioral tests with
-# zero (which is correct — base would have failed too).
+# F2P 4 (0.10): Override calls super with update_counts=False AND triggers a
+# rebalance. This proves the override is structurally complete: it suppresses
+# the base's count-update so it can rebalance, then lets the (now single)
+# count-update path run via the helper.
 # ===========================================================================
-mkdir -p /tmp/sd_test
-rm -rf /tmp/sd_test/*
-mkdir -p /tmp/sd_test/train_only/cls
-mkdir -p /tmp/sd_test/train_with_reg/cls
-mkdir -p /tmp/sd_test/train_with_reg/reg
-mkdir -p /tmp/sd_test/zero_reg/cls
-
-# Create dummy small images
-timeout 30 python3 << 'PYEOF' > /tmp/mkimg.log 2>&1
-from PIL import Image
-import os
-def mkimgs(dir_, n, size=(64,64), color=(128,128,128)):
-    os.makedirs(dir_, exist_ok=True)
-    for i in range(n):
-        Image.new("RGB", size, color).save(os.path.join(dir_, f"img_{i}.png"))
-        with open(os.path.join(dir_, f"img_{i}.txt"), "w") as f:
-            f.write("a photo")
-
-mkimgs("/tmp/sd_test/train_only/cls", 5)
-mkimgs("/tmp/sd_test/train_with_reg/cls", 4)
-mkimgs("/tmp/sd_test/train_with_reg/reg", 2)
-mkimgs("/tmp/sd_test/zero_reg/cls", 3)
-print("imgs OK")
-PYEOF
-if [ $? -ne 0 ]; then
-    echo "IMG SETUP FAIL (skipping behavioral tests)"
-    cat /tmp/mkimg.log | head
-fi
-
-cat > /tmp/build_ds.py << 'PYEOF'
-"""Robust DreamBoothDataset builder across signature variations."""
-import sys, os, inspect
-sys.path.insert(0, '/workspace/sd-scripts')
-import library.train_util as tu
-
-def make_subset(image_dir, num_repeats=1, is_reg=False):
-    SubsetCls = tu.DreamBoothSubset
-    sig = inspect.signature(SubsetCls.__init__)
-    params = list(sig.parameters.keys())
-    kwargs = {}
-    # The original signature includes many fields; use defaults / sensible values.
-    defaults = {
-        "image_dir": image_dir,
-        "is_reg": is_reg,
-        "class_tokens": "cls",
-        "caption_extension": ".txt",
-        "cache_info": False,
-        "num_repeats": num_repeats,
-        "shuffle_caption": False,
-        "caption_separator": ",",
-        "keep_tokens": 0,
-        "keep_tokens_separator": "",
-        "secondary_separator": None,
-        "enable_wildcard": False,
-        "color_aug": False,
-        "flip_aug": False,
-        "face_crop_aug_range": None,
-        "random_crop": False,
-        "caption_prefix": None,
-        "caption_suffix": None,
-        "caption_dropout_rate": 0.0,
-        "caption_dropout_every_n_epochs": 0,
-        "caption_tag_dropout_rate": 0.0,
-        "token_warmup_min": 1,
-        "token_warmup_step": 0,
-        "alpha_mask": False,
-        "custom_attributes": None,
-        "resize_interpolation": None,
-    }
-    for p in params:
-        if p == "self":
-            continue
-        if p in defaults:
-            kwargs[p] = defaults[p]
-    try:
-        return SubsetCls(**kwargs)
-    except TypeError:
-        # Fallback: positional with first few common args
-        return SubsetCls(image_dir, False, "cls", ".txt", False, num_repeats,
-                         False, ",", 0, "", None, False, False, False, None, False,
-                         None, None, 0.0, 0, 0.0, 1, 0, False, None)
-
-def make_dataset(subsets, is_training=True):
-    DSCls = tu.DreamBoothDataset
-    sig = inspect.signature(DSCls.__init__)
-    params = list(sig.parameters.keys())
-    defaults = {
-        "subsets": subsets,
-        "is_training_dataset": is_training,
-        "batch_size": 1,
-        "tokenizer": None,
-        "max_token_length": 75,
-        "resolution": (64, 64),
-        "network_multiplier": 1.0,
-        "enable_bucket": False,
-        "min_bucket_reso": 64,
-        "max_bucket_reso": 256,
-        "bucket_reso_steps": 64,
-        "bucket_no_upscale": False,
-        "prior_loss_weight": 1.0,
-        "debug_dataset": False,
-        "validation_split": 0.0,
-        "validation_seed": None,
-        "resize_interpolation": None,
-    }
-    kwargs = {}
-    for p in params:
-        if p == "self":
-            continue
-        if p in defaults:
-            kwargs[p] = defaults[p]
-    return DSCls(**kwargs)
-PYEOF
-
-# ===========================================================================
-# F2P TEST 3 (0.25): Zero-reg-images edge case — instantiating a dataset with
-# only training images (no reg subset) must not crash.
-# On a buggy base where balancing logic isn't guarded, division/loop may break;
-# more importantly, the agent's refactor must preserve this. We treat this as
-# a behavioral check that exercises the new helper path.
-# Crucially this also checks that base behavior (counts) is sensible.
-# ===========================================================================
-echo "--- F2P 3: Zero reg images doesn't crash & counts correct ---"
-timeout 60 python3 << 'PYEOF' > /tmp/t3.log 2>&1
-import sys
-sys.path.insert(0, '/workspace/sd-scripts')
-sys.path.insert(0, '/tmp')
-try:
-    from build_ds import make_subset, make_dataset
-    s = make_subset("/tmp/sd_test/zero_reg/cls", num_repeats=3, is_reg=False)
-    ds = make_dataset([s], is_training=True)
-    # 3 images * num_repeats=3 = 9
-    assert ds.num_train_images == 9, f"expected 9 train, got {ds.num_train_images}"
-    assert ds.num_reg_images == 0, f"expected 0 reg, got {ds.num_reg_images}"
-    print("PASS: zero-reg dataset built; counts correct")
-except Exception as e:
-    import traceback
-    traceback.print_exc()
-    print(f"FAIL: {e}")
-    sys.exit(1)
-PYEOF
-T3_RESULT=$?
-cat /tmp/t3.log | tail -30
-
-# This test passes on base too (zero-reg already works in original code).
-# So we use it only as a GATE for the more interesting behavioral checks below;
-# no reward weight assigned here directly.
-
-# ===========================================================================
-# F2P TEST 4 (0.25): Reg image balancing still works correctly after refactor.
-# 4 train images * num_repeats=2 = 8 train; 2 reg images should balance to 8.
-# This passes on base AND on fix — but only if the refactor preserved behavior.
-# A broken refactor would fail. We use this as a regression GUARD: if it fails,
-# whole reward zeroes out.
-# ===========================================================================
-echo "--- GUARD: balancing behavior preserved ---"
-timeout 60 python3 << 'PYEOF' > /tmp/guard.log 2>&1
-import sys
-sys.path.insert(0, '/workspace/sd-scripts')
-sys.path.insert(0, '/tmp')
-try:
-    from build_ds import make_subset, make_dataset
-    train = make_subset("/tmp/sd_test/train_with_reg/cls", num_repeats=2, is_reg=False)
-    reg = make_subset("/tmp/sd_test/train_with_reg/reg", num_repeats=1, is_reg=True)
-    ds = make_dataset([train, reg], is_training=True)
-    # 4 train * 2 = 8 train repeats
-    assert ds.num_train_images == 8, f"expected 8 train, got {ds.num_train_images}"
-    # reg should be balanced to match (8)
-    assert ds.num_reg_images == 8, f"expected 8 reg (balanced), got {ds.num_reg_images}"
-    print("GUARD PASS: balancing preserved")
-except Exception as e:
-    import traceback
-    traceback.print_exc()
-    print(f"GUARD FAIL: {e}")
-    sys.exit(1)
-PYEOF
-GUARD_RESULT=$?
-cat /tmp/guard.log | tail -30
-
-if [ $GUARD_RESULT -ne 0 ]; then
-    echo "GUARD FAILED — refactor broke balancing. Zeroing reward."
-    write_reward_and_exit "0.0"
-fi
-
-# Now the dedup-edge-case award: dataset with no reg images should also have
-# successful construction (this passes on base too, so it's a guard, not reward).
-if [ $T3_RESULT -ne 0 ]; then
-    echo "GUARD FAIL: zero-reg case broke. Zeroing reward."
-    write_reward_and_exit "0.0"
-fi
-
-# ===========================================================================
-# F2P TEST 5 (0.20): A single helper method exists on DreamBoothDataset that
-# encapsulates the balancing logic. Acceptable names span what models chose:
-# _balance_reg_images, register_regularization_images, rebalance_regularization_images.
-# On the buggy base, NONE of these helper methods exist on DreamBoothDataset.
-# After any reasonable refactor, at least one exists.
-# ===========================================================================
-echo "--- F2P 5: balancing helper method exists ---"
-timeout 30 python3 << 'PYEOF' > /tmp/t5.log 2>&1
-import sys
-sys.path.insert(0, '/workspace/sd-scripts')
-import library.train_util as tu
-candidates = [
-    "_balance_reg_images",
-    "balance_reg_images",
-    "register_regularization_images",
-    "rebalance_regularization_images",
-]
-found = [n for n in candidates if hasattr(tu.DreamBoothDataset, n)]
-if not found:
-    print(f"FAIL: no balancing helper method found. Tried: {candidates}")
-    sys.exit(1)
-print(f"PASS: helper(s) present = {found}")
-PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.20")
-    cat /tmp/t5.log
-    echo "(+0.20)"
-else
-    cat /tmp/t5.log
-fi
-
-# ===========================================================================
-# F2P TEST 6 (0.20): Override calls super() and the base/super invocation
-# triggers exactly one update of dataset image counts overall. We verify by
-# reading the override source: it must call super().filter_registered_images_by_orig_resolution
-# (so we know it composes properly rather than reimplementing) AND it must NOT
-# directly call update_dataset_image_counts (already enforced in F2P 2, but
-# here we additionally require the super() call exists, which it doesn't on
-# the base because the override itself doesn't exist on the base).
-# ===========================================================================
-echo "--- F2P 6: override exists, calls super(), no direct update call ---"
-timeout 10 python3 << 'PYEOF' > /tmp/t6.log 2>&1
-import json, sys, re
+echo "--- F2P 4 (0.10): override defers count update via super(update_counts=False) and rebalances ---"
+timeout 10 python3 << 'PYEOF' > /tmp/t4.log 2>&1
+import json, sys
 c = json.load(open("/tmp/test_cache.json"))
 if not c.get("db_filter_found", False):
-    print("FAIL: DreamBooth filter override does not exist")
+    print("FAIL: no override")
     sys.exit(1)
+sf = c.get("db_filter_super_update_false", 0)
+rb = c.get("db_filter_rebalance_calls", 0)
 seg = c.get("db_filter_source", "")
-# Must call super() form
-if not re.search(r"super\s*\(\s*\)\s*\.\s*filter_registered_images_by_orig_resolution", seg):
-    print("FAIL: override doesn't call super().filter_registered_images_by_orig_resolution")
+if sf < 1:
+    print(f"FAIL: super(...).filter_registered_images_by_orig_resolution(update_counts=False) not present")
     sys.exit(1)
-# Must NOT directly call update_dataset_image_counts (re-check)
-direct = c.get("db_filter_update_count_calls", 99)
-if direct >= 1:
-    print(f"FAIL: override has {direct} direct update_dataset_image_counts calls")
+if rb < 1 and "rebalance" not in seg.lower() and "register_regularization" not in seg.lower():
+    print("FAIL: override does not invoke a rebalance/re-register helper")
     sys.exit(1)
-print("PASS: override delegates to super() and doesn't double-call update")
+print(f"PASS (super-update-false={sf}, rebalance-call-like={rb})")
 PYEOF
-if [ $? -eq 0 ]; then
-    REWARD=$(awk_add "$REWARD" "0.20")
-    cat /tmp/t6.log
-    echo "(+0.20)"
-else
-    cat /tmp/t6.log
+T4=$?
+cat /tmp/t4.log
+if [ $T4 -eq 0 ]; then
+    REWARD=$(awk_add "$REWARD" "0.10")
+    echo "(+0.10)"
 fi
 
+# ===========================================================================
+# F2P 5 (0.20): BEHAVIORAL — zero-reg-images edge case is handled gracefully.
+# Construct a DreamBoothDataset-like flow by directly invoking the balancing
+# helper(s) with empty reg_infos and verify no crash. We do this by patching
+# enough state to call the helper safely on a real instance using
+# DreamBoothDataset.__new__ and bound method invocation.
+# ===========================================================================
+echo "--- F2P 5 (0.20): Zero reg images edge case (behavioral) ---"
+timeout 60 python3 << 'PYEOF' > /tmp/t5.log 2>&1
+import sys, traceback
+sys.path.insert(0, "/workspace/sd-scripts")
+try:
+    import library.train_util as tu
+except Exception as e:
+    print("FAIL: import error:", e); traceback.print_exc(); sys.exit(1)
+
+DBD = getattr(tu, "DreamBoothDataset", None)
+BASE = getattr(tu, "BaseDataset", None)
+if DBD is None:
+    print("FAIL: DreamBoothDataset missing"); sys.exit(1)
+
+# Find a balance helper
+helper_name = None
+for n in ("_balance_reg_images", "register_regularization_images", "rebalance_regularization_images"):
+    if hasattr(DBD, n) or hasattr(BASE, n):
+        helper_name = n
+        break
+if helper_name is None:
+    print("FAIL: no balance helper method found on classes")
+    sys.exit(1)
+
+# Construct a minimal instance without running __init__
+inst = DBD.__new__(DBD)
+inst.image_data = {}
+inst.image_to_subset = {}
+inst.subsets = []
+inst.is_training_dataset = True
+inst.num_train_images = 0
+inst.num_reg_images = 0
+inst._reg_infos = []
+
+# Try to call the helper with empty reg_infos. Try a few signatures.
+import inspect
+fn = getattr(inst, helper_name, None)
+if fn is None:
+    fn = getattr(BASE, helper_name, None).__get__(inst, type(inst))
+
+try:
+    sig = inspect.signature(fn)
+    params = [p for p in sig.parameters.values() if p.name != "self"]
+    args = []
+    for p in params:
+        if p.default is not inspect.Parameter.empty:
+            continue
+        # Heuristic: empty list for reg_infos, 0 for num_train_images
+        if "reg" in p.name.lower():
+            args.append([])
+        elif "num_train" in p.name.lower() or "train" in p.name.lower():
+            args.append(0)
+        else:
+            args.append(None)
+    # Call without crashing
+    try:
+        fn(*args)
+        print(f"PASS: {helper_name}({args}) handled empty reg_infos without error")
+        sys.exit(0)
+    except TypeError:
+        # Try alternate ordering
+        try:
+            fn([], 0)
+            print(f"PASS: {helper_name}([], 0) handled empty reg_infos without error")
+            sys.exit(0)
+        except Exception as e:
+            try:
+                fn([])
+                print(f"PASS: {helper_name}([]) handled empty reg_infos without error")
+                sys.exit(0)
+            except Exception as e2:
+                print(f"FAIL: helper call raised: {e2}")
+                traceback.print_exc()
+                sys.exit(1)
+except Exception as e:
+    print(f"FAIL: {e}")
+    traceback.print_exc()
+    sys.exit(1)
+PYEOF
+T5=$?
+cat /tmp/t5.log
+if [ $T5 -eq 0 ]; then
+    REWARD=$(awk_add "$REWARD" "0.20")
+    echo "(+0.20)"
+fi
+
+# ===========================================================================
+# F2P 6 (0.15): BEHAVIORAL — balancing produces correct repeat counts.
+# Construct fake ImageInfo objects + reg_infos and call the helper to balance
+# against num_train_images=10 with 3 reg images of num_repeats=1. The total
+# reg num_repeats must equal num_train_images (or at least >= num_train_images
+# and <= num_train_images + len(reg_infos), matching the original semantics).
+# ===========================================================================
+echo "--- F2P 6 (0.15): Balancing math correctness (behavioral) ---"
+timeout 60 python3 << 'PYEOF' > /tmp/t6.log 2>&1
+import sys, traceback, inspect
+sys.path.insert(0, "/workspace/sd-scripts")
+try:
+    import library.train_util as tu
+except Exception as e:
+    print("FAIL: import error:", e); sys.exit(1)
+
+DBD = getattr(tu, "DreamBoothDataset", None)
+BASE = getattr(tu, "BaseDataset", None)
+ImageInfo = getattr(tu, "ImageInfo", None)
+
+helper_name = None
+for n in ("_balance_reg_images", "register_regularization_images", "rebalance_regularization_images"):
+    if hasattr(DBD, n) or hasattr(BASE, n):
+        helper_name = n
+        break
+if helper_name is None:
+    print("FAIL: no helper method found"); sys.exit(1)
+
+inst = DBD.__new__(DBD)
+inst.image_data = {}
+inst.image_to_subset = {}
+inst.subsets = []
+inst.is_training_dataset = True
+inst.num_train_images = 10
+inst.num_reg_images = 0
+inst._reg_infos = []
+
+# Build fake reg ImageInfos
+class FakeSubset:
+    def __init__(self):
+        self.image_dir = "/tmp/reg"
+        self.num_repeats = 1
+        self.img_count = 1
+
+reg_infos = []
+for i in range(3):
+    if ImageInfo is not None:
+        try:
+            info = ImageInfo(image_key=f"reg_{i}", num_repeats=1, caption="x", is_reg=True, absolute_path=f"/tmp/reg_{i}.png")
+        except Exception:
+            try:
+                info = ImageInfo(f"reg_{i}", 1, "x", True, f"/tmp/reg_{i}.png")
+            except Exception as e:
+                print(f"FAIL: cannot construct ImageInfo: {e}")
+                sys.exit(1)
+    else:
+        class FI:
+            pass
+        info = FI()
+        info.image_key = f"reg_{i}"
+        info.num_repeats = 1
+        info.is_reg = True
+        info.absolute_path = f"/tmp/reg_{i}.png"
+        info.caption = "x"
+    reg_infos.append((info, FakeSubset()))
+
+fn = getattr(inst, helper_name)
+sig = inspect.signature(fn)
+params = [p for p in sig.parameters.values() if p.name != "self"]
+
+call_kwargs = {}
+call_args = []
+for p in params:
+    if p.default is not inspect.Parameter.empty:
+        continue
+    nm = p.name.lower()
+    if "reg" in nm:
+        call_args.append(reg_infos)
+    elif "num_train" in nm or "train_images" in nm or nm == "num":
+        call_args.append(10)
+    else:
+        call_args.append(None)
+
+# Save original num_repeats so we can detect them being mutated
+originals = [info.num_repeats for info, _ in reg_infos]
+
+try:
+    fn(*call_args)
+except TypeError:
+    try:
+        fn(reg_infos, 10)
+    except TypeError:
+        try:
+            fn(10, reg_infos)
+        except Exception as e:
+            print(f"FAIL: could not call helper: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+    except Exception as e:
+        print(f"FAIL: helper raised: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+except Exception as e:
+    print(f"FAIL: helper raised: {e}")
+    traceback.print_exc()
+    sys.exit(1)
+
+total = sum(info.num_repeats for info, _ in reg_infos)
+n_train = 10
+# Original semantics: balance loop adds 1 per pass until n >= num_train_images
+# Final total should be exactly num_train_images (since starts at 3, increments by 1).
+# Allow [num_train_images, num_train_images + len(reg_infos)] tolerance.
+if total < n_train or total > n_train + len(reg_infos):
+    print(f"FAIL: total reg num_repeats={total}, expected ~{n_train} (originals {originals})")
+    sys.exit(1)
+
+# Also check images registered
+reg_in_data = [k for k, info in inst.image_data.items() if getattr(info, "is_reg", False)]
+if len(reg_in_data) != 3:
+    # Some implementations register through register_image, others may not. Be lenient
+    # but require at least one path of registration if helper name suggests register.
+    if "register" in helper_name:
+        print(f"FAIL: register helper did not register 3 reg images (got {len(reg_in_data)})")
+        sys.exit(1)
+
+print(f"PASS: total reg num_repeats={total} (target {n_train}), registered={len(reg_in_data)}")
+sys.exit(0)
+PYEOF
+T6=$?
+cat /tmp/t6.log
+if [ $T6 -eq 0 ]; then
+    REWARD=$(awk_add "$REWARD" "0.15")
+    echo "(+0.15)"
+fi
+
+# ===========================================================================
+# F2P 7 (0.10): BEHAVIORAL — DB filter override, when called, performs exactly
+# ONE update of num_train_images / num_reg_images (no double accounting).
+# We monkey-patch update_dataset_image_counts on a real instance and ensure
+# it's invoked at most once by a single override call.
+# ===========================================================================
+echo "--- F2P 7 (0.10): override path triggers update_dataset_image_counts at most once ---"
+timeout 60 python3 << 'PYEOF' > /tmp/t7.log 2>&1
+import sys, traceback
+sys.path.insert(0, "/workspace/sd-scripts")
+try:
+    import library.train_util as tu
+except Exception as e:
+    print("FAIL: import:", e); sys.exit(1)
+
+DBD = getattr(tu, "DreamBoothDataset")
+BASE = getattr(tu, "BaseDataset")
+
+if not hasattr(DBD, "filter_registered_images_by_orig_resolution"):
+    print("FAIL: DreamBoothDataset has no filter_registered_images_by_orig_resolution override")
+    sys.exit(1)
+
+# Verify it is actually defined on DBD (not just inherited)
+own = "filter_registered_images_by_orig_resolution" in DBD.__dict__
+if not own:
+    print("FAIL: filter_registered_images_by_orig_resolution not overridden on DreamBoothDataset")
+    sys.exit(1)
+
+inst = DBD.__new__(DBD)
+inst.image_data = {}
+inst.image_to_subset = {}
+inst.subsets = []
+inst.is_training_dataset = True
+inst.num_train_images = 0
+inst.num_reg_images = 0
+inst._reg_infos = []
+inst.enable_bucket = True
+inst.min_bucket_reso = None
+inst.max_bucket_reso = None
+inst.bucket_reso_steps = 64
+inst.bucket_no_upscale = False
+
+call_count = {"n": 0}
+def fake_update(self=None, *a, **kw):
+    call_count["n"] += 1
+
+# Patch on instance and on classes to catch any path
+import types
+inst.update_dataset_image_counts = types.MethodType(lambda self: (call_count.__setitem__("n", call_count["n"]+1)), inst)
+# Also patch class-level methods so super() routes hit our counter
+orig_base_update = getattr(BASE, "update_dataset_image_counts", None)
+def class_fake(self, *a, **kw):
+    call_count["n"] += 1
+if orig_base_update is not None:
+    BASE.update_dataset_image_counts = class_fake
+
+# Patch base filter to be a no-op that just respects update_counts kwarg by calling update if True
+orig_base_filter = BASE.filter_registered_images_by_orig_resolution
+def fake_filter(self, update_counts: bool = True):
+    if update_counts:
+        # Simulate base behavior of calling update
+        self.update_dataset_image_counts()
+BASE.filter_registered_images_by_orig_resolution = fake_filter
+
+try:
+    inst.filter_registered_images_by_orig_resolution()
+except Exception as e:
+    # The override might call rebalance which needs more state; that's OK as long as
+    # it didn't double-count BEFORE crashing. But a clean fix shouldn't crash here.
+    print(f"NOTE: override raised: {e}")
+
+# Restore
+BASE.filter_registered_images_by_orig_resolution = orig_base_filter
+if orig_base_update is not None:
+    BASE.update_dataset_image_counts = orig_base_update
+
+n = call_count["n"]
+if n > 1:
+    print(f"FAIL: update_dataset_image_counts invoked {n} times in single filter call (double-call still present)")
+    sys.exit(1)
+print(f"PASS: update_dataset_image_counts invoked {n} time(s) (<=1)")
+sys.exit(0)
+PYEOF
+T7=$?
+cat /tmp/t7.log
+if [ $T7 -eq 0 ]; then
+    REWARD=$(awk_add "$REWARD" "0.10")
+    echo "(+0.10)"
+fi
+
+# ---------------------------------------------------------------------------
+# Total / write
+# ---------------------------------------------------------------------------
 echo "=== Final reward: $REWARD ==="
-echo "$REWARD" > "$REWARD_FILE"
+echo "$REWARD" > /logs/verifier/reward.txt

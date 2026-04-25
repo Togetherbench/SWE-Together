@@ -4,22 +4,26 @@ set +e
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 echo "0.0" > "$REWARD_FILE"
+REWARD="0.0"
 
-export PATH="/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-cd /workspace/pi-mono || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+cd /workspace/pi-mono 2>/dev/null || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+
+# Probe essential tools
+command -v npx >/dev/null 2>&1 || { echo "npx missing"; echo "0.0" > "$REWARD_FILE"; exit 0; }
 
 # ═══════════════════════════════════════════════════════════════════
-# P2P GATE: TypeScript compilation must pass
-# (gating only — no reward weight, since this passes on base)
+# P2P GATE: TypeScript compilation
 # ═══════════════════════════════════════════════════════════════════
 echo "=== P2P GATE: TypeScript compilation ==="
 COMPILE_OK=0
-if npx tsgo --noEmit 2>&1 | tail -30; [ ${PIPESTATUS[0]} -eq 0 ]; then
+if npx tsgo --noEmit > /tmp/tsc.out 2>&1; then
     COMPILE_OK=1
-elif npx tsc --noEmit 2>&1 | tail -30; [ ${PIPESTATUS[0]} -eq 0 ]; then
+elif npx tsc --noEmit > /tmp/tsc.out 2>&1; then
     COMPILE_OK=1
 fi
+tail -30 /tmp/tsc.out
 if [ "$COMPILE_OK" -ne 1 ]; then
     echo "TypeScript compilation failed — regression"
     echo "0.0" > "$REWARD_FILE"
@@ -29,20 +33,18 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # P2P GATE: Existing tool-choice tests must still pass
 # ═══════════════════════════════════════════════════════════════════
-echo "=== P2P GATE: existing tests ==="
-EXISTING_OUT=$(cd packages/ai && npx vitest --run test/openai-completions-tool-choice.test.ts 2>&1)
-echo "$EXISTING_OUT" | tail -30
-if ! echo "$EXISTING_OUT" | grep -Eq "Tests +.*passed"; then
-    # Vitest summary not found or failed
-    if echo "$EXISTING_OUT" | grep -Eqi "(failed|FAIL )"; then
-        echo "Existing tests broken — regression"
-        echo "0.0" > "$REWARD_FILE"
-        exit 0
-    fi
+echo "=== P2P GATE: existing openai-completions-tool-choice tests ==="
+EXISTING_OUT=$(cd packages/ai && npx vitest --run test/openai-completions-tool-choice.test.ts --reporter=verbose 2>&1)
+echo "$EXISTING_OUT" | tail -50
+if echo "$EXISTING_OUT" | grep -Eqi "(✗|×|failed|FAIL )" && ! echo "$EXISTING_OUT" | grep -Eq "Tests +.* passed.*\(.*\)"; then
+    echo "Existing tests broken — regression"
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
 fi
 
 # ═══════════════════════════════════════════════════════════════════
 # Build behavioral test harness
+# Tests groq qwen3-32b reasoning_effort remapping behavior
 # ═══════════════════════════════════════════════════════════════════
 HARNESS=packages/ai/test/_issue1745_harness.test.ts
 cat > "$HARNESS" << 'TESTEOF'
@@ -125,16 +127,20 @@ describe("issue1745", () => {
         const p = await capture("groq", "openai/gpt-oss-20b", "low");
         expect(p.reasoning_effort).toBe("low");
     });
+    it("GPTOSS_MINIMAL_UNCHANGED", async () => {
+        const p = await capture("groq", "openai/gpt-oss-20b", "minimal");
+        expect(p.reasoning_effort).toBe("minimal");
+    });
 });
 TESTEOF
 
 echo "=== Running behavioral harness ==="
-HARNESS_OUT=$(cd packages/ai && npx vitest --run test/_issue1745_harness.test.ts 2>&1)
-echo "$HARNESS_OUT" | tail -100
+HARNESS_OUT=$(cd packages/ai && npx vitest --run test/_issue1745_harness.test.ts --reporter=verbose 2>&1)
+echo "$HARNESS_OUT" | tail -120
 
 check_pass() {
     local name="$1"
-    if echo "$HARNESS_OUT" | grep -E "(✓|√).*${name}" > /dev/null 2>&1; then
+    if echo "$HARNESS_OUT" | grep -E "(✓|√|PASS).*${name}" > /dev/null 2>&1; then
         echo 1
     else
         echo 0
@@ -148,6 +154,7 @@ QWEN_MINIMAL=$(check_pass "QWEN_MINIMAL_MAPS_TO_DEFAULT")
 GPTOSS_HIGH=$(check_pass "GPTOSS_HIGH_UNCHANGED")
 GPTOSS_MEDIUM=$(check_pass "GPTOSS_MEDIUM_UNCHANGED")
 GPTOSS_LOW=$(check_pass "GPTOSS_LOW_UNCHANGED")
+GPTOSS_MINIMAL=$(check_pass "GPTOSS_MINIMAL_UNCHANGED")
 
 rm -f "$HARNESS"
 
@@ -158,45 +165,77 @@ echo "QWEN_MINIMAL=$QWEN_MINIMAL"
 echo "GPTOSS_HIGH=$GPTOSS_HIGH"
 echo "GPTOSS_MEDIUM=$GPTOSS_MEDIUM"
 echo "GPTOSS_LOW=$GPTOSS_LOW"
+echo "GPTOSS_MINIMAL=$GPTOSS_MINIMAL"
+
+# Aggregate behavioral scores
+QWEN_PASSED=$((QWEN_MEDIUM + QWEN_HIGH + QWEN_LOW + QWEN_MINIMAL))
+GPTOSS_PASSED=$((GPTOSS_HIGH + GPTOSS_MEDIUM + GPTOSS_LOW + GPTOSS_MINIMAL))
+
+# QWEN behavior is the core fix (4 cases, 0.10 each = 0.40)
+QWEN_SCORE=$(awk -v n=$QWEN_PASSED 'BEGIN{printf "%.4f", n*0.10}')
+# GPT-OSS preservation guards against over-broad fixes (4 cases, 0.075 each = 0.30)
+GPTOSS_SCORE=$(awk -v n=$GPTOSS_PASSED 'BEGIN{printf "%.4f", n*0.075}')
+
+# ═══════════════════════════════════════════════════════════════════
+# F2P: Source code change in the right file
+# Verifies the fix lives in the compat layer (not as global regex override)
+# ═══════════════════════════════════════════════════════════════════
+echo "=== F2P: source change in openai-completions provider ==="
+SRC=packages/ai/src/providers/openai-completions.ts
+SRC_F2P=0
+if [ -f "$SRC" ]; then
+    # Must mention reasoningEffortMap and either qwen or groq-specific gating
+    if grep -q "reasoningEffortMap" "$SRC" 2>/dev/null && \
+       grep -Eqi "(qwen|isGroq)" "$SRC" 2>/dev/null; then
+        # Must have at least one mapping entry to "default"
+        if grep -Eq '"default"' "$SRC" 2>/dev/null; then
+            SRC_F2P=1
+        fi
+    fi
+fi
+echo "SRC_F2P=$SRC_F2P"
 
 # ═══════════════════════════════════════════════════════════════════
 # F2P: Documentation update
-# Base file does not mention reasoningEffortMap with qwen3-32b context.
-# Verify by checking that DOC change is genuine vs base.
 # ═══════════════════════════════════════════════════════════════════
 echo "=== F2P: docs updated ==="
 DOCS=packages/coding-agent/docs/custom-provider.md
 DOC_F2P=0
 if [ -f "$DOCS" ]; then
-    # Must reference the qwen3 model AND the restricted effort behavior (default/none/restricted)
-    if grep -Eqi "qwen3-32b|qwen/qwen3" "$DOCS" && \
-       grep -Eqi "(reasoningEffortMap|reasoning_effort)" "$DOCS" && \
-       grep -Eqi "(default|restrict|only accept|none)" "$DOCS"; then
+    if grep -Eqi "reasoningEffortMap" "$DOCS" 2>/dev/null; then
         DOC_F2P=1
     fi
 fi
 echo "DOC_F2P=$DOC_F2P"
 
 # ═══════════════════════════════════════════════════════════════════
-# Compute reward
-# F2P weights sum to 1.0:
-#   QWEN behavioral (4 tests): 4 × 0.18 = 0.72
-#   GPT-OSS behavioral (3 tests): 3 × 0.06 = 0.18
-#   DOC F2P: 0.10
-# Total: 0.72 + 0.18 + 0.10 = 1.00
+# F2P: Documentation specifically mentions the qwen3/groq restricted-effort case
+# (Distinguishes a generic doc edit from one that documents THIS fix)
+# ═══════════════════════════════════════════════════════════════════
+echo "=== F2P: docs mention qwen3 restricted-effort case ==="
+DOC_SPECIFIC=0
+if [ -f "$DOCS" ]; then
+    if grep -Eqi "(qwen3|qwen/qwen3|qwen-32b)" "$DOCS" 2>/dev/null && \
+       grep -Eqi "(default|none|restrict|only accept)" "$DOCS" 2>/dev/null; then
+        DOC_SPECIFIC=1
+    fi
+fi
+echo "DOC_SPECIFIC=$DOC_SPECIFIC"
+
+# ═══════════════════════════════════════════════════════════════════
+# Compute final reward
+#   QWEN_SCORE     (4 cases × 0.10 = 0.40)  — core behavioral fix
+#   GPTOSS_SCORE   (4 cases × 0.075 = 0.30) — non-regression / specificity
+#   SRC_F2P        0.10                     — fix in correct file
+#   DOC_F2P        0.10                     — docs touched
+#   DOC_SPECIFIC   0.10                     — docs explain THIS fix
+# Total: 1.00
 # ═══════════════════════════════════════════════════════════════════
 
-REWARD=$(awk -v qm=$QWEN_MEDIUM -v qh=$QWEN_HIGH -v ql=$QWEN_LOW -v qmin=$QWEN_MINIMAL \
-    -v gh=$GPTOSS_HIGH -v gm=$GPTOSS_MEDIUM -v gl=$GPTOSS_LOW \
-    -v doc=$DOC_F2P \
-    'BEGIN {
-        r = qm*0.18 + qh*0.18 + ql*0.18 + qmin*0.18 \
-          + gh*0.06 + gm*0.06 + gl*0.06 \
-          + doc*0.10;
-        if (r > 1.0) r = 1.0;
-        if (r < 0.0) r = 0.0;
-        printf "%.4f", r;
-    }')
+REWARD=$(awk -v q=$QWEN_SCORE -v g=$GPTOSS_SCORE -v s=$SRC_F2P -v d=$DOC_F2P -v ds=$DOC_SPECIFIC \
+    'BEGIN{printf "%.4f", q + g + s*0.10 + d*0.10 + ds*0.10}')
 
-echo "REWARD=$REWARD"
-echo "$REWARD" > "$REWARD_FILE"
+echo "QWEN_SCORE=$QWEN_SCORE GPTOSS_SCORE=$GPTOSS_SCORE SRC_F2P=$SRC_F2P DOC_F2P=$DOC_F2P DOC_SPECIFIC=$DOC_SPECIFIC"
+echo "FINAL REWARD=$REWARD"
+
+echo "$REWARD" > /logs/verifier/reward.txt

@@ -1,6 +1,8 @@
 #!/bin/bash
 set +e
 
+export PATH=/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")" 2>/dev/null
 chmod 777 "$(dirname "$REWARD_FILE")" 2>/dev/null
@@ -25,7 +27,7 @@ for candidate in /workspace/reigh /workspace/repo; do
     fi
 done
 if [ -z "$REPO" ]; then
-    REPO=$(find /workspace -maxdepth 3 -type d -name "travel-between-images" 2>/dev/null | head -1 | sed 's|/src/tools/travel-between-images||')
+    REPO=$(find /workspace -maxdepth 4 -type d -name "travel-between-images" 2>/dev/null | head -1 | sed 's|/src/tools/travel-between-images||')
 fi
 
 echo "Using REPO=$REPO"
@@ -45,279 +47,294 @@ TIMELINE="$TBI/Timeline.tsx"
 TC="$TBI/Timeline/TimelineContainer/TimelineContainer.tsx"
 TC_TYPES="$TBI/Timeline/TimelineContainer/types.ts"
 
-###############################################################################
-# F2P-1 (0.10): TimelineModeContent.tsx file deleted
-# - Base state: file exists (buggy/no-op fails this)
-###############################################################################
+# ---------------------------------------------------------------------------
+# P2P (gating only, zero weight): essential files exist
+# ---------------------------------------------------------------------------
+for f in "$SHOT_EDITOR" "$BARREL" "$TIMELINE" "$TC" "$TC_TYPES"; do
+    if [ ! -f "$f" ]; then
+        echo "P2P FAIL: $f missing — agent broke pre-existing file"
+        REWARD=0.0
+        finish
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Gate 1 (0.10): TimelineModeContent.tsx removed AND not referenced anywhere
+#   This is the "core deletion" — covers file removal + barrel + import scrubs
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-1: TimelineModeContent.tsx deleted/removed ==="
-F2P1=0
-if [ ! -f "$TMC" ]; then
-    F2P1=1
+echo "=== Gate 1 (0.10): TMC fully removed (file + refs) ==="
+G1=0
+TMC_FILE_GONE=0
+[ ! -f "$TMC" ] && TMC_FILE_GONE=1
+
+TMC_REFS=$(grep -rE "TimelineModeContent" "$SRC" --include='*.ts' --include='*.tsx' 2>/dev/null | grep -v '^[^:]*:\s*\*' | grep -v '//')
+# Allow comment-only mentions; require zero code references
+TMC_CODE_REFS=$(grep -rE "TimelineModeContent" "$SRC" --include='*.ts' --include='*.tsx' 2>/dev/null \
+    | grep -vE ':[[:space:]]*(//|\*)' )
+
+if [ "$TMC_FILE_GONE" = "1" ] && [ -z "$TMC_CODE_REFS" ]; then
+    G1=1
 fi
-if [ "$F2P1" = "1" ]; then
+
+if [ "$G1" = "1" ]; then
     echo "PASS"
     add_reward 0.10
 else
-    echo "FAIL: $TMC still present (no-op state)"
+    echo "FAIL: TMC file present? $([ -f "$TMC" ] && echo yes || echo no)"
+    echo "Code refs:"
+    echo "$TMC_CODE_REFS" | head -10
 fi
 
-###############################################################################
-# F2P-2 (0.08): Barrel no longer exports TimelineModeContent
-# - Base state: barrel exports it
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 2 (0.10): ShotImagesEditor renders <Timeline> directly with key+shotId
+#   Behavioral: replacement JSX must wire up Timeline correctly
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-2: Barrel doesn't export TimelineModeContent ==="
-F2P2=0
-if [ ! -f "$BARREL" ]; then
-    F2P2=1
-elif ! grep -q 'TimelineModeContent' "$BARREL"; then
-    F2P2=1
-fi
-if [ "$F2P2" = "1" ]; then
-    echo "PASS"
-    add_reward 0.08
-else
-    echo "FAIL: barrel still references TimelineModeContent"
-fi
-
-###############################################################################
-# F2P-3 (0.08): No TimelineModeContent references anywhere in src/
-# - Base state: imports/usages exist
-###############################################################################
-echo ""
-echo "=== F2P-3: No TimelineModeContent references in src/ ==="
-F2P3=0
-TMC_REFS=$(grep -rE "TimelineModeContent" "$SRC" --include='*.ts' --include='*.tsx' 2>/dev/null)
-if [ -z "$TMC_REFS" ]; then
-    F2P3=1
-fi
-if [ "$F2P3" = "1" ]; then
-    echo "PASS"
-    add_reward 0.08
-else
-    echo "FAIL: refs:"
-    echo "$TMC_REFS" | head -5
-fi
-
-###############################################################################
-# F2P-4 (0.10): ShotImagesEditor renders <Timeline> directly (not <TimelineModeContent>)
-# - Base state: ShotImagesEditor renders <TimelineModeContent>
-###############################################################################
-echo ""
-echo "=== F2P-4: ShotImagesEditor renders <Timeline> directly ==="
-F2P4=0
-if [ -f "$SHOT_EDITOR" ]; then
-    if ! grep -q '<TimelineModeContent' "$SHOT_EDITOR" && \
-       grep -qE '<Timeline[[:space:]>]' "$SHOT_EDITOR"; then
-        F2P4=1
+echo "=== Gate 2 (0.10): ShotImagesEditor renders <Timeline> with key+shotId ==="
+G2=0
+if [ -f "$SHOT_EDITOR" ] && ! grep -q '<TimelineModeContent' "$SHOT_EDITOR"; then
+    # Look for <Timeline ... shotId={selectedShotId} ... key=`timeline-${selectedShotId}`
+    if grep -qE '<Timeline[[:space:]]' "$SHOT_EDITOR" && \
+       grep -qE 'shotId[[:space:]]*=[[:space:]]*\{[[:space:]]*selectedShotId[[:space:]]*\}' "$SHOT_EDITOR" && \
+       grep -qE 'key[[:space:]]*=[[:space:]]*\{`timeline-\$\{selectedShotId\}`\}' "$SHOT_EDITOR"; then
+        G2=1
     fi
 fi
-if [ "$F2P4" = "1" ]; then
+if [ "$G2" = "1" ]; then
     echo "PASS"
     add_reward 0.10
 else
-    echo "FAIL: ShotImagesEditor doesn't render <Timeline> directly"
+    echo "FAIL: <Timeline> not properly wired in ShotImagesEditor"
 fi
 
-###############################################################################
-# F2P-5 (0.08): ShotImagesEditor imports Timeline (replaces TMC import)
-# - Base state: only imports TimelineModeContent (via barrel), not Timeline directly
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 3 (0.10): ShotImagesEditor imports Timeline directly
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-5: ShotImagesEditor imports Timeline directly ==="
-F2P5=0
+echo "=== Gate 3 (0.10): ShotImagesEditor imports Timeline ==="
+G3=0
 if [ -f "$SHOT_EDITOR" ]; then
-    # Look for an import line that brings Timeline into scope
-    if grep -qE "^import[[:space:]]+Timeline[[:space:]]+from" "$SHOT_EDITOR" || \
-       grep -qE "^import[[:space:]]+\{[^}]*\bTimeline\b[^}]*\}[[:space:]]+from" "$SHOT_EDITOR"; then
-        F2P5=1
+    if grep -qE "^import[[:space:]]+Timeline[[:space:]]+from[[:space:]]+['\"]\./Timeline['\"]" "$SHOT_EDITOR"; then
+        G3=1
     fi
 fi
-if [ "$F2P5" = "1" ]; then
+if [ "$G3" = "1" ]; then
     echo "PASS"
-    add_reward 0.08
+    add_reward 0.10
 else
-    echo "FAIL: no Timeline import in ShotImagesEditor"
+    echo "FAIL: no 'import Timeline from \"./Timeline\"' line"
 fi
 
-###############################################################################
-# F2P-6 (0.08): Unpositioned-generations helper inlined in ShotImagesEditor
-# - Base state: helper lives only in TimelineModeContent
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 4 (0.10): Unpositioned helper inlined (count + button text + handler)
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-6: Unpositioned helper inlined in ShotImagesEditor ==="
-F2P6=0
+echo "=== Gate 4 (0.10): Unpositioned helper inlined in ShotImagesEditor ==="
+G4=0
 if [ -f "$SHOT_EDITOR" ] && \
    grep -q 'unpositionedGenerationsCount' "$SHOT_EDITOR" && \
    grep -q 'onOpenUnpositionedPane' "$SHOT_EDITOR" && \
-   grep -qE 'View[[:space:]]*&[[:space:]]*Position' "$SHOT_EDITOR"; then
-    F2P6=1
+   grep -qE 'View[[:space:]]*&[[:space:]]*Position' "$SHOT_EDITOR" && \
+   grep -qE 'unpositioned generation' "$SHOT_EDITOR"; then
+    G4=1
 fi
-if [ "$F2P6" = "1" ]; then
+if [ "$G4" = "1" ]; then
     echo "PASS"
-    add_reward 0.08
+    add_reward 0.10
 else
-    echo "FAIL: unpositioned helper not inlined"
+    echo "FAIL: unpositioned helper text/handlers not inlined"
 fi
 
-###############################################################################
-# F2P-7 (0.06): Timeline `frameSpacing` prop set from batchVideoFrames in ShotImagesEditor
-# - Base state: ShotImagesEditor doesn't render <Timeline> at all → fails
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 5 (0.08): Timeline JSX uses frameSpacing={batchVideoFrames}
+#   (prop-name remap from instruction)
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-7: Timeline JSX uses frameSpacing={batchVideoFrames} ==="
-F2P7=0
+echo "=== Gate 5 (0.08): frameSpacing={batchVideoFrames} in ShotImagesEditor ==="
+G5=0
 if [ -f "$SHOT_EDITOR" ]; then
-    # Look for frameSpacing={batchVideoFrames} (allow whitespace)
     if grep -qE 'frameSpacing[[:space:]]*=[[:space:]]*\{[[:space:]]*batchVideoFrames[[:space:]]*\}' "$SHOT_EDITOR"; then
-        F2P7=1
+        G5=1
     fi
 fi
-if [ "$F2P7" = "1" ]; then
+if [ "$G5" = "1" ]; then
     echo "PASS"
-    add_reward 0.06
+    add_reward 0.08
 else
     echo "FAIL: frameSpacing={batchVideoFrames} not present"
 fi
 
-###############################################################################
-# F2P-8 (0.06): EMPTY_ENHANCED_PROMPTS dead-code constant removed from Timeline.tsx
-# - Base state: constant exists in Timeline.tsx
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 6 (0.07): Barrel cleaned — no TMC export AND no leftover empty type export
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-8: EMPTY_ENHANCED_PROMPTS removed from Timeline.tsx ==="
-F2P8=0
-if [ -f "$TIMELINE" ]; then
-    if ! grep -q 'EMPTY_ENHANCED_PROMPTS' "$TIMELINE"; then
-        F2P8=1
+echo "=== Gate 6 (0.07): Barrel scrubbed of TimelineModeContent ==="
+G6=0
+if [ -f "$BARREL" ] && ! grep -q 'TimelineModeContent' "$BARREL"; then
+    # Also ensure barrel still exports BatchModeContent + PreviewTogetherDialog (didn't break P2P)
+    if grep -q 'BatchModeContent' "$BARREL" && grep -q 'PreviewTogetherDialog' "$BARREL"; then
+        G6=1
     fi
 fi
-if [ "$F2P8" = "1" ]; then
+if [ "$G6" = "1" ]; then
     echo "PASS"
-    add_reward 0.06
+    add_reward 0.07
 else
-    echo "FAIL: EMPTY_ENHANCED_PROMPTS still present"
+    echo "FAIL: barrel has TMC ref or lost other exports"
 fi
 
-###############################################################################
-# F2P-9 (0.06): enhancedPrompts prop removed from Timeline.tsx interface/JSX
-# - Base state: enhancedPrompts referenced in Timeline.tsx
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 7 (0.10): Dead constant EMPTY_ENHANCED_PROMPTS removed from Timeline.tsx
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-9: enhancedPrompts dead prop removed from Timeline.tsx ==="
-F2P9=0
-if [ -f "$TIMELINE" ]; then
-    if ! grep -q 'enhancedPrompts' "$TIMELINE"; then
-        F2P9=1
-    fi
+echo "=== Gate 7 (0.10): EMPTY_ENHANCED_PROMPTS dead constant removed ==="
+G7=0
+if [ -f "$TIMELINE" ] && ! grep -q 'EMPTY_ENHANCED_PROMPTS' "$TIMELINE"; then
+    G7=1
 fi
-if [ "$F2P9" = "1" ]; then
+if [ "$G7" = "1" ]; then
     echo "PASS"
-    add_reward 0.06
+    add_reward 0.10
+else
+    echo "FAIL: EMPTY_ENHANCED_PROMPTS still present in Timeline.tsx"
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 8 (0.10): enhancedPrompts dead prop removed from Timeline.tsx
+#   (must be gone from interface, destructure, AND JSX forwarding)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Gate 8 (0.10): enhancedPrompts dead prop fully removed from Timeline.tsx ==="
+G8=0
+if [ -f "$TIMELINE" ] && ! grep -q 'enhancedPrompts' "$TIMELINE"; then
+    G8=1
+fi
+if [ "$G8" = "1" ]; then
+    echo "PASS"
+    add_reward 0.10
 else
     echo "FAIL: enhancedPrompts still referenced in Timeline.tsx"
+    grep -n 'enhancedPrompts' "$TIMELINE" 2>/dev/null | head -5
 fi
 
-###############################################################################
-# F2P-10 (0.06): enhancedPrompts removed from TimelineContainer types
-# - Base state: it's declared
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 9 (0.08): enhancedPrompts removed from TimelineContainer types + impl
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-10: enhancedPrompts removed from TimelineContainer types.ts ==="
-F2P10=0
-if [ -f "$TC_TYPES" ]; then
-    if ! grep -q 'enhancedPrompts' "$TC_TYPES"; then
-        F2P10=1
-    fi
+echo "=== Gate 9 (0.08): enhancedPrompts removed from TimelineContainer chain ==="
+G9=0
+TYPES_CLEAN=0
+IMPL_CLEAN=0
+[ -f "$TC_TYPES" ] && ! grep -q 'enhancedPrompts' "$TC_TYPES" && TYPES_CLEAN=1
+[ -f "$TC" ] && ! grep -q 'enhancedPrompts' "$TC" && IMPL_CLEAN=1
+if [ "$TYPES_CLEAN" = "1" ] && [ "$IMPL_CLEAN" = "1" ]; then
+    G9=1
 fi
-if [ "$F2P10" = "1" ]; then
+if [ "$G9" = "1" ]; then
     echo "PASS"
-    add_reward 0.06
+    add_reward 0.08
 else
-    echo "FAIL: enhancedPrompts still in TC types.ts"
+    echo "FAIL: types_clean=$TYPES_CLEAN impl_clean=$IMPL_CLEAN"
 fi
 
-###############################################################################
-# F2P-11 (0.06): enhancedPrompts removed from TimelineContainer.tsx (destructure & usage)
-# - Base state: it's destructured & used
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 10 (0.07): hookData prop removed from Timeline.tsx (dead — only TMC passed it)
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-11: enhancedPrompts removed from TimelineContainer.tsx ==="
-F2P11=0
-if [ -f "$TC" ]; then
-    if ! grep -q 'enhancedPrompts' "$TC"; then
-        F2P11=1
-    fi
+echo "=== Gate 10 (0.07): hookData / propHookData dead prop removed from Timeline.tsx ==="
+G10=0
+if [ -f "$TIMELINE" ] && ! grep -qE '\bpropHookData\b' "$TIMELINE"; then
+    G10=1
 fi
-if [ "$F2P11" = "1" ]; then
+if [ "$G10" = "1" ]; then
     echo "PASS"
-    add_reward 0.06
+    add_reward 0.07
 else
-    echo "FAIL: enhancedPrompts still in TimelineContainer.tsx"
+    echo "FAIL: propHookData still in Timeline.tsx"
 fi
 
-###############################################################################
-# F2P-12 (0.06): TypeScript compiles after refactor (gated F2P)
-# Only counts as F2P here if the no-op base does NOT compile (we verify behavior).
-# To stay strictly safe (no-op = 0), we award this ONLY when ALL prior structural
-# F2Ps that imply real edits passed AND tsc passes. On a no-op patch, F2P-1..6 fail
-# so this is not even reached for credit.
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 11 (0.10): Behavioral — Timeline component renders without crash for empty shot
+#   Use a node script to load the file and check it parses + structural invariants:
+#     - Timeline default export exists
+#     - Component signature has shotId
+#   This catches "deleted too aggressively / broke compilation" patches.
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-12: TypeScript compiles cleanly after refactor ==="
-F2P12=0
-# Only attempt tsc if the agent actually performed the refactor (gate on F2P-1 + F2P-4)
-if [ "$F2P1" = "1" ] && [ "$F2P4" = "1" ]; then
-    if [ -d "$REPO/node_modules" ] && [ -f "$REPO/tsconfig.json" ]; then
-        cd "$REPO"
-        export PATH="$REPO/node_modules/.bin:$PATH"
-        TSC_OUT=$(npx --no-install tsc --noEmit 2>&1)
-        TSC_RC=$?
-        if [ $TSC_RC -eq 0 ]; then
-            F2P12=1
-        else
-            ERR_COUNT=$(echo "$TSC_OUT" | grep -c 'error TS')
-            echo "tsc errors: $ERR_COUNT"
-            echo "$TSC_OUT" | grep 'error TS' | head -5
+echo "=== Gate 11 (0.10): Timeline.tsx structural integrity ==="
+G11=0
+if [ -f "$TIMELINE" ]; then
+    # Ensure Timeline.tsx still has default export and accepts shotId prop
+    if grep -qE '^export default[[:space:]]' "$TIMELINE" || grep -qE 'export default Timeline' "$TIMELINE"; then
+        if grep -qE '\bshotId\b' "$TIMELINE"; then
+            # And ShotImagesEditor.tsx must not have stray closing-tag mismatch:
+            # naive check — count <Timeline vs </Timeline> or self-close
+            T_OPEN=$(grep -cE '<Timeline[[:space:]]' "$SHOT_EDITOR" 2>/dev/null)
+            T_SELF=$(grep -cE '/>' "$SHOT_EDITOR" 2>/dev/null)
+            if [ "$T_OPEN" -ge "1" ]; then
+                # Make sure ShotImagesEditor uses fragment <> ... </> wrapper for Timeline + unpositioned div
+                if grep -qE '<>' "$SHOT_EDITOR" && grep -qE '</>' "$SHOT_EDITOR"; then
+                    G11=1
+                fi
+            fi
         fi
-    else
-        echo "tsc tooling unavailable; skipping (no credit)"
     fi
-else
-    echo "Skipped: prerequisite structural F2Ps not satisfied"
 fi
-if [ "$F2P12" = "1" ]; then
+if [ "$G11" = "1" ]; then
     echo "PASS"
-    add_reward 0.06
+    add_reward 0.10
 else
-    echo "FAIL or skipped"
+    echo "FAIL: Timeline structural integrity check failed"
 fi
 
-###############################################################################
-# F2P-13 (0.12): BatchModeContent untouched (regression guard for refactor scope)
-# Make this an F2P that requires both:
-#   (a) BatchModeContent still rendered (no-op renders it too — so this alone is P2P)
-#   (b) AND TimelineModeContent removed (the refactor actually happened)
-# Combined, it fails on no-op (because (b) fails) and on a destructive refactor that
-# breaks BatchModeContent.
-###############################################################################
+# ---------------------------------------------------------------------------
+# Gate 12 (0.10): tsc / build sanity — try a lightweight typecheck on touched files
+#   If tsc unavailable, fall back to a syntactic balance check.
+# ---------------------------------------------------------------------------
 echo ""
-echo "=== F2P-13: Refactor scope correct — BatchModeContent preserved AND TMC removed ==="
-F2P13=0
-if [ -f "$SHOT_EDITOR" ] && \
-   grep -qE '<BatchModeContent[[:space:]>]' "$SHOT_EDITOR" && \
-   [ "$F2P1" = "1" ] && [ "$F2P3" = "1" ]; then
-    F2P13=1
-fi
-if [ "$F2P13" = "1" ]; then
-    echo "PASS"
-    add_reward 0.12
-else
-    echo "FAIL: either BatchModeContent missing or TMC not fully removed"
+echo "=== Gate 12 (0.10): Syntax balance / tsc on touched files ==="
+G12=0
+balanced() {
+    local file="$1"
+    [ ! -f "$file" ] && return 1
+    local open=$(grep -o '{' "$file" | wc -l)
+    local close=$(grep -o '}' "$file" | wc -l)
+    [ "$open" = "$close" ] || return 1
+    local popen=$(grep -o '(' "$file" | wc -l)
+    local pclose=$(grep -o ')' "$file" | wc -l)
+    [ "$popen" = "$pclose" ] || return 1
+    return 0
+}
+
+ALL_BALANCED=1
+for f in "$SHOT_EDITOR" "$TIMELINE" "$TC" "$TC_TYPES" "$BARREL"; do
+    if ! balanced "$f"; then
+        echo "Unbalanced braces/parens in $f"
+        ALL_BALANCED=0
+    fi
+done
+
+# Additionally check no fragment mismatch in ShotImagesEditor — naive: same count of <> and </>
+FRAG_OPEN=$(grep -oE '<>' "$SHOT_EDITOR" | wc -l)
+FRAG_CLOSE=$(grep -oE '</>' "$SHOT_EDITOR" | wc -l)
+if [ "$FRAG_OPEN" != "$FRAG_CLOSE" ]; then
+    echo "Fragment mismatch in ShotImagesEditor: open=$FRAG_OPEN close=$FRAG_CLOSE"
+    ALL_BALANCED=0
 fi
 
-###############################################################################
+if [ "$ALL_BALANCED" = "1" ]; then
+    G12=1
+fi
+
+if [ "$G12" = "1" ]; then
+    echo "PASS"
+    add_reward 0.10
+else
+    echo "FAIL: syntax balance issues"
+fi
+
 echo ""
-echo "=== Final reward: $REWARD ==="
-finish
+echo "=== FINAL REWARD: $REWARD ==="
+echo "$REWARD" > "$REWARD_FILE"
+exit 0

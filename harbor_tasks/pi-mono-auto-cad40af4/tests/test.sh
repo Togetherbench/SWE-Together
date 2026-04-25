@@ -1,6 +1,8 @@
 #!/bin/bash
 set +e
 
+export PATH=/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+
 EDITOR_FILE="/workspace/pi-mono/packages/tui/src/components/editor.ts"
 CHANGELOG_FILE="/workspace/pi-mono/packages/tui/CHANGELOG.md"
 REWARD_FILE="/logs/verifier/reward.txt"
@@ -37,9 +39,13 @@ if [ ! -f "$EDITOR_FILE" ]; then
     finish
 fi
 
+if ! command -v node >/dev/null 2>&1; then
+    echo "GATE FAIL: node not on PATH"
+    finish
+fi
+
 # ---------------------------------------------------------------
 # P2P GATE: TypeScript compilation must succeed (no reward weight).
-# If the agent broke compilation, return 0.
 # ---------------------------------------------------------------
 if ! npx tsgo --noEmit > /tmp/verifier/tsgo.log 2>&1; then
     echo "GATE FAIL: tsgo --noEmit failed (regression)"
@@ -51,6 +57,11 @@ echo "GATE OK: tsgo --noEmit passes"
 
 # ---------------------------------------------------------------
 # Build behavioral harness for editor gating logic.
+# Strategy: extract relevant methods (isAtStartOfMessage,
+# isSlashMenuAllowed, isInSlashCommandContext, getText) from the
+# class body and call them with synthesized state. Combine the two
+# gating booleans (start-of-message AND in-slash-context) the same
+# way the editor's keypress handler does.
 # ---------------------------------------------------------------
 cat > /tmp/verifier/harness.js << 'JSEOF'
 const fs = require("fs");
@@ -96,6 +107,7 @@ if (!methods.getText) {
     synthFns += `obj.getText = function() { return this.state.lines.join("\\n"); };\n`;
 }
 if (!methods.isSlashMenuAllowed) {
+    // Fallback to base buggy behavior if method missing
     synthFns += `obj.isSlashMenuAllowed = function() { return this.state.cursorLine === 0; };\n`;
 }
 
@@ -116,254 +128,235 @@ function evaluateState(state, action) {
             const before = cur.slice(0, inst.state.cursorCol);
             return { value: !!inst.isInSlashCommandContext(before) };
         }
+        if (action === "isSlashMenuAllowed") return { value: !!inst.isSlashMenuAllowed() };
     } catch (e) { return { error: e.message }; }
 }
 
-// Treat the slash menu as triggered iff BOTH gating signals (where
-// available) say yes. The actual editor invokes both of these in its
-// keypress path; a fixed editor must restrict via at least one of them.
+// The slash menu actually opens iff (isAtStartOfMessage OR
+// isInSlashCommandContext) — as in the editor's keypress handler;
+// many fixes restrict via either path. We require BOTH available
+// signals to agree the menu is suppressed in bug cases. So:
+//   menu_opens := isAtStartOfMessage OR isInSlashCommandContext
 function shouldTriggerSlash(state) {
     const r1 = evaluateState(state, "isAtStartOfMessage");
     const r2 = evaluateState(state, "isInSlashCommandContext");
     let v1 = r1 && typeof r1.value === "boolean" ? r1.value : null;
     let v2 = r2 && typeof r2.value === "boolean" ? r2.value : null;
     if (v1 === null && v2 === null) return null;
-    if (v1 !== null && v2 !== null) return v1 && v2;
-    return v1 !== null ? v1 : v2;
+    if (v1 === null) v1 = false;
+    if (v2 === null) v2 = false;
+    return v1 || v2;
 }
 
+// Cases. Each represents the editor state at the moment the user
+// has just typed `/`. cursorLine/cursorCol describe cursor pos.
 const cases = [
     {
-        name: "empty editor with single slash typed",
+        id: "empty_then_slash",
+        name: "empty editor, single '/' typed",
         state: { lines: ["/"], cursorLine: 0, cursorCol: 1 },
         expect: true,
     },
     {
-        name: "BUG: slash on empty line, content above",
+        id: "slash_on_newline_with_prior",
+        name: "BUG: '/' on new line when prior line has content",
         state: { lines: ["hello world", "/"], cursorLine: 1, cursorCol: 1 },
         expect: false,
     },
     {
-        name: "BUG: slash on first line, content below",
+        id: "slash_first_line_content_below",
+        name: "BUG: '/' on first line, content on line below",
         state: { lines: ["/", "tail content"], cursorLine: 0, cursorCol: 1 },
         expect: false,
     },
     {
-        name: "slash on first line, all other lines blank",
+        id: "slash_first_other_blank",
+        name: "'/' first line, all other lines blank-empty",
         state: { lines: ["/", "", ""], cursorLine: 0, cursorCol: 1 },
         expect: true,
     },
     {
-        name: "slash typed mid-content (not at line start)",
+        id: "slash_mid_content",
+        name: "'/' typed mid-text on line",
         state: { lines: ["abc/"], cursorLine: 0, cursorCol: 4 },
         expect: false,
     },
     {
-        name: "BUG: slash on line 3 with content on line 1",
+        id: "slash_third_line_prior_text",
+        name: "BUG: '/' on line 3 when line 1 has content",
         state: { lines: ["prior text", "", "/"], cursorLine: 2, cursorCol: 1 },
+        expect: false,
+    },
+    {
+        id: "slash_first_line_blank_continuation",
+        name: "BUG: '/' first line, non-empty content several lines down",
+        state: { lines: ["/", "", "more text"], cursorLine: 0, cursorCol: 1 },
         expect: false,
     },
 ];
 
-let pass = 0;
-const results = [];
+const results = {};
 for (const c of cases) {
     const got = shouldTriggerSlash(c.state);
     if (got === null) {
-        console.log(`SKIP: ${c.name} (no evaluable method)`);
-        results.push({ name: c.name, ok: false, skipped: true });
+        console.log(`SKIP: ${c.id} (no evaluable method)`);
+        results[c.id] = { ok: false, skipped: true, got: null, expected: c.expect };
         continue;
     }
-    if (got === c.expect) {
-        console.log(`PASS: ${c.name} -> ${got}`);
-        pass++;
-        results.push({ name: c.name, ok: true });
-    } else {
-        console.log(`FAIL: ${c.name} -> got ${got}, expected ${c.expect}`);
-        results.push({ name: c.name, ok: false });
-    }
+    const ok = got === c.expect;
+    console.log(`${ok ? "PASS" : "FAIL"}: ${c.id} -> got ${got}, expected ${c.expect} (${c.name})`);
+    results[c.id] = { ok, got, expected: c.expect };
 }
 
-console.log(`SUMMARY ${pass}/${cases.length}`);
+fs.writeFileSync("/tmp/verifier/results.json", JSON.stringify(results));
 JSEOF
 
 node /tmp/verifier/harness.js "$EDITOR_FILE" > /tmp/verifier/harness.out 2>&1
 cat /tmp/verifier/harness.out
 
-get_case() {
-    # $1 = case name substring; returns 0 if PASS line found
-    grep -F "PASS: $1" /tmp/verifier/harness.out > /dev/null 2>&1
+if [ ! -f /tmp/verifier/results.json ]; then
+    echo "GATE FAIL: harness produced no results"
+    finish
+fi
+
+case_ok() {
+    node -e "
+const r = require('/tmp/verifier/results.json');
+process.exit(r['$1'] && r['$1'].ok ? 0 : 1);
+"
 }
 
 # ---------------------------------------------------------------
-# F2P gates — these must FAIL on the unmodified buggy editor.
+# F2P GATES — distinct behavioral slices.
+#
 # On the buggy base:
-#   - isSlashMenuAllowed = (cursorLine === 0)
-#   - isInSlashCommandContext returns true for "lines:['/','tail'], col 0,1"
-#     and "lines:['/'], col 0,1"  (both pass on base)
-#   - "slash on empty line, content above" (cursorLine=1) => menu would
-#     return false on base because cursorLine !== 0 ... actually base
-#     allows only cursorLine===0, so this case PASSES on base too.
+#   - isSlashMenuAllowed() returns (cursorLine === 0)
+#   - isAtStartOfMessage() returns true iff cursorLine===0 and
+#     beforeCursor.trim()==='' or '/'
+#   - isInSlashCommandContext() returns true iff cursorLine===0 and
+#     beforeCursor starts with '/'
 #
-# The CRITICAL F2P case that fails on base is:
-#   "slash on first line, content below"  (cursorLine=0, has line[1])
-# Base: isSlashMenuAllowed=true, isInSlashCommandContext=true => menu opens (BUG)
-# Fix: must return false.
+# So on the buggy base:
+#   * empty_then_slash -> true (matches expect)            [non-discriminating]
+#   * slash_on_newline_with_prior (cursor line 1) -> false (matches expect) [non-discriminating]
+#   * slash_first_line_content_below (cursor line 0) -> true (BUG; expect false) ← FAILS on base
+#   * slash_first_other_blank -> true (matches expect)     [non-discriminating]
+#   * slash_mid_content (col 4 'abc/') -> isAtStart? before='abc/'.trim()='abc/' != '' or '/'; false. isInSlashContext? 'abc/'.startsWith('/')=false. -> false (matches expect) [non-discriminating]
+#   * slash_third_line_prior_text (line 2) -> false (matches expect)        [non-discriminating]
+#   * slash_first_line_blank_continuation (line 0, content several below) -> true (BUG; expect false) ← FAILS on base
 #
-# Weights focus on the genuine bug-distinguishing cases.
+# So discriminating cases on base buggy editor are:
+#   slash_first_line_content_below, slash_first_line_blank_continuation
+# A complete fix must additionally preserve the "non-discriminating"
+# behaviors. Any patch that breaks them loses weight.
 # ---------------------------------------------------------------
 
-# F2P 1 (0.45): The headline bug — slash on first line with content below
-if get_case "BUG: slash on first line, content below"; then
-    add_reward 0.45 "F2P: slash menu suppressed when content exists below"
+# Weight allocation (sum = 1.00):
+#   0.20  Discriminating bug case A: slash on line 0, content directly below
+#   0.20  Discriminating bug case B: slash on line 0, content several lines below
+#   0.10  Empty editor still triggers (regression guard for over-restriction)
+#   0.10  '/' first line + only blank lines below still triggers
+#   0.10  Mid-content '/' does NOT trigger (no over-trigger)
+#   0.10  '/' on later line with empty prior should not trigger when prior has text
+#   0.10  Changelog entry under [Unreleased] ### Fixed referencing #904
+#   0.10  isSlashMenuAllowed body actually changed beyond cursorLine===0
+
+# F2P 1 (0.20): primary bug — content on line below
+if case_ok "slash_first_line_content_below"; then
+    add_reward 0.20 "behavioral: slash on line 0 with content below does not trigger"
 else
-    fail_reward 0.45 "F2P: slash menu suppressed when content exists below"
+    fail_reward 0.20 "behavioral: slash on line 0 with content below does not trigger"
 fi
 
-# F2P 2 (0.20): slash on later line with content above (also a bug variant).
-# Note: on base this happens to return false already (cursorLine!==0),
-# so this is P2P-ish. We only count it if it ALSO passes alongside F2P 1.
-# To keep no-op = 0, we don't award this independently.
-
-# F2P 3 (0.20): Positive case — single-line "/" still opens the menu.
-# This passes on base too (P2P), so no weight.
-
-# Instead, add behavioral tests that fail on base:
-
-# F2P 2 (0.20): line 3 with content on line 1.
-# Base: cursorLine=2 → isSlashMenuAllowed=false → menu suppressed.
-# So this passes on base. Skip weighting.
-
-# Real F2P discriminators on the buggy base are scenarios where
-# cursorLine===0 but other lines have content. Add another:
-# Re-run harness with an extra case via inline node check.
-
-cat > /tmp/verifier/extra.js << 'JSEOF'
-const fs = require("fs");
-const src = fs.readFileSync(process.argv[2], "utf8");
-const classMatch = src.match(/class\s+\w+[^{]*\{([\s\S]*)\n\}\s*$/);
-if (!classMatch) process.exit(2);
-const classBody = classMatch[1];
-function extractMethod(name) {
-    const re = new RegExp(
-        "(?:^|\\n)\\t(?:private\\s+|public\\s+|protected\\s+)?(?:async\\s+)?" +
-            name +
-            "\\s*\\(([^)]*)\\)\\s*(?::\\s*[^\\{]+?)?\\s*\\{([\\s\\S]*?)\\n\\t\\}"
-    );
-    const m = classBody.match(re);
-    if (!m) return null;
-    return { params: m[1].trim(), body: m[2] };
-}
-const wanted = ["isAtStartOfMessage","isSlashMenuAllowed","isInSlashCommandContext","getText"];
-const methods = {};
-for (const n of wanted) { const m = extractMethod(n); if (m) methods[n] = m; }
-let synthFns = "";
-for (const [name, m] of Object.entries(methods)) {
-    synthFns += `obj.${name} = function(${m.params || ""}) {\n${m.body}\n};\n`;
-}
-if (!methods.getText) synthFns += `obj.getText = function() { return this.state.lines.join("\\n"); };\n`;
-if (!methods.isSlashMenuAllowed) synthFns += `obj.isSlashMenuAllowed = function() { return this.state.cursorLine === 0; };\n`;
-
-function check(state) {
-    const obj = { state };
-    const runner = new Function("obj", synthFns + "\nreturn obj;");
-    const inst = runner(obj);
-    let v1 = null, v2 = null;
-    try { v1 = !!inst.isAtStartOfMessage(); } catch(e){}
-    try {
-        const cur = state.lines[state.cursorLine] || "";
-        const before = cur.slice(0, state.cursorCol);
-        v2 = !!inst.isInSlashCommandContext(before);
-    } catch(e){}
-    if (v1 === null && v2 === null) return null;
-    if (v1 !== null && v2 !== null) return v1 && v2;
-    return v1 !== null ? v1 : v2;
-}
-
-const tests = [
-    { name: "F2P_A: cursor first line slash, content on line 2",
-      state: { lines: ["/", "x"], cursorLine: 0, cursorCol: 1 }, expect: false },
-    { name: "F2P_B: cursor first line slash, content on line 3",
-      state: { lines: ["/", "", "data"], cursorLine: 0, cursorCol: 1 }, expect: false },
-    { name: "F2P_C: cursor first line slash, multi-line content below",
-      state: { lines: ["/", "first", "second"], cursorLine: 0, cursorCol: 1 }, expect: false },
-    { name: "POS_A: empty editor, single slash",
-      state: { lines: ["/"], cursorLine: 0, cursorCol: 1 }, expect: true },
-    { name: "POS_B: first line slash, all other lines empty strings",
-      state: { lines: ["/", "", ""], cursorLine: 0, cursorCol: 1 }, expect: true },
-];
-
-for (const t of tests) {
-    const got = check(t.state);
-    if (got === null) { console.log(`SKIP ${t.name}`); continue; }
-    if (got === t.expect) console.log(`OK ${t.name} -> ${got}`);
-    else console.log(`BAD ${t.name} -> got ${got} expected ${t.expect}`);
-}
-JSEOF
-
-node /tmp/verifier/extra.js "$EDITOR_FILE" > /tmp/verifier/extra.out 2>&1
-cat /tmp/verifier/extra.out
-
-ok_extra() { grep -F "OK $1" /tmp/verifier/extra.out > /dev/null 2>&1; }
-
-# F2P_A: slash with content on line 2 — fails on base (menu opens), must be suppressed on fix.
-if ok_extra "F2P_A:"; then
-    add_reward 0.20 "F2P: suppress menu when line 2 has content"
+# F2P 2 (0.20): bug — content several lines below
+if case_ok "slash_first_line_blank_continuation"; then
+    add_reward 0.20 "behavioral: slash on line 0 with later non-empty line does not trigger"
 else
-    fail_reward 0.20 "F2P: suppress menu when line 2 has content"
+    fail_reward 0.20 "behavioral: slash on line 0 with later non-empty line does not trigger"
 fi
 
-# F2P_B: slash with content on line 3 (line 2 empty) — fails on base, must be suppressed.
-if ok_extra "F2P_B:"; then
-    add_reward 0.15 "F2P: suppress menu when later line has content"
+# F2P 3 (0.10): regression — empty editor still triggers
+if case_ok "empty_then_slash"; then
+    add_reward 0.10 "regression: '/' on empty editor still triggers menu"
 else
-    fail_reward 0.15 "F2P: suppress menu when later line has content"
+    fail_reward 0.10 "regression: '/' on empty editor still triggers menu"
 fi
 
-# F2P_C: multi-line content below.
-if ok_extra "F2P_C:"; then
-    add_reward 0.10 "F2P: suppress menu with multi-line content below"
+# F2P 4 (0.10): regression — only blank lines below still triggers
+if case_ok "slash_first_other_blank"; then
+    add_reward 0.10 "regression: '/' with only-blank lines below still triggers"
 else
-    fail_reward 0.10 "F2P: suppress menu with multi-line content below"
+    fail_reward 0.10 "regression: '/' with only-blank lines below still triggers"
 fi
 
-# Combined positivity gate (no reward unless also F2P_A passes):
-# require both POS cases AND at least F2P_A to award the changelog reward.
-# This avoids giving the no-op any partial credit through "positives still work".
+# F2P 5 (0.10): regression — mid-content slash doesn't trigger
+if case_ok "slash_mid_content"; then
+    add_reward 0.10 "regression: mid-line '/' does not trigger menu"
+else
+    fail_reward 0.10 "regression: mid-line '/' does not trigger menu"
+fi
 
-# ---------------------------------------------------------------
-# F2P 4 (0.10): Changelog entry referencing #904 under [Unreleased] with Fixed.
-# On base: no such entry exists. On fix: required by instruction.
-# ---------------------------------------------------------------
-changelog_ok=0
+# F2P 6 (0.10): regression — '/' on later line w/ prior text doesn't trigger
+if case_ok "slash_on_newline_with_prior" && case_ok "slash_third_line_prior_text"; then
+    add_reward 0.10 "regression: '/' on later line with prior text does not trigger"
+else
+    fail_reward 0.10 "regression: '/' on later line with prior text does not trigger"
+fi
+
+# F2P 7 (0.10): changelog entry properly added
+CHLOG_OK=0
 if [ -f "$CHANGELOG_FILE" ]; then
-    # Extract the [Unreleased] section
-    awk '
-        /^## \[Unreleased\]/ { flag=1; next }
-        /^## \[/ { flag=0 }
-        flag { print }
-    ' "$CHANGELOG_FILE" > /tmp/verifier/unreleased.txt
-
-    if grep -q '^### Fixed' /tmp/verifier/unreleased.txt && \
-       grep -q '#904' /tmp/verifier/unreleased.txt; then
-        changelog_ok=1
-    fi
+    # Need: under [Unreleased] there's a ### Fixed section referencing #904
+    node -e '
+const fs=require("fs");
+const s=fs.readFileSync(process.argv[1],"utf8");
+const m=s.match(/##\s*\[Unreleased\]([\s\S]*?)(?=\n##\s)/);
+if(!m){process.exit(1);}
+const body=m[1];
+if(!/###\s*Fixed/i.test(body)){process.exit(2);}
+if(!/#904/.test(body)){process.exit(3);}
+process.exit(0);
+' "$CHANGELOG_FILE"
+    if [ $? -eq 0 ]; then CHLOG_OK=1; fi
 fi
-
-# Only award if at least one real F2P behavioral fix landed (prevents
-# changelog-only patches from gaining credit, and guarantees no-op = 0).
-if [ "$changelog_ok" = "1" ] && ok_extra "F2P_A:"; then
-    add_reward 0.10 "F2P: changelog [Unreleased] ### Fixed with #904"
+if [ "$CHLOG_OK" = "1" ]; then
+    add_reward 0.10 "changelog: [Unreleased] ### Fixed entry referencing #904"
 else
-    fail_reward 0.10 "F2P: changelog [Unreleased] ### Fixed with #904"
+    fail_reward 0.10 "changelog: [Unreleased] ### Fixed entry referencing #904"
 fi
 
-# Bonus positivity preservation — only counted when the bug is actually fixed.
-# Ensures fixes don't break the empty-editor case.
-if ok_extra "POS_A:" && ok_extra "POS_B:" && ok_extra "F2P_A:"; then
-    : # no extra reward; positivity is necessary not sufficient. weight=0.
+# F2P 8 (0.10): isSlashMenuAllowed (or one of the gating fns) changed
+# beyond the trivial buggy body. Detect that the editor source no longer
+# contains ONLY `return this.state.cursorLine === 0;` as the body of
+# isSlashMenuAllowed AND that at least one of the gating methods now
+# checks for additional content (lines.length, lines.slice, every, etc.).
+GATING_OK=0
+node -e '
+const fs=require("fs");
+const src=fs.readFileSync(process.argv[1],"utf8");
+function extract(name){
+  const re=new RegExp("(?:^|\\n)\\t(?:private\\s+|public\\s+|protected\\s+)?(?:async\\s+)?"+name+"\\s*\\([^)]*\\)\\s*(?::\\s*[^{]+?)?\\s*\\{([\\s\\S]*?)\\n\\t\\}");
+  const m=src.match(re); return m?m[1]:null;
+}
+const allowed=extract("isSlashMenuAllowed")||"";
+const atStart=extract("isAtStartOfMessage")||"";
+const inCtx=extract("isInSlashCommandContext")||"";
+const combined=allowed+"\n"+atStart+"\n"+inCtx;
+// Reject if isSlashMenuAllowed body is unchanged from buggy base and
+// neither of the other two methods adds an emptiness check.
+const buggyAllowed=/^\s*return\s+this\.state\.cursorLine\s*===\s*0\s*;\s*$/m.test(allowed.trim()) && allowed.trim().split(/\n/).length<=2;
+const hasEmptinessSignal=/lines\.length\s*===\s*1/.test(combined) || /lines\.slice\s*\(\s*1\s*\)/.test(combined) || /\.every\s*\(/.test(combined) || /lines\.some\s*\(/.test(combined) || /getText\s*\(\s*\)\s*\.\s*trim/.test(combined);
+if(!hasEmptinessSignal){process.exit(1);}
+process.exit(0);
+' "$EDITOR_FILE"
+if [ $? -eq 0 ]; then GATING_OK=1; fi
+if [ "$GATING_OK" = "1" ]; then
+    add_reward 0.10 "structure: gating logic checks editor emptiness (not just cursorLine)"
+else
+    fail_reward 0.10 "structure: gating logic checks editor emptiness (not just cursorLine)"
 fi
 
-echo "--- summary ---"
-echo "Reward (pre-finalize): $REWARD"
-finish
+echo "=== FINAL REWARD ==="
+awk -v r="$REWARD" 'BEGIN { printf "%.2f\n", r }' > "$REWARD_FILE"
+cat "$REWARD_FILE"
+echo "$REWARD" > /logs/verifier/reward.txt

@@ -1,6 +1,8 @@
 #!/bin/bash
 set +e
 
+export PATH=/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+
 # Find workspace
 WORKSPACE=""
 for candidate in /workspace/ComfyUI /workspace/repo /workspace/comfyui; do
@@ -10,7 +12,7 @@ for candidate in /workspace/ComfyUI /workspace/repo /workspace/comfyui; do
     fi
 done
 if [ -z "$WORKSPACE" ]; then
-    found=$(find /workspace -maxdepth 4 -path '*/comfy/text_encoders/llama.py' 2>/dev/null | head -1)
+    found=$(find /workspace -maxdepth 5 -path '*/comfy/text_encoders/llama.py' 2>/dev/null | head -1)
     if [ -n "$found" ]; then
         WORKSPACE=$(dirname "$(dirname "$(dirname "$found")")")
     fi
@@ -20,7 +22,13 @@ RESULT_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 REWARD=0.0
 
+emit_and_exit() {
+    echo "$REWARD" > "$RESULT_FILE"
+    exit 0
+}
+
 emit_zero_and_exit() {
+    REWARD=0.0
     echo "0.0" > "$RESULT_FILE"
     exit 0
 }
@@ -49,7 +57,7 @@ if [ $? -ne 0 ]; then
     emit_zero_and_exit
 fi
 
-# Build a portable mock harness that exec's the source with mocked deps.
+# Build a portable mock harness
 cat > /tmp/mock_setup.py << MOCKEOF
 import sys, os, types, torch, math, logging
 from typing import Optional, Any
@@ -64,20 +72,31 @@ def _rms(x, w, e):
 
 captured_masks = []
 captured_q_shapes = []
+captured_call_count = [0]
 
 def make_oafd():
     def fn(q, k2, v, heads, mask=None, skip_reshape=False):
+        captured_call_count[0] += 1
         if mask is not None:
-            captured_masks.append(mask.clone().detach().float())
+            try:
+                captured_masks.append(mask.clone().detach().float())
+            except Exception:
+                captured_masks.append(None)
         else:
             captured_masks.append(None)
         captured_q_shapes.append(tuple(q.shape))
-        s = q.shape[-1] ** -0.5
-        sc = torch.matmul(q, k2.transpose(-2, -1)) * s
+        if skip_reshape:
+            qq, kk, vv = q, k2, v
+        else:
+            qq, kk, vv = q, k2, v
+        s = qq.shape[-1] ** -0.5
+        sc = torch.matmul(qq, kk.transpose(-2, -1)) * s
         if mask is not None:
             sc = sc + mask
-        out = torch.softmax(sc, dim=-1).matmul(v)
-        return out.transpose(1, 2).reshape(q.shape[0], q.shape[2], -1)
+        out = torch.softmax(sc, dim=-1).matmul(vv)
+        if skip_reshape:
+            return out.transpose(1, 2).reshape(qq.shape[0], qq.shape[2], -1)
+        return out
     return fn
 
 def _oafd(*a, **k):
@@ -95,14 +114,18 @@ for l in source.split("\n"):
 
 class _common_dit:
     rms_norm = staticmethod(_rms)
+class _attention_mod:
+    optimized_attention_for_device = staticmethod(_oafd)
+class _modules_mod:
+    attention = _attention_mod
 class _ldm:
     common_dit = _common_dit
-    class modules:
-        class attention:
-            optimized_attention_for_device = staticmethod(_oafd)
+    modules = _modules_mod
+class _model_management:
+    pass
 class _comfy:
     ldm = _ldm
-    class model_management: pass
+    model_management = _model_management
 
 ns = {
     "__builtins__": __builtins__, "torch": torch, "nn": torch.nn,
@@ -123,7 +146,7 @@ except Exception as e:
     LOAD_ERR = traceback.format_exc()
 MOCKEOF
 
-# ==== P2P GATE: module must load ====
+# ==== P2P GATE: module must load and required symbols exist ====
 LOAD_RES=$(python3 << 'PYEOF'
 exec(open("/tmp/mock_setup.py").read())
 if not LOAD_OK:
@@ -146,44 +169,58 @@ if ! echo "$LOAD_RES" | head -1 | grep -q "^PASS$"; then
 fi
 
 #################################################################
-# F2P 1 [0.15]: Config sliding_attention pattern correct
-# Base has [False, False, False, False, False, 1024] which is the
-# WRONG pattern (only layer 5 = sliding, rest global).
-# Correct pattern: positions 0-4 sliding, position 5 global.
+# F2P 1 [0.10]: Stale TODO/warning text removed (cleanup gate)
 #################################################################
-T1=$(python3 << 'PYEOF'
+src=$(cat "$TARGET_FILE")
+T1_PASS=1
+if echo "$src" | grep -qi "sliding attention not implemented"; then
+    T1_PASS=0
+fi
+if echo "$src" | grep -q "TODO: implement"; then
+    T1_PASS=0
+fi
+if [ "$T1_PASS" = "1" ]; then
+    add_score 0.10
+    echo "F2P1 PASS (cleanup)"
+else
+    echo "F2P1 FAIL (stale TODO/warning still present)"
+fi
+
+#################################################################
+# F2P 2 [0.15]: Config sliding_attention pattern correct
+# Sliding positions [0..4], global at position 5, window=1024.
+#################################################################
+T2=$(python3 << 'PYEOF'
 exec(open("/tmp/mock_setup.py").read())
 if not LOAD_OK:
     print("FAIL"); raise SystemExit
 config = ns["Gemma3_4B_Config"]()
-sa = config.sliding_attention
+sa = getattr(config, "sliding_attention", None)
 if not isinstance(sa, list) or len(sa) != 6:
-    print("FAIL"); raise SystemExit
+    print("FAIL: not list len 6"); raise SystemExit
 def is_sliding(v):
     return bool(v) and v != 0
 sliding_positions = [i for i, v in enumerate(sa) if is_sliding(v)]
 global_positions = [i for i, v in enumerate(sa) if not is_sliding(v)]
 if sliding_positions != [0,1,2,3,4] or global_positions != [5]:
-    print("FAIL"); raise SystemExit
+    print(f"FAIL pattern: {sa}"); raise SystemExit
 windows = [v for v in sa if is_sliding(v)]
 if not all(w == 1024 for w in windows):
-    print("FAIL"); raise SystemExit
+    print(f"FAIL window: {windows}"); raise SystemExit
 print("PASS")
 PYEOF
 )
-if [ "$T1" = "PASS" ]; then
+if echo "$T2" | grep -q "^PASS$"; then
     add_score 0.15
-    echo "F2P1 PASS"
+    echo "F2P2 PASS"
 else
-    echo "F2P1 FAIL"
+    echo "F2P2 FAIL: $T2"
 fi
 
 #################################################################
-# F2P 2 [0.15]: Per-layer mapping — layer 5 (and 11,17,...) is global,
-# others sliding. This requires correct config + correct index mapping.
-# Buggy base: layer 5 -> 1024 (sliding), layer 0 -> False (global) — INVERTED.
+# F2P 3 [0.15]: Per-layer index mapping — layer 5 is global, 0-4 sliding.
 #################################################################
-T2=$(python3 << 'PYEOF'
+T3=$(python3 << 'PYEOF'
 exec(open("/tmp/mock_setup.py").read())
 if not LOAD_OK:
     print("FAIL"); raise SystemExit
@@ -192,15 +229,12 @@ Block = ns["TransformerBlockGemma2"]
 def is_sliding(v):
     return bool(v) and v != 0
 try:
-    # layer 5 should be global
     b5 = Block(config, index=5, device="cpu", dtype=torch.float32)
     if is_sliding(b5.sliding_attention):
         print("FAIL: layer 5 sliding"); raise SystemExit
-    # layer 11 should be global
     b11 = Block(config, index=11, device="cpu", dtype=torch.float32)
     if is_sliding(b11.sliding_attention):
         print("FAIL: layer 11 sliding"); raise SystemExit
-    # layers 0,1,2,3,4 should be sliding
     for idx in [0,1,2,3,4,6,7,10]:
         b = Block(config, index=idx, device="cpu", dtype=torch.float32)
         if not is_sliding(b.sliding_attention):
@@ -214,218 +248,333 @@ except Exception as e:
 print("PASS")
 PYEOF
 )
-if [ "$T2" = "PASS" ]; then
+if echo "$T3" | grep -q "^PASS$"; then
     add_score 0.15
-    echo "F2P2 PASS"
-else
-    echo "F2P2 FAIL"
-fi
-
-#################################################################
-# F2P 3 [0.10]: Stale TODO/warning text removed
-# Base has both. Real fix removes them.
-#################################################################
-src=$(cat "$TARGET_FILE")
-T3_PASS=1
-if echo "$src" | grep -qi "sliding attention not implemented"; then
-    T3_PASS=0
-fi
-if echo "$src" | grep -qi "TODO: implement"; then
-    # Specifically the sliding-attention TODO
-    if echo "$src" | grep -B1 -A1 "TODO: implement" | grep -qi "sliding"; then
-        T3_PASS=0
-    fi
-fi
-if [ $T3_PASS -eq 1 ]; then
-    add_score 0.10
     echo "F2P3 PASS"
 else
-    echo "F2P3 FAIL"
+    echo "F2P3 FAIL: $T3"
 fi
 
 #################################################################
-# F2P 4 [0.35]: Sliding window mask correctness via forward pass
-# Run the gemma3 model on a sliding-attention layer with seq_len > window
-# (using a small window override) and verify:
-#   - mask passed to attention has -inf for keys outside window
-#   - mask has 0 (or finite) for keys inside window
-#   - causal direction respected (queries cannot attend to keys >= window positions in past)
+# F2P 4 [0.25]: Behavioral — sliding window mask actually applied at attention.
+# Build a Gemma3 block with a tiny window and run forward; verify the mask
+# passed into optimized_attention has -inf entries where (q - k) >= window.
 #################################################################
 T4=$(python3 << 'PYEOF'
-import torch
 exec(open("/tmp/mock_setup.py").read())
 if not LOAD_OK:
-    print("FAIL: load"); raise SystemExit
+    print("FAIL load"); raise SystemExit
+
+import torch
+
+# Build a minimal Gemma3-ish config by patching window size
 try:
-    config = ns["Gemma3_4B_Config"]()
+    Cfg = ns["Gemma3_4B_Config"]
     Block = ns["TransformerBlockGemma2"]
-
-    # Use small window to make seq_len > window feasible
-    config.sliding_attention = [4, 4, 4, 4, 4, False]
-    config.num_hidden_layers = 6
-    config.hidden_size = 64
-    config.num_attention_heads = 4
-    config.num_key_value_heads = 2
-    config.intermediate_size = 128
-    config.head_dim = 16
-
-    block = Block(config, index=0, device="cpu", dtype=torch.float32)
-
-    seq_len = 12
-    x = torch.randn(1, seq_len, 64)
-    # Build freqs_cis: gemma3 expects [local, global], each (seq_len, head_dim/2) complex-style.
-    # Try common shapes; accept failure gracefully.
-    head_dim = 16
-    # try (cos, sin) pair or complex tensor; simplest: complex
-    t = torch.arange(seq_len).float().unsqueeze(1)
-    inv = 1.0 / (10000 ** (torch.arange(0, head_dim, 2).float() / head_dim))
-    freqs = t * inv.unsqueeze(0)
-    freqs_cis_local = torch.polar(torch.ones_like(freqs), freqs)
-    inv2 = 1.0 / (1000000 ** (torch.arange(0, head_dim, 2).float() / head_dim))
-    freqs2 = t * inv2.unsqueeze(0)
-    freqs_cis_global = torch.polar(torch.ones_like(freqs2), freqs2)
-    freqs_cis = (freqs_cis_local, freqs_cis_global)
-
-    captured_masks.clear()
-    captured_q_shapes.clear()
-    try:
-        out = block(x, attention_mask=None, freqs_cis=freqs_cis, optimized_attention=ns["optimized_attention_for_device"]())
-    except Exception as e:
-        # Try alternative freqs_cis as tuple of (cos, sin)
-        cos_l = torch.cos(freqs); sin_l = torch.sin(freqs)
-        cos_g = torch.cos(freqs2); sin_g = torch.sin(freqs2)
-        freqs_cis = ((cos_l, sin_l), (cos_g, sin_g))
-        captured_masks.clear()
-        captured_q_shapes.clear()
-        try:
-            out = block(x, attention_mask=None, freqs_cis=freqs_cis, optimized_attention=ns["optimized_attention_for_device"]())
-        except Exception as e2:
-            print(f"FAIL: forward error: {e2}"); raise SystemExit
-
-    if not captured_masks or captured_masks[0] is None:
-        print("FAIL: no mask captured"); raise SystemExit
-
-    mask = captured_masks[0]
-    # mask shape may be [seq, seq] or broadcastable to [b, h, seq, seq]
-    while mask.dim() > 2:
-        mask = mask[0]
-    if mask.shape[-2:] != (seq_len, seq_len):
-        print(f"FAIL: mask shape {mask.shape}"); raise SystemExit
-
-    window = 4
-    # Required: mask[i, j] == -inf when (i - j) >= window  (key too far in past)
-    # Required: mask[i, j] is finite (not -inf) when 0 <= (i - j) < window
-    fails = []
-    for i in range(seq_len):
-        for j in range(seq_len):
-            v = float(mask[i, j])
-            d = i - j
-            if d >= window:
-                if v > -1e30:
-                    fails.append(f"({i},{j}) d={d} expected -inf got {v}")
-            elif 0 <= d < window:
-                if v < -1e30:
-                    fails.append(f"({i},{j}) d={d} expected finite got {v}")
-    if fails:
-        print("FAIL:", fails[:3]); raise SystemExit
-    print("PASS")
-except SystemExit:
-    raise
 except Exception as e:
-    import traceback
-    print(f"FAIL: {e}")
-    traceback.print_exc()
+    print(f"FAIL symbols: {e}"); raise SystemExit
+
+# Make a small config: shrink hidden sizes for speed by editing fields if dataclass
+config = Cfg()
+
+# Override sliding window to small value for testing
+try:
+    config.sliding_attention = [4, 4, 4, 4, 4, False]
+except Exception as e:
+    print(f"FAIL override: {e}"); raise SystemExit
+
+# Try to shrink dimensions. If frozen, fall back to original.
+seq_len = 12
+hidden = config.hidden_size
+
+# Build sliding-layer (idx=0) and global-layer (idx=5) blocks
+try:
+    block_local = Block(config, index=0, device="cpu", dtype=torch.float32)
+    block_global = Block(config, index=5, device="cpu", dtype=torch.float32)
+except Exception as e:
+    print(f"FAIL block construct: {e}"); raise SystemExit
+
+# Determine head_dim
+head_dim = getattr(config, "head_dim", 128)
+n_heads = config.num_attention_heads
+
+# Build dummy x and freqs_cis shaped to bypass rope (rope needs (cos, sin) tuples)
+x = torch.randn(1, seq_len, hidden, dtype=torch.float32)
+
+# freqs_cis is expected to be a list/tuple of [local, global] each (cos, sin) of shape (seq_len, head_dim)
+def make_freqs(seq_len, head_dim):
+    pos = torch.arange(seq_len, dtype=torch.float32)
+    inv = 1.0 / (10000 ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim))
+    freqs = torch.outer(pos, inv)
+    cos = torch.cos(freqs).repeat_interleave(2, dim=-1)
+    sin = torch.sin(freqs).repeat_interleave(2, dim=-1)
+    return (cos, sin)
+
+freqs_local = make_freqs(seq_len, head_dim)
+freqs_global = make_freqs(seq_len, head_dim)
+freqs_cis = [freqs_local, freqs_global]
+
+# Get the optimized_attention callable used by self_attn
+oa = ns["optimized_attention_for_device"]("cpu")
+
+# Reset capture lists
+captured_masks.clear()
+captured_q_shapes.clear()
+captured_call_count[0] = 0
+
+# Local layer forward — should apply sliding window mask
+try:
+    _ = block_local(x, attention_mask=None, freqs_cis=freqs_cis, optimized_attention=oa)
+except Exception as e:
+    import traceback; traceback.print_exc()
+    print(f"FAIL local fwd: {e}"); raise SystemExit
+
+if len(captured_masks) < 1:
+    print("FAIL: no attn call captured for local"); raise SystemExit
+
+mask_local = captured_masks[-1]
+if mask_local is None:
+    print("FAIL: local layer passed no mask (sliding window not applied)"); raise SystemExit
+
+# Validate sliding window structure: window=4
+# For q-row i, key j is allowed iff (i - j) < 4 (and j <= i for causal? not enforced here)
+# We don't require causal — only that positions with i - j >= 4 are -inf.
+window = 4
+m2d = mask_local
+# Reduce to 2D (seq, seq) by squeezing batch/head dims
+while m2d.dim() > 2:
+    m2d = m2d[0]
+if m2d.shape[-2:] != (seq_len, seq_len):
+    print(f"FAIL mask shape: {tuple(m2d.shape)}"); raise SystemExit
+
+ok = True
+checked_blocked = 0
+checked_allowed = 0
+for i in range(seq_len):
+    for j in range(seq_len):
+        v = m2d[i, j].item()
+        if (i - j) >= window:
+            # Must be -inf or extremely negative
+            if not (v < -1e30 or v == float("-inf")):
+                ok = False
+            else:
+                checked_blocked += 1
+        # We don't insist on what's at (j - i) >= window since that depends on whether mask is symmetric or causal-style.
+        # But within window (|i - j| < window), and for j <= i, mask should not be -inf.
+        if (i - j) >= 0 and (i - j) < window:
+            if v < -1e30 or v == float("-inf"):
+                ok = False
+            else:
+                checked_allowed += 1
+
+if not ok:
+    print(f"FAIL mask values wrong (blocked={checked_blocked}, allowed={checked_allowed})"); raise SystemExit
+if checked_blocked < 1 or checked_allowed < 1:
+    print(f"FAIL mask coverage too low (blocked={checked_blocked}, allowed={checked_allowed})"); raise SystemExit
+
+# Now global layer — should NOT apply sliding window (mask should be None or no -inf entries from sliding)
+captured_masks.clear()
+captured_q_shapes.clear()
+try:
+    _ = block_global(x, attention_mask=None, freqs_cis=freqs_cis, optimized_attention=oa)
+except Exception as e:
+    print(f"FAIL global fwd: {e}"); raise SystemExit
+
+mask_global = captured_masks[-1] if captured_masks else None
+if mask_global is not None:
+    g2d = mask_global
+    while g2d.dim() > 2:
+        g2d = g2d[0]
+    # Global layer must NOT have -inf at sliding-window positions (i.e., shouldn't be sliding)
+    # check position (5,0): with window=4, i-j=5 >= 4 — local would block, global must not
+    if g2d.shape[-2:] == (seq_len, seq_len):
+        if g2d[5, 0].item() < -1e30:
+            print("FAIL: global layer applied sliding mask"); raise SystemExit
+
+print("PASS")
 PYEOF
 )
-if [ "$T4" = "PASS" ]; then
-    add_score 0.35
-    echo "F2P4 PASS"
+if echo "$T4" | grep -q "^PASS$"; then
+    add_score 0.25
+    echo "F2P4 PASS (behavioral mask)"
 else
     echo "F2P4 FAIL: $T4"
 fi
 
 #################################################################
-# F2P 5 [0.15]: Sliding mask combines with existing attention mask
-# Provide a non-None attention_mask and verify final mask still has the
-# sliding constraint (out-of-window positions are -inf).
+# F2P 5 [0.15]: Mask combines with existing attention_mask (additive)
+# Pass an attention_mask of zeros (no-op causal-like) and verify sliding mask is added,
+# not replaced.
 #################################################################
 T5=$(python3 << 'PYEOF'
-import torch
 exec(open("/tmp/mock_setup.py").read())
 if not LOAD_OK:
-    print("FAIL: load"); raise SystemExit
+    print("FAIL"); raise SystemExit
+import torch
+Cfg = ns["Gemma3_4B_Config"]
+Block = ns["TransformerBlockGemma2"]
+config = Cfg()
 try:
-    config = ns["Gemma3_4B_Config"]()
-    Block = ns["TransformerBlockGemma2"]
-    config.sliding_attention = [3, 3, 3, 3, 3, False]
-    config.num_hidden_layers = 6
-    config.hidden_size = 64
-    config.num_attention_heads = 4
-    config.num_key_value_heads = 2
-    config.intermediate_size = 128
-    config.head_dim = 16
-
-    block = Block(config, index=0, device="cpu", dtype=torch.float32)
-
-    seq_len = 10
-    x = torch.randn(1, seq_len, 64)
-    head_dim = 16
-    t = torch.arange(seq_len).float().unsqueeze(1)
-    inv = 1.0 / (10000 ** (torch.arange(0, head_dim, 2).float() / head_dim))
-    freqs = t * inv.unsqueeze(0)
-    inv2 = 1.0 / (1000000 ** (torch.arange(0, head_dim, 2).float() / head_dim))
-    freqs2 = t * inv2.unsqueeze(0)
-
-    # Provide an existing mask with all zeros (causal/full visible) — sliding must still cut it down
-    existing_mask = torch.zeros(seq_len, seq_len)
-
-    success = False
-    for fc in [
-        (torch.polar(torch.ones_like(freqs), freqs), torch.polar(torch.ones_like(freqs2), freqs2)),
-        ((torch.cos(freqs), torch.sin(freqs)), (torch.cos(freqs2), torch.sin(freqs2))),
-    ]:
-        captured_masks.clear()
-        try:
-            out = block(x, attention_mask=existing_mask, freqs_cis=fc, optimized_attention=ns["optimized_attention_for_device"]())
-            success = True
-            break
-        except Exception:
-            continue
-
-    if not success:
-        print("FAIL: forward failed"); raise SystemExit
-
-    if not captured_masks or captured_masks[0] is None:
-        print("FAIL: no mask"); raise SystemExit
-
-    mask = captured_masks[0]
-    while mask.dim() > 2:
-        mask = mask[0]
-
-    window = 3
-    # Out-of-window positions must still be -inf even when combined with zeros mask
-    bad = 0
-    for i in range(seq_len):
-        for j in range(seq_len):
-            d = i - j
-            if d >= window:
-                if float(mask[i, j]) > -1e30:
-                    bad += 1
-    if bad > 0:
-        print(f"FAIL: {bad} out-of-window positions not masked"); raise SystemExit
-    print("PASS")
-except SystemExit:
-    raise
+    config.sliding_attention = [4, 4, 4, 4, 4, False]
 except Exception as e:
-    print(f"FAIL: {e}")
+    print(f"FAIL: {e}"); raise SystemExit
+
+seq_len = 10
+hidden = config.hidden_size
+head_dim = getattr(config, "head_dim", 128)
+
+try:
+    block_local = Block(config, index=0, device="cpu", dtype=torch.float32)
+except Exception as e:
+    print(f"FAIL block: {e}"); raise SystemExit
+
+x = torch.randn(1, seq_len, hidden, dtype=torch.float32)
+
+def make_freqs(seq_len, head_dim):
+    pos = torch.arange(seq_len, dtype=torch.float32)
+    inv = 1.0 / (10000 ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim))
+    freqs = torch.outer(pos, inv)
+    cos = torch.cos(freqs).repeat_interleave(2, dim=-1)
+    sin = torch.sin(freqs).repeat_interleave(2, dim=-1)
+    return (cos, sin)
+
+freqs_cis = [make_freqs(seq_len, head_dim), make_freqs(seq_len, head_dim)]
+oa = ns["optimized_attention_for_device"]("cpu")
+
+# Existing attention mask: a distinctive marker value at position (0,0) we can detect
+existing = torch.zeros(seq_len, seq_len, dtype=torch.float32)
+MARKER = -7.5
+existing[0, 0] = MARKER  # within window so should remain combined
+existing[1, 1] = MARKER
+
+captured_masks.clear()
+try:
+    _ = block_local(x, attention_mask=existing, freqs_cis=freqs_cis, optimized_attention=oa)
+except Exception as e:
+    print(f"FAIL fwd: {e}"); raise SystemExit
+
+if not captured_masks or captured_masks[-1] is None:
+    print("FAIL: no mask after combining"); raise SystemExit
+
+m = captured_masks[-1]
+while m.dim() > 2:
+    m = m[0]
+
+# Marker at (0,0) and (1,1): these are within window (i==j), should be preserved (==MARKER, not 0, not -inf)
+v00 = m[0,0].item()
+v11 = m[1,1].item()
+if abs(v00 - MARKER) > 1e-3 or abs(v11 - MARKER) > 1e-3:
+    print(f"FAIL: existing mask not preserved (v00={v00}, v11={v11})"); raise SystemExit
+
+# Sliding window must still be applied: (5,0) should be -inf-ish
+window = 4
+v50 = m[5,0].item()
+if not (v50 < -1e30 or v50 == float("-inf")):
+    print(f"FAIL: sliding not applied after combining (v50={v50})"); raise SystemExit
+
+print("PASS")
 PYEOF
 )
-if [ "$T5" = "PASS" ]; then
-    add_score 0.10
-    echo "F2P5 PASS"
+if echo "$T5" | grep -q "^PASS$"; then
+    add_score 0.15
+    echo "F2P5 PASS (mask combine)"
 else
     echo "F2P5 FAIL: $T5"
 fi
 
-echo "TOTAL: $REWARD"
-echo "$REWARD" > /logs/verifier/reward.txt
+#################################################################
+# F2P 6 [0.10]: Local layer uses local RoPE (freqs_cis[0]),
+# global layer uses global RoPE (freqs_cis[1]).
+# We probe by giving distinguishable freqs per index and reading rotated q.
+#################################################################
+T6=$(python3 << 'PYEOF'
+exec(open("/tmp/mock_setup.py").read())
+if not LOAD_OK:
+    print("FAIL"); raise SystemExit
+import torch
+Cfg = ns["Gemma3_4B_Config"]
+Block = ns["TransformerBlockGemma2"]
+config = Cfg()
+try:
+    config.sliding_attention = [4, 4, 4, 4, 4, False]
+except Exception as e:
+    print(f"FAIL: {e}"); raise SystemExit
+
+seq_len = 6
+hidden = config.hidden_size
+head_dim = getattr(config, "head_dim", 128)
+
+try:
+    block_local = Block(config, index=0, device="cpu", dtype=torch.float32)
+    block_global = Block(config, index=5, device="cpu", dtype=torch.float32)
+except Exception as e:
+    print(f"FAIL: {e}"); raise SystemExit
+
+x = torch.randn(1, seq_len, hidden, dtype=torch.float32)
+
+# Use very distinct freqs: freqs_cis[0]=(zeros,zeros) so cos=0,sin=0 means rotated q = 0
+# freqs_cis[1]=(ones,zeros) means rotated q = q (cos=1,sin=0 -> identity)
+zeros_cs = (torch.zeros(seq_len, head_dim), torch.zeros(seq_len, head_dim))
+ones_cs = (torch.ones(seq_len, head_dim), torch.zeros(seq_len, head_dim))
+freqs_cis = [zeros_cs, ones_cs]
+
+oa = ns["optimized_attention_for_device"]("cpu")
+
+# Local layer: should use freqs_cis[0] = zeros => q after rope ~ 0 => attention scores all equal
+captured_masks.clear()
+captured_q_shapes.clear()
+captured_call_count[0] = 0
+
+# Capture q values too — extend mock
+import torch as _t
+q_capture = []
+def capture_fn(q, k2, v, heads, mask=None, skip_reshape=False):
+    q_capture.append(q.detach().clone())
+    s = q.shape[-1] ** -0.5
+    sc = _t.matmul(q, k2.transpose(-2, -1)) * s
+    if mask is not None:
+        sc = sc + mask
+    out = _t.softmax(sc, dim=-1).matmul(v)
+    if skip_reshape:
+        return out.transpose(1,2).reshape(q.shape[0], q.shape[2], -1)
+    return out
+
+try:
+    _ = block_local(x, attention_mask=None, freqs_cis=freqs_cis, optimized_attention=capture_fn)
+except Exception as e:
+    print(f"FAIL local fwd: {e}"); raise SystemExit
+
+if not q_capture:
+    print("FAIL: no q captured local"); raise SystemExit
+q_local = q_capture[-1]
+local_mag = q_local.abs().mean().item()
+
+q_capture.clear()
+try:
+    _ = block_global(x, attention_mask=None, freqs_cis=freqs_cis, optimized_attention=capture_fn)
+except Exception as e:
+    print(f"FAIL global fwd: {e}"); raise SystemExit
+
+if not q_capture:
+    print("FAIL: no q captured global"); raise SystemExit
+q_global = q_capture[-1]
+global_mag = q_global.abs().mean().item()
+
+# With freqs_local=zeros and freqs_global=ones, local rotated q should be much smaller magnitude
+# than global rotated q.
+if not (local_mag < global_mag * 0.5):
+    print(f"FAIL rope select: local_mag={local_mag} global_mag={global_mag}"); raise SystemExit
+
+print("PASS")
+PYEOF
+)
+if echo "$T6" | grep -q "^PASS$"; then
+    add_score 0.10
+    echo "F2P6 PASS (rope per-layer)"
+else
+    echo "F2P6 FAIL: $T6"
+fi
+
+echo "FINAL REWARD: $REWARD"
+echo "$REWARD" > "$RESULT_FILE"
+exit 0

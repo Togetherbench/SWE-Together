@@ -10,42 +10,49 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
   echo "0.0" > /logs/verifier/reward.txt; exit 0
 fi
 
-BASE_COMMIT="eba91a1905745415a4f4d5a91e7e246829cda566"
+export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
 
-# ---- HARD GATE 1: file exists & no conflict markers & compiles ----
-# On the buggy base, the file likely has unmerged conflict markers OR is a clean
-# pre-merge state. We need it parseable to even probe behavior.
+# ---- HARD GATES (P2P-style; gating only, no points) ----
 if [ ! -f arr-monitor.py ]; then
   echo "0.0" > /logs/verifier/reward.txt; exit 0
 fi
 
-if grep -nE '^(<{7}|={7}|>{7})' arr-monitor.py >/dev/null 2>&1; then
-  # Conflict markers present => agent failed to resolve merges => 0
+# Conflict markers => no merge happened
+if grep -nE '^(<{7}|={7}|>{7})( |$)' arr-monitor.py >/dev/null 2>&1; then
+  echo "Conflict markers present"
   echo "0.0" > /logs/verifier/reward.txt; exit 0
 fi
 
+# File must compile
 if ! python3 -m py_compile arr-monitor.py 2>/dev/null; then
+  echo "py_compile failed"
   echo "0.0" > /logs/verifier/reward.txt; exit 0
 fi
 
-# ---- HARD GATE 2: HEAD must have advanced past base (merges integrated) ----
-CURRENT_HEAD=$(git rev-parse HEAD 2>/dev/null)
-if [ "$CURRENT_HEAD" = "$BASE_COMMIT" ]; then
-  # No-op: HEAD unchanged. Even if compilation passes, no merge happened.
-  # But wait: if base is clean (no markers) and compiles, we still gate on F2P.
-  # The F2P below will catch it. Don't exit here.
-  :
+# No-op detection: if file is byte-identical to base, score 0
+BASE_COMMIT="eba91a1905745415a4f4d5a91e7e246829cda566"
+if git cat-file -e "${BASE_COMMIT}:arr-monitor.py" 2>/dev/null; then
+  if git diff --quiet "$BASE_COMMIT" -- arr-monitor.py 2>/dev/null; then
+    echo "No changes vs base"
+    echo "0.0" > /logs/verifier/reward.txt; exit 0
+  fi
 fi
 
 # ============================================================
-# F2P GATES (sum = 1.0). Each must FAIL on buggy base.
+# F2P GATES (weights sum to 1000 milli-points = 1.0)
+# Each tests a DIFFERENT slice of behavioral correctness:
+#   G1 (0.15): IGNORE_EXTENSIONS includes .exe and .msi (merge of fix-ignore-exe-extension)
+#   G2 (0.15): --add-new-processes flag visible in --help
+#   G3 (0.15): flag actually parses via argparse
+#   G4 (0.20): run_monitor signature accepts add_new_processes AND call site passes it
+#   G5 (0.20): runtime body actually scans for new processes (find_arr_processes inside loop region influenced by flag)
+#   G6 (0.15): --add-new-processes without --all errors with validation message
 # ============================================================
-SCORE=0
-# Use millis (x1000) for awk math.
 
-# ---- F2P 1 (0.20): IGNORE_EXTENSIONS contains all of .nfo, .exe, .msi ----
-# On buggy base (with conflict markers OR pre-merge), this set is incomplete.
-EXTS_RESULT=$(python3 - <<'EOF' 2>/dev/null
+SCORE=0
+
+# ---- G1 (0.15): IGNORE_EXTENSIONS extended ----
+G1_RES=$(python3 - <<'EOF' 2>/dev/null
 import ast
 try:
     src = open('/workspace/arr-monitor.py').read()
@@ -63,47 +70,77 @@ for node in ast.walk(tree):
                     found = None
 if found is None:
     print("NONE"); raise SystemExit
-required = {'.nfo', '.exe', '.msi'}
-have = required & set(found)
-print(f"HAVE:{len(have)}")
+s = set(found)
+need_new = {'.exe', '.msi'}
+need_old = {'.nfo'}
+ok_new = need_new.issubset(s)
+ok_old = need_old.issubset(s)
+if ok_new and ok_old:
+    print("FULL")
+elif ok_new and not ok_old:
+    print("LOST_OLD")
+elif ok_old and not ok_new:
+    print("MISSING_NEW")
+else:
+    print("BROKEN")
 EOF
 )
-case "$EXTS_RESULT" in
-  HAVE:3) SCORE=$((SCORE + 200)) ;;
-  HAVE:2) SCORE=$((SCORE + 130)) ;;
-  HAVE:1) SCORE=$((SCORE + 60))  ;;
+case "$G1_RES" in
+  FULL)        SCORE=$((SCORE + 150)) ;;
+  LOST_OLD)    SCORE=$((SCORE + 60))  ;;
+  MISSING_NEW) SCORE=$((SCORE + 30))  ;;
   *) ;;
 esac
 
-# ---- F2P 2 (0.25): --add-new-processes flag is in --help output ----
+# ---- G2 (0.15): --help shows --add-new-processes ----
 HELP_OUT=$(timeout 10 python3 arr-monitor.py --help 2>&1)
 HELP_RC=$?
-HELP_HAS_FLAG=0
+G2_OK=0
 if [ "$HELP_RC" -eq 0 ] && echo "$HELP_OUT" | grep -q -- '--add-new-processes'; then
-  HELP_HAS_FLAG=1
-  SCORE=$((SCORE + 250))
+  G2_OK=1
+  SCORE=$((SCORE + 150))
 fi
 
-# ---- F2P 3 (0.20): flag actually parses (argparse-registered) ----
-FLAG_PARSE_OK=0
-if [ "$HELP_HAS_FLAG" -eq 1 ]; then
-  PARSE_OUT=$(timeout 10 python3 arr-monitor.py --add-new-processes --help 2>&1)
-  PARSE_RC=$?
-  if [ "$PARSE_RC" -eq 0 ] && echo "$PARSE_OUT" | grep -q -- '--add-new-processes'; then
-    FLAG_PARSE_OK=1
-    SCORE=$((SCORE + 200))
-  else
-    # Try with --all in case it's gated
-    PARSE_OUT2=$(timeout 10 python3 arr-monitor.py --all --add-new-processes --help 2>&1)
-    if [ $? -eq 0 ] && echo "$PARSE_OUT2" | grep -q -- '--add-new-processes'; then
-      FLAG_PARSE_OK=1
-      SCORE=$((SCORE + 200))
-    fi
+# ---- G3 (0.15): flag parses (no argparse error) ----
+G3_OK=0
+if [ "$G2_OK" -eq 1 ]; then
+  # Try without --all first; if parser.error (validation), retry with --all.
+  # Use a sentinel approach: parse via argparse-only by importing module and
+  # invoking parse_known_args with the flag through the script's argparse.
+  PARSE_RES=$(python3 - <<'EOF' 2>/dev/null
+import sys, types, runpy, importlib.util, argparse, io, contextlib
+spec = importlib.util.spec_from_file_location("arrmon", "/workspace/arr-monitor.py")
+mod = importlib.util.module_from_spec(spec)
+# Block actual main execution by patching curses.wrapper and sys.exit paths.
+# We just want argparse; many scripts only run argparse under __main__.
+# Simpler: parse the AST and check action exists with correct dest.
+import ast
+src = open('/workspace/arr-monitor.py').read()
+tree = ast.parse(src)
+found = False
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call):
+        f = node.func
+        is_add = (isinstance(f, ast.Attribute) and f.attr == 'add_argument')
+        if not is_add:
+            continue
+        for a in node.args:
+            if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value == '--add-new-processes':
+                found = True
+                break
+        if found:
+            break
+print("OK" if found else "NO")
+EOF
+)
+  if [ "$PARSE_RES" = "OK" ]; then
+    G3_OK=1
+    SCORE=$((SCORE + 150))
   fi
 fi
 
-# ---- F2P 4 (0.20): flag is plumbed through to runtime (run_monitor or args ref) ----
-PLUMBED=$(python3 - <<'EOF' 2>/dev/null
+# ---- G4 (0.20): plumbing — signature + call site ----
+G4_RES=$(python3 - <<'EOF' 2>/dev/null
 import ast
 try:
     src = open('/workspace/arr-monitor.py').read()
@@ -121,36 +158,94 @@ for node in ast.walk(tree):
                 sig_ok = True
                 break
 
-ref_ok = ('args.add_new_processes' in src) or ('add_new_processes=' in src)
+# Call site: must pass args.add_new_processes (or equivalent) somewhere
+call_ok = False
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call):
+        # any arg that references args.add_new_processes
+        for a in list(node.args) + [kw.value for kw in node.keywords]:
+            try:
+                code = ast.unparse(a)
+            except Exception:
+                code = ''
+            if 'add_new_processes' in code and 'args' in code:
+                call_ok = True
+                break
 
-if sig_ok and ref_ok:
+if sig_ok and call_ok:
     print("FULL")
-elif sig_ok or ref_ok:
+elif sig_ok or call_ok:
     print("PARTIAL")
 else:
     print("NONE")
 EOF
 )
-case "$PLUMBED" in
+case "$G4_RES" in
   FULL)    SCORE=$((SCORE + 200)) ;;
-  PARTIAL) SCORE=$((SCORE + 100)) ;;
+  PARTIAL) SCORE=$((SCORE + 90))  ;;
   *) ;;
 esac
 
-# ---- F2P 5 (0.15): behavioral - flag without --all errors out (validation) ----
-# This is bonus/optional behavior on top - reward agents who added validation.
-# On buggy base, the flag doesn't exist at all so this fails too.
-VALIDATION_OK=0
-if [ "$HELP_HAS_FLAG" -eq 1 ]; then
-  # Run with just the flag, no --all. We expect either:
-  #   (a) parser.error -> exits non-zero with "requires --all" in stderr, OR
-  #   (b) it tries to run normally (no validation - no points)
-  VAL_OUT=$(timeout 5 python3 arr-monitor.py --add-new-processes 2>&1 </dev/null)
+# ---- G5 (0.20): runtime body scans for new processes when flag is set ----
+# A real fix calls find_arr_processes() inside run_monitor (or a helper called
+# from it) gated on the add_new_processes parameter. Shallow patches that only
+# add the flag but don't rescan should fail this.
+G5_RES=$(python3 - <<'EOF' 2>/dev/null
+import ast
+try:
+    src = open('/workspace/arr-monitor.py').read()
+    tree = ast.parse(src)
+except Exception:
+    print("ERR"); raise SystemExit
+
+# Find run_monitor body source
+target = None
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == 'run_monitor':
+        target = node
+        break
+if target is None:
+    print("NO_FUNC"); raise SystemExit
+
+try:
+    body_src = ast.unparse(target)
+except Exception:
+    print("ERR"); raise SystemExit
+
+calls_finder = 'find_arr_processes' in body_src
+mentions_flag = ('add_new_processes' in body_src)
+# Must also extend/append to pid_list (i.e., actually pick up new pids)
+extends_list = ('pid_list.append' in body_src) or ('pid_list.extend' in body_src) or \
+               ('pid_list +=' in body_src) or ('pid_list = pid_list +' in body_src)
+
+if calls_finder and mentions_flag and extends_list:
+    print("FULL")
+elif calls_finder and mentions_flag:
+    print("HALF")
+elif mentions_flag:
+    print("FLAG_ONLY")
+else:
+    print("NONE")
+EOF
+)
+case "$G5_RES" in
+  FULL)      SCORE=$((SCORE + 200)) ;;
+  HALF)      SCORE=$((SCORE + 110)) ;;
+  FLAG_ONLY) SCORE=$((SCORE + 40))  ;;
+  *) ;;
+esac
+
+# ---- G6 (0.15): --add-new-processes without --all triggers validation error ----
+G6_OK=0
+if [ "$G2_OK" -eq 1 ]; then
+  VAL_OUT=$(timeout 8 python3 arr-monitor.py --add-new-processes </dev/null 2>&1)
   VAL_RC=$?
-  # If it errored mentioning --all requirement, validation is in place
-  if [ "$VAL_RC" -ne 0 ] && echo "$VAL_OUT" | grep -qiE 'requires.*--all|--all.*required|with --all'; then
-    VALIDATION_OK=1
-    SCORE=$((SCORE + 150))
+  if [ "$VAL_RC" -ne 0 ] && echo "$VAL_OUT" | grep -qiE '(requires.*--all|--all.*required|with --all|requires --a|--a)'; then
+    # narrower: must mention all
+    if echo "$VAL_OUT" | grep -qiE '\-\-all|requires.*all|with all'; then
+      G6_OK=1
+      SCORE=$((SCORE + 150))
+    fi
   fi
 fi
 
@@ -158,17 +253,16 @@ fi
 # Convert milli-score to decimal reward
 # ============================================================
 REWARD=$(awk -v s="$SCORE" 'BEGIN { printf "%.3f", s/1000.0 }')
-
-# Safety clamp
 REWARD=$(awk -v r="$REWARD" 'BEGIN { if (r<0) r=0; if (r>1) r=1; printf "%.3f", r }')
 
 echo "Score components:"
-echo "  IGNORE_EXTENSIONS: $EXTS_RESULT"
-echo "  --help has flag: $HELP_HAS_FLAG"
-echo "  flag parses: $FLAG_PARSE_OK"
-echo "  plumbed: $PLUMBED"
-echo "  validation: $VALIDATION_OK"
-echo "  raw score (x1000): $SCORE"
-echo "  REWARD: $REWARD"
+echo "  G1 IGNORE_EXTENSIONS:     $G1_RES"
+echo "  G2 --help has flag:       $G2_OK"
+echo "  G3 flag parses:           $G3_OK"
+echo "  G4 plumbing (sig+call):   $G4_RES"
+echo "  G5 runtime rescan:        $G5_RES"
+echo "  G6 validation error:      $G6_OK"
+echo "  raw score (x1000):        $SCORE"
+echo "  REWARD:                   $REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt

@@ -15,49 +15,39 @@ if [ ! -d "$REPO" ]; then
   done
 fi
 
-COMPONENTS_DIR="$REPO/packages/coding-agent/src/modes/interactive/components"
-INTERACTIVE="$REPO/packages/coding-agent/src/modes/interactive/interactive-mode.ts"
-EXTENSIONS_DIR="$REPO/.pi/extensions"
-EXAMPLE_EXT_DIR="$REPO/packages/coding-agent/examples/extensions"
-
-REWARD=0
-
-# ---- P2P gating: regression guard ----------------------------------
-# armin.ts is the reference component that ships in base; if missing or
-# gutted the agent broke pre-existing state.
+PKG_DIR="$REPO/packages/coding-agent"
+COMPONENTS_DIR="$PKG_DIR/src/modes/interactive/components"
+INTERACTIVE="$PKG_DIR/src/modes/interactive/interactive-mode.ts"
 ARMIN_PATH="$COMPONENTS_DIR/armin.ts"
+EXTENSIONS_DIR="$REPO/.pi/extensions"
+EXAMPLE_EXT_DIR="$PKG_DIR/examples/extensions"
+
+echo "REPO=$REPO"
+
+# ---- P2P gating ----------------------------------------------------
 if [ ! -f "$ARMIN_PATH" ]; then
-  echo "P2P FAIL: armin.ts missing"
-  echo "0.0" > "$REWARD_FILE"; exit 0
+  echo "P2P FAIL: armin.ts missing"; echo "0.0" > "$REWARD_FILE"; exit 0
 fi
 if ! grep -qE 'export\s+class\s+ArminComponent' "$ARMIN_PATH"; then
-  echo "P2P FAIL: ArminComponent export missing"
-  echo "0.0" > "$REWARD_FILE"; exit 0
+  echo "P2P FAIL: ArminComponent missing"; echo "0.0" > "$REWARD_FILE"; exit 0
 fi
-
 if [ ! -f "$INTERACTIVE" ]; then
-  echo "P2P FAIL: interactive-mode.ts missing"
-  echo "0.0" > "$REWARD_FILE"; exit 0
+  echo "P2P FAIL: interactive-mode.ts missing"; echo "0.0" > "$REWARD_FILE"; exit 0
 fi
 imsize=$(wc -c < "$INTERACTIVE")
 if [ "$imsize" -lt 5000 ]; then
-  echo "P2P FAIL: interactive-mode.ts gutted ($imsize bytes)"
-  echo "0.0" > "$REWARD_FILE"; exit 0
+  echo "P2P FAIL: interactive-mode.ts gutted ($imsize bytes)"; echo "0.0" > "$REWARD_FILE"; exit 0
 fi
-if ! grep -q 'InteractiveMode' "$INTERACTIVE"; then
-  echo "P2P FAIL: InteractiveMode missing"
-  echo "0.0" > "$REWARD_FILE"; exit 0
+if ! grep -q 'class InteractiveMode' "$INTERACTIVE"; then
+  echo "P2P FAIL: InteractiveMode class missing"; echo "0.0" > "$REWARD_FILE"; exit 0
 fi
 
-# ---- Discover any new "easter egg" file added by the agent ---------
-# Base files at start commit (everything else in components/ is new).
+# ---- Discover candidate easter-egg files ---------------------------
 BASE_FILES="armin.ts assistant-message.ts bash-execution.ts bordered-loader.ts branch-summary-message.ts compaction-summary-message.ts config-selector.ts countdown-timer.ts custom-editor.ts custom-message.ts diff.ts dynamic-border.ts extension-editor.ts extension-input.ts extension-selector.ts footer.ts index.ts keybinding-hints.ts login-dialog.ts model-selector.ts oauth-selector.ts scoped-models-selector.ts session-selector-search.ts session-selector.ts settings-selector.ts show-images-selector.ts skill-invocation-message.ts theme-selector.ts thinking-selector.ts tool-execution.ts tree-selector.ts user-message-selector.ts user-message.ts visual-truncate.ts"
 
 is_base_file() {
   local b="$1"
-  for f in $BASE_FILES; do
-    [ "$f" = "$b" ] && return 0
-  done
+  for f in $BASE_FILES; do [ "$f" = "$b" ] && return 0; done
   return 1
 }
 
@@ -71,256 +61,328 @@ if [ -d "$COMPONENTS_DIR" ]; then
   done
 fi
 for d in "$EXTENSIONS_DIR" "$EXAMPLE_EXT_DIR"; do
-  if [ -d "$d" ]; then
-    for f in "$d"/*.ts; do
-      [ -f "$f" ] || continue
-      CANDIDATES+=("$f")
-    done
-  fi
+  [ -d "$d" ] || continue
+  for f in "$d"/*.ts; do
+    [ -f "$f" ] || continue
+    CANDIDATES+=("$f")
+  done
 done
 
-echo "REPO=$REPO"
 echo "CANDIDATES count=${#CANDIDATES[@]}"
 for c in "${CANDIDATES[@]}"; do echo "  cand: $c ($(wc -c < "$c") bytes)"; done
 
-# Filter to "easter egg" files: must mention both opencode and kimi (case-insensitive).
+# Filter: must mention opencode AND kimi AND daxnut
 EE_FILES=()
 for f in "${CANDIDATES[@]}"; do
-  if grep -qiE 'opencode' "$f" 2>/dev/null && grep -qiE 'kimi' "$f" 2>/dev/null; then
+  if grep -qiE 'opencode' "$f" 2>/dev/null \
+     && grep -qiE 'kimi' "$f" 2>/dev/null \
+     && grep -qiE 'daxnut' "$f" 2>/dev/null; then
     EE_FILES+=("$f")
   fi
 done
 
-# Pick a primary file: largest among EE_FILES.
 PRIMARY_EE=""
 best=0
 for f in "${EE_FILES[@]}"; do
   sz=$(wc -c < "$f")
-  if [ "$sz" -gt "$best" ]; then
-    best=$sz
-    PRIMARY_EE="$f"
-  fi
+  if [ "$sz" -gt "$best" ]; then best=$sz; PRIMARY_EE="$f"; fi
 done
+echo "PRIMARY_EE=$PRIMARY_EE (size=$best)"
+echo "EE_FILES count=${#EE_FILES[@]}"
 
-echo "PRIMARY_EE=$PRIMARY_EE"
+# Helper: numeric arithmetic with awk for fractional REWARD
+REWARD="0.00"
+add_reward() {
+  REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{printf "%.4f", a+b}')
+}
 
 # ---------------------------------------------------------------------
-# F2P GATE A (0.20): A new easter-egg source file exists, mentioning the
-# trigger pair (opencode + kimi) AND the daxnuts brand. None of these
-# files exist on base, so this gate is 0 on no-op.
+# GATE 1 (0.15): A non-trivial easter-egg artifact exists with all
+# required tokens (kimi, opencode, daxnut) and substantial content.
 # ---------------------------------------------------------------------
-GATE_A=0
-if [ -n "$PRIMARY_EE" ]; then
-  if grep -qiE 'daxnut' "$PRIMARY_EE" && \
-     grep -qiE 'opencode' "$PRIMARY_EE" && \
-     grep -qiE 'kimi' "$PRIMARY_EE"; then
-    sz=$(wc -c < "$PRIMARY_EE")
-    if [ "$sz" -gt 800 ]; then
-      GATE_A=20
-      echo "F2P A: PASS — easter egg file with trigger+brand ($sz bytes)"
-    else
-      echo "F2P A: FAIL — file too small ($sz bytes)"
-    fi
+G1=0
+if [ -n "$PRIMARY_EE" ] && [ "$best" -gt 1500 ]; then
+  # Must have a real export
+  if grep -qE 'export\s+(default|class|function|const)' "$PRIMARY_EE"; then
+    G1=1
+    echo "GATE 1 PASS: easter-egg artifact with tokens & export ($best bytes)"
   else
-    echo "F2P A: FAIL — missing daxnut/opencode/kimi tokens"
+    echo "GATE 1 FAIL: no export in $PRIMARY_EE"
   fi
 else
-  echo "F2P A: FAIL — no easter egg file"
+  echo "GATE 1 FAIL: no substantial easter-egg artifact"
 fi
-REWARD=$((REWARD + GATE_A))
+[ "$G1" = "1" ] && add_reward 0.15
 
 # ---------------------------------------------------------------------
-# F2P GATE B (0.20): Easter-egg file is a real component-like artifact:
-# has an export and exposes a render or component-shaped surface.
-# This is structural but the FILE didn't exist on base, so still F2P.
+# GATE 2 (0.15): The "powered by daxnuts" brand string actually appears
+# as a renderable string (not just in a comment). Must include "powered"
+# and "daxnuts" close together (case-insensitive).
 # ---------------------------------------------------------------------
-GATE_B=0
-if [ -n "$PRIMARY_EE" ]; then
-  has_export=0
-  has_component_shape=0
-  if grep -qE 'export\s+(default|class|function|const)' "$PRIMARY_EE"; then
-    has_export=1
-  fi
-  if grep -qE 'render\s*\(|implements\s+Component|: *Component\b|Component\s*\{|registerCommand|setWidget|sendMessage|showOverlay|ui\.custom|registerMessageRenderer' "$PRIMARY_EE"; then
-    has_component_shape=1
-  fi
-  echo "F2P B detail: export=$has_export shape=$has_component_shape"
-  if [ "$has_export" -eq 1 ] && [ "$has_component_shape" -eq 1 ]; then
-    GATE_B=20
-    echo "F2P B: PASS — exported component-shaped artifact"
-  fi
-fi
-REWARD=$((REWARD + GATE_B))
-
-# ---------------------------------------------------------------------
-# F2P GATE C (0.25): Trigger logic exists somewhere (easter-egg file or
-# interactive-mode.ts) — predicate references opencode AND kimi within a
-# small window AND uses an actual conditional comparison. None of this
-# is in base files.
-# ---------------------------------------------------------------------
-GATE_C=0
-TRIGGER_FILES=()
-[ -n "$PRIMARY_EE" ] && TRIGGER_FILES+=("$PRIMARY_EE")
-[ -f "$INTERACTIVE" ] && TRIGGER_FILES+=("$INTERACTIVE")
+G2=0
 for f in "${EE_FILES[@]}"; do
-  TRIGGER_FILES+=("$f")
-done
-
-# Verify base interactive-mode.ts does NOT already have this predicate.
-# (Sanity: this is the F2P-on-base property.)
-BASE_HAS_TRIGGER=0
-if grep -qiE 'kimi' "$INTERACTIVE" 2>/dev/null && grep -qiE 'opencode' "$INTERACTIVE" 2>/dev/null; then
-  # If both appear together within 30 lines, predicate is plausibly already there.
-  if awk '
+  if awk 'BEGIN{IGNORECASE=1}
     { lines[NR]=tolower($0) }
     END {
       for (i=1;i<=NR;i++) {
-        lo=i; hi=i+30; if (hi>NR) hi=NR
-        ok=0; ki=0
-        for (j=lo;j<=hi;j++) {
-          if (index(lines[j],"opencode")) ok=1
-          if (index(lines[j],"kimi")) ki=1
-        }
-        if (ok && ki) { print "Y"; exit }
+        # ignore lines that are pure comments (starting with // or *)
+        raw=lines[i]
+        sub(/^[ \t]*/,"",raw)
+        if (raw ~ /^\/\// || raw ~ /^\*/) continue
+        if (index(raw,"powered") && index(raw,"daxnut")) { print "Y"; exit }
       }
-    }' "$INTERACTIVE" | grep -q Y; then
-    BASE_HAS_TRIGGER=1
+      # also accept if both appear in same line anywhere
+      for (i=1;i<=NR;i++) if (index(lines[i],"powered by daxnut")) { print "Y"; exit }
+    }' "$f" 2>/dev/null | grep -q Y; then
+    G2=1
+    echo "GATE 2 PASS: 'powered by daxnuts' brand in $f"
+    break
   fi
-fi
+done
+[ "$G2" = "0" ] && echo "GATE 2 FAIL: no rendered 'powered by daxnuts' string"
+[ "$G2" = "1" ] && add_reward 0.15
 
-HAS_TRIGGER=0
+# ---------------------------------------------------------------------
+# GATE 3 (0.20): The trigger predicate is correct: requires the
+# opencode provider AND a kimi-k2.5 (or kimi-k2) model id, in a real
+# conditional. We check across the easter-egg files AND interactive-mode.ts
+# for additions, but reject if it's only the unchanged base interactive
+# mode.
+# ---------------------------------------------------------------------
+G3=0
+TRIGGER_FILES=()
+for f in "${EE_FILES[@]}"; do TRIGGER_FILES+=("$f"); done
+[ -f "$INTERACTIVE" ] && TRIGGER_FILES+=("$INTERACTIVE")
+
 for f in "${TRIGGER_FILES[@]}"; do
   [ -f "$f" ] || continue
-  # Reject the "trigger" being only in interactive-mode.ts if it was already there in base.
-  if [ "$f" = "$INTERACTIVE" ] && [ "$BASE_HAS_TRIGGER" -eq 1 ] && [ "${#EE_FILES[@]}" -eq 0 ]; then
-    continue
-  fi
-  if awk '
-    { lines[NR]=tolower($0) }
-    END {
-      for (i=1;i<=NR;i++) {
-        lo=i; hi=i+25; if (hi>NR) hi=NR
-        ocguard=0; kimiguard=0
-        for (j=lo;j<=hi;j++) {
-          l=lines[j]
-          if (index(l,"opencode") && (l ~ /===|==|includes|provider|match/)) ocguard=1
-          if (index(l,"kimi") && (l ~ /===|==|includes|tolowercase|match|test\(/)) kimiguard=1
+  # Must have a comparison/equality referencing "opencode" AND test for kimi-k2
+  has_provider_check=$(grep -cE '(provider|provider_id)[^=]*===[[:space:]]*"opencode"|"opencode"[[:space:]]*===[[:space:]]*[a-zA-Z0-9_.]*provider|provider[^=]*==[[:space:]]*"opencode"' "$f" 2>/dev/null)
+  has_kimi_check=$(grep -cE 'kimi-k2(\.5)?|"kimi[^"]*"|includes\(\s*"kimi' "$f" 2>/dev/null)
+  if [ "${has_provider_check:-0}" -gt 0 ] && [ "${has_kimi_check:-0}" -gt 0 ]; then
+    # Within 12 lines of each other?
+    if awk '
+      BEGIN{IGNORECASE=1}
+      { L[NR]=$0 }
+      END {
+        for (i=1;i<=NR;i++) {
+          lo=i; hi=i+12; if (hi>NR) hi=NR
+          okp=0; okk=0
+          for (j=lo;j<=hi;j++) {
+            l=tolower(L[j])
+            if (index(l,"\"opencode\"")) okp=1
+            if (l ~ /kimi-k2(\.5)?/ || index(l,"\"kimi") || (index(l,"includes") && index(l,"kimi"))) okk=1
+          }
+          if (okp && okk) { print "Y"; exit }
         }
-        if (ocguard && kimiguard) { print "OK"; exit }
-      }
-    }' "$f" | grep -q OK; then
-    HAS_TRIGGER=1
-    echo "F2P C: trigger predicate found in $f"
+      }' "$f" | grep -q Y; then
+      G3=1
+      echo "GATE 3 PASS: trigger predicate (opencode + kimi-k2.5) in $f"
+      break
+    fi
+  fi
+done
+[ "$G3" = "0" ] && echo "GATE 3 FAIL: no opencode+kimi-k2.5 conditional"
+[ "$G3" = "1" ] && add_reward 0.20
+
+# ---------------------------------------------------------------------
+# GATE 4 (0.15): Component-shape: the artifact implements a Component
+# (render() and dispose()/handleInput()/invalidate()) OR uses extension
+# UI hooks (setWidget / sendMessage / ui.custom / showOverlay /
+# showExtensionCustom).
+# ---------------------------------------------------------------------
+G4=0
+for f in "${EE_FILES[@]}"; do
+  has_render=$(grep -cE 'render\s*\(' "$f" 2>/dev/null)
+  has_lifecycle=$(grep -cE 'dispose\s*\(|handleInput\s*\(|invalidate\s*\(' "$f" 2>/dev/null)
+  has_uihook=$(grep -cE 'setWidget\(|sendMessage\(|ui\.custom\b|showOverlay\(|showExtensionCustom\(|registerCommand\(' "$f" 2>/dev/null)
+  has_component_type=$(grep -cE 'implements\s+Component|:\s*Component\b|Component\s*\{' "$f" 2>/dev/null)
+
+  shape_score=0
+  [ "${has_render:-0}" -gt 0 ] && [ "${has_lifecycle:-0}" -gt 0 ] && shape_score=1
+  [ "${has_uihook:-0}" -gt 0 ] && shape_score=1
+  [ "${has_component_type:-0}" -gt 0 ] && [ "${has_render:-0}" -gt 0 ] && shape_score=1
+
+  if [ "$shape_score" = "1" ]; then
+    G4=1
+    echo "GATE 4 PASS: component-shape in $f (render=$has_render lifecycle=$has_lifecycle uihook=$has_uihook)"
+    break
+  fi
+done
+[ "$G4" = "0" ] && echo "GATE 4 FAIL: no component-shape"
+[ "$G4" = "1" ] && add_reward 0.15
+
+# ---------------------------------------------------------------------
+# GATE 5 (0.20): Wiring — the trigger actually causes the component
+# to be shown. Two acceptable patterns:
+#   (a) Extension: registers on "model_select" event AND calls
+#       ctx.ui.{custom,setWidget} OR pi.sendMessage with a check for
+#       opencode+kimi.
+#   (b) Core: interactive-mode.ts has a check method that calls into
+#       a Daxnuts component / showExtensionCustom / showOverlay.
+# ---------------------------------------------------------------------
+G5=0
+
+# Pattern A: extension
+for f in "${EE_FILES[@]}"; do
+  case "$f" in
+    "$EXTENSIONS_DIR"/*|"$EXAMPLE_EXT_DIR"/*) ;;
+    *) continue ;;
+  esac
+  has_event=$(grep -cE 'pi\.on\(\s*"model_select"|on\(\s*"model_select"' "$f" 2>/dev/null)
+  has_show=$(grep -cE 'ctx\.ui\.(custom|setWidget|showOverlay)|pi\.sendMessage\(|pi\.appendEntry\(' "$f" 2>/dev/null)
+  if [ "${has_event:-0}" -gt 0 ] && [ "${has_show:-0}" -gt 0 ]; then
+    G5=1
+    echo "GATE 5 PASS (extension wiring) in $f"
     break
   fi
 done
 
-if [ "$HAS_TRIGGER" -eq 1 ]; then
-  GATE_C=25
-  echo "F2P C: PASS — provider/model trigger predicate present"
-else
-  echo "F2P C: FAIL — no opencode+kimi trigger predicate"
-fi
-REWARD=$((REWARD + GATE_C))
-
-# ---------------------------------------------------------------------
-# F2P GATE D (0.20): Behavioral simulation — extract the predicate idea
-# and verify it (a) accepts opencode+kimi-k2.5 and (b) rejects mismatched
-# combos. We do this by writing a tiny JS that mirrors the conditions we
-# can detect in the source: provider check + model id check.
-# To avoid hardcoding to one solution, we just reproduce a minimal logic
-# that the agent's predicate must satisfy in spirit, then ensure the
-# source file CONTAINS each of those constituent checks textually.
-# Specifically: must have something that constrains provider to
-# "opencode" AND something that matches "kimi" (case-insensitively, by
-# includes/===/regex). Both already required in Gate C; Gate D upgrades:
-# also require that the predicate is NEGATIVE on at least one mismatched
-# branch — i.e. an `if (...)` or guard that gates the easter egg, rather
-# than firing unconditionally.
-# ---------------------------------------------------------------------
-GATE_D=0
-if [ "$HAS_TRIGGER" -eq 1 ]; then
-  guard_seen=0
-  for f in "${TRIGGER_FILES[@]}"; do
-    [ -f "$f" ] || continue
-    # Look for an if-guard within 8 lines of a kimi mention that references provider/opencode
-    if awk '
-      { lines[NR]=$0 }
-      END {
-        for (i=1;i<=NR;i++) {
-          if (tolower(lines[i]) ~ /kimi/) {
-            lo=i-10; if (lo<1) lo=1
-            hi=i+10; if (hi>NR) hi=NR
-            saw_if=0; saw_oc=0
-            for (j=lo;j<=hi;j++) {
-              l=tolower(lines[j])
-              if (l ~ /\bif\s*\(|return\s+|&&|\?\s*/) saw_if=1
-              if (index(l,"opencode")) saw_oc=1
-            }
-            if (saw_if && saw_oc) { print "G"; exit }
-          }
-        }
-      }' "$f" | grep -q G; then
-      guard_seen=1
-      echo "F2P D: guard form found in $f"
-      break
+# Pattern B: core wiring inside interactive-mode.ts
+if [ "$G5" = "0" ]; then
+  # check for a method that references kimi+opencode AND adds component / shows overlay
+  if grep -qE 'checkDaxnutsEasterEgg|handleDaxnuts|showDaxnuts' "$INTERACTIVE"; then
+    if grep -qE 'DaxnutsComponent|showExtensionCustom|showOverlay\(|chatContainer\.addChild\(\s*new\s+Daxnuts' "$INTERACTIVE"; then
+      # And the method must be invoked somewhere (not just defined)
+      callcount=$(grep -cE 'this\.(checkDaxnutsEasterEgg|handleDaxnuts|showDaxnuts)\(' "$INTERACTIVE")
+      if [ "${callcount:-0}" -ge 2 ]; then
+        # at least 1 def + 1 call
+        G5=1
+        echo "GATE 5 PASS (core wiring in interactive-mode.ts, callcount=$callcount)"
+      else
+        echo "GATE 5 INFO: method defined but not invoked (callcount=$callcount)"
+      fi
     fi
-  done
-  if [ "$guard_seen" -eq 1 ]; then
-    GATE_D=20
-    echo "F2P D: PASS — predicate is a real conditional guard"
-  else
-    echo "F2P D: FAIL — no proper if-guard around kimi/opencode"
   fi
 fi
-REWARD=$((REWARD + GATE_D))
+[ "$G5" = "0" ] && echo "GATE 5 FAIL: trigger not wired to UI"
+[ "$G5" = "1" ] && add_reward 0.20
 
 # ---------------------------------------------------------------------
-# F2P GATE E (0.15): Easter egg renders/sends actual content with the
-# "powered by daxnuts" / "DAXNUTS" branding the user explicitly asked
-# for. Pure base has no such string anywhere.
+# GATE 6 (0.15): Behavioral simulation — synthesize the predicate
+# that the patch implements and verify it returns true for
+# (provider=opencode, id="kimi-k2.5") and false for unrelated models.
+# We extract the predicate region by looking for an if-statement that
+# contains both "opencode" and "kimi" within 6 lines, then evaluate it
+# in node by stubbing.
 # ---------------------------------------------------------------------
-GATE_E=0
-brand_hit=0
-search_files=()
-[ -n "$PRIMARY_EE" ] && search_files+=("$PRIMARY_EE")
-for f in "${EE_FILES[@]}"; do search_files+=("$f"); done
-[ -f "$INTERACTIVE" ] && search_files+=("$INTERACTIVE")
+G6=0
 
-for f in "${search_files[@]}"; do
+extract_predicate() {
+  local f="$1"
+  awk '
+    {
+      L[NR]=$0
+    }
+    END {
+      for (i=1;i<=NR;i++) {
+        line=L[i]
+        if (line ~ /^[[:space:]]*if[[:space:]]*\(/ || line ~ /[[:space:]]if[[:space:]]*\(/) {
+          # accumulate up to 8 lines
+          buf=line
+          j=i
+          while (j<NR && buf !~ /\)[[:space:]]*\{?[[:space:]]*$/ && j-i < 8) {
+            j++
+            buf=buf " " L[j]
+          }
+          low=tolower(buf)
+          if (index(low,"opencode") && index(low,"kimi")) {
+            print buf
+            exit
+          }
+        }
+      }
+    }' "$f"
+}
+
+PRED=""
+for f in "${EE_FILES[@]}" "$INTERACTIVE"; do
   [ -f "$f" ] || continue
-  # Need both "daxnuts" branding AND the verb "powered by" or similar
-  # AND a thanks/free-access reference.
-  if grep -qiE 'daxnut' "$f" && \
-     grep -qiE 'powered\s*by|p\W*o\W*w\W*e\W*r\W*e\W*d' "$f"; then
-    if grep -qiE 'free|thank|kimi|opencode' "$f"; then
-      brand_hit=1
-      echo "F2P E: brand+message found in $f"
-      break
-    fi
+  p=$(extract_predicate "$f")
+  if [ -n "$p" ]; then
+    PRED="$p"
+    PRED_FILE="$f"
+    break
   fi
 done
 
-# Sanity: make sure base files do NOT already contain "daxnut".
-# Scan all base component files + interactive-mode.ts for the brand.
-base_has_brand=0
-if grep -riE 'daxnut' "$COMPONENTS_DIR" 2>/dev/null | grep -vE '/(daxnuts?|kimi[^/]*|.*easter[^/]*)\.ts:' >/dev/null; then
-  # any base file containing daxnut -> brand was pre-existing, neutralize gate
-  base_has_brand=1
-fi
+if [ -n "$PRED" ]; then
+  echo "GATE 6 predicate from $PRED_FILE: $PRED"
+  # Extract just the boolean expression inside the outer if(...)
+  EXPR=$(echo "$PRED" | sed -nE 's/.*if[[:space:]]*\((.*)\).*/\1/p')
+  if [ -z "$EXPR" ]; then
+    EXPR=$(echo "$PRED" | sed -E 's/.*if[[:space:]]*\(//' | sed -E 's/\)[[:space:]]*\{?[[:space:]]*$//')
+  fi
+  # Strip any trailing dangling
+  EXPR=$(echo "$EXPR" | sed -E 's/[[:space:]]+$//')
+  echo "GATE 6 EXPR: $EXPR"
 
-if [ "$brand_hit" -eq 1 ] && [ "$base_has_brand" -eq 0 ]; then
-  GATE_E=15
-  echo "F2P E: PASS — DAXNUTS branding + thank-you context"
+  if command -v node >/dev/null 2>&1 || command -v bun >/dev/null 2>&1; then
+    RUNNER="node"
+    command -v bun >/dev/null 2>&1 && RUNNER="bun"
+
+    # Build a small JS harness. We replace identifiers with a "model" object.
+    # Common forms in patches:
+    #   model.provider === "opencode" && model.id.toLowerCase().includes("kimi-k2.5")
+    #   event.model.provider === "opencode" && event.model.id....
+    #   model.provider !== "opencode" return / model.id.toLowerCase().includes("kimi-k2")
+    HARNESS=$(cat <<'JSEOF'
+function evalPred(exprStr, model) {
+  // Map common refs to `model`
+  const e = exprStr
+    .replace(/event\.model/g, "model")
+    .replace(/this\.model/g, "model")
+    .replace(/_event\.model/g, "model");
+  try {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function("model", "return (" + e + ");");
+    return !!fn(model);
+  } catch (err) {
+    return "ERR:" + err.message;
+  }
+}
+const expr = process.argv[2];
+const cases = [
+  { name: "opencode+kimi-k2.5", model: { provider: "opencode", id: "kimi-k2.5" }, expect: true },
+  { name: "opencode+kimi-k2", model: { provider: "opencode", id: "kimi-k2" }, expect: true },
+  { name: "anthropic+claude", model: { provider: "anthropic", id: "claude-sonnet-4" }, expect: false },
+  { name: "openai+gpt4", model: { provider: "openai", id: "gpt-4o" }, expect: false },
+  { name: "opencode+gpt", model: { provider: "opencode", id: "gpt-5" }, expect: false },
+];
+let pass = 0, total = cases.length;
+for (const c of cases) {
+  const got = evalPred(expr, c.model);
+  const ok = got === c.expect;
+  console.log(`${ok ? "OK" : "FAIL"} ${c.name}: got=${got} expect=${c.expect}`);
+  if (ok) pass++;
+}
+console.log(`SUMMARY ${pass}/${total}`);
+process.exit(pass === total ? 0 : 1);
+JSEOF
+)
+    HARNESS_FILE=$(mktemp /tmp/daxnuts_harness_XXXXXX.js)
+    echo "$HARNESS" > "$HARNESS_FILE"
+    OUT=$("$RUNNER" "$HARNESS_FILE" "$EXPR" 2>&1)
+    echo "$OUT" | tail -8
+    if echo "$OUT" | grep -qE 'SUMMARY 5/5'; then
+      G6=1
+      echo "GATE 6 PASS: predicate behaves correctly on all 5 cases"
+    elif echo "$OUT" | grep -qE 'SUMMARY [34]/5'; then
+      echo "GATE 6 PARTIAL: predicate partially correct"
+    else
+      echo "GATE 6 FAIL: predicate incorrect"
+    fi
+    rm -f "$HARNESS_FILE"
+  else
+    echo "GATE 6 SKIP: no node/bun available"
+  fi
 else
-  echo "F2P E: FAIL — brand_hit=$brand_hit base_has_brand=$base_has_brand"
+  echo "GATE 6 FAIL: no predicate extractable"
 fi
-REWARD=$((REWARD + GATE_E))
+[ "$G6" = "1" ] && add_reward 0.15
 
-# ---------------------------------------------------------------------
-# Convert to 0..1
-# Total possible: 20 + 20 + 25 + 20 + 15 = 100
-# ---------------------------------------------------------------------
-FINAL=$(awk -v r="$REWARD" 'BEGIN { printf "%.3f", r/100.0 }')
-echo "RAW=$REWARD FINAL=$FINAL"
-echo "$FINAL" > "$REWARD_FILE"
+# ---- Final reward --------------------------------------------------
+# Cap at 1.0 (sum of weights = 0.15+0.15+0.20+0.15+0.20+0.15 = 1.00)
+echo "GATES: G1=$G1 G2=$G2 G3=$G3 G4=$G4 G5=$G5 G6=$G6"
+echo "FINAL REWARD=$REWARD"
+echo "$REWARD" > /logs/verifier/reward.txt

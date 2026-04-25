@@ -1,6 +1,8 @@
 #!/bin/bash
 set +e
 
+export PATH=/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
@@ -13,7 +15,7 @@ if [ ! -f "$CACHE_PY" ] || [ ! -f "$GENERATE_PY" ]; then
     exit 0
 fi
 
-# Build mlx shim + load cache.py and extract _merge_caches
+# ---------- Build mlx shim env ----------
 cat > /tmp/mlx_test_env.py << 'ENVEOF'
 import sys, types, ast
 import numpy as np
@@ -121,6 +123,7 @@ try:
             'RotatingKVCache': RotatingKVCache,
             'BatchRotatingKVCache': BatchRotatingKVCache,
             'ArraysCache': ArraysCache, 'CacheList': CacheList,
+            'MambaCache': MambaCache,
         }
         exec(compile(_func_src, 'generate.py', 'exec'), _merge_ns)
         _merge_caches = _merge_ns.get('_merge_caches')
@@ -130,8 +133,11 @@ except Exception as _e:
 import mlx.core as mx
 ENVEOF
 
-# ---------- P2P gating: parse + classes still present ----------
-echo "=== P2P gate: cache.py loads, base classes present ==="
+run_py() {
+    python3 -c "exec(open('/tmp/mlx_test_env.py').read()); $1" 2>&1
+}
+
+# ---------- P2P gate: cache.py loads, base classes present, _merge_caches importable ----------
 gate_out=$(python3 << 'PYEOF' 2>&1
 exec(open('/tmp/mlx_test_env.py').read())
 ok = True
@@ -152,21 +158,24 @@ if _merge_caches is None:
 print("GATE_OK" if ok else "GATE_FAIL")
 PYEOF
 )
-echo "$gate_out" | tail -5
 if ! echo "$gate_out" | grep -q "^GATE_OK$"; then
-    echo "P2P gate failed (regression). Reward=0."
+    echo "P2P gate failed."
     echo "0.0" > "$REWARD_FILE"
     exit 0
 fi
 
-# ---------- F2P-1 [0.20]: _merge_caches handles ArraysCache batch ----------
-echo "=== F2P-1: _merge_caches handles ArraysCache (0.20) ==="
+# Helper for awk float add
+add() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.4f", a+b}'; }
+
+# =========================================================================
+# F2P-1 [0.15] — _merge_caches no longer raises on ArraysCache, returns
+#   ArraysCache instance with batched leading dimension (concat along axis 0).
+# =========================================================================
 out=$(python3 << 'PYEOF' 2>&1
 exec(open('/tmp/mlx_test_env.py').read())
-import sys
+import sys, numpy as np
 if _merge_caches is None:
-    print("FAIL")
-    sys.exit(0)
+    print("FAIL:no_merge"); sys.exit(0)
 
 ac1 = ArraysCache(size=2)
 ac1.cache[0] = mx.ones((1, 4, 3))
@@ -178,383 +187,389 @@ ac2.cache[1] = mx.ones((1, 4, 8)) * 4.0
 
 try:
     merged = _merge_caches([[ac1], [ac2]])
-except ValueError as e:
-    if "does not yet support batching" in str(e):
-        print(f"FAIL:still_raises")
-        sys.exit(0)
-    print(f"FAIL:valueerr:{e}")
-    sys.exit(0)
 except Exception as e:
-    print(f"FAIL:exc:{e}")
-    sys.exit(0)
+    print(f"FAIL:exc:{e}"); sys.exit(0)
 
 if not isinstance(merged, list) or len(merged) != 1:
-    print(f"FAIL:shape:{type(merged)}")
-    sys.exit(0)
+    print(f"FAIL:shape"); sys.exit(0)
 
 m0 = merged[0]
-# Should be an ArraysCache or subclass
 if not isinstance(m0, ArraysCache):
-    print(f"FAIL:not_arrayscache:{type(m0)}")
-    sys.exit(0)
+    print(f"FAIL:not_arrayscache:{type(m0).__name__}"); sys.exit(0)
 
-# Batch dim should now be 2
-try:
-    s0 = m0.cache[0].shape
-    s1 = m0.cache[1].shape
-except Exception as e:
-    print(f"FAIL:no_cache_attr:{e}")
-    sys.exit(0)
+c0 = np.asarray(m0.cache[0])
+c1 = np.asarray(m0.cache[1])
+if c0.shape != (2,4,3) or c1.shape != (2,4,8):
+    print(f"FAIL:bad_shape:{c0.shape}|{c1.shape}"); sys.exit(0)
 
-if s0[0] != 2 or s1[0] != 2:
-    print(f"FAIL:bad_batch_dim:{s0},{s1}")
-    sys.exit(0)
+# Verify values: batch 0 should be 1.0/2.0, batch 1 should be 3.0/4.0
+if not (np.allclose(c0[0], 1.0) and np.allclose(c0[1], 3.0)):
+    print(f"FAIL:bad_vals_c0"); sys.exit(0)
+if not (np.allclose(c1[0], 2.0) and np.allclose(c1[1], 4.0)):
+    print(f"FAIL:bad_vals_c1"); sys.exit(0)
 
 print("PASS")
 PYEOF
 )
-echo "$out" | tail -3
 if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.20}")
-    echo "F2P-1: PASS (+0.20)"
+    REWARD=$(add "$REWARD" 0.15)
+    echo "F2P-1 PASS (+0.15)"
+else
+    echo "F2P-1 FAIL: $out"
 fi
 
-# ---------- F2P-2 [0.15]: ArraysCache.merge classmethod exists & works ----------
-echo "=== F2P-2: ArraysCache.merge classmethod (0.15) ==="
+# =========================================================================
+# F2P-2 [0.15] — _merge_caches handles CacheList wrapping mixed cache types
+#   (KVCache + MambaCache), the canonical hybrid model layout.
+# =========================================================================
 out=$(python3 << 'PYEOF' 2>&1
 exec(open('/tmp/mlx_test_env.py').read())
-import sys
-m = getattr(ArraysCache, 'merge', None)
-if m is None or not callable(m):
-    print("FAIL:no_merge")
-    sys.exit(0)
+import sys, numpy as np
+if _merge_caches is None:
+    print("FAIL:no_merge"); sys.exit(0)
 
-c1 = ArraysCache(size=2)
-c1.cache[0] = mx.ones((1, 3, 4))
-c1.cache[1] = mx.ones((1, 3, 4)) * 2.0
-c2 = ArraysCache(size=2)
-c2.cache[0] = mx.ones((1, 3, 4)) * 3.0
-c2.cache[1] = mx.ones((1, 3, 4)) * 4.0
-c3 = ArraysCache(size=2)
-c3.cache[0] = mx.ones((1, 3, 4)) * 5.0
-c3.cache[1] = mx.ones((1, 3, 4)) * 6.0
+def make_layer(seed):
+    np.random.seed(seed)
+    # MambaCache (subclass of ArraysCache)
+    mc = MambaCache()
+    mc.cache[0] = mx.array(np.random.randn(1, 3, 4).astype(np.float32))
+    mc.cache[1] = mx.array(np.random.randn(1, 2, 5).astype(np.float32))
+    # KVCache
+    kv = KVCache()
+    kv.update_and_fetch(
+        mx.array(np.random.randn(1, 2, 4, 6).astype(np.float32)),
+        mx.array(np.random.randn(1, 2, 4, 6).astype(np.float32)),
+    )
+    return CacheList(mc, kv)
+
+c1 = [make_layer(1)]
+c2 = [make_layer(2)]
 
 try:
-    merged = ArraysCache.merge([c1, c2, c3])
+    merged = _merge_caches([c1, c2])
 except Exception as e:
-    print(f"FAIL:exc:{e}")
-    sys.exit(0)
+    print(f"FAIL:exc:{e}"); sys.exit(0)
+
+if len(merged) != 1:
+    print(f"FAIL:len"); sys.exit(0)
+
+ml = merged[0]
+if not isinstance(ml, CacheList):
+    print(f"FAIL:not_cachelist:{type(ml).__name__}"); sys.exit(0)
+
+# Inspect inner caches
+sub0, sub1 = ml.caches[0], ml.caches[1]
+if not isinstance(sub0, ArraysCache):
+    print(f"FAIL:sub0_type:{type(sub0).__name__}"); sys.exit(0)
+
+c0 = np.asarray(sub0.cache[0])
+if c0.shape[0] != 2:
+    print(f"FAIL:sub0_batch:{c0.shape}"); sys.exit(0)
+
+# sub1 should be a batch-capable KV cache
+if not (isinstance(sub1, KVCache) or isinstance(sub1, BatchKVCache)):
+    print(f"FAIL:sub1_type:{type(sub1).__name__}"); sys.exit(0)
+
+# Check the keys batch dimension
+keys = np.asarray(sub1.keys)
+if keys.shape[0] != 2:
+    print(f"FAIL:sub1_batch:{keys.shape}"); sys.exit(0)
+
+print("PASS")
+PYEOF
+)
+if echo "$out" | grep -q "^PASS$"; then
+    REWARD=$(add "$REWARD" 0.15)
+    echo "F2P-2 PASS (+0.15)"
+else
+    echo "F2P-2 FAIL: $out"
+fi
+
+# =========================================================================
+# F2P-3 [0.15] — ArraysCache.merge classmethod produces correct concat,
+#   and ArraysCache.extract(idx) recovers a single-batch slice.
+# =========================================================================
+out=$(python3 << 'PYEOF' 2>&1
+exec(open('/tmp/mlx_test_env.py').read())
+import sys, numpy as np
+
+if not hasattr(ArraysCache, 'merge'):
+    print("FAIL:no_merge_classmethod"); sys.exit(0)
+if not hasattr(ArraysCache, 'extract'):
+    print("FAIL:no_extract"); sys.exit(0)
+
+a = ArraysCache(size=2)
+a.cache[0] = mx.array(np.full((1,3,4), 7.0, dtype=np.float32))
+a.cache[1] = mx.array(np.full((1,2,2), 1.0, dtype=np.float32))
+b = ArraysCache(size=2)
+b.cache[0] = mx.array(np.full((1,3,4), 9.0, dtype=np.float32))
+b.cache[1] = mx.array(np.full((1,2,2), 2.0, dtype=np.float32))
+
+try:
+    merged = ArraysCache.merge([a, b])
+except Exception as e:
+    print(f"FAIL:merge_exc:{e}"); sys.exit(0)
 
 if not isinstance(merged, ArraysCache):
-    print(f"FAIL:type:{type(merged)}")
-    sys.exit(0)
+    print(f"FAIL:not_arrays:{type(merged).__name__}"); sys.exit(0)
 
-if merged.cache[0].shape[0] != 3 or merged.cache[1].shape[0] != 3:
-    print(f"FAIL:bad_batch:{merged.cache[0].shape},{merged.cache[1].shape}")
-    sys.exit(0)
+m0 = np.asarray(merged.cache[0])
+if m0.shape != (2,3,4):
+    print(f"FAIL:merged_shape:{m0.shape}"); sys.exit(0)
+if not (np.allclose(m0[0], 7.0) and np.allclose(m0[1], 9.0)):
+    print(f"FAIL:merged_vals"); sys.exit(0)
 
-# Spot-check values: index 0 should be all 1s, index 2 all 5s in cache[0]
-import numpy as np
-if not np.allclose(np.asarray(merged.cache[0][0]), 1.0):
-    print("FAIL:val0")
-    sys.exit(0)
-if not np.allclose(np.asarray(merged.cache[0][2]), 5.0):
-    print("FAIL:val2")
-    sys.exit(0)
+try:
+    e0 = merged.extract(0)
+    e1 = merged.extract(1)
+except Exception as e:
+    print(f"FAIL:extract_exc:{e}"); sys.exit(0)
+
+if not isinstance(e0, ArraysCache):
+    print(f"FAIL:extract_type"); sys.exit(0)
+
+x0 = np.asarray(e0.cache[0])
+x1 = np.asarray(e1.cache[0])
+if x0.shape[0] != 1 or x1.shape[0] != 1:
+    print(f"FAIL:extract_shape:{x0.shape}|{x1.shape}"); sys.exit(0)
+if not (np.allclose(x0, 7.0) and np.allclose(x1, 9.0)):
+    print(f"FAIL:extract_vals"); sys.exit(0)
+
 print("PASS")
 PYEOF
 )
-echo "$out" | tail -3
 if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.15}")
-    echo "F2P-2: PASS (+0.15)"
+    REWARD=$(add "$REWARD" 0.15)
+    echo "F2P-3 PASS (+0.15)"
+else
+    echo "F2P-3 FAIL: $out"
 fi
 
-# ---------- F2P-3 [0.15]: ArraysCache.extract round-trip ----------
-echo "=== F2P-3: ArraysCache.extract method (0.15) ==="
-out=$(python3 << 'PYEOF' 2>&1
-exec(open('/tmp/mlx_test_env.py').read())
-import sys, numpy as np
-ex = getattr(ArraysCache, 'extract', None)
-if ex is None or not callable(ex):
-    print("FAIL:no_extract")
-    sys.exit(0)
-
-c1 = ArraysCache(size=2)
-c1.cache[0] = mx.ones((1, 3, 4))
-c1.cache[1] = mx.ones((1, 3, 4)) * 2.0
-c2 = ArraysCache(size=2)
-c2.cache[0] = mx.ones((1, 3, 4)) * 7.0
-c2.cache[1] = mx.ones((1, 3, 4)) * 8.0
-
-try:
-    merged = ArraysCache.merge([c1, c2])
-except Exception as e:
-    print(f"FAIL:merge:{e}")
-    sys.exit(0)
-
-try:
-    ex0 = merged.extract(0)
-    ex1 = merged.extract(1)
-except Exception as e:
-    print(f"FAIL:extract:{e}")
-    sys.exit(0)
-
-if not isinstance(ex0, ArraysCache) or not isinstance(ex1, ArraysCache):
-    print(f"FAIL:type:{type(ex0)},{type(ex1)}")
-    sys.exit(0)
-
-if ex0.cache[0].shape[0] != 1 or ex1.cache[0].shape[0] != 1:
-    print(f"FAIL:bad_shape:{ex0.cache[0].shape},{ex1.cache[0].shape}")
-    sys.exit(0)
-
-if not np.allclose(np.asarray(ex0.cache[0]), 1.0):
-    print(f"FAIL:val0:{np.asarray(ex0.cache[0]).mean()}")
-    sys.exit(0)
-if not np.allclose(np.asarray(ex1.cache[0]), 7.0):
-    print(f"FAIL:val1:{np.asarray(ex1.cache[0]).mean()}")
-    sys.exit(0)
-if not np.allclose(np.asarray(ex1.cache[1]), 8.0):
-    print(f"FAIL:val1b")
-    sys.exit(0)
-print("PASS")
-PYEOF
-)
-echo "$out" | tail -3
-if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.15}")
-    echo "F2P-3: PASS (+0.15)"
-fi
-
-# ---------- F2P-4 [0.10]: ArraysCache.prepare + finalize methods ----------
-echo "=== F2P-4: ArraysCache.prepare/finalize (0.10) ==="
-out=$(python3 << 'PYEOF' 2>&1
-exec(open('/tmp/mlx_test_env.py').read())
-import sys
-prep = getattr(ArraysCache, 'prepare', None)
-fin = getattr(ArraysCache, 'finalize', None)
-if prep is None or fin is None or not callable(prep) or not callable(fin):
-    print("FAIL:missing")
-    sys.exit(0)
-
-c = ArraysCache(size=2)
-# Try calling prepare with the documented kwargs
-try:
-    c.prepare(left_padding=None, lengths=[3, 5], right_padding=[2, 0])
-except TypeError as e:
-    print(f"FAIL:signature:{e}")
-    sys.exit(0)
-except Exception as e:
-    print(f"FAIL:prepare_exc:{e}")
-    sys.exit(0)
-
-try:
-    c.finalize()
-except Exception as e:
-    print(f"FAIL:finalize:{e}")
-    sys.exit(0)
-print("PASS")
-PYEOF
-)
-echo "$out" | tail -3
-if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.10}")
-    echo "F2P-4: PASS (+0.10)"
-fi
-
-# ---------- F2P-5 [0.10]: ArraysCache _lengths attribute used in make_mask ----------
-echo "=== F2P-5: ArraysCache lengths-aware mask (0.10) ==="
+# =========================================================================
+# F2P-4 [0.15] — CacheList.merge classmethod and CacheList.extract recursive
+# =========================================================================
 out=$(python3 << 'PYEOF' 2>&1
 exec(open('/tmp/mlx_test_env.py').read())
 import sys, numpy as np
 
-c = ArraysCache(size=2)
-# Configure right-padding lengths via prepare
+if not hasattr(CacheList, 'merge'):
+    print("FAIL:no_clist_merge"); sys.exit(0)
+if not hasattr(CacheList, 'extract'):
+    print("FAIL:no_clist_extract"); sys.exit(0)
+
+def mklist(v):
+    a = ArraysCache(size=1)
+    a.cache[0] = mx.array(np.full((1, 2, 3), v, dtype=np.float32))
+    return CacheList(a)
+
+cls_a = mklist(5.0)
+cls_b = mklist(6.0)
+cls_c = mklist(7.0)
+
 try:
-    c.prepare(left_padding=None, lengths=[3, 5], right_padding=[2, 0])
+    merged = CacheList.merge([cls_a, cls_b, cls_c])
 except Exception as e:
-    print(f"FAIL:prepare:{e}")
-    sys.exit(0)
-
-# Either _lengths or lengths attribute should now reflect lengths
-has_attr = False
-val = None
-for name in ('_lengths', 'lengths'):
-    if hasattr(c, name):
-        v = getattr(c, name)
-        if v is not None:
-            has_attr = True
-            val = v
-            break
-if not has_attr:
-    print("FAIL:no_lengths_attr_set")
-    sys.exit(0)
-
-try:
-    arr = np.asarray(val)
-except Exception:
-    print(f"FAIL:not_array:{type(val)}")
-    sys.exit(0)
-
-if arr.shape[0] != 2 or int(arr[0]) != 3 or int(arr[1]) != 5:
-    print(f"FAIL:vals:{arr.tolist()}")
-    sys.exit(0)
-print("PASS")
-PYEOF
-)
-echo "$out" | tail -3
-if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.10}")
-    echo "F2P-5: PASS (+0.10)"
-fi
-
-# ---------- F2P-6 [0.15]: CacheList.merge classmethod ----------
-echo "=== F2P-6: CacheList.merge classmethod (0.15) ==="
-out=$(python3 << 'PYEOF' 2>&1
-exec(open('/tmp/mlx_test_env.py').read())
-import sys
-m = getattr(CacheList, 'merge', None)
-if m is None or not callable(m):
-    print("FAIL:no_merge")
-    sys.exit(0)
-
-def make_cl():
-    ac = ArraysCache(size=2)
-    ac.cache[0] = mx.ones((1, 4, 3))
-    ac.cache[1] = mx.ones((1, 4, 3)) * 2.0
-    kv = KVCache()
-    # Update KVCache with some keys/values so it's batched-capable
-    keys = mx.ones((1, 2, 4, 8))
-    vals = mx.ones((1, 2, 4, 8)) * 3.0
-    try:
-        kv.update_and_fetch(keys, vals)
-    except Exception:
-        pass
-    return CacheList(ac, kv)
-
-cl1 = make_cl()
-cl2 = make_cl()
-
-try:
-    merged = CacheList.merge([cl1, cl2])
-except Exception as e:
-    print(f"FAIL:exc:{e}")
-    sys.exit(0)
+    print(f"FAIL:merge_exc:{e}"); sys.exit(0)
 
 if not isinstance(merged, CacheList):
-    print(f"FAIL:type:{type(merged)}")
-    sys.exit(0)
+    print(f"FAIL:not_cachelist:{type(merged).__name__}"); sys.exit(0)
+inner = merged.caches[0]
+arr = np.asarray(inner.cache[0])
+if arr.shape != (3,2,3):
+    print(f"FAIL:shape:{arr.shape}"); sys.exit(0)
+if not (np.allclose(arr[0],5.0) and np.allclose(arr[1],6.0) and np.allclose(arr[2],7.0)):
+    print(f"FAIL:vals"); sys.exit(0)
 
-# First sub-cache should be an ArraysCache (or subclass) with batch=2
-sub0 = merged.caches[0] if hasattr(merged, 'caches') else merged[0]
-if not isinstance(sub0, ArraysCache):
-    print(f"FAIL:sub0_type:{type(sub0)}")
-    sys.exit(0)
-if sub0.cache[0].shape[0] != 2:
-    print(f"FAIL:sub0_batch:{sub0.cache[0].shape}")
-    sys.exit(0)
+# recursive extract
+try:
+    ex = merged.extract(1)
+except Exception as e:
+    print(f"FAIL:extract_exc:{e}"); sys.exit(0)
+if not isinstance(ex, CacheList):
+    print(f"FAIL:extract_type"); sys.exit(0)
+ex_inner = np.asarray(ex.caches[0].cache[0])
+if ex_inner.shape[0] != 1 or not np.allclose(ex_inner, 6.0):
+    print(f"FAIL:extract_vals"); sys.exit(0)
+
 print("PASS")
 PYEOF
 )
-echo "$out" | tail -3
 if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.15}")
-    echo "F2P-6: PASS (+0.15)"
+    REWARD=$(add "$REWARD" 0.15)
+    echo "F2P-4 PASS (+0.15)"
+else
+    echo "F2P-4 FAIL: $out"
 fi
 
-# ---------- F2P-7 [0.10]: CacheList.extract method ----------
-echo "=== F2P-7: CacheList.extract method (0.10) ==="
+# =========================================================================
+# F2P-5 [0.15] — ArraysCache.prepare/finalize work and _lengths (or lengths)
+#   gets populated when right_padding is provided. Tests behavioral hookup.
+# =========================================================================
 out=$(python3 << 'PYEOF' 2>&1
 exec(open('/tmp/mlx_test_env.py').read())
 import sys, numpy as np
-ex = getattr(CacheList, 'extract', None)
-if ex is None or not callable(ex):
-    print("FAIL:no_extract")
-    sys.exit(0)
 
-ac1 = ArraysCache(size=1); ac1.cache[0] = mx.ones((1, 2, 3))
-ac2 = ArraysCache(size=1); ac2.cache[0] = mx.ones((1, 2, 3)) * 9.0
-cl1 = CacheList(ac1)
-cl2 = CacheList(ac2)
+ac = ArraysCache(size=2)
+if not hasattr(ac, 'prepare'):
+    print("FAIL:no_prepare"); sys.exit(0)
+if not hasattr(ac, 'finalize'):
+    print("FAIL:no_finalize"); sys.exit(0)
 
+# Test prepare with right_padding sets length attr
 try:
-    merged = CacheList.merge([cl1, cl2])
-    ex0 = merged.extract(0)
-    ex1 = merged.extract(1)
+    ac.prepare(left_padding=None, lengths=[3, 5], right_padding=[2, 0])
 except Exception as e:
-    print(f"FAIL:exc:{e}")
-    sys.exit(0)
+    print(f"FAIL:prepare_exc:{e}"); sys.exit(0)
 
-if not isinstance(ex0, CacheList) or not isinstance(ex1, CacheList):
-    print(f"FAIL:type:{type(ex0)},{type(ex1)}")
-    sys.exit(0)
+len_attr = getattr(ac, '_lengths', None)
+if len_attr is None:
+    len_attr = getattr(ac, 'lengths', None)
+if len_attr is None:
+    print("FAIL:no_lengths_set"); sys.exit(0)
 
-sub0 = ex0.caches[0] if hasattr(ex0, 'caches') else ex0[0]
-sub1 = ex1.caches[0] if hasattr(ex1, 'caches') else ex1[0]
-if sub0.cache[0].shape[0] != 1 or sub1.cache[0].shape[0] != 1:
-    print(f"FAIL:batch:{sub0.cache[0].shape},{sub1.cache[0].shape}")
-    sys.exit(0)
-if not np.allclose(np.asarray(sub0.cache[0]), 1.0):
-    print("FAIL:v0")
-    sys.exit(0)
-if not np.allclose(np.asarray(sub1.cache[0]), 9.0):
-    print("FAIL:v1")
-    sys.exit(0)
+la = np.asarray(len_attr)
+if la.shape != (2,) or int(la[0]) != 3 or int(la[1]) != 5:
+    print(f"FAIL:bad_lengths:{la}"); sys.exit(0)
+
+# finalize should clear it
+try:
+    ac.finalize()
+except Exception as e:
+    print(f"FAIL:finalize_exc:{e}"); sys.exit(0)
+
+post = getattr(ac, '_lengths', None)
+if post is None:
+    post = getattr(ac, 'lengths', None)
+if post is not None:
+    print(f"FAIL:lengths_not_cleared:{post}"); sys.exit(0)
+
+# Test prepare with left_padding only (no right_padding) — should not set lengths
+ac2 = ArraysCache(size=2)
+ac2.prepare(left_padding=[1, 2], lengths=[3, 5], right_padding=None)
+post2 = getattr(ac2, '_lengths', None) or getattr(ac2, 'lengths', None)
+if post2 is not None:
+    print(f"FAIL:lengths_set_when_no_right_pad:{post2}"); sys.exit(0)
+
 print("PASS")
 PYEOF
 )
-echo "$out" | tail -3
 if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.10}")
-    echo "F2P-7: PASS (+0.10)"
+    REWARD=$(add "$REWARD" 0.15)
+    echo "F2P-5 PASS (+0.15)"
+else
+    echo "F2P-5 FAIL: $out"
 fi
 
-# ---------- F2P-8 [0.05]: _merge_caches handles CacheList ----------
-echo "=== F2P-8: _merge_caches dispatches to CacheList (0.05) ==="
+# =========================================================================
+# F2P-6 [0.10] — CacheList delegates prepare/finalize/extract; doesn't crash
+#   on mixed sub-caches.
+# =========================================================================
 out=$(python3 << 'PYEOF' 2>&1
 exec(open('/tmp/mlx_test_env.py').read())
-import sys
-if _merge_caches is None:
-    print("FAIL")
-    sys.exit(0)
+import sys, numpy as np
 
-def make_cl(scale):
-    ac = ArraysCache(size=1)
-    ac.cache[0] = mx.ones((1, 2, 3)) * scale
-    return CacheList(ac)
+mc = MambaCache()
+mc.cache[0] = mx.array(np.zeros((2, 3, 4), dtype=np.float32))
+mc.cache[1] = mx.array(np.zeros((2, 2, 5), dtype=np.float32))
+kv = KVCache()
+kv.update_and_fetch(
+    mx.array(np.zeros((2,2,4,6), dtype=np.float32)),
+    mx.array(np.zeros((2,2,4,6), dtype=np.float32)),
+)
+cl = CacheList(mc, kv)
+
+if not hasattr(cl, 'prepare'):
+    print("FAIL:no_prepare"); sys.exit(0)
+if not hasattr(cl, 'extract'):
+    print("FAIL:no_extract"); sys.exit(0)
 
 try:
-    merged = _merge_caches([[make_cl(1.0)], [make_cl(2.0)]])
-except ValueError as e:
-    if "does not yet support batching" in str(e):
-        print("FAIL:still_raises")
-        sys.exit(0)
-    print(f"FAIL:ve:{e}")
-    sys.exit(0)
+    cl.prepare(left_padding=None, lengths=[3, 5], right_padding=[2, 0])
 except Exception as e:
-    print(f"FAIL:exc:{e}")
-    sys.exit(0)
+    print(f"FAIL:prepare_exc:{e}"); sys.exit(0)
 
-if not isinstance(merged, list) or len(merged) != 1:
-    print(f"FAIL:shape")
-    sys.exit(0)
-if not isinstance(merged[0], CacheList):
-    print(f"FAIL:type:{type(merged[0])}")
-    sys.exit(0)
-sub = merged[0].caches[0] if hasattr(merged[0], 'caches') else merged[0][0]
-if sub.cache[0].shape[0] != 2:
-    print(f"FAIL:batch:{sub.cache[0].shape}")
-    sys.exit(0)
+# After prepare, mamba sub should have lengths
+sub_len = getattr(mc, '_lengths', None) or getattr(mc, 'lengths', None)
+if sub_len is None:
+    print("FAIL:sub_lengths_not_set"); sys.exit(0)
+
+try:
+    ex = cl.extract(0)
+except Exception as e:
+    print(f"FAIL:extract_exc:{e}"); sys.exit(0)
+if not isinstance(ex, CacheList):
+    print(f"FAIL:extract_not_cachelist:{type(ex).__name__}"); sys.exit(0)
+sub0 = ex.caches[0]
+if not isinstance(sub0, ArraysCache):
+    print(f"FAIL:sub0:{type(sub0).__name__}"); sys.exit(0)
+arr = np.asarray(sub0.cache[0])
+if arr.shape[0] != 1:
+    print(f"FAIL:extract_batch:{arr.shape}"); sys.exit(0)
+
+try:
+    cl.finalize()
+except Exception as e:
+    print(f"FAIL:finalize_exc:{e}"); sys.exit(0)
+
 print("PASS")
 PYEOF
 )
-echo "$out" | tail -3
 if echo "$out" | grep -q "^PASS$"; then
-    REWARD=$(awk "BEGIN{print $REWARD + 0.05}")
-    echo "F2P-8: PASS (+0.05)"
+    REWARD=$(add "$REWARD" 0.10)
+    echo "F2P-6 PASS (+0.10)"
+else
+    echo "F2P-6 FAIL: $out"
 fi
 
-# Clamp to [0,1]
-REWARD=$(awk "BEGIN{r=$REWARD; if(r<0)r=0; if(r>1)r=1; printf \"%.4f\", r}")
+# =========================================================================
+# F2P-7 [0.10] — Source-level: _merge_caches in generate.py mentions both
+#   ArraysCache and CacheList (completeness gate against shallow patches that
+#   only handle one).
+# =========================================================================
+gen_src=$(cat "$GENERATE_PY")
+# Extract _merge_caches body specifically
+mc_body=$(python3 << 'PYEOF' 2>&1
+import ast
+src = open('/workspace/mlx-lm/mlx_lm/generate.py').read()
+tree = ast.parse(src)
+for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef) and node.name == "_merge_caches":
+        print(ast.get_source_segment(src, node))
+        break
+PYEOF
+)
+has_arrays=0
+has_cachelist=0
+echo "$mc_body" | grep -q "ArraysCache" && has_arrays=1
+echo "$mc_body" | grep -q "CacheList" && has_cachelist=1
+if [ "$has_arrays" = "1" ] && [ "$has_cachelist" = "1" ]; then
+    REWARD=$(add "$REWARD" 0.10)
+    echo "F2P-7 PASS (+0.10)"
+else
+    echo "F2P-7 FAIL: arrays=$has_arrays cachelist=$has_cachelist"
+fi
+
+# =========================================================================
+# F2P-8 [0.05] — Author-supplied unit test file exists and at least one test
+#   passes (rewards bug-fix authoring discipline; small weight).
+# =========================================================================
+TEST_FILE="/workspace/mlx-lm/tests/test_mamba_cache_batching.py"
+if [ -f "$TEST_FILE" ]; then
+    cd /workspace/mlx-lm
+    pyt_out=$(python3 -m pytest "$TEST_FILE" -v --no-header -x 2>&1 | tail -50)
+    passed=$(echo "$pyt_out" | grep -oE "[0-9]+ passed" | head -1 | awk '{print $1}')
+    if [ -n "$passed" ] && [ "$passed" -ge 1 ]; then
+        REWARD=$(add "$REWARD" 0.05)
+        echo "F2P-8 PASS (+0.05) — $passed tests passed"
+    else
+        echo "F2P-8 FAIL: no passing tests in $TEST_FILE"
+    fi
+    cd - >/dev/null
+else
+    echo "F2P-8 FAIL: test file missing"
+fi
+
+# Clamp
+REWARD=$(awk -v r="$REWARD" 'BEGIN{ if (r>1.0) r=1.0; if (r<0.0) r=0.0; printf "%.4f", r }')
 echo "FINAL REWARD: $REWARD"
-echo "$REWARD" > "$REWARD_FILE"
+echo "$REWARD" > /logs/verifier/reward.txt

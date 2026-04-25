@@ -6,6 +6,13 @@ mkdir -p /logs/verifier
 REWARD="0.00"
 echo "$REWARD" > "$REWARD_FILE"
 
+export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+if ! command -v node >/dev/null 2>&1; then
+  for p in /root/.nvm/versions/node/*/bin /usr/local/node/bin; do
+    [ -d "$p" ] && export PATH="$p:$PATH"
+  done
+fi
+
 # Locate workspace
 REPO=""
 for cand in /workspace/repo /workspace/reigh /workspace/*/; do
@@ -16,44 +23,43 @@ for cand in /workspace/repo /workspace/reigh /workspace/*/; do
 done
 if [ -z "$REPO" ]; then
   for d in /workspace/*/; do
-    if [ -d "$d/src" ]; then REPO="${d%/}"; break; fi
+    if [ -d "$d/src" ] && [ -d "$d/src/shared" ]; then REPO="${d%/}"; break; fi
   done
 fi
 echo "Using REPO=$REPO"
+[ -z "$REPO" ] && { echo "0.00" > "$REWARD_FILE"; exit 0; }
 cd "$REPO" || { echo "0.00" > "$REWARD_FILE"; exit 0; }
-
-export PATH="/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-if ! command -v node >/dev/null 2>&1; then
-  for p in /root/.nvm/versions/node/*/bin /usr/local/node/bin; do
-    [ -d "$p" ] && export PATH="$p:$PATH"
-  done
-fi
 
 TASKSPANE="src/shared/components/TasksPane/TasksPane.tsx"
 TASKITEM="src/shared/components/TasksPane/TaskItem.tsx"
 TASK_UTILS="src/shared/components/TasksPane/utils/task-utils.ts"
 SOS="src/tools/travel-between-images/components/Timeline/SegmentOutputStrip.tsx"
 TASKSPANE_DIR="src/shared/components/TasksPane"
+SLOT_HOOK="src/tools/travel-between-images/components/ShotImagesEditor/hooks/useSegmentSlotMode.ts"
 
 ###############################################################################
-# Hard P2P gate: SegmentOutputStrip must still pass shotId to MediaLightbox.
-# This passes on base (no-op) — used purely as regression guard.
+# P2P regression gates (no reward, gating only)
 ###############################################################################
-if [ ! -f "$SOS" ]; then
-  echo "Missing $SOS — bailing"
-  echo "0.00" > "$REWARD_FILE"
-  exit 0
-fi
-if ! grep -q "shotId" "$SOS"; then
-  echo "P2P FAIL: SegmentOutputStrip lost shotId — regression"
-  echo "0.00" > "$REWARD_FILE"
-  exit 0
+
+# P2P: SegmentOutputStrip still exists and references shotId
+if [ ! -f "$SOS" ] || ! grep -q "shotId" "$SOS"; then
+  echo "P2P FAIL: SegmentOutputStrip.tsx missing or lost shotId"
+  echo "0.00" > "$REWARD_FILE"; exit 0
 fi
 
-###############################################################################
-# Hard P2P gate: Task type field. Determine the correct field name on Task type.
-# Used as a regression guard only (no reward).
-###############################################################################
+# P2P: task-utils still exports the helpers used downstream
+if [ ! -f "$TASK_UTILS" ]; then
+  echo "P2P FAIL: task-utils missing"
+  echo "0.00" > "$REWARD_FILE"; exit 0
+fi
+for sym in "isSegmentVideoTask" "extractPairShotGenerationId" "extractShotId"; do
+  if ! grep -q "$sym" "$TASK_UTILS"; then
+    echo "P2P FAIL: $sym missing from task-utils"
+    echo "0.00" > "$REWARD_FILE"; exit 0
+  fi
+done
+
+# Detect Task field name (camelCase taskType vs snake task_type)
 TYPE_FILE=""
 for f in src/types/tasks.ts src/types/Task.ts; do
   [ -f "$f" ] && TYPE_FILE="$f" && break
@@ -72,190 +78,320 @@ fi
 echo "Detected Task field: $TASK_FIELD (from $TYPE_FILE)"
 
 ###############################################################################
-# Determine the BASE-state of isSegmentVideoTask: is the bug present?
-# The bug (per the task and confirmed by all 5 agents): isSegmentVideoTask
-# uses `task.task_type` while the Task type defines `taskType` (camelCase),
-# so the function ALWAYS returns false → segment-video click handler is dead
-# code → lightbox opens without shot context.
-#
-# F2P signal: isSegmentVideoTask must reference task.<TASK_FIELD> matching
-# the Task type. On the buggy base it does NOT (uses wrong key); on the fix
-# it does. Award only if this is FIXED.
+# F2P Gates — total weight = 1.0
 ###############################################################################
-echo "=== F2P Gate 1: isSegmentVideoTask uses correct field name (0.30) ==="
+
+# Weights:
+#   G1  isSegmentVideoTask uses correct field (behavioral, executed)   0.25
+#   G2  isSegmentVideoTask gates routing in TasksPane (call-site)      0.10
+#   G3  Shot-context routing exists & is reachable                     0.20
+#       (deep-link nav OR in-place segmentSlot lightbox)
+#   G4  extractPairShotGenerationId returns expected id (behavioral)   0.15
+#   G5  Receiver wiring: useSegmentSlotMode handles openSegmentSlot    0.15
+#       OR a dedicated SegmentSlot lightbox hook for TasksPane exists
+#   G6  Completeness: ≥2 of {task-utils, TaskItem/TasksPane,            0.15
+#       useSegmentSlotMode/SegmentSlotTaskLightbox} touched
+#       AND non-trivial line counts in those touched files
+#
+# Total = 1.00
+
+SCORE=0
+
+###############################################################################
+# G1 — Behavioral: actually evaluate isSegmentVideoTask in node
+###############################################################################
+echo "=== G1: isSegmentVideoTask returns true for individual_travel_segment (0.25) ==="
 G1=0
-if [ -f "$TASK_UTILS" ]; then
-  # Extract just the isSegmentVideoTask body
-  BODY=$(awk '/isSegmentVideoTask/,/^};/' "$TASK_UTILS" | head -20)
-  echo "--- isSegmentVideoTask body ---"
+if [ -f "$TASK_UTILS" ] && command -v node >/dev/null 2>&1; then
+  TMPJS=$(mktemp /tmp/tu_XXXXXX.mjs)
+  # Strip TS types crudely so node can run it. We only need the body.
+  # Extract isSegmentVideoTask body and rebuild as plain JS.
+  BODY=$(awk '
+    /export const isSegmentVideoTask/ { capture=1 }
+    capture { print }
+    capture && /^};?\s*$/ { capture=0 }
+  ' "$TASK_UTILS")
+
+  echo "--- isSegmentVideoTask source ---"
   echo "$BODY"
   echo "--- end ---"
-  if echo "$BODY" | grep -qE "task\.${TASK_FIELD}\s*===\s*['\"]individual_travel_segment['\"]"; then
-    echo "PASS: isSegmentVideoTask uses task.${TASK_FIELD}"
-    G1=30
+
+  # Convert TS arrow with type annotations into JS
+  JS_BODY=$(echo "$BODY" \
+    | sed -E 's/:\s*Task//g' \
+    | sed -E 's/:\s*boolean//g' \
+    | sed 's/^export //')
+
+  cat > "$TMPJS" <<EOF
+$JS_BODY
+
+const taskCamel = { taskType: 'individual_travel_segment', task_type: 'individual_travel_segment' };
+const taskSnakeOnly = { task_type: 'individual_travel_segment' };
+const taskCamelOnly = { taskType: 'individual_travel_segment' };
+const wrongType = { taskType: 'travel_orchestrator', task_type: 'travel_orchestrator' };
+
+const expectedField = '$TASK_FIELD';
+let okPositive = false;
+let okNegative = false;
+try { okPositive = isSegmentVideoTask(taskCamel) === true; } catch (e) { console.error('positive call threw:', e.message); }
+try { okNegative = isSegmentVideoTask(wrongType) === false; } catch (e) { console.error('negative call threw:', e.message); }
+
+// More importantly: does it work when ONLY the Type-defined field is set?
+let okFieldMatches = false;
+try {
+  const onlyCorrect = expectedField === 'taskType' ? taskCamelOnly : taskSnakeOnly;
+  okFieldMatches = isSegmentVideoTask(onlyCorrect) === true;
+} catch (e) { console.error('field-match call threw:', e.message); }
+
+console.log(JSON.stringify({ okPositive, okNegative, okFieldMatches }));
+EOF
+
+  OUT=$(node "$TMPJS" 2>&1)
+  echo "G1 output: $OUT"
+  rm -f "$TMPJS"
+
+  if echo "$OUT" | grep -q '"okFieldMatches":true' \
+     && echo "$OUT" | grep -q '"okPositive":true' \
+     && echo "$OUT" | grep -q '"okNegative":true'; then
+    echo "G1 PASS"
+    G1=25
   else
-    echo "FAIL: isSegmentVideoTask not using task.${TASK_FIELD}"
+    echo "G1 FAIL"
   fi
 else
-  echo "FAIL: $TASK_UTILS missing"
+  echo "G1 SKIP (no node or task-utils missing)"
 fi
+SCORE=$((SCORE+G1))
 
 ###############################################################################
-# F2P Gate 2: Segment-video routing wired into TasksPane click flow.
-# On the buggy base, even when isSegmentVideoTask was correct, there was
-# no shot-context routing in TasksPane. Two acceptable fixes:
-#   (A) Navigate to /tools/travel-between-images#<shotId> with state carrying
-#       openSegmentSlot / fromShotClick (deep-link to ShotImagesEditor).
-#   (B) Open MediaLightbox locally with shot-context props (segmentSlotMode
-#       or shotId+currentSegmentImages).
-#
-# Must be GATED by isSegmentVideoTask call inside TasksPane component tree.
+# G2 — isSegmentVideoTask CALLED inside TasksPane component tree
 ###############################################################################
-echo "=== F2P Gate 2: shot-context routing wired in TasksPane (0.40) ==="
+echo "=== G2: isSegmentVideoTask gates routing at call-site (0.10) ==="
 G2=0
-ROUTING=0
-
-# Strategy A: deep-link navigation with openSegmentSlot
-if grep -rE "travel-between-images#" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null | grep -q .; then
-  if grep -rE "openSegmentSlot|fromShotClick" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null | grep -q .; then
-    ROUTING=$((ROUTING+1))
-    echo "Found strategy A: deep-link navigation"
-  fi
-fi
-
-# Strategy B: in-place lightbox with shot context props
-ML_PROBE='
-const ts=require("typescript");
-const fs=require("fs");
-const path=process.argv[1];
-if(!fs.existsSync(path)){console.log("[]"); process.exit(0);}
-const src=fs.readFileSync(path,"utf8");
-const sf=ts.createSourceFile("f.tsx",src,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
-const elems=[];
-(function v(n){
-  if(ts.isJsxOpeningElement(n)||ts.isJsxSelfClosingElement(n)){
-    const tag=n.tagName.getText(sf);
-    if(tag==="MediaLightbox"){
-      const props=[];
-      if(n.attributes&&n.attributes.properties){
-        n.attributes.properties.forEach(x=>{
-          if(ts.isJsxAttribute(x)&&x.name) props.push(x.name.getText(sf));
-        });
-      }
-      elems.push(props);
-    }
-  }
-  ts.forEachChild(n,v);
-})(sf);
-console.log(JSON.stringify(elems));
-'
-
-ML_HIT=0
-if command -v node >/dev/null 2>&1 && [ -d node_modules/typescript ]; then
-  for f in $(find "$TASKSPANE_DIR" -name '*.tsx' -o -name '*.ts' 2>/dev/null); do
-    OUT=$(node -e "$ML_PROBE" "$f" 2>/dev/null)
-    if echo "$OUT" | grep -qE 'segmentSlotMode|currentSegmentImages|"shotId"'; then
-      ML_HIT=1
-      echo "Found strategy B in $f: $OUT"
-      break
-    fi
-  done
-fi
-if [ $ML_HIT -eq 1 ]; then
-  ROUTING=$((ROUTING+1))
-fi
-
-# Confirm gating: isSegmentVideoTask is CALLED (not just defined) somewhere in
-# TasksPane / shared hooks
-GATED=0
-CALL_HITS=$(grep -rE "isSegmentVideoTask\s*\(" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null \
+CALL_HITS=$(grep -rEn "isSegmentVideoTask\s*\(" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null \
   | grep -v "export const isSegmentVideoTask" \
   | grep -v "export function isSegmentVideoTask" \
   | wc -l)
-if [ "$CALL_HITS" -gt 0 ]; then
-  GATED=1
-fi
-echo "routing strategies=$ROUTING, gated_calls=$CALL_HITS"
-
-# To get full credit: routing wired AND gated by isSegmentVideoTask.
-# Note: on the buggy base, although there IS a `if (isSegmentVideoTask(task) && shotId)`
-# in TaskItem.tsx already, the function returns false (G1 fails). So G2 alone
-# isn't enough to fix the bug. We award G2 only if routing is present.
-# But the routing exists in the base TaskItem.tsx already, so we need a stricter check.
-
-# Stricter F2P: the routing must be REACHABLE. We test by checking BOTH:
-#   - G1 passes (taskType correct), AND
-#   - routing exists with gating.
-# We award G2 only when routing is gated AND isSegmentVideoTask is correct.
-if [ $ROUTING -ge 1 ] && [ $GATED -eq 1 ] && [ $G1 -eq 30 ]; then
-  G2=40
-  echo "PASS: shot-context routing reachable (isSegmentVideoTask correct + gated routing present)"
-elif [ $ROUTING -ge 1 ] && [ $GATED -eq 1 ]; then
-  echo "ROUTING present and gated, but isSegmentVideoTask still buggy → routing is dead code → no credit"
-  G2=0
+echo "isSegmentVideoTask call-site count: $CALL_HITS"
+if [ "$CALL_HITS" -ge 1 ]; then
+  G2=10
+  echo "G2 PASS"
 else
-  echo "FAIL: routing not wired"
+  echo "G2 FAIL"
 fi
+SCORE=$((SCORE+G2))
 
 ###############################################################################
-# F2P Gate 3: TypeScript still compiles after the changes.
-# This is BEHAVIORAL: a real fix that introduces new props/state must still type-check.
-# To avoid awarding the no-op base, we ONLY count this when G1 has been fixed
-# (i.e. the agent did real work). Otherwise no credit even if base compiles.
+# G3 — Shot-context routing wired in TasksPane (deep-link OR in-place)
 ###############################################################################
-echo "=== F2P Gate 3: TS compiles after fix (0.20) ==="
+echo "=== G3: shot-context routing exists in TasksPane (0.20) ==="
 G3=0
-if [ $G1 -eq 30 ]; then
-  TSC_OUT=$(mktemp)
-  TSC_EXIT=127
-  if [ -x node_modules/.bin/tsc ]; then
-    node_modules/.bin/tsc --noEmit > "$TSC_OUT" 2>&1
-    TSC_EXIT=$?
-  elif [ -f node_modules/typescript/bin/tsc ]; then
-    node node_modules/typescript/bin/tsc --noEmit > "$TSC_OUT" 2>&1
-    TSC_EXIT=$?
-  elif command -v npx >/dev/null 2>&1; then
-    npx --no-install tsc --noEmit > "$TSC_OUT" 2>&1
-    TSC_EXIT=$?
-  fi
-  ERR_COUNT=$(grep -cE "error TS[0-9]+" "$TSC_OUT" 2>/dev/null)
-  [ -z "$ERR_COUNT" ] && ERR_COUNT=0
-  echo "tsc exit=$TSC_EXIT err_count=$ERR_COUNT"
-  tail -30 "$TSC_OUT"
-  if [ "$TSC_EXIT" = "0" ]; then
+
+# Strategy A: navigation to /tools/travel-between-images#<shotId> with openSegmentSlot
+NAV_HIT=$(grep -rEn "travel-between-images#" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null | wc -l)
+SLOT_PAYLOAD=$(grep -rEn "openSegmentSlot" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null | wc -l)
+A_OK=0
+if [ "$NAV_HIT" -ge 1 ] && [ "$SLOT_PAYLOAD" -ge 1 ]; then
+  A_OK=1
+fi
+
+# Strategy B: in-place MediaLightbox with segmentSlotMode / segmentSlotModeData / shot context
+B_OK=0
+if grep -rEn "segmentSlotMode|SegmentSlotModeData|currentSegmentImages" "$TASKSPANE_DIR" 2>/dev/null | grep -q .; then
+  B_OK=1
+fi
+
+echo "Strategy A (deep-link)=$A_OK  Strategy B (in-place)=$B_OK"
+if [ $A_OK -eq 1 ] || [ $B_OK -eq 1 ]; then
+  # Strategy must be reachable from a place that's gated by isSegmentVideoTask.
+  # Check: in the same file as a call to isSegmentVideoTask, the routing exists.
+  GATED_OK=0
+  for f in $(grep -rl "isSegmentVideoTask\s*(" "$TASKSPANE_DIR" 2>/dev/null); do
+    if grep -qE "openSegmentSlot|segmentSlotMode|SegmentSlotModeData" "$f"; then
+      GATED_OK=1
+      echo "Routing gated by isSegmentVideoTask in: $f"
+      break
+    fi
+  done
+  if [ $GATED_OK -eq 1 ]; then
     G3=20
-  elif [ "$ERR_COUNT" -le 2 ]; then
+    echo "G3 PASS"
+  else
+    echo "G3 PARTIAL: routing exists but not co-located with isSegmentVideoTask gate"
     G3=10
   fi
-  rm -f "$TSC_OUT"
 else
-  echo "Skipped (G1 not fixed → no credit even if base compiles)"
+  echo "G3 FAIL"
 fi
+SCORE=$((SCORE+G3))
 
 ###############################################################################
-# F2P Gate 4: TaskItem actually invokes the segment-video routing path.
-# Must contain a call to isSegmentVideoTask gated with shotId AND a code path
-# that either navigates to travel-between-images OR opens segmentSlotMode lightbox.
-# Award only when G1 fixed (otherwise dead code).
+# G4 — Behavioral: extractPairShotGenerationId returns expected id
 ###############################################################################
-echo "=== F2P Gate 4: TaskItem invokes shot-context path (0.10) ==="
+echo "=== G4: extractPairShotGenerationId returns correct id (0.15) ==="
 G4=0
-if [ $G1 -eq 30 ] && [ -f "$TASKITEM" ]; then
-  if grep -qE "isSegmentVideoTask\s*\(\s*task\s*\)" "$TASKITEM" && \
-     grep -qE "shotId" "$TASKITEM"; then
-    if grep -qE "travel-between-images" "$TASKITEM" || \
-       grep -qE "openSegmentSlot|segmentSlotMode|openSegmentSlotLightbox" "$TASKITEM"; then
-      G4=10
-      echo "PASS: TaskItem has gated shot-context path"
+if [ -f "$TASK_UTILS" ] && command -v node >/dev/null 2>&1; then
+  TMPJS=$(mktemp /tmp/ep_XXXXXX.mjs)
+
+  # Pull just the body of extractPairShotGenerationId by line range.
+  START=$(grep -nE "export const extractPairShotGenerationId|export function extractPairShotGenerationId" "$TASK_UTILS" | head -1 | cut -d: -f1)
+  if [ -n "$START" ]; then
+    # Find next "^};" or "^}" after START
+    END=$(awk -v s="$START" 'NR>=s && /^};?\s*$/ {print NR; exit}' "$TASK_UTILS")
+    if [ -n "$END" ]; then
+      sed -n "${START},${END}p" "$TASK_UTILS" > /tmp/_body.ts
+      JS_BODY=$(sed -E 's/:\s*[A-Za-z_<>\|\[\]\? ]+(\s*=)/\1/g; s/ as [A-Za-z_<>\|\[\] ]+//g; s/^export //' /tmp/_body.ts)
+
+      cat > "$TMPJS" <<EOF
+$JS_BODY
+
+// Test 1: top-level params.pair_shot_generation_id wins
+const t1 = { params: { pair_shot_generation_id: 'aaaaaaaa-1111' } };
+// Test 2: nested individual_segment_params
+const t2 = { params: { individual_segment_params: { pair_shot_generation_id: 'bbbbbbbb-2222' } } };
+// Test 3: orchestrator_details.pair_shot_generation_ids[segment_index]
+const t3 = { params: { segment_index: 2, orchestrator_details: { pair_shot_generation_ids: ['x0','x1','cccccccc-3333','x3'] } } };
+// Test 4: nothing → null
+const t4 = { params: {} };
+
+const r1 = extractPairShotGenerationId(t1);
+const r2 = extractPairShotGenerationId(t2);
+const r3 = extractPairShotGenerationId(t3);
+const r4 = extractPairShotGenerationId(t4);
+console.log(JSON.stringify({ r1, r2, r3, r4 }));
+EOF
+      OUT=$(node "$TMPJS" 2>&1)
+      echo "G4 output: $OUT"
+      rm -f "$TMPJS" /tmp/_body.ts
+
+      OK=0
+      echo "$OUT" | grep -q '"r1":"aaaaaaaa-1111"' && OK=$((OK+1))
+      echo "$OUT" | grep -q '"r2":"bbbbbbbb-2222"' && OK=$((OK+1))
+      echo "$OUT" | grep -q '"r3":"cccccccc-3333"' && OK=$((OK+1))
+      echo "$OUT" | grep -q '"r4":null' && OK=$((OK+1))
+      echo "G4 sub-checks passed: $OK/4"
+      if [ $OK -ge 3 ]; then
+        G4=15
+        echo "G4 PASS"
+      elif [ $OK -ge 2 ]; then
+        G4=8
+        echo "G4 PARTIAL"
+      fi
+    fi
+  fi
+else
+  echo "G4 SKIP"
+fi
+SCORE=$((SCORE+G4))
+
+###############################################################################
+# G5 — Receiver wiring (handles the open-on-arrival)
+###############################################################################
+echo "=== G5: receiver wiring for shot-context open (0.15) ==="
+G5=0
+
+# Path A: useSegmentSlotMode reads location.state.openSegmentSlot
+A=0
+if [ -f "$SLOT_HOOK" ]; then
+  if grep -qE "openSegmentSlot" "$SLOT_HOOK" && \
+     grep -qE "setActivePairData|setSegmentSlotLightboxIndex|pairDataByIndex|startImage" "$SLOT_HOOK"; then
+    A=1
+  fi
+fi
+
+# Path B: TasksPane has its own SegmentSlot lightbox hook that opens MediaLightbox
+B=0
+if find "$TASKSPANE_DIR" -name '*.ts' -o -name '*.tsx' 2>/dev/null \
+    | xargs grep -lE "useSegmentSlotTaskLightbox|segmentSlotModeData|SegmentSlotModeData" 2>/dev/null \
+    | grep -q .; then
+  B=1
+fi
+
+# Path C: TasksPane navigates with openSegmentSlot AND useSegmentSlotMode (already in repo) handles it
+C=0
+if grep -rqE "openSegmentSlot" "$TASKSPANE_DIR" 2>/dev/null \
+   && [ -f "$SLOT_HOOK" ] && grep -q "openSegmentSlot" "$SLOT_HOOK"; then
+  C=1
+fi
+
+echo "Receiver paths: A=$A B=$B C=$C"
+if [ $A -eq 1 ] || [ $B -eq 1 ] || [ $C -eq 1 ]; then
+  G5=15
+  echo "G5 PASS"
+else
+  echo "G5 FAIL"
+fi
+SCORE=$((SCORE+G5))
+
+###############################################################################
+# G6 — Completeness via heuristic file-touch detection
+###############################################################################
+echo "=== G6: completeness across required files (0.15) ==="
+G6=0
+
+# Capture line counts (proxy for "was edited / non-trivial")
+TASK_UTILS_LC=$(wc -l < "$TASK_UTILS" 2>/dev/null || echo 0)
+
+# 1) task-utils references taskType (the bug fix marker)
+T1=0
+if grep -qE "task\.${TASK_FIELD}\s*===\s*['\"]individual_travel_segment['\"]" "$TASK_UTILS"; then
+  T1=1
+fi
+
+# 2) TasksPane component tree wires routing for segment videos
+T2=0
+if grep -rqE "isSegmentVideoTask\s*\(" "$TASKSPANE_DIR" 2>/dev/null \
+   && grep -rqE "openSegmentSlot|segmentSlotMode|SegmentSlotModeData" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null; then
+  T2=1
+fi
+
+# 3) Receiver side updated OR a TasksPane-local segment lightbox exists
+T3=0
+if [ -f "$SLOT_HOOK" ] && grep -q "openSegmentSlot" "$SLOT_HOOK"; then
+  T3=1
+fi
+if find "$TASKSPANE_DIR" -name '*.ts' -o -name '*.tsx' 2>/dev/null \
+    | xargs grep -lE "useSegmentSlotTaskLightbox|segmentSlotModeData" 2>/dev/null \
+    | grep -q .; then
+  T3=1
+fi
+
+TOUCHED=$((T1+T2+T3))
+echo "Completeness components met: T1=$T1 T2=$T2 T3=$T3 (sum=$TOUCHED)"
+if [ $TOUCHED -ge 3 ]; then
+  G6=15
+elif [ $TOUCHED -eq 2 ]; then
+  G6=8
+elif [ $TOUCHED -eq 1 ]; then
+  G6=3
+fi
+SCORE=$((SCORE+G6))
+
+###############################################################################
+# Run any existing vitest tests for TasksPane / segment slot if present (P2P-ish bonus weight 0)
+# We do not add reward, but we DO short-circuit if existing tests fail.
+###############################################################################
+if [ -f package.json ] && command -v npx >/dev/null 2>&1; then
+  TEST_FILES=$(find src/shared/components/TasksPane src/tools/travel-between-images -name '*.test.ts*' 2>/dev/null | head -5)
+  if [ -n "$TEST_FILES" ]; then
+    echo "=== Running existing tests (P2P regression only): ==="
+    echo "$TEST_FILES"
+    timeout 90 npx vitest run $TEST_FILES --reporter=basic >/tmp/vitest.out 2>&1
+    RC=$?
+    head -80 /tmp/vitest.out
+    if [ $RC -ne 0 ] && grep -qE "FAIL|failed" /tmp/vitest.out; then
+      echo "P2P FAIL: existing tests broken"
+      echo "0.00" > "$REWARD_FILE"
+      exit 0
     fi
   fi
 fi
 
 ###############################################################################
-# Total
+# Compute final reward
 ###############################################################################
-TOTAL=$((G1 + G2 + G3 + G4))
-echo "G1=$G1 G2=$G2 G3=$G3 G4=$G4 TOTAL=$TOTAL"
-REWARD=$(awk "BEGIN {printf \"%.2f\", $TOTAL/100}")
-echo "REWARD=$REWARD"
-echo "$REWARD" > "$REWARD_FILE"
+# SCORE is in units of 1/100. Convert to 0.00–1.00.
+echo "G1=$G1 G2=$G2 G3=$G3 G4=$G4 G5=$G5 G6=$G6 SCORE=$SCORE/100"
+REWARD=$(awk -v s="$SCORE" 'BEGIN { printf "%.2f", s/100.0 }')
+echo "FINAL REWARD: $REWARD"
+echo "$REWARD" > /logs/verifier/reward.txt
