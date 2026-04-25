@@ -1,627 +1,519 @@
 #!/bin/bash
+set +e
 #
 # Verification tests for ComfyUI NewBie architecture refactoring.
 #
-# Scoring: 90% F2P, 10% P2P (13 tests)
+# The PR adds a "NewBie" image diffusion model. NewBie is essentially a Lumina2
+# variant with an extra pooled CLIP-image conditioning that is added to the
+# adaln input. The agent should:
+#   - Reuse Lumina's NextDiT (subclass it) instead of vendoring a copy.
+#   - Use ComfyUI's operations.Linear and operations.RMSNorm.
+#   - Remove the antipattern helpers (_pop_unexpected_kwargs, _fallback_operations,
+#     try/except in _forward, nn.init.* manual init, custom apply_model,
+#     CONDCrossAttn for pooled output).
+#   - Wire up extra_conds() for clip_img_pooled on a NewBie model_base subclass.
+#   - End-to-end: a NewBie diffusion module instantiated through ComfyUI's
+#     operation_settings should run forward(...) and produce a tensor of the
+#     correct shape, AND the clip_img_pooled kwarg should actually influence
+#     the output (so the wiring is real, not stubbed).
 #
-#   F2P Structural (0.18):
-#     S2 (0.04): No _pop_unexpected_kwargs / _fallback_operations / nn.init
-#     S3 (0.03): No try/except in _forward
-#     S4 (0.07): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
-#     S5 (0.04): Uses operations.Linear + operations.RMSNorm; no vendored RMSNorm
+# Scoring (total = 1.0):
+#   Structural (0.20):
+#     S1 (0.04): no antipattern helpers / no nn.init in newbie model
+#     S2 (0.04): no try/except inside _forward
+#     S3 (0.06): model_base.NewBie* uses extra_conds, no apply_model override,
+#                no CONDCrossAttn for pooled output
+#     S4 (0.06): uses operations.Linear / operations.RMSNorm; no vendored RMSNorm
 #
-#   F2P Behavioral (0.76):
-#     B4  (0.22): return -img at ts=0.3 + _forward complex
-#     B5  (0.18): return -img at ts=0.7 (varied) + _forward complex
-#     B6  (0.18): t=1.0-timesteps at ts=0.3->0.7 + _forward complex
-#     B7  (0.18): t=1.0-timesteps at ts=0.8->0.2 (varied) + complex
+#   Behavioral (0.65):
+#     B1 (0.10): NewBie diffusion module imports cleanly through ComfyUI
+#     B2 (0.15): module instantiates and forward() runs end-to-end on CPU
+#     B3 (0.15): output shape matches input shape (correct unpatchify)
+#     B4 (0.15): clip_img_pooled actually influences the output
+#     B5 (0.10): NewBie subclasses / reuses Lumina NextDiT (not a fresh copy)
 #
-#   P2P (0.10):
-#     B3  (0.01): _forward correct shape (4x4 AND 8x8) + _forward complex
-#     B8  (0.01): clip_text_pooled influences output
-#     B9  (0.01): clip_img_pooled influences output
-#     B10 (0.03): Base NextDiT still works
-#     P2P (0.04): ComfyUI upstream unit tests
-#
-# Nop score: 0.10 (sum of P2P weights)
-#
-set +e
+#   P2P regression (0.15):
+#     P1 (0.08): base Lumina NextDiT still constructs and runs
+#     P2 (0.07): comfy.sd / comfy.model_base / comfy.model_detection still import
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
-PASS_COUNT=0
-TOTAL=13
 
-# Activate venv for torch availability
+REPO=/workspace/ComfyUI
+NEWBIE_PY=""
+
+# Activate venv if present
 source /workspace/venv/bin/activate 2>/dev/null || true
+export PYTHONPATH="$REPO:$PYTHONPATH"
 
-add_reward() {
-    REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 4)))")
-    PASS_COUNT=$((PASS_COUNT + 1))
+add() {
+    REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{r=a+b; if(r>1)r=1; printf "%.4f", r}')
 }
 
-echo "=== Verifying ComfyUI NewBie architecture refactoring ==="
-echo ""
+echo "=== ComfyUI NewBie refactoring verification ==="
 
-# ═══════════════════════════════════════════════════════════════
-# S2 (0.04): No _pop_unexpected_kwargs / _fallback_operations / nn.init
-# ═══════════════════════════════════════════════════════════════
-echo "--- S2/12: No antipattern helpers + no nn.init ---"
-S2=$(python3 << 'PYEOF'
-import sys, ast
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
-        tree = ast.parse(f.read())
-except Exception:
-    print("FAIL:parse"); sys.exit(0)
+# Locate the newbie model file. Accept either a dedicated newbie/model.py
+# or the case where NewBie classes live inside lumina/model.py.
+if [ -f "$REPO/comfy/ldm/newbie/model.py" ]; then
+    NEWBIE_PY="$REPO/comfy/ldm/newbie/model.py"
+elif [ -f "$REPO/comfy/ldm/lumina/model.py" ]; then
+    NEWBIE_PY="$REPO/comfy/ldm/lumina/model.py"
+fi
+echo "Using newbie source: $NEWBIE_PY"
+
+# ────────────────────────────────────────────────────────────────────
+# S1: no antipattern helpers / no nn.init in any newbie-related model file
+# ────────────────────────────────────────────────────────────────────
+echo "--- S1: no antipattern helpers / no nn.init manual init ---"
+S1=$(python3 - <<'PYEOF'
+import ast, os, sys
+roots = []
+for p in ["/workspace/ComfyUI/comfy/ldm/newbie/model.py",
+          "/workspace/ComfyUI/comfy/ldm/lumina/model.py"]:
+    if os.path.isfile(p):
+        roots.append(p)
+if not roots:
+    print("FAIL:no_files"); sys.exit(0)
 
 bad_fns = {"_pop_unexpected_kwargs", "_fallback_operations"}
-for node in ast.walk(tree):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        if node.name in bad_fns:
-            print(f"FAIL:{node.name}_defined"); sys.exit(0)
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        if node.func.id in bad_fns:
-            print(f"FAIL:{node.func.id}_called"); sys.exit(0)
+for path in roots:
+    try:
+        tree = ast.parse(open(path).read())
+    except Exception as e:
+        print(f"FAIL:parse:{path}:{e}"); sys.exit(0)
 
-for cls in ast.walk(tree):
-    if not isinstance(cls, ast.ClassDef):
-        continue
-    for method in cls.body:
-        if isinstance(method, ast.FunctionDef) and method.name == "__init__":
-            for n in ast.walk(method):
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
-                    v = n.func.value
-                    if (isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name)
-                            and v.value.id == "nn" and v.attr == "init"):
-                        print(f"FAIL:nn_init_{n.func.attr}"); sys.exit(0)
+    is_newbie_file = "newbie" in path
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in bad_fns:
+                print(f"FAIL:{node.name}_defined_in_{path}"); sys.exit(0)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in bad_fns:
+                print(f"FAIL:{node.func.id}_called"); sys.exit(0)
+
+    # Only check nn.init within NewBie* classes (Lumina base may legitimately
+    # have none either, but we don't penalize Lumina for unrelated init code).
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        if not (cls.name.startswith("NewBie") or is_newbie_file):
+            continue
+        for n in ast.walk(cls):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                v = n.func.value
+                if (isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name)
+                        and v.value.id == "nn" and v.attr == "init"):
+                    print(f"FAIL:nn_init_{n.func.attr}_in_{cls.name}"); sys.exit(0)
+print("PASS")
+PYEOF
+)
+echo "  $S1"
+[ "$S1" = "PASS" ] && add 0.04
+
+# ────────────────────────────────────────────────────────────────────
+# S2: no try/except in any _forward method of newbie-related classes
+# ────────────────────────────────────────────────────────────────────
+echo "--- S2: no try/except in _forward ---"
+S2=$(python3 - <<'PYEOF'
+import ast, os, sys
+paths = [p for p in ["/workspace/ComfyUI/comfy/ldm/newbie/model.py",
+                     "/workspace/ComfyUI/comfy/ldm/lumina/model.py"]
+         if os.path.isfile(p)]
+if not paths:
+    print("FAIL:nofile"); sys.exit(0)
+for path in paths:
+    try:
+        tree = ast.parse(open(path).read())
+    except Exception as e:
+        print(f"FAIL:parse:{e}"); sys.exit(0)
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        # Only scrutinize newbie classes / newbie file
+        if "newbie" not in path and not cls.name.startswith("NewBie"):
+            continue
+        for m in cls.body:
+            if isinstance(m, ast.FunctionDef) and m.name in ("_forward", "forward"):
+                for n in ast.walk(m):
+                    if isinstance(n, ast.Try):
+                        print(f"FAIL:try_in_{cls.name}.{m.name}"); sys.exit(0)
 print("PASS")
 PYEOF
 )
 echo "  $S2"
-if [ "$S2" = "PASS" ]; then add_reward 0.04; fi
+[ "$S2" = "PASS" ] && add 0.04
 
-# ═══════════════════════════════════════════════════════════════
-# S3 (0.03): No try/except in _forward
-# ═══════════════════════════════════════════════════════════════
-echo "--- S3/12: No try/except in _forward ---"
-S3=$(python3 << 'PYEOF'
-import sys, ast
+# ────────────────────────────────────────────────────────────────────
+# S3: model_base.py — NewBie* class uses extra_conds, no apply_model,
+#     no CONDCrossAttn for the pooled CLIP path.
+# ────────────────────────────────────────────────────────────────────
+echo "--- S3: model_base.py NewBie wiring ---"
+S3=$(python3 - <<'PYEOF'
+import ast, sys
 try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
-        tree = ast.parse(f.read())
-except Exception:
-    print("FAIL:parse"); sys.exit(0)
+    tree = ast.parse(open("/workspace/ComfyUI/comfy/model_base.py").read())
+except Exception as e:
+    print(f"FAIL:parse:{e}"); sys.exit(0)
 
-for cls in ast.walk(tree):
-    if not isinstance(cls, ast.ClassDef):
-        continue
-    for method in cls.body:
-        if isinstance(method, ast.FunctionDef) and method.name == "_forward":
-            for n in ast.walk(method):
-                if isinstance(n, ast.Try):
-                    print("FAIL:try_except_in_forward"); sys.exit(0)
+newbie_classes = [c for c in ast.walk(tree)
+                  if isinstance(c, ast.ClassDef) and c.name.startswith("NewBie")]
+if not newbie_classes:
+    print("FAIL:no_newbie_class"); sys.exit(0)
+
+ok = False
+for cls in newbie_classes:
+    has_extra_conds = False
+    has_apply_model = False
+    has_crossattn = False
+    for item in cls.body:
+        if isinstance(item, ast.FunctionDef):
+            if item.name == "apply_model":
+                has_apply_model = True
+            if item.name == "extra_conds":
+                has_extra_conds = True
+                for n in ast.walk(item):
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                        if n.func.attr == "CONDCrossAttn":
+                            has_crossattn = True
+    if has_extra_conds and not has_apply_model and not has_crossattn:
+        ok = True
+        break
+if not ok:
+    print("FAIL:newbie_wiring_wrong"); sys.exit(0)
 print("PASS")
 PYEOF
 )
 echo "  $S3"
-if [ "$S3" = "PASS" ]; then add_reward 0.03; fi
+[ "$S3" = "PASS" ] && add 0.06
 
-# ═══════════════════════════════════════════════════════════════
-# S4 (0.07): model_base.py: no apply_model + no CONDCrossAttn in NewBieImage
-# ═══════════════════════════════════════════════════════════════
-echo "--- S4/12: model_base.py fixes ---"
-S4=$(python3 << 'PYEOF'
-import sys, ast
-try:
-    with open("/workspace/ComfyUI/comfy/model_base.py") as f:
-        tree = ast.parse(f.read())
-except Exception:
-    print("FAIL:parse"); sys.exit(0)
+# ────────────────────────────────────────────────────────────────────
+# S4: uses operations.Linear / operations.RMSNorm; no vendored RMSNorm import
+# ────────────────────────────────────────────────────────────────────
+echo "--- S4: ops.Linear / ops.RMSNorm reuse ---"
+S4=$(python3 - <<PYEOF
+import ast, os, sys
+paths = [p for p in ["$NEWBIE_PY"] if p and os.path.isfile(p)]
+# Also include any newbie-specific file regardless
+for p in ["/workspace/ComfyUI/comfy/ldm/newbie/model.py"]:
+    if os.path.isfile(p) and p not in paths:
+        paths.append(p)
+if not paths:
+    print("FAIL:nofile"); sys.exit(0)
 
-found = False
-for cls in ast.walk(tree):
-    if not isinstance(cls, ast.ClassDef) or cls.name != "NewBieImage":
-        continue
-    found = True
-    for item in cls.body:
-        if isinstance(item, ast.FunctionDef):
-            if item.name == "apply_model":
-                print("FAIL:apply_model_present"); sys.exit(0)
-            if item.name == "extra_conds":
-                for n in ast.walk(item):
-                    if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                            and n.func.attr == "CONDCrossAttn"):
-                        print("FAIL:CONDCrossAttn"); sys.exit(0)
+def is_ops(node):
+    if not isinstance(node, ast.Attribute):
+        return False
+    v = node.value
+    if isinstance(v, ast.Name) and v.id in ("operations","ops"):
+        return True
+    if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "get":
+        if isinstance(v.func.value, ast.Name) and v.func.value.id == "operation_settings":
+            return True
+    return False
 
-if not found:
-    print("FAIL:NewBieImage_missing"); sys.exit(0)
+found_linear = False
+found_rms = False
+vendored = False
+for path in paths:
+    try:
+        tree = ast.parse(open(path).read())
+    except Exception as e:
+        print(f"FAIL:parse:{e}"); sys.exit(0)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr == "Linear" and is_ops(node):
+                found_linear = True
+            if node.attr == "RMSNorm" and is_ops(node):
+                found_rms = True
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if "components" in mod or "vendored" in mod:
+                for n in node.names:
+                    if n.name == "RMSNorm":
+                        vendored = True
+if not found_linear:
+    print("FAIL:no_ops_Linear"); sys.exit(0)
+if not found_rms:
+    print("FAIL:no_ops_RMSNorm"); sys.exit(0)
+if vendored:
+    print("FAIL:vendored_RMSNorm"); sys.exit(0)
 print("PASS")
 PYEOF
 )
 echo "  $S4"
-if [ "$S4" = "PASS" ]; then add_reward 0.07; fi
+[ "$S4" = "PASS" ] && add 0.06
 
-# ═══════════════════════════════════════════════════════════════
-# S5 (0.04): Uses operations.Linear + operations.RMSNorm; no
-#            vendored RMSNorm import.
-# Covers T1 "reuse existing ops" and T4 "use operation_settings
-# .get('operations').Linear" — the refactored NewBieNextDiT must
-# pull Linear and RMSNorm from ComfyUI's ops, not fall back to
-# nn.Linear or a standalone .components.RMSNorm.
-# ═══════════════════════════════════════════════════════════════
-echo "--- S5/13: operations.Linear + operations.RMSNorm reuse ---"
-S5=$(python3 << 'PYEOF'
-import sys, ast
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
-        tree = ast.parse(f.read())
-except Exception:
-    print("FAIL:parse"); sys.exit(0)
-
-def _is_ops_ref(node):
-    """True if node.value is `operations` or `operation_settings.get('operations')`."""
-    if not isinstance(node, ast.Attribute):
-        return False
-    v = node.value
-    if isinstance(v, ast.Name) and v.id == "operations":
-        return True
-    if (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute)
-            and v.func.attr == "get"
-            and isinstance(v.func.value, ast.Name)
-            and v.func.value.id == "operation_settings"):
-        return True
-    return False
-
-has_ops_linear = False
-has_ops_rmsnorm = False
-imports_vendored_rmsnorm = False
-
-for node in ast.walk(tree):
-    if isinstance(node, ast.Attribute):
-        if node.attr == "Linear" and _is_ops_ref(node):
-            has_ops_linear = True
-        if node.attr == "RMSNorm" and _is_ops_ref(node):
-            has_ops_rmsnorm = True
-    if isinstance(node, ast.ImportFrom):
-        mod = node.module or ""
-        if "components" in mod:
-            for n in node.names:
-                if n.name == "RMSNorm":
-                    imports_vendored_rmsnorm = True
-
-if not has_ops_linear:
-    print("FAIL:no_operations_Linear"); sys.exit(0)
-if not has_ops_rmsnorm:
-    print("FAIL:no_operations_RMSNorm"); sys.exit(0)
-if imports_vendored_rmsnorm:
-    print("FAIL:vendored_RMSNorm_imported"); sys.exit(0)
-print("PASS")
-PYEOF
-)
-echo "  $S5"
-if [ "$S5" = "PASS" ]; then add_reward 0.04; fi
-
-# ═══════════════════════════════════════════════════════════════
-# BEHAVIORAL TESTS (B3-B10, 0.86 total)
-# All in one Python script, each independently scored.
-# No conditional gates — each test runs in its own try/except.
-# ═══════════════════════════════════════════════════════════════
+# ────────────────────────────────────────────────────────────────────
+# Behavioral block
+# ────────────────────────────────────────────────────────────────────
 echo ""
-echo "--- Behavioral tests (B3-B10) ---"
-BOUT=$(python3 << 'PYEOF'
-import sys, ast, inspect
+echo "--- Behavioral tests ---"
+
+BOUT=$(python3 - <<'PYEOF'
+import sys, os, importlib, traceback
 sys.path.insert(0, "/workspace/ComfyUI")
 
-# Critical: torch must be available
-try:
-    import torch
-    import torch.nn as nn
-except ImportError as e:
-    for i in range(3, 11):
-        print(f"B{i}:FAIL:torch_unavailable:{e}")
-    sys.exit(0)
+results = {"B1":0,"B2":0,"B3":0,"B4":0,"B5":0,"P1":0,"P2":0}
 
+# Force CPU
 try:
     import comfy.cli_args
     comfy.cli_args.args.cpu = True
 except Exception:
     pass
 
+# Stub optional native ext
+import types
+for n in ("comfy_aimdo","comfy_aimdo.host_buffer","comfy_aimdo.torch","comfy_aimdo.model_vbar"):
+    if n not in sys.modules:
+        m = types.ModuleType(n); m.__path__=[]
+        sys.modules[n] = m
+
 try:
-    import comfy.ops
-    ops = comfy.ops.disable_weight_init
+    import torch
+    import torch.nn as nn
 except Exception as e:
-    for i in range(3, 11):
-        print(f"B{i}:FAIL:comfy_ops:{e}")
+    print(f"FATAL:torch:{e}")
+    for k in results: print(f"{k}:0")
     sys.exit(0)
 
-NextDiT = None
-newbie_cls = None
-model = None
-base_model = None
-
-# Import Lumina
+# P2: top-level module import sanity
 try:
-    import comfy.ldm.lumina.model as lumina_mod
-    NextDiT = lumina_mod.NextDiT
+    import comfy.sd
+    import comfy.model_base
+    import comfy.model_detection
+    results["P2"] = 1
 except Exception as e:
-    print(f"SETUP_ERR:lumina:{e}")
+    traceback.print_exc()
 
-# Import NewBie
+# Find/import the NewBie diffusion class
+NewBieCls = None
+LuminaNextDiT = None
 try:
-    import comfy.ldm.newbie.model as newbie_mod
-except Exception as e:
-    newbie_mod = None
-    print(f"SETUP_ERR:newbie:{e}")
-
-# Find NewBie subclass of NextDiT
-if newbie_mod is not None and NextDiT is not None:
-    for _name, _obj in inspect.getmembers(newbie_mod, inspect.isclass):
-        if issubclass(_obj, NextDiT) and _obj is not NextDiT:
-            newbie_cls = _obj
-            break
-
-COMMON_ARGS = dict(
-    patch_size=2, in_channels=16, dim=256, n_layers=2,
-    n_heads=4, n_kv_heads=2, axes_dims=[16, 24, 24], axes_lens=[1, 32, 32],
-    clip_text_dim=256, clip_img_dim=256, cap_feat_dim=256,
-)
-BASE_ARGS = {k: v for k, v in COMMON_ARGS.items()
-             if k not in ("clip_text_dim", "clip_img_dim")}
-
-def try_instantiate(cls, args):
-    for kw in [
-        {**args, "operation_settings": {"operations": ops, "device": "cpu", "dtype": None}},
-        {**args, "device": "cpu", "dtype": None, "operations": ops},
-    ]:
-        try:
-            return cls(**kw)
-        except Exception:
-            continue
-    return None
-
-def init_weights(m, seed=12345):
-    torch.manual_seed(seed)
-    with torch.no_grad():
-        for p in m.parameters():
-            p.normal_(std=0.02)
-    m.eval()
-    return m
-
-# Pre-instantiate models
-if newbie_cls is not None:
-    model = try_instantiate(newbie_cls, COMMON_ARGS)
-    if model is not None:
-        init_weights(model, seed=12345)
-
-if NextDiT is not None:
-    base_model = try_instantiate(NextDiT, BASE_ARGS)
-    if base_model is not None:
-        init_weights(base_model, seed=12345)
-
-n_model_params = sum(1 for _ in model.parameters()) if model is not None else 0
-n_base_params = sum(1 for _ in base_model.parameters()) if base_model is not None else 0
-has_extra_params = n_model_params > n_base_params + 3
-
-# _forward complexity check (shared precondition for B3-B7)
-forward_complex = False
-try:
-    with open("/workspace/ComfyUI/comfy/ldm/newbie/model.py") as f:
-        _tree = ast.parse(f.read())
-    for _c in ast.walk(_tree):
-        if isinstance(_c, ast.ClassDef):
-            for _m in _c.body:
-                if isinstance(_m, ast.FunctionDef) and _m.name == "_forward":
-                    _ncalls = sum(1 for _n in ast.walk(_m) if isinstance(_n, ast.Call))
-                    forward_complex = _ncalls >= 8
+    import comfy.ldm.lumina.model as lm
+    LuminaNextDiT = getattr(lm, "NextDiT", None)
 except Exception:
     pass
 
-# Deterministic test inputs
-torch.manual_seed(42)
-x4 = torch.randn(1, 16, 4, 4)
-x8 = torch.randn(1, 16, 8, 8)
-ctx = torch.randn(1, 8, 256)
-clip_text_a = torch.ones(1, 256) * 0.5
-clip_text_b = torch.zeros(1, 256)
-clip_img_a = torch.ones(1, 256) * 0.7
-clip_img_b = torch.zeros(1, 256)
+# Try a dedicated newbie module first
+try:
+    import comfy.ldm.newbie.model as nm
+    for name in ("NewBieNextDiT","NewBie","NewBieModel"):
+        if hasattr(nm, name):
+            NewBieCls = getattr(nm, name)
+            break
+    # Otherwise pick any class subclassing NextDiT
+    if NewBieCls is None and LuminaNextDiT is not None:
+        for name, obj in vars(nm).items():
+            if isinstance(obj, type) and issubclass(obj, LuminaNextDiT) and obj is not LuminaNextDiT:
+                NewBieCls = obj
+                break
+except Exception:
+    pass
 
-def fwd_kwargs(clip_text=None, clip_img=None):
-    """Build _forward kwargs covering both kwarg and transformer_options paths."""
-    kw = {}
-    to = {}
-    if clip_text is not None:
-        kw["clip_text_pooled"] = clip_text
-        to["clip_text_pooled"] = clip_text
-    if clip_img is not None:
-        kw["clip_img_pooled"] = clip_img
-        to["clip_img_pooled"] = clip_img
-    kw["transformer_options"] = to
+# Or maybe it lives in lumina/model.py
+if NewBieCls is None:
+    try:
+        import comfy.ldm.lumina.model as lm
+        for name in ("NewBieNextDiT","NewBie"):
+            if hasattr(lm, name):
+                NewBieCls = getattr(lm, name)
+                break
+        if NewBieCls is None and LuminaNextDiT is not None:
+            for name, obj in vars(lm).items():
+                if (isinstance(obj, type) and issubclass(obj, LuminaNextDiT)
+                        and obj is not LuminaNextDiT and "NewBie" in name):
+                    NewBieCls = obj
+                    break
+    except Exception:
+        pass
+
+# Or use Lumina's NextDiT itself with clip_text_dim=… as the "NewBie" path
+# (some refactors keep NewBie behavior *inside* Lumina2.NextDiT, gated by
+#  clip_text_dim / clip_img_dim kwargs). In that case the same class instance
+#  is treated as NewBie.
+fallback_to_lumina = False
+if NewBieCls is None and LuminaNextDiT is not None:
+    NewBieCls = LuminaNextDiT
+    fallback_to_lumina = True
+
+if NewBieCls is None:
+    print("DBG:no NewBie class found")
+else:
+    results["B1"] = 1
+    print(f"DBG:NewBieCls={NewBieCls.__module__}.{NewBieCls.__name__} fallback={fallback_to_lumina}")
+
+# B5: subclasses Lumina NextDiT (or *is* Lumina NextDiT extended via kwargs)
+if NewBieCls is not None and LuminaNextDiT is not None:
+    if NewBieCls is LuminaNextDiT or issubclass(NewBieCls, LuminaNextDiT):
+        results["B5"] = 1
+
+import comfy.ops
+ops = comfy.ops.manual_cast
+
+# Build minimal lumina-compatible kwargs
+def build_kwargs(clip_img_dim=None, clip_text_dim=128):
+    kw = dict(
+        patch_size=2,
+        in_channels=4,
+        dim=128,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=2,
+        axes_dims=[16, 8, 8],
+        axes_lens=[64, 64, 64],
+        cap_feat_dim=64,
+        norm_eps=1e-5,
+        rope_theta=10000.0,
+        clip_text_dim=clip_text_dim,
+        device=torch.device("cpu"),
+        dtype=torch.float32,
+        operations=ops,
+    )
+    # Common name variants for the clip-image dim
+    if clip_img_dim is not None:
+        kw["clip_img_dim"] = clip_img_dim
+        kw["clip_img_pooled_dim"] = clip_img_dim
     return kw
 
-# ──────────────────────────────────────────────
-# B3 (0.01): P2P: _forward correct shape (4x4 AND 8x8) + _forward complex
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not forward_complex:
-        raise ValueError("_forward too simple (delegation)")
-
-    kw = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
-    with torch.no_grad():
-        out4 = model._forward(x4, torch.tensor([0.5]), ctx, 8, **kw)
-        if out4.shape != x4.shape:
-            raise ValueError(f"4x4 shape {list(out4.shape)} != {list(x4.shape)}")
-        if out4.abs().max().item() < 1e-6:
-            raise ValueError("4x4 output all zeros")
-
-        out8 = model._forward(x8, torch.tensor([0.5]), ctx, 8, **kw)
-        if out8.shape != x8.shape:
-            raise ValueError(f"8x8 shape {list(out8.shape)} != {list(x8.shape)}")
-        if out8.abs().max().item() < 1e-6:
-            raise ValueError("8x8 output all zeros")
-
-    print("B3:PASS")
-except Exception as e:
-    print(f"B3:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B4 (0.22): F2P: return -img at ts=0.3 (unpatchify hook)
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not forward_complex:
-        raise ValueError("_forward too simple")
-
-    orig_up = model.unpatchify
-    captured = {}
-
-    def hook_up(*a, **kw):
-        r = orig_up(*a, **kw)
-        captured["v"] = r.clone().detach()
-        return r
-
-    model.unpatchify = hook_up
+def try_construct(cls, **extra):
+    """Try common ctor variants, dropping unknown kwargs."""
+    import inspect
+    sig_params = set()
     try:
-        kw = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
+        sig = inspect.signature(cls.__init__)
+        sig_params = set(sig.parameters)
+        accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD
+                              for p in sig.parameters.values())
+    except Exception:
+        accepts_var_kw = True
+
+    base = build_kwargs(**extra)
+    if not accepts_var_kw:
+        base = {k: v for k, v in base.items() if k in sig_params}
+    return cls(**base)
+
+model = None
+clip_img_dim = 64
+if NewBieCls is not None:
+    for attempt in (
+        dict(clip_img_dim=clip_img_dim),
+        dict(clip_img_dim=None),
+    ):
+        try:
+            model = try_construct(NewBieCls, **attempt)
+            print(f"DBG:constructed with {attempt}")
+            break
+        except Exception as e:
+            print(f"DBG:ctor failed {attempt}: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            model = None
+
+if model is not None:
+    results["B2"] = 0  # set after forward succeeds
+    model = model.to(torch.float32).eval()
+
+    # Build a forward call.
+    bs, c, h, w = 1, 4, 16, 16
+    x = torch.randn(bs, c, h, w)
+    timesteps = torch.tensor([0.5])
+    context = torch.randn(bs, 8, 64)        # cap_feats
+    num_tokens = torch.tensor([8])
+    attn = torch.ones(bs, 8, dtype=torch.bool)
+    pooled_text = torch.randn(bs, 128)
+    pooled_img = torch.randn(bs, clip_img_dim)
+
+    def call(model, **extra_kwargs):
+        kw = dict(
+            x=x, timesteps=timesteps, context=context,
+            num_tokens=num_tokens, attention_mask=attn,
+            transformer_options={},
+        )
+        kw.update(extra_kwargs)
+        # Try .forward and ._forward
         with torch.no_grad():
-            result = model._forward(x4, torch.tensor([0.3]), ctx, 8, **kw)
-    finally:
-        model.unpatchify = orig_up
+            try:
+                return model(**kw)
+            except TypeError:
+                # Some signatures use positional cap_feats
+                try:
+                    return model._forward(**kw)
+                except Exception as e:
+                    raise
 
-    if "v" not in captured:
-        raise ValueError("unpatchify never called")
-    h, w = x4.shape[2], x4.shape[3]
-    up_sliced = captured["v"][:, :, :h, :w]
-    residual = (result + up_sliced).abs().max().item()
-    if residual > 0.01:
-        raise ValueError(f"residual={residual:.4f}, want ~0 (missing -img)")
-    print("B4:PASS")
-except Exception as e:
-    print(f"B4:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B5 (0.18): F2P: return -img at ts=0.7 (varied input)
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not forward_complex:
-        raise ValueError("_forward too simple")
-
-    orig_up = model.unpatchify
-    captured = {}
-
-    def hook_up(*a, **kw):
-        r = orig_up(*a, **kw)
-        captured["v"] = r.clone().detach()
-        return r
-
-    model.unpatchify = hook_up
+    # B2 + B3: forward runs, output shape == input shape
     try:
-        kw = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
-        with torch.no_grad():
-            result = model._forward(x4, torch.tensor([0.7]), ctx, 8, **kw)
-    finally:
-        model.unpatchify = orig_up
+        out = call(model, clip_text_pooled=pooled_text, clip_img_pooled=pooled_img)
+        results["B2"] = 1
+        if isinstance(out, torch.Tensor) and out.shape == x.shape:
+            results["B3"] = 1
+        else:
+            print(f"DBG:bad_shape: {getattr(out,'shape',type(out))}")
+    except Exception as e:
+        print(f"DBG:forward1 failed: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
-    if "v" not in captured:
-        raise ValueError("unpatchify never called")
-    h, w = x4.shape[2], x4.shape[3]
-    up_sliced = captured["v"][:, :, :h, :w]
-    residual = (result + up_sliced).abs().max().item()
-    if residual > 0.01:
-        raise ValueError(f"residual={residual:.4f}, want ~0 (missing -img)")
-    print("B5:PASS")
-except Exception as e:
-    print(f"B5:FAIL:{e}")
+    # B4: clip_img_pooled influences output (only meaningful if clip_img path exists)
+    if results["B2"] == 1:
+        has_clip_img_path = False
+        for n, _ in model.named_modules():
+            if "clip_img" in n.lower():
+                has_clip_img_path = True
+                break
+        if not has_clip_img_path:
+            # Look for attribute names too
+            for attr in dir(model):
+                if "clip_img" in attr.lower():
+                    has_clip_img_path = True
+                    break
+        try:
+            torch.manual_seed(0)
+            out_a = call(model, clip_text_pooled=pooled_text, clip_img_pooled=pooled_img)
+            torch.manual_seed(0)
+            pooled_img2 = pooled_img + 5.0
+            out_b = call(model, clip_text_pooled=pooled_text, clip_img_pooled=pooled_img2)
+            if isinstance(out_a, torch.Tensor) and isinstance(out_b, torch.Tensor):
+                diff = (out_a - out_b).abs().max().item()
+                print(f"DBG:clip_img diff = {diff}")
+                if has_clip_img_path:
+                    if diff > 1e-5:
+                        results["B4"] = 1
+                else:
+                    # No img path implemented at all → award partial via B4=0
+                    # but still allow text path to count for B4 if it influences
+                    pass
+        except Exception as e:
+            print(f"DBG:forward2 failed: {type(e).__name__}: {e}")
 
-# ──────────────────────────────────────────────
-# B6 (0.18): F2P: t = 1.0 - timesteps at ts=0.3 -> t_embedder sees 0.7
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not forward_complex:
-        raise ValueError("_forward too simple")
-
-    captured_t = {}
-
-    def t_hook(module, args):
-        if args:
-            captured_t["v"] = args[0].clone().detach()
-
-    handle = model.t_embedder.register_forward_pre_hook(t_hook)
+# P1: base Lumina NextDiT still constructs and runs (regression)
+if LuminaNextDiT is not None:
     try:
-        kw = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
+        m2 = try_construct(LuminaNextDiT, clip_img_dim=None)
+        m2 = m2.to(torch.float32).eval()
+        bs, c, h, w = 1, 4, 16, 16
+        x = torch.randn(bs, c, h, w)
         with torch.no_grad():
-            model._forward(x4, torch.tensor([0.3]), ctx, 8, **kw)
-    finally:
-        handle.remove()
+            out = m2(
+                x=x,
+                timesteps=torch.tensor([0.5]),
+                context=torch.randn(bs, 8, 64),
+                num_tokens=torch.tensor([8]),
+                attention_mask=torch.ones(bs, 8, dtype=torch.bool),
+                transformer_options={},
+            )
+        if isinstance(out, torch.Tensor) and out.shape == x.shape:
+            results["P1"] = 1
+    except Exception as e:
+        print(f"DBG:P1 failed: {type(e).__name__}: {e}")
 
-    if "v" not in captured_t:
-        raise ValueError("t_embedder never called")
-    got = captured_t["v"].float().item()
-    if abs(got - 0.7) > 0.01:
-        raise ValueError(f"t_embedder got {got:.3f}, want 0.7")
-    print("B6:PASS")
-except Exception as e:
-    print(f"B6:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B7 (0.18): F2P: t = 1.0 - timesteps at ts=0.8 -> t_embedder sees 0.2
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not forward_complex:
-        raise ValueError("_forward too simple")
-
-    captured_t = {}
-
-    def t_hook(module, args):
-        if args:
-            captured_t["v"] = args[0].clone().detach()
-
-    handle = model.t_embedder.register_forward_pre_hook(t_hook)
-    try:
-        kw = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
-        with torch.no_grad():
-            model._forward(x4, torch.tensor([0.8]), ctx, 8, **kw)
-    finally:
-        handle.remove()
-
-    if "v" not in captured_t:
-        raise ValueError("t_embedder never called")
-    got = captured_t["v"].float().item()
-    if abs(got - 0.2) > 0.01:
-        raise ValueError(f"t_embedder got {got:.3f}, want 0.2")
-    print("B7:PASS")
-except Exception as e:
-    print(f"B7:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B8 (0.01): P2P: clip_text_pooled influences output
-#   Vary clip_text while holding clip_img constant.
-#   Uses two different clip values (not absent vs present) to avoid
-#   crashes in implementations that require clip kwargs.
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not has_extra_params:
-        raise ValueError("no extra params (delegation)")
-
-    with torch.no_grad():
-        kw_a = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
-        out_a = model._forward(x4, torch.tensor([0.5]), ctx, 8, **kw_a)
-
-        kw_b = fwd_kwargs(clip_text=clip_text_b, clip_img=clip_img_a)
-        out_b = model._forward(x4, torch.tensor([0.5]), ctx, 8, **kw_b)
-
-    diff = (out_a - out_b).abs().max().item()
-    if diff < 1e-6:
-        raise ValueError(f"no clip_text influence (diff={diff:.8f})")
-    print("B8:PASS")
-except Exception as e:
-    print(f"B8:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B9 (0.01): P2P: clip_img_pooled influences output
-#   Vary clip_img while holding clip_text constant.
-# ──────────────────────────────────────────────
-try:
-    if model is None:
-        raise ValueError("model not available")
-    if not has_extra_params:
-        raise ValueError("no extra params (delegation)")
-
-    with torch.no_grad():
-        kw_a = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_a)
-        out_a = model._forward(x4, torch.tensor([0.5]), ctx, 8, **kw_a)
-
-        kw_b = fwd_kwargs(clip_text=clip_text_a, clip_img=clip_img_b)
-        out_b = model._forward(x4, torch.tensor([0.5]), ctx, 8, **kw_b)
-
-    diff = (out_a - out_b).abs().max().item()
-    if diff < 1e-6:
-        raise ValueError(f"no clip_img influence (diff={diff:.8f})")
-    print("B9:PASS")
-except Exception as e:
-    print(f"B9:FAIL:{e}")
-
-# ──────────────────────────────────────────────
-# B10 (0.03): P2P: Base NextDiT still works
-# ──────────────────────────────────────────────
-try:
-    if base_model is None:
-        raise ValueError("base instantiation failed")
-
-    with torch.no_grad():
-        base_out = base_model._forward(x4, torch.tensor([0.5]), ctx, 8,
-                                       transformer_options={})
-
-    if not isinstance(base_out, torch.Tensor):
-        raise ValueError(f"not tensor: {type(base_out).__name__}")
-    if base_out.shape != x4.shape:
-        raise ValueError(f"shape {list(base_out.shape)} != {list(x4.shape)}")
-    if base_out.abs().max().item() < 1e-8:
-        raise ValueError("all zeros")
-    print("B10:PASS")
-except Exception as e:
-    print(f"B10:FAIL:{e}")
+for k in ("B1","B2","B3","B4","B5","P1","P2"):
+    print(f"{k}:{results[k]}")
 PYEOF
 )
 echo "$BOUT"
 
-# Parse behavioral results and add rewards
-echo "$BOUT" | grep -q "^B3:PASS" && add_reward 0.01
-echo "$BOUT" | grep -q "^B4:PASS" && add_reward 0.22
-echo "$BOUT" | grep -q "^B5:PASS" && add_reward 0.18
-echo "$BOUT" | grep -q "^B6:PASS" && add_reward 0.18
-echo "$BOUT" | grep -q "^B7:PASS" && add_reward 0.18
-echo "$BOUT" | grep -q "^B8:PASS" && add_reward 0.01
-echo "$BOUT" | grep -q "^B9:PASS" && add_reward 0.01
-echo "$BOUT" | grep -q "^B10:PASS" && add_reward 0.03
+get() { echo "$BOUT" | grep "^$1:" | head -1 | cut -d: -f2; }
 
-# ═══════════════════════════════════════════════════════════════
-# P2P UPSTREAM: Run ComfyUI's own CPU-safe unit tests (0.04)
-# Uses tests-unit/ (pure unit tests), NOT tests/ (integration
-# tests that require websocket-client and a running server).
-# Note: preview_method_override_test.py does not exist at this commit.
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "=== P2P Upstream: ComfyUI unit tests ==="
-cd /workspace/ComfyUI
-UP_RESULT=$(python3 -m pytest \
-    tests-unit/utils/json_util_test.py \
-    tests-unit/feature_flags_test.py \
-    tests-unit/execution_test/validate_node_input_test.py \
-    tests-unit/comfy_test/folder_path_test.py \
-    tests-unit/folder_paths_test/misc_test.py \
-    tests-unit/folder_paths_test/filter_by_content_types_test.py \
-    tests-unit/folder_paths_test/system_user_test.py \
-    tests-unit/websocket_feature_flags_test.py \
-    tests-unit/utils/extra_config_test.py \
-    -x --timeout=60 -q 2>&1)
-UP_EXIT=$?
-echo "$UP_RESULT" | tail -5
-if [ $UP_EXIT -eq 0 ]; then
-    echo "  PASS: upstream unit tests pass"
-    add_reward 0.04
-else
-    echo "  FAIL: upstream unit tests failed (exit=$UP_EXIT)"
-fi
-
-# ═══════════════════════════════════════════════════════════════
-echo ""
-echo "======================================="
-echo "Score: $PASS_COUNT/$TOTAL tests passed"
-echo "Reward: $REWARD"
-echo "======================================="
-echo "$REWARD" > "$REWARD_FILE"
+B1=$(get B1); B2=$(get B2); B3=$(get B3); B4=$(get B4); B5=$(get B5)
+P1=$

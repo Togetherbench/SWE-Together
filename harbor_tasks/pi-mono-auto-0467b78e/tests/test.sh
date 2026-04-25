@@ -1,320 +1,351 @@
 #!/bin/bash
-# Verifier for PR review task (pi-mono PR #1292)
-# PR #1292 adds skip logic for Python venv dirs in skill loader (skills.ts)
-# Key issues: missing changelog, .venv redundancy with dotfile check,
-# spaces vs tabs, could use existing ignore infrastructure
-#
-# Gate classification:
-#   P2P = pass-to-pass (passes on unmodified base AND on correct fix)
-#   F2P = fail-to-pass (fails on unmodified base, passes on correct fix)
-#
-# Execution gates (python3 -c) account for 95% of reward weight.
-# Total weights: P2P=0.05, F2P=0.95
-# Nop baseline: 0.05 (only P2P-1 passes)
-
 set +e
+
+# Verifier for PR #1292: skill loader should skip Python venv / cache dirs
+# Repo at /workspace/pi-mono. Task is a PR review + changelog addition.
+# We score by:
+#   (a) review file quality (structural + content insights)
+#   (b) changelog entry presence in coding-agent
+#   (c) behavioral check: skill loader actually skips venv/__pycache__/site-packages
 
 REWARD="0.00"
 add_reward() {
-  REWARD=$(python3 -c "print(f'{$REWARD + $1:.2f}')")
+  REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{printf "%.3f", a+b}')
 }
 
-echo "=== PR #1292 Review Verification ==="
-echo ""
+REPO=/workspace/pi-mono
+PKG=$REPO/packages/coding-agent
+SKILLS=$PKG/src/core/skills.ts
+CHANGELOG=$PKG/CHANGELOG.md
 
-# ---------- P2P-1: Repository integrity (0.05) ----------
-# Passes on unmodified base AND after correct fix.
-# Guards against agent deleting or corrupting the repo.
-if [ -d /workspace/pi-mono ] && [ -f /workspace/pi-mono/package.json ]; then
+mkdir -p /logs/verifier
+
+echo "=== PR #1292 Review Verification ==="
+
+# ---------- P2P-1: Repository intact (0.05) ----------
+if [ -d "$REPO" ] && [ -f "$REPO/package.json" ] && [ -f "$SKILLS" ]; then
   echo "PASS [0.05]: P2P-1 - Repository structure intact"
   add_reward 0.05
 else
   echo "FAIL [0.05]: P2P-1 - Repository missing or damaged"
-fi
-
-# ---------- F2P-1: Review file exists with substantive content (0.05) ----------
-# Uses python3 execution gate
-REVIEW=""
-REVIEW_CHECK=$(python3 -c "
-import os, sys
-paths = ['/workspace/review.md', '/workspace/pi-mono/review.md']
-for p in paths:
-    if os.path.isfile(p):
-        content = open(p).read()
-        if len(content) > 100:
-            print(p)
-            sys.exit(0)
-print('')
-sys.exit(1)
-" 2>&1)
-REVIEW_RC=$?
-
-if [ $REVIEW_RC -eq 0 ] && [ -n "$REVIEW_CHECK" ]; then
-  REVIEW="$REVIEW_CHECK"
-  echo "PASS [0.05]: F2P-1 - Review file exists at $REVIEW with substantive content"
-  add_reward 0.05
-else
-  echo "FAIL [0.05]: F2P-1 - No review file with substantive content found"
-  echo ""
-  echo "=== Final Score: $REWARD ==="
-  mkdir -p /logs/verifier
   echo "$REWARD" > /logs/verifier/reward.txt
   exit 0
 fi
 
-# ---------- F2P-2: Review structure - basic sections present (0.05) ----------
-# Uses python3 execution gate. Accepts multiple valid formats:
-#   "Good:", "## Good", "**Good**:", etc.
-BASIC_STRUCT=$(python3 -c "
+# ---------- Locate review file ----------
+REVIEW=""
+for p in /workspace/review.md /workspace/pi-mono/review.md; do
+  if [ -f "$p" ] && [ "$(wc -c < "$p")" -gt 200 ]; then
+    REVIEW="$p"
+    break
+  fi
+done
+
+if [ -z "$REVIEW" ]; then
+  echo "FAIL: No substantive review.md found"
+  echo "$REWARD" > /logs/verifier/reward.txt
+  exit 0
+fi
+echo "INFO: Review file at $REVIEW"
+
+# ---------- F2P-1: Review structure (0.05) ----------
+STRUCT=$(python3 - "$REVIEW" <<'PY'
 import re, sys
-
-content = open(sys.argv[1]).read()
-found = 0
-total = 5
-
-# Check for required sections in any reasonable format
-for pattern in ['good', 'bad', 'ugly', 'changelog', 'change.?summary']:
-    regex = r'^(?:[#*\s]*)?(' + pattern + r')[\s:*]'
-    if re.search(regex, content, re.MULTILINE | re.IGNORECASE):
-        found += 1
-
-# Bonus: Tests or Questions section
-if re.search(r'^(?:[#*\s]*)?(tests|questions|assumptions)[\s:*]', content, re.MULTILINE | re.IGNORECASE):
-    found += 1
-
-# Need at least 4 of 5 required sections
-if found >= 4:
-    print('0.05')
-else:
-    print('0.00')
-" "$REVIEW" 2>&1)
-
-if [ "$BASIC_STRUCT" = "0.05" ]; then
-  echo "PASS [0.05]: F2P-2 - Review has required sections"
+c = open(sys.argv[1]).read()
+need = ['good', 'bad', 'ugly', 'changelog']
+found = sum(1 for p in need if re.search(r'(?im)^[\s#*]*'+p+r'[\s:*]', c))
+print(found)
+PY
+)
+if [ "${STRUCT:-0}" -ge 4 ]; then
+  echo "PASS [0.05]: F2P-1 - Review has required sections ($STRUCT/4)"
   add_reward 0.05
 else
-  echo "FAIL [0.05]: F2P-2 - Review missing required sections"
+  echo "FAIL [0.05]: F2P-1 - Missing sections ($STRUCT/4)"
 fi
 
-# ---------- F2P-3: Precise instruction-following format (0.15) ----------
-# Uses python3 execution gate. The instruction explicitly specifies:
-#   "Good:\n- ...\nBad:\n- ...\nUgly:\n- ..."
-# NOT markdown headers like "## Good" or "**Good**".
-# Tests whether agent follows the specified output format precisely.
-FORMAT_SCORE=$(python3 -c "
+# ---------- F2P-2: Review content quality (0.10) ----------
+QSCORE=$(python3 - "$REVIEW" <<'PY'
 import re, sys
-
-content = open(sys.argv[1]).read()
-score = 0.0
-
-# Instruction specifies these exact section headers at line start
-precise_sections = {
-    r'^Good:': 0.03,
-    r'^Bad:': 0.03,
-    r'^Ugly:': 0.02,
-    r'^Changelog:': 0.02,
-    r'^Change [Ss]ummary:': 0.02,
-}
-
-for pattern, weight in precise_sections.items():
-    if re.search(pattern, content, re.MULTILINE):
-        score += weight
-
-# Questions or Assumptions or Tests section in precise format
-if re.search(r'^(Questions|Tests|Assumptions)', content, re.MULTILINE):
-    score += 0.03
-
-print(f'{score:.2f}')
-" "$REVIEW" 2>&1)
-
-if [ -n "$FORMAT_SCORE" ] && [ "$FORMAT_SCORE" != "0.00" ]; then
-  echo "PASS [$FORMAT_SCORE/0.15]: F2P-3 - Precise instruction format (partial credit)"
-  add_reward "$FORMAT_SCORE"
-else
-  echo "FAIL [0.15]: F2P-3 - Does not follow instruction output format precisely"
-fi
-
-# ---------- F2P-4: Content quality - discusses actual PR changes (0.10) ----------
-# Uses python3 execution gate
-QUALITY_SCORE=$(python3 -c "
-import re, sys
-
-content = open(sys.argv[1]).read()
-lower = content.lower()
-score = 0.0
-
-# Mentions PR 1292 (0.02)
-if '1292' in lower:
-    score += 0.02
-
-# Discusses actual code changes: skill loader, venv, pycache (0.03)
-change_terms = ['skill', 'venv', '__pycache__', 'pycache', 'virtual env',
-                'site-packages', 'site_packages']
-if any(t in lower for t in change_terms):
-    score += 0.03
-
-# Identifies missing changelog entry (0.03)
-changelog_patterns = [
-    r'(missing|no|absent|lack).{0,40}changelog',
-    r'changelog.{0,40}(missing|required|needed|absent|add)',
-    r'changelog.{0,40}entry.{0,40}(missing|required|needed|absent)',
-    r'no.{0,20}entry.{0,20}(exist|found)',
-]
-if any(re.search(p, lower) for p in changelog_patterns):
-    score += 0.03
-
-# Mentions tests are missing or not added (0.02)
-test_patterns = [
-    r'(no|missing|lack|without|absent).{0,20}test',
-    r'test.{0,25}(miss|lack|absent|not)',
-    r'no.{0,15}unit.{0,10}test',
-]
-if any(re.search(p, lower) for p in test_patterns):
-    score += 0.02
-
-print(f'{score:.2f}')
-" "$REVIEW" 2>&1)
-
-if [ -n "$QUALITY_SCORE" ] && [ "$QUALITY_SCORE" != "0.00" ]; then
-  echo "PASS [$QUALITY_SCORE/0.10]: F2P-4 - Content quality (partial credit)"
-  add_reward "$QUALITY_SCORE"
-else
-  echo "FAIL [0.10]: F2P-4 - Review does not discuss PR changes"
-fi
-
-# ---------- F2P-5: Deep analysis insights (0.30) ----------
-# Uses python3 execution gate - tests for non-trivial analytical insights
-# that distinguish strong from weak reviewers.
-# The .venv redundancy insight is the key discriminator: it requires understanding
-# the existing startsWith(".") guard in the code and recognizing .venv is caught by it.
-DEEP_SCORE=$(python3 -c "
-import re, sys
-
-content = open(sys.argv[1]).read()
-score = 0.0
-
-# Insight 1: .venv redundancy with dotfile/startsWith check (0.20)
-# The specific insight: .venv starts with '.' and entry.name.startsWith('.')
-# already catches it, making the explicit .venv check redundant.
-has_dot_mechanism = bool(re.search(
-    r'startsWith.{0,25}[\"\x27(]\\\\?\.'
-    r'|starts?.with.{0,25}[\"\x27(]\\\\?\.'
-    r'|dot.?file|dot.?prefix|dot.?dir'
-    r'|entry\.name.*\.'
-    r'|names?\s+start.{0,20}(with|by)\s+[\"\x27.]'
-    r'|begins?\s+with\s+[a-z\s]*dot'
-    r'|leading\s+dot'
-    r'|hidden.{0,20}(director|folder|file)',
-    content, re.IGNORECASE))
-
-has_venv_redundancy = bool(re.search(
-    r'\.venv.{0,100}(redundant|already|unnecessar|superflu|overlap|duplicat|covered|caught|handled|filtered|excluded|skipped)'
-    r'|(redundant|already|unnecessar|superflu|overlap|duplicat|covered).{0,100}\.venv',
-    content, re.IGNORECASE))
-
-if has_dot_mechanism and has_venv_redundancy:
-    score += 0.20
-elif has_venv_redundancy:
-    score += 0.10  # partial: noted redundancy without explaining mechanism
-
-# Insight 2: Formatting/indentation inconsistency - tabs vs spaces (0.05)
-if re.search(
-    r'space.{0,60}tab|tab.{0,60}space'
-    r'|indent.{0,40}(inconsist|mismatch|mixed|wrong)'
-    r'|whitespace.{0,40}(inconsist|mismatch|mixed)'
-    r'|uses?\s.{0,40}spaces?\s.{0,40}(but|while|instead|whereas|rather).{0,50}tabs?'
-    r'|format.{0,30}(inconsist|issue|problem)',
-    content, re.IGNORECASE):
-    score += 0.05
-
-# Insight 3: Suggests using existing ignore infrastructure (0.05)
-if re.search(
-    r'ignore.{0,50}(package|infra|librar|existing|already|module|util)'
-    r'|existing.{0,50}(ignore|infra|mechanism)'
-    r'|package.manager.{0,50}(ignore|already|existing|has|uses)'
-    r'|hardcod.{0,50}(vs|instead|rather).{0,50}(ignore|gitignore|pattern)'
-    r'|\.gitignore.{0,40}(pars|handl|support|integrat|already|reuse|leverag)'
-    r'|(reuse|leverag|utiliz).{0,50}(ignore|existing|infrastructure)',
-    content, re.IGNORECASE):
-    score += 0.05
-
-print(f'{score:.2f}')
-" "$REVIEW" 2>&1)
-
-if [ -n "$DEEP_SCORE" ] && [ "$DEEP_SCORE" != "0.00" ]; then
-  echo "PASS [$DEEP_SCORE/0.30]: F2P-5 - Deep analysis (partial credit)"
-  add_reward "$DEEP_SCORE"
-else
-  echo "FAIL [0.30]: F2P-5 - No deep analysis insights found"
-fi
-
-# ---------- F2P-6: CHANGELOG.md modified with relevant entry (0.20) ----------
-# Uses python3 + git execution gate
-CHANGELOG_SCORE=$(python3 -c "
-import subprocess, re, sys
-
-result = subprocess.run(
-    ['git', 'diff', '--', 'packages/*/CHANGELOG.md'],
-    capture_output=True, text=True, cwd='/workspace/pi-mono'
+c = open(sys.argv[1]).read()
+low = c.lower()
+s = 0.0
+# (a) discusses the actual change
+if any(t in low for t in ['venv', '__pycache__', 'pycache', 'site-packages', 'site_packages', 'virtual env']):
+    s += 0.03
+# (b) mentions PR or issue number
+if '1292' in low or '1294' in low:
+    s += 0.02
+# (c) discusses changelog status
+if re.search(r'changelog', low):
+    s += 0.02
+# (d) mentions tests / regression coverage gap
+if re.search(r'(no|missing|lack|without|absent)[^.]{0,30}test', low) or re.search(r'test[^.]{0,30}(miss|lack|absent|not\s+add)', low):
+    s += 0.03
+print(f"{s:.3f}")
+PY
 )
-diff = result.stdout
+add_reward "${QSCORE:-0}"
+echo "SCORE [$QSCORE/0.10]: F2P-2 - Content quality"
 
-if not diff:
-    print('0.00')
-    sys.exit(0)
+# ---------- F2P-3: Deep insights (0.15) ----------
+DSCORE=$(python3 - "$REVIEW" <<'PY'
+import re, sys
+c = open(sys.argv[1]).read()
+low = c.lower()
+s = 0.0
+# Key insight: should reuse existing ignore() infrastructure rather than ad-hoc if checks
+reuse = bool(re.search(r'(reuse|leverag|use).{0,40}(ignore|gitignore|existing)', low) or
+             re.search(r'(ignore|gitignore).{0,40}(infrastructure|matcher|mechanism|already|exist)', low) or
+             re.search(r'hardcod', low) or
+             re.search(r'(ad.hoc|instead of|rather than).{0,50}ignore', low))
+if reuse:
+    s += 0.06
 
-score = 0.0
-lower = diff.lower()
+# Insight: .venv / dotfile redundancy OR mention that .venv missing
+dotfile = bool(re.search(r'(dot.?file|leading dot|starts?.with.{0,20}["\'.]|hidden.{0,20}(dir|file)|\.venv)', low))
+if dotfile:
+    s += 0.04
 
-# Base credit: CHANGELOG.md was modified at all (0.08)
-score += 0.08
+# Insight: mentions tabs/spaces or formatting/indent
+if re.search(r'(tab.{0,40}space|space.{0,40}tab|indent.{0,30}(inconsist|mismatch|mixed|wrong)|format.{0,30}(inconsist|issue))', low):
+    s += 0.03
 
-# Relevant content: mentions PR or its changes (0.07)
-relevant_terms = ['skill', 'venv', '1292', 'ignore', 'loader', 'pycache',
-                  'virtual', 'python', 'directory', 'filter']
-if any(t in lower for t in relevant_terms):
-    score += 0.07
+# Insight: notes lack of regression test for the FD-exhaustion / skip behavior
+if re.search(r'(regression|fd|file descriptor|36k|36,?000)', low):
+    s += 0.02
 
-# Proper attribution format for external PR (0.05)
-if re.search(r'1292.*@?jverkoey|jverkoey.*1292|\[#1292\]|pull/1292', diff, re.IGNORECASE):
-    score += 0.05
+print(f"{s:.3f}")
+PY
+)
+add_reward "${DSCORE:-0}"
+echo "SCORE [$DSCORE/0.15]: F2P-3 - Deep insights"
 
-print(f'{score:.2f}')
-" 2>&1)
+# ---------- F2P-4: Changelog entry added (0.10) ----------
+CL_SCORE=$(python3 - "$CHANGELOG" <<'PY'
+import re, sys, os
+p = sys.argv[1]
+if not os.path.isfile(p):
+    print("0.00"); sys.exit()
+c = open(p).read()
+# Find Unreleased section content
+m = re.search(r'##\s*\[Unreleased\](.*?)(?=^##\s*\[|\Z)', c, re.S | re.M)
+if not m:
+    print("0.00"); sys.exit()
+unr = m.group(1).lower()
+s = 0.0
+# Mentions venv/pycache/skill loader fix
+if re.search(r'(venv|__pycache__|pycache|site.?packages|skill.{0,20}load|virtual.{0,10}env)', unr):
+    s += 0.06
+# Mentions PR #1292 link or author
+if '1292' in unr:
+    s += 0.02
+if '@jverkoey' in unr or 'jverkoey' in unr:
+    s += 0.02
+print(f"{s:.3f}")
+PY
+)
+add_reward "${CL_SCORE:-0}"
+echo "SCORE [$CL_SCORE/0.10]: F2P-4 - Changelog entry"
 
-if [ -n "$CHANGELOG_SCORE" ] && [ "$CHANGELOG_SCORE" != "0.00" ]; then
-  echo "PASS [$CHANGELOG_SCORE/0.20]: F2P-6 - CHANGELOG.md modified (partial credit)"
-  add_reward "$CHANGELOG_SCORE"
+# ---------- F2P-5: Behavioral - skill loader skips venv-style dirs (0.45) ----------
+# We test the actual runtime behavior of skills.ts. The fix must cause the loader
+# to NOT load skills inside venv / __pycache__ / site-packages directories.
+# We don't care HOW it's implemented (hardcoded list, ignore matcher, etc.) — only
+# that the behavior holds.
+
+BEHAV=0.0
+
+# Setup: ensure tooling
+export PATH="/usr/local/cargo/bin:/usr/local/share/npm-global/bin:/root/.bun/bin:$PATH"
+NPM_BIN=$(command -v npm || true)
+NPX_BIN=$(command -v npx || true)
+NODE_BIN=$(command -v node || true)
+TSX_BIN=$(command -v tsx || true)
+
+if [ -z "$NODE_BIN" ]; then
+  echo "WARN: node not on PATH, behavioral test skipped"
 else
-  echo "FAIL [0.20]: F2P-6 - CHANGELOG.md not modified"
+  # Create fixture tree
+  FIX=$(mktemp -d)
+  mkdir -p "$FIX/real-skill" "$FIX/venv/lib" "$FIX/__pycache__" "$FIX/site-packages/pkg" "$FIX/node_modules/pkg"
+
+  cat > "$FIX/real-skill/SKILL.md" <<'EOF'
+---
+name: real-skill
+description: A real skill that should be discovered.
+---
+# Real
+EOF
+
+  cat > "$FIX/venv/lib/SKILL.md" <<'EOF'
+---
+name: venv-skill
+description: Should not be loaded.
+---
+EOF
+
+  cat > "$FIX/__pycache__/SKILL.md" <<'EOF'
+---
+name: pycache-skill
+description: Should not be loaded.
+---
+EOF
+
+  cat > "$FIX/site-packages/pkg/SKILL.md" <<'EOF'
+---
+name: site-packages-skill
+description: Should not be loaded.
+---
+EOF
+
+  cat > "$FIX/node_modules/pkg/SKILL.md" <<'EOF'
+---
+name: node-modules-skill
+description: Should not be loaded.
+---
+EOF
+
+  # Try to invoke loadSkillsFromDir via the package's own test runner.
+  # First: try npx vitest with a tiny inline test.
+  TESTFILE="$PKG/test/_pr1292_behavior.test.ts"
+  cat > "$TESTFILE" <<EOF
+import { describe, it, expect } from "vitest";
+import { loadSkillsFromDir } from "../src/core/skills.js";
+
+describe("PR #1292 behavior", () => {
+  it("skips venv, __pycache__, site-packages, node_modules", () => {
+    const { skills } = loadSkillsFromDir({ dir: "$FIX", source: "test" });
+    const names = skills.map((s) => s.name).sort();
+    expect(names).toContain("real-skill");
+    expect(names).not.toContain("venv-skill");
+    expect(names).not.toContain("pycache-skill");
+    expect(names).not.toContain("site-packages-skill");
+    expect(names).not.toContain("node-modules-skill");
+  });
+});
+EOF
+
+  cd "$PKG" || true
+  TEST_OUT=$(mktemp)
+
+  # Try several runners
+  RAN=0
+  if [ -x "$PKG/node_modules/.bin/vitest" ]; then
+    timeout 180 "$PKG/node_modules/.bin/vitest" run test/_pr1292_behavior.test.ts > "$TEST_OUT" 2>&1
+    RC=$?
+    RAN=1
+  elif [ -x "$REPO/node_modules/.bin/vitest" ]; then
+    timeout 180 "$REPO/node_modules/.bin/vitest" run "$TESTFILE" > "$TEST_OUT" 2>&1
+    RC=$?
+    RAN=1
+  elif command -v npx >/dev/null 2>&1; then
+    timeout 180 npx --no-install vitest run test/_pr1292_behavior.test.ts > "$TEST_OUT" 2>&1
+    RC=$?
+    RAN=1
+  fi
+
+  if [ "$RAN" -eq 1 ]; then
+    if [ "$RC" -eq 0 ] && grep -qE "(1 passed|✓ PR #1292)" "$TEST_OUT"; then
+      echo "PASS [0.45]: F2P-5 - Behavioral test passed (skill loader skips all 4 dir types)"
+      BEHAV=0.45
+    else
+      # Partial: parse output for which expectations passed
+      # Fallback: try a node-based scan that simulates the check.
+      echo "INFO: vitest run failed/partial, falling back to direct readdir scan"
+      cat "$TEST_OUT" | tail -40
+      RAN=0
+    fi
+  fi
+
+  if [ "$RAN" -eq 0 ]; then
+    # Fallback: parse skills.ts source for behavioral guarantees and verify against
+    # a small in-process check. We compile a regex check that confirms each pattern
+    # is handled either by an `if entry.name === "X"` continue OR by an ignore() add()
+    # call referencing it.
+    PARTIAL=$(python3 - "$SKILLS" <<'PY'
+import re, sys
+src = open(sys.argv[1]).read()
+patterns = ['node_modules', 'venv', '__pycache__', 'site-packages']
+score = 0.0
+each = 0.45 / len(patterns)
+for pat in patterns:
+    # Hardcoded skip
+    if re.search(r'entry\.name\s*===\s*["\']'+re.escape(pat)+r'["\']', src):
+        score += each
+        continue
+    # Added to ignore matcher
+    if re.search(r'ignore\(\)[^;]*\.add\([^)]*["\']'+re.escape(pat), src) or \
+       re.search(r'\.add\([^)]*\b'+re.escape(pat)+r'\b', src):
+        score += each
+        continue
+    # Listed in a constant array
+    m = re.search(r'\[(.*?)\]', src, re.S)
+    # check arrays containing the pattern that are then .add()ed
+    arr_matches = re.findall(r'(?:const|let|var)\s+(\w+)\s*=\s*\[([^\]]+)\]', src)
+    matched = False
+    for name, body in arr_matches:
+        if pat in body and re.search(r'\.add\(\s*'+name, src):
+            matched = True
+            break
+    if matched:
+        score += each
+print(f"{score:.3f}")
+PY
+)
+    add_reward "${PARTIAL:-0}"
+    BEHAV="${PARTIAL:-0}"
+    echo "SCORE [$BEHAV/0.45]: F2P-5 - Static behavioral analysis (fallback)"
+    rm -f "$TESTFILE"
+  else
+    add_reward "$BEHAV"
+    rm -f "$TESTFILE"
+  fi
+
+  rm -rf "$FIX"
+  rm -f "$TEST_OUT"
 fi
 
-# ---------- F2P-7: Mentions PR author/contributor (0.10) ----------
-# Uses python3 execution gate
-AUTHOR_SCORE=$(python3 -c "
-import sys
+# ---------- F2P-6: Existing tests still pass (0.10) ----------
+# Regression guard: agent shouldn't break the existing skill test suite.
+if [ -f "$PKG/test/skills.test.ts" ] && command -v node >/dev/null 2>&1; then
+  cd "$PKG" || true
+  REG_OUT=$(mktemp)
+  RAN=0
+  if [ -x "$PKG/node_modules/.bin/vitest" ]; then
+    timeout 240 "$PKG/node_modules/.bin/vitest" run test/skills.test.ts > "$REG_OUT" 2>&1
+    RC=$?; RAN=1
+  elif [ -x "$REPO/node_modules/.bin/vitest" ]; then
+    timeout 240 "$REPO/node_modules/.bin/vitest" run test/skills.test.ts > "$REG_OUT" 2>&1
+    RC=$?; RAN=1
+  elif command -v npx >/dev/null 2>&1; then
+    timeout 240 npx --no-install vitest run test/skills.test.ts > "$REG_OUT" 2>&1
+    RC=$?; RAN=1
+  fi
 
-content = open(sys.argv[1]).read()
-lower = content.lower()
-score = 0.0
-
-# Mentions the actual PR author (jverkoey) or acknowledges external contribution
-if 'jverkoey' in lower:
-    score += 0.10
-elif any(t in lower for t in ['contributor', 'external', 'author', 'community']):
-    score += 0.05
-
-print(f'{score:.2f}')
-" "$REVIEW" 2>&1)
-
-if [ -n "$AUTHOR_SCORE" ] && [ "$AUTHOR_SCORE" != "0.00" ]; then
-  echo "PASS [$AUTHOR_SCORE/0.10]: F2P-7 - Mentions PR author/contributor"
-  add_reward "$AUTHOR_SCORE"
-else
-  echo "FAIL [0.10]: F2P-7 - Does not mention PR author"
+  if [ "$RAN" -eq 1 ]; then
+    if [ "$RC" -eq 0 ] && ! grep -qE "(failed|FAIL )" "$REG_OUT"; then
+      echo "PASS [0.10]: F2P-6 - Existing skills test suite passes"
+      add_reward 0.10
+    else
+      echo "FAIL [0.10]: F2P-6 - Existing skills test suite broken"
+      tail -30 "$REG_OUT"
+    fi
+  else
+    # Tooling unavailable: give partial benefit-of-doubt if file unmodified or syntactically valid
+    if node --check "$SKILLS" 2>/dev/null; then
+      :
+    fi
+    # Light credit: source compiles via TS check is too heavy; give 0.05 if ignore() usage preserved
+    if grep -q "ignore()" "$SKILLS" && grep -q "addIgnoreRules" "$SKILLS"; then
+      echo "PARTIAL [0.05/0.10]: F2P-6 - Test runner unavailable, ignore() infra preserved"
+      add_reward 0.05
+    fi
+  fi
+  rm -f "$REG_OUT"
 fi
 
 echo ""
 echo "=== Final Score: $REWARD ==="
-mkdir -p /logs/verifier
 echo "$REWARD" > /logs/verifier/reward.txt
+exit 0

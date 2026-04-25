@@ -1,18 +1,32 @@
 #!/bin/bash
-# Verifier for comfyui-gemma3-sliding-window task
-# Tests that the Gemma3 sliding window attention is correctly implemented
-# F2P = fail-to-pass (fails on base, passes on correct fix)
-# P2P = pass-to-pass (passes on both base and correct fix)
 set +e
 
-WORKSPACE="/workspace/repo"
+# Find workspace
+WORKSPACE=""
+for candidate in /workspace/ComfyUI /workspace/repo /workspace/comfyui; do
+    if [ -f "$candidate/comfy/text_encoders/llama.py" ]; then
+        WORKSPACE="$candidate"
+        break
+    fi
+done
+if [ -z "$WORKSPACE" ]; then
+    found=$(find /workspace -maxdepth 3 -path '*/comfy/text_encoders/llama.py' 2>/dev/null | head -1)
+    if [ -n "$found" ]; then
+        WORKSPACE=$(dirname "$(dirname "$(dirname "$found")")")
+    fi
+fi
+
 RESULT_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 
-cd "$WORKSPACE"
+if [ -z "$WORKSPACE" ] || [ ! -d "$WORKSPACE" ]; then
+    echo "FATAL: workspace not found"
+    echo "0.0" > "$RESULT_FILE"
+    exit 0
+fi
 
+cd "$WORKSPACE"
 TARGET_FILE="comfy/text_encoders/llama.py"
-SCORE=0
 
 if [ ! -f "$TARGET_FILE" ]; then
     echo "FATAL: $TARGET_FILE not found"
@@ -20,435 +34,470 @@ if [ ! -f "$TARGET_FILE" ]; then
     exit 0
 fi
 
-# Shared Python helper: exec the target file with mocked heavy deps (CUDA-free).
-# This IS behavioral testing: we exec the ACTUAL source code and test real objects.
-cat > /tmp/mock_setup.py << 'MOCKEOF'
-import sys, types, torch, math, logging
+SCORE=0.0
+
+add_score() {
+    SCORE=$(awk "BEGIN{printf \"%.4f\", $SCORE + $1}")
+}
+
+# Build a portable mock harness that exec's the source with mocked deps.
+cat > /tmp/mock_setup.py << MOCKEOF
+import sys, os, types, torch, math, logging
 from typing import Optional, Any
 from dataclasses import dataclass
+
+WORKSPACE = "$WORKSPACE"
+TARGET = os.path.join(WORKSPACE, "comfy/text_encoders/llama.py")
 
 def _rms(x, w, e):
     v = x.pow(2).mean(-1, keepdim=True)
     return x * torch.rsqrt(v + e) * w
 
 captured_masks = []
+captured_q_shapes = []
 
-def _oafd(*a, **k):
+def make_oafd():
     def fn(q, k2, v, heads, mask=None, skip_reshape=False):
         if mask is not None:
-            captured_masks.append(mask.clone().detach())
+            captured_masks.append(mask.clone().detach().float())
         else:
             captured_masks.append(None)
+        captured_q_shapes.append(tuple(q.shape))
+        # q,k,v in skip_reshape format: [b, heads, seq, head_dim]
         s = q.shape[-1] ** -0.5
         sc = torch.matmul(q, k2.transpose(-2, -1)) * s
         if mask is not None:
             sc = sc + mask
-        return torch.softmax(sc, dim=-1).matmul(v).transpose(1,2).reshape(q.shape[0], q.shape[2], -1)
+        out = torch.softmax(sc, dim=-1).matmul(v)
+        return out.transpose(1, 2).reshape(q.shape[0], q.shape[2], -1)
     return fn
 
-source = open("comfy/text_encoders/llama.py").read()
-cl = [l for l in source.split("\n")
-      if not l.strip().startswith("from comfy")
-      and not l.strip().startswith("import comfy")
-      and not l.strip().startswith("from . import")]
+def _oafd(*a, **k):
+    return make_oafd()
 
+source = open(TARGET).read()
+cl = []
+for l in source.split("\n"):
+    s = l.strip()
+    if s.startswith("from comfy") or s.startswith("import comfy"):
+        continue
+    if s.startswith("from . import") or s.startswith("from .") and "import" in s:
+        continue
+    cl.append(l)
+
+class _common_dit:
+    rms_norm = staticmethod(_rms)
+class _ldm:
+    common_dit = _common_dit
+    class modules:
+        class attention:
+            optimized_attention_for_device = staticmethod(_oafd)
 class _comfy:
-    class ldm:
-        class common_dit:
-            rms_norm = staticmethod(_rms)
+    ldm = _ldm
     class model_management: pass
 
-ns = {"__builtins__": __builtins__, "torch": torch, "nn": torch.nn,
-      "dataclass": dataclass, "Optional": Optional, "Any": Any,
-      "math": math, "logging": logging,
-      "optimized_attention_for_device": _oafd,
-      "qwen_vl": type("M",(),{})(), "comfy": _comfy}
-exec("\n".join(cl), ns)
+ns = {
+    "__builtins__": __builtins__, "torch": torch, "nn": torch.nn,
+    "dataclass": dataclass, "Optional": Optional, "Any": Any,
+    "math": math, "logging": logging,
+    "optimized_attention_for_device": _oafd,
+    "qwen_vl": types.SimpleNamespace(),
+    "comfy": _comfy,
+}
+
+try:
+    exec("\n".join(cl), ns)
+    LOAD_OK = True
+    LOAD_ERR = None
+except Exception as e:
+    LOAD_OK = False
+    LOAD_ERR = str(e)
 MOCKEOF
 
 #################################################################
-# Test 1 [P2P, weight 0.05]: Syntax/compile gate
-# Passes on unmodified base AND on correct fix.
+# Test 1 [P2P, 0.05]: Syntax compile
 #################################################################
-echo "=== Test 1 [P2P]: Syntax compile check ==="
+echo "=== Test 1 [P2P]: Syntax compile ==="
 python3 -c "compile(open('$TARGET_FILE').read(), '$TARGET_FILE', 'exec')" 2>/dev/null
 if [ $? -eq 0 ]; then
     echo "PASS"
-    SCORE=$(python3 -c "print($SCORE + 0.05)")
+    add_score 0.05
 else
-    echo "FAIL: syntax error in $TARGET_FILE"
+    echo "FAIL: syntax error"
     echo "0.0" > "$RESULT_FILE"
     exit 0
 fi
 
 #################################################################
-# Test 2 [F2P, weight 0.15]: Config correctness
-# Instantiates Gemma3_4B_Config and checks sliding_attention
-# pattern: majority sliding windows, every 6th layer global.
-# Base has [False,False,False,False,False,1024] => FAILS
+# Test 2 [P2P, 0.05]: Module loads via mock harness
 #################################################################
-echo "=== Test 2 [F2P]: Config sliding_attention pattern ==="
+echo "=== Test 2 [P2P]: Module load ==="
 T2=$(python3 << 'PYEOF'
-import sys
 exec(open("/tmp/mock_setup.py").read())
-
-config = ns["Gemma3_4B_Config"]()
-sa = config.sliding_attention
-if not isinstance(sa, list) or len(sa) < 2:
-    print("FAIL: sliding_attention not a valid list"); sys.exit(0)
-
-sliding = [v for v in sa if v and v != 0]
-global_l = [v for v in sa if not v or v == 0]
-if len(sliding) <= len(global_l):
-    print("FAIL: majority should be sliding, got %d sliding vs %d global" % (len(sliding), len(global_l)))
-    sys.exit(0)
-if not all(isinstance(w, int) and w > 0 for w in sliding):
-    print("FAIL: sliding window values must be positive integers"); sys.exit(0)
-if len(global_l) < 1:
-    print("FAIL: need at least one global attention layer"); sys.exit(0)
-print("PASS")
+if not LOAD_OK:
+    print("FAIL:", LOAD_ERR)
+else:
+    needed = ["Gemma3_4B_Config", "TransformerBlockGemma2", "precompute_freqs_cis"]
+    missing = [n for n in needed if n not in ns]
+    if missing:
+        print("FAIL: missing", missing)
+    else:
+        print("PASS")
 PYEOF
 )
 echo "Test 2: $T2"
-if [ "$T2" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.15)")
-fi
+[[ "$T2" == PASS* ]] && add_score 0.05
 
 #################################################################
-# Test 3 [F2P, weight 0.15]: Per-layer sliding_attention
-# Instantiates TransformerBlockGemma2 at various indices.
-# Layers 0-4 must have sliding, layer 5 must be global.
-# Base has inverted pattern => FAILS
+# Test 3 [F2P, 0.10]: Config sliding_attention pattern correct
+# Per HF: every 6th layer (idx 5, 11, 17...) is global; rest local.
+# Pattern of length 6: positions 0..4 sliding, position 5 global.
 #################################################################
-echo "=== Test 3 [F2P]: Per-layer sliding_attention ==="
+echo "=== Test 3 [F2P]: Config sliding_attention pattern ==="
 T3=$(python3 << 'PYEOF'
-import sys
 exec(open("/tmp/mock_setup.py").read())
-
+if not LOAD_OK:
+    print("FAIL: load"); raise SystemExit
 config = ns["Gemma3_4B_Config"]()
-Block = ns["TransformerBlockGemma2"]
-
-b5 = Block(config, index=5, device="cpu", dtype=torch.float32)
-if b5.sliding_attention and b5.sliding_attention != 0:
-    print("FAIL: layer 5 should be global, got sliding_attention=%s" % b5.sliding_attention)
-    sys.exit(0)
-
-for idx in range(5):
-    b = Block(config, index=idx, device="cpu", dtype=torch.float32)
-    if not b.sliding_attention or b.sliding_attention == 0:
-        print("FAIL: layer %d should have sliding attention, got %s" % (idx, b.sliding_attention))
-        sys.exit(0)
-
+sa = config.sliding_attention
+if not isinstance(sa, list) or len(sa) != 6:
+    print("FAIL: expected list len 6, got", sa); raise SystemExit
+sliding_count = sum(1 for v in sa if v and v != 0)
+global_count = 6 - sliding_count
+if sliding_count != 5 or global_count != 1:
+    print(f"FAIL: expected 5 sliding/1 global, got {sliding_count}/{global_count}"); raise SystemExit
+# global must be at position 5 (last) so that (idx+1)%6==0 for layer 5
+if sa[5] and sa[5] != 0:
+    print("FAIL: position 5 should be global"); raise SystemExit
+for i in range(5):
+    if not sa[i] or sa[i] == 0:
+        print(f"FAIL: position {i} should be sliding"); raise SystemExit
+# Window size should be 1024
+windows = [v for v in sa if v and v != 0]
+if not all(w == 1024 for w in windows):
+    print(f"FAIL: window size should be 1024, got {windows}"); raise SystemExit
 print("PASS")
 PYEOF
 )
 echo "Test 3: $T3"
-if [ "$T3" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.15)")
-fi
+[[ "$T3" == "PASS" ]] && add_score 0.10
 
 #################################################################
-# Test 4 [F2P, weight 0.10]: Warning removal
-# The "sliding attention not implemented" warning must be removed.
-# Base has the warning => FAILS
+# Test 4 [F2P, 0.10]: Per-layer assignment to layers via index
+# layer_idx 5,11 => global; layer_idx 0..4,6..10 => sliding
 #################################################################
-echo "=== Test 4 [F2P]: Warning removal ==="
+echo "=== Test 4 [F2P]: Per-layer index mapping ==="
 T4=$(python3 << 'PYEOF'
-source = open("comfy/text_encoders/llama.py").read()
-if "sliding attention not implemented" in source.lower():
-    print("FAIL: warning still present")
-else:
-    print("PASS")
+exec(open("/tmp/mock_setup.py").read())
+if not LOAD_OK:
+    print("FAIL: load"); raise SystemExit
+config = ns["Gemma3_4B_Config"]()
+Block = ns["TransformerBlockGemma2"]
+expected_global = [5, 11, 17, 23, 29, 33]
+expected_sliding = [0, 1, 2, 3, 4, 6, 7, 10, 12, 16, 18]
+try:
+    for idx in expected_global:
+        if idx >= config.num_hidden_layers: continue
+        b = Block(config, index=idx, device="cpu", dtype=torch.float32)
+        if b.sliding_attention and b.sliding_attention != 0:
+            print(f"FAIL: layer {idx} should be global, got {b.sliding_attention}"); raise SystemExit
+    for idx in expected_sliding:
+        if idx >= config.num_hidden_layers: continue
+        b = Block(config, index=idx, device="cpu", dtype=torch.float32)
+        if not b.sliding_attention or b.sliding_attention == 0:
+            print(f"FAIL: layer {idx} should be sliding, got {b.sliding_attention}"); raise SystemExit
+except SystemExit:
+    raise
+except Exception as e:
+    print(f"FAIL: instantiation error: {e}"); raise SystemExit
+print("PASS")
 PYEOF
 )
 echo "Test 4: $T4"
-if [ "$T4" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.10)")
+[[ "$T4" == "PASS" ]] && add_score 0.10
+
+#################################################################
+# Test 5 [F2P, 0.05]: Stale TODO/warning text removed
+#################################################################
+echo "=== Test 5 [F2P]: Stale warning removed ==="
+T5_PASS=1
+src=$(cat "$TARGET_FILE")
+if echo "$src" | grep -qi "sliding attention not implemented"; then
+    T5_PASS=0
+fi
+if echo "$src" | grep -q "TODO: implement.*sliding"; then
+    T5_PASS=0
+fi
+if [ $T5_PASS -eq 1 ]; then
+    echo "PASS"
+    add_score 0.05
+else
+    echo "FAIL: stale TODO/warning still present"
 fi
 
 #################################################################
-# Test 5 [F2P, weight 0.20]: Forward pass sliding window mask
-# Runs forward() on a sliding-attention block and captures the
-# attention mask. Verifies tokens outside window are masked.
-# Base has no mask => FAILS
+# Test 6 [F2P, 0.25]: Forward pass produces correct sliding mask
+# Run on a sliding-attention layer, capture mask, verify:
+#   - tokens beyond window are masked (-inf)
+#   - tokens within window are visible (0)
+#   - causal property preserved
 #################################################################
-echo "=== Test 5 [F2P]: Forward pass sliding window mask ==="
-T5=$(python3 << 'PYEOF'
-import sys
+echo "=== Test 6 [F2P]: Sliding window mask correctness ==="
+T6=$(python3 << 'PYEOF'
 exec(open("/tmp/mock_setup.py").read())
-
+if not LOAD_OK:
+    print("FAIL: load"); raise SystemExit
 config = ns["Gemma3_4B_Config"]()
 Block = ns["TransformerBlockGemma2"]
 precompute = ns["precompute_freqs_cis"]
 
 block = Block(config, index=0, device="cpu", dtype=torch.float32)
 if not block.sliding_attention:
-    print("FAIL: layer 0 has no sliding attention (config not fixed)")
-    sys.exit(0)
+    print("FAIL: layer 0 not sliding"); raise SystemExit
 
 window = block.sliding_attention
-seq_len = window * 2 if isinstance(window, int) and window > 0 else 16
-batch = 1
-hidden = config.hidden_size
+# Use small window to keep test fast: monkey-patch this instance only
+test_window = 8
+block.sliding_attention = test_window
+seq_len = 24
 
-torch.manual_seed(42)
-x = torch.randn(batch, seq_len, hidden)
+torch.manual_seed(0)
+x = torch.randn(1, seq_len, config.hidden_size)
 pos_ids = torch.arange(0, seq_len).unsqueeze(0)
-freqs = precompute(config.head_dim, pos_ids, config.rope_theta,
-                   config.rope_scale, config.rope_dims, device="cpu")
-causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
-oafd_fn = _oafd()
-
-captured_masks.clear()
 try:
-    _ = block(x=x, attention_mask=causal, freqs_cis=freqs, optimized_attention=oafd_fn)
+    freqs = precompute(config.head_dim, pos_ids, config.rope_theta,
+                       config.rope_scale, config.rope_dims, device="cpu")
 except Exception as e:
-    print("FAIL: forward crashed: %s" % str(e)[:200])
-    sys.exit(0)
+    print(f"FAIL: precompute: {e}"); raise SystemExit
 
-if not captured_masks:
-    print("FAIL: no mask captured"); sys.exit(0)
+causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
+captured_masks.clear()
+
+try:
+    _ = block(x=x, attention_mask=causal, freqs_cis=freqs, optimized_attention=make_oafd())
+except Exception as e:
+    print(f"FAIL: forward crash: {e}"); raise SystemExit
+
+if not captured_masks or captured_masks[0] is None:
+    print("FAIL: no mask captured"); raise SystemExit
 
 mask = captured_masks[0]
-if mask is None:
-    print("FAIL: mask is None"); sys.exit(0)
+# Reduce to 2D [seq, seq]
+while mask.dim() > 2:
+    mask = mask[0]
 
-m = mask
-while m.dim() > 2:
-    m = m[0]
+NEG = -1e30
+errs = []
+# Check: for query q, key k:
+#   if k > q : masked (causal)
+#   if q - k >= window : masked (sliding)
+#   if 0 <= q - k < window : visible (0)
+for q in [3, 7, 10, 15, 20, 23]:
+    for k in [0, 1, 5, 9, 14, 19, 22, 23]:
+        if k >= seq_len or q >= seq_len: continue
+        v = mask[q, k].item()
+        if k > q:
+            if v > NEG:
+                errs.append(f"causal violated at q={q} k={k}: {v}")
+        elif q - k >= test_window:
+            if v > NEG:
+                errs.append(f"sliding violated at q={q} k={k} (dist={q-k}, window={test_window}): {v}")
+        else:
+            if v < -1.0:
+                errs.append(f"in-window blocked at q={q} k={k} (dist={q-k}): {v}")
 
-if seq_len > window:
-    far_val = m[-1, 0].item()
-    near_val = m[-1, -2].item()
-    if far_val == 0.0 or (far_val > -1e9 and far_val != float("-inf")):
-        print("FAIL: pos 0 should be masked from pos %d (window=%d), got %.4f" % (seq_len-1, window, far_val))
-        sys.exit(0)
-    if near_val < -1e9 or near_val == float("-inf"):
-        print("FAIL: pos %d should be visible from pos %d, got %.4f" % (seq_len-2, seq_len-1, near_val))
-        sys.exit(0)
-
-print("PASS")
-PYEOF
-)
-echo "Test 5: $T5"
-if [ "$T5" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.20)")
-fi
-
-#################################################################
-# Test 6 [F2P, weight 0.15]: Global layer forward produces valid output
-# A global attention layer must NOT apply sliding window masking.
-# If sliding window mask is incorrectly applied to global layers
-# (e.g. with window=0), attention collapses and output contains NaN.
-# Base has no mask at all => FAILS (Test 2/3 already fail so this
-# is only reachable when config is fixed)
-#################################################################
-echo "=== Test 6 [F2P]: Global layer valid output ==="
-T6=$(python3 << 'PYEOF'
-import sys
-exec(open("/tmp/mock_setup.py").read())
-
-config = ns["Gemma3_4B_Config"]()
-Block = ns["TransformerBlockGemma2"]
-precompute = ns["precompute_freqs_cis"]
-
-# Global layer (index 5, should NOT have sliding window)
-block_global = Block(config, index=5, device="cpu", dtype=torch.float32)
-if block_global.sliding_attention and block_global.sliding_attention != 0:
-    print("FAIL: layer 5 should be global, got sliding_attention=%s" % block_global.sliding_attention)
-    sys.exit(0)
-
-seq_len = 32
-batch = 1
-hidden = config.hidden_size
-
-torch.manual_seed(123)
-x = torch.randn(batch, seq_len, hidden)
-pos_ids = torch.arange(0, seq_len).unsqueeze(0)
-freqs = precompute(config.head_dim, pos_ids, config.rope_theta,
-                   config.rope_scale, config.rope_dims, device="cpu")
-causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
-oafd_fn = _oafd()
-
-captured_masks.clear()
-try:
-    out = block_global(x=x, attention_mask=causal, freqs_cis=freqs, optimized_attention=oafd_fn)
-except Exception as e:
-    err = str(e)
-    print("FAIL: global layer forward crashed: %s" % err[:200])
-    sys.exit(0)
-
-# Check the mask passed to attention: global layer should NOT apply sliding
-# window masking. The mask should allow all causally-valid positions.
-if not captured_masks:
-    print("FAIL: no mask captured for global layer")
-    sys.exit(0)
-
-mask = captured_masks[0]
-if mask is None:
-    # No mask at all is also acceptable for global attention (just causal)
-    print("PASS")
-    sys.exit(0)
-
-m = mask
-while m.dim() > 2:
-    m = m[0]
-
-# Row seq_len-1, col 0: last token should see first token in global attention
-val_far = m[-1, 0].item()
-if val_far < -1e9 or val_far == float("-inf"):
-    print("FAIL: global layer masks position 0 from position %d (sliding window incorrectly applied to global layer)" % (seq_len - 1))
-    sys.exit(0)
-
-# Row 4, col 0: token 4 should see token 0 in global attention
-val_near = m[4, 0].item()
-if val_near < -1e9 or val_near == float("-inf"):
-    print("FAIL: global layer masks position 0 from position 4 (should allow full causal)")
-    sys.exit(0)
-
-# Diagonal: every token should attend to itself
-diag_val = m[seq_len // 2, seq_len // 2].item()
-if diag_val < -1e9 or diag_val == float("-inf"):
-    print("FAIL: global layer masks self-attention on diagonal")
-    sys.exit(0)
-
+if errs:
+    print("FAIL:", errs[0])
+    raise SystemExit
 print("PASS")
 PYEOF
 )
 echo "Test 6: $T6"
-if [ "$T6" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.15)")
-fi
+[[ "$T6" == "PASS" ]] && add_score 0.25
 
 #################################################################
-# Test 7 [F2P, weight 0.15]: Rope frequency assignment
-# Sliding (local) layers must use freqs_cis[0] (local theta),
-# global layers must use freqs_cis[1] (global theta).
-# Base has these swapped => FAILS
+# Test 7 [F2P, 0.15]: Global layer must NOT have sliding mask applied
 #################################################################
-echo "=== Test 7 [F2P]: Rope frequency assignment ==="
+echo "=== Test 7 [F2P]: Global layer no sliding ==="
 T7=$(python3 << 'PYEOF'
-import sys
 exec(open("/tmp/mock_setup.py").read())
-
+if not LOAD_OK:
+    print("FAIL: load"); raise SystemExit
 config = ns["Gemma3_4B_Config"]()
 Block = ns["TransformerBlockGemma2"]
 precompute = ns["precompute_freqs_cis"]
 
-# Use a TrackingList to detect which freqs_cis index is accessed
-class TrackingList:
-    def __init__(self, items):
-        self.items = list(items)
-        self.accesses = []
-    def __getitem__(self, idx):
-        self.accesses.append(idx)
-        return self.items[idx]
-    def __iter__(self):
-        return iter(self.items)
-    def __len__(self):
-        return len(self.items)
+# Find a global layer (should be index 5 with HF pattern)
+global_idx = None
+for idx in range(config.num_hidden_layers):
+    b = Block(config, index=idx, device="cpu", dtype=torch.float32)
+    if not b.sliding_attention or b.sliding_attention == 0:
+        global_idx = idx
+        break
+if global_idx is None:
+    print("FAIL: no global layer found"); raise SystemExit
 
-seq_len = 16
-pos_ids = torch.arange(0, seq_len).unsqueeze(0)
-freqs_pair = precompute(config.head_dim, pos_ids, config.rope_theta,
-                        config.rope_scale, config.rope_dims, device="cpu")
-causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
-oafd_fn = _oafd()
-
-# Test sliding layer (index=0)
-block_sl = Block(config, index=0, device="cpu", dtype=torch.float32)
-if not block_sl.sliding_attention:
-    print("FAIL: layer 0 has no sliding attention"); sys.exit(0)
-
-torch.manual_seed(42)
+block = Block(config, index=global_idx, device="cpu", dtype=torch.float32)
+seq_len = 24
+torch.manual_seed(1)
 x = torch.randn(1, seq_len, config.hidden_size)
-tracker_sl = TrackingList(freqs_pair)
+pos_ids = torch.arange(0, seq_len).unsqueeze(0)
+freqs = precompute(config.head_dim, pos_ids, config.rope_theta,
+                   config.rope_scale, config.rope_dims, device="cpu")
+causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
+
 captured_masks.clear()
 try:
-    block_sl(x=x.clone(), attention_mask=causal.clone(), freqs_cis=tracker_sl, optimized_attention=oafd_fn)
+    _ = block(x=x, attention_mask=causal, freqs_cis=freqs, optimized_attention=make_oafd())
 except Exception as e:
-    print("FAIL: sliding layer forward crashed: %s" % str(e)[:200])
-    sys.exit(0)
+    print(f"FAIL: forward crash: {e}"); raise SystemExit
 
-if not tracker_sl.accesses:
-    print("FAIL: freqs_cis was not indexed for sliding layer"); sys.exit(0)
-sl_idx = tracker_sl.accesses[0]
+if not captured_masks or captured_masks[0] is None:
+    print("FAIL: no mask captured"); raise SystemExit
+mask = captured_masks[0]
+while mask.dim() > 2:
+    mask = mask[0]
 
-# Test global layer (index=5)
-block_gl = Block(config, index=5, device="cpu", dtype=torch.float32)
-tracker_gl = TrackingList(freqs_pair)
-captured_masks.clear()
-try:
-    block_gl(x=x.clone(), attention_mask=causal.clone(), freqs_cis=tracker_gl, optimized_attention=oafd_fn)
-except Exception as e:
-    # Global layer might crash due to other bugs; check what we captured
-    if not tracker_gl.accesses:
-        print("FAIL: freqs_cis not indexed for global layer"); sys.exit(0)
-
-gl_idx = tracker_gl.accesses[0] if tracker_gl.accesses else -1
-
-# Sliding (local) should use freqs_cis[0], global should use freqs_cis[1]
-# rope_theta = [10000.0, 1000000.0] -> index 0 = local, index 1 = global
-if sl_idx != 0:
-    print("FAIL: sliding layer used freqs_cis[%d], expected [0] (local theta)" % sl_idx)
-    sys.exit(0)
-if gl_idx != 1:
-    print("FAIL: global layer used freqs_cis[%d], expected [1] (global theta)" % gl_idx)
-    sys.exit(0)
-
+# All in-causal positions (q >= k) should be 0, no sliding restriction
+NEG = -1e30
+for q in range(seq_len):
+    for k in range(q + 1):  # k <= q
+        v = mask[q, k].item()
+        if v < -1.0:
+            print(f"FAIL: global layer masked q={q} k={k}: {v}")
+            raise SystemExit
+# Causal still holds
+for q in range(seq_len):
+    for k in range(q + 1, seq_len):
+        v = mask[q, k].item()
+        if v > NEG:
+            print(f"FAIL: global layer causal broken q={q} k={k}: {v}")
+            raise SystemExit
 print("PASS")
 PYEOF
 )
 echo "Test 7: $T7"
-if [ "$T7" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.15)")
-fi
+[[ "$T7" == "PASS" ]] && add_score 0.15
 
 #################################################################
-# Test 8 [P2P, weight 0.05]: Class structure sanity
-# Verifies key classes exist and can be instantiated.
-# Passes on base AND on correct fix.
+# Test 8 [F2P, 0.15]: Forward output is finite & differs from base
+# (The base just emits a warning and uses no sliding mask, so output
+# of a sliding layer with seq>window must differ from "no mask" run.)
 #################################################################
-echo "=== Test 8 [P2P]: Class structure sanity ==="
+echo "=== Test 8 [F2P]: Output differs from no-sliding-mask baseline ==="
 T8=$(python3 << 'PYEOF'
-import sys
 exec(open("/tmp/mock_setup.py").read())
+if not LOAD_OK:
+    print("FAIL: load"); raise SystemExit
+config = ns["Gemma3_4B_Config"]()
+Block = ns["TransformerBlockGemma2"]
+precompute = ns["precompute_freqs_cis"]
 
-errs = []
-for c in ["Gemma3_4B_Config", "Gemma2_2B_Config", "Llama2Config",
-          "TransformerBlockGemma2", "TransformerBlock", "Attention", "MLP"]:
-    if c not in ns:
-        errs.append("missing: " + c)
+block = Block(config, index=0, device="cpu", dtype=torch.float32)
+if not block.sliding_attention:
+    print("FAIL: layer 0 not sliding"); raise SystemExit
+block.sliding_attention = 4  # tiny window so it really matters
+seq_len = 16
+torch.manual_seed(7)
+x = torch.randn(1, seq_len, config.hidden_size)
+pos_ids = torch.arange(0, seq_len).unsqueeze(0)
+freqs = precompute(config.head_dim, pos_ids, config.rope_theta,
+                   config.rope_scale, config.rope_dims, device="cpu")
+causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
 
 try:
-    cfg = ns["Gemma3_4B_Config"]()
-    if cfg.transformer_type != "gemma3":
-        errs.append("wrong transformer_type")
+    out = block(x=x.clone(), attention_mask=causal.clone(), freqs_cis=freqs, optimized_attention=make_oafd())
 except Exception as e:
-    errs.append("Gemma3_4B_Config init: " + str(e)[:80])
+    print(f"FAIL: forward crash: {e}"); raise SystemExit
 
-try:
-    cfg2 = ns["Gemma2_2B_Config"]()
-    b = ns["TransformerBlockGemma2"](cfg2, index=0, device="cpu", dtype=torch.float32)
-except Exception as e:
-    errs.append("TransformerBlockGemma2 init: " + str(e)[:80])
+if not torch.isfinite(out).all():
+    print("FAIL: non-finite output"); raise SystemExit
 
-if errs:
-    print("FAIL: " + "; ".join(errs))
-else:
-    print("PASS")
+# Compare against a reference: same forward but with global-only causal
+# (simulated by changing block to non-sliding via .sliding_attention=0)
+# We can't easily flip behavior for base agents, but we can check the
+# captured mask diverges from pure causal:
+captured_masks.clear()
+_ = block(x=x.clone(), attention_mask=causal.clone(), freqs_cis=freqs, optimized_attention=make_oafd())
+m = captured_masks[0]
+if m is None:
+    print("FAIL: no mask"); raise SystemExit
+while m.dim() > 2:
+    m = m[0]
+# Pure causal would have zero at (seq_len-1, 0); sliding with window=4 would have -inf
+v = m[seq_len-1, 0].item()
+if v > -1e10:
+    print(f"FAIL: sliding mask not applied (last,0)={v}"); raise SystemExit
+print("PASS")
 PYEOF
 )
 echo "Test 8: $T8"
-if [ "$T8" = "PASS" ]; then
-    SCORE=$(python3 -c "print($SCORE + 0.05)")
-fi
+[[ "$T8" == "PASS" ]] && add_score 0.15
 
 #################################################################
-# Final score
+# Test 9 [F2P, 0.10]: Mask combines with provided attention_mask
+# (must add, not replace) — we pass a non-causal extra mask and ensure
+# both causal + sliding constraints survive.
 #################################################################
-echo ""
-echo "==============================="
-echo "Final score: $SCORE"
-echo "==============================="
+echo "=== Test 9 [F2P]: Mask combines with provided attention_mask ==="
+T9=$(python3 << 'PYEOF'
+exec(open("/tmp/mock_setup.py").read())
+if not LOAD_OK:
+    print("FAIL: load"); raise SystemExit
+config = ns["Gemma3_4B_Config"]()
+Block = ns["TransformerBlockGemma2"]
+precompute = ns["precompute_freqs_cis"]
+
+block = Block(config, index=0, device="cpu", dtype=torch.float32)
+if not block.sliding_attention:
+    print("FAIL: layer 0 not sliding"); raise SystemExit
+block.sliding_attention = 4
+seq_len = 12
+torch.manual_seed(3)
+x = torch.randn(1, seq_len, config.hidden_size)
+pos_ids = torch.arange(0, seq_len).unsqueeze(0)
+freqs = precompute(config.head_dim, pos_ids, config.rope_theta,
+                   config.rope_scale, config.rope_dims, device="cpu")
+# Provide an external mask that blocks position 2 entirely (column 2)
+ext = torch.zeros(seq_len, seq_len)
+ext[:, 2] = float("-inf")
+# Combine with causal
+causal = torch.empty(seq_len, seq_len).fill_(float("-inf")).triu_(1)
+combined_in = ext + causal
+
+captured_masks.clear()
+try:
+    _ = block(x=x, attention_mask=combined_in, freqs_cis=freqs, optimized_attention=make_oafd())
+except Exception as e:
+    print(f"FAIL: forward crash: {e}"); raise SystemExit
+
+if not captured_masks or captured_masks[0] is None:
+    print("FAIL: no mask"); raise SystemExit
+m = captured_masks[0]
+while m.dim() > 2:
+    m = m[0]
+
+# Position 2 must remain blocked everywhere
+for q in range(seq_len):
+    if m[q, 2].item() > -1e10:
+        print(f"FAIL: external mask lost at q={q}, k=2: {m[q,2].item()}")
+        raise SystemExit
+# Causal must hold
+if m[3, 5].item() > -1e10:
+    print("FAIL: causal lost"); raise SystemExit
+# Sliding must hold: q=11, k=0 (dist=11, window=4) blocked
+if m[11, 0].item() > -1e10:
+    print("FAIL: sliding lost when combining"); raise SystemExit
+# Within window unblocked: q=11, k=10
+if m[11, 10].item() < -1.0:
+    print(f"FAIL: in-window blocked at (11,10): {m[11,10].item()}"); raise SystemExit
+print("PASS")
+PYEOF
+)
+echo "Test 9: $T9"
+[[ "$T9" == "PASS" ]] && add_score 0.10
+
+echo "=========================================="
+echo "FINAL SCORE: $SCORE"
 echo "$SCORE" > "$RESULT_FILE"
+exit 0

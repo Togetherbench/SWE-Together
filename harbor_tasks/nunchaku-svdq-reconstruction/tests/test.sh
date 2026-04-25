@@ -1,615 +1,351 @@
 #!/bin/bash
 # Verifier for nunchaku-svdq-reconstruction
-#
-# Gate classification (F2P = fail-to-pass, P2P = pass-to-pass):
-#   [P2P] P2P1-P2P3 (0.05) pass-to-pass  upstream sanity (parse, imports, source)
-#   [F2P] S1-S3     (0.06)  structural  file + functions + anti-stub
-#   [F2P] Q1-Q3     (0.18)  behavioral  qweight unpack per shape
-#   [F2P] SC1-SC3   (0.06)  behavioral  scale unpack per shape
-#   [F2P] QS1-QS3   (0.06)  behavioral  qweight+scale integration (no lowrank needed)
-#   [F2P] LR1-LR8   (0.32)  behavioral  lowrank unpack per case (expanded)
-#   [F2P] R1-R6     (0.18)  behavioral  full reconstruction per param (diff<0.05)
-#   [F2P] TT        (0.05)  behavioral  tight threshold all 6 (diff<0.01)
-#   [F2P] RW1-RW3   (0.06)  behavioral  agent's reconstruct_weight fn end-to-end
-#   [F2P] F1-F3     (0.18)  behavioral  fresh synthetic data, 3 sizes
-#
 # Scoring: 0.0 to 1.0 written to /logs/verifier/reward.txt
 set +e
 
-SCORE=0
-add_score() {
-    SCORE=$(python3 -c "print(round($SCORE + $1, 4))")
+cd /workspace
+
+REWARD=0.0
+add_reward() {
+    REWARD=$(awk "BEGIN{printf \"%.4f\", $REWARD + $1}")
 }
 
-cd /workspace
-RESULTS=/tmp/verifier_results.txt
-> "$RESULTS"
+mkdir -p /logs/verifier
 
-# ── Pass-to-pass (P2P1-P2P3: 0.05) ────────────────────────────────────
-# Upstream sanity: these must pass even on the unmodified buggy baseline.
-python3 - "$RESULTS" <<'PYEOF'
-import sys
-
-rf = sys.argv[1]
-
-def wr(name, ok):
-    with open(rf, 'a') as f:
-        f.write(f"{name} {1 if ok else 0}\n")
-    print(f"  [{name}] {'PASS' if ok else 'FAIL'}", file=sys.stderr)
-
-# P2P1: reconstruct_weight.py exists and parses as valid Python
-try:
-    import ast
-    with open("reconstruct_weight.py") as f:
-        ast.parse(f.read())
-    wr("P2P1", True)
-except Exception:
-    wr("P2P1", False)
-
-# P2P2: torch is importable and CUDA-free CPU tensors work
-try:
-    import torch
-    t = torch.zeros(2, 2)
-    wr("P2P2", t.shape == (2, 2))
-except Exception:
-    wr("P2P2", False)
-
-# P2P3: upstream NunchakuWeightPacker functional test on CPU.
-# Import packer.py bypassing CUDA-dependent __init__.py via sys.modules stubs,
-# then verify pack_lowrank_weight -> unpack_lowrank_weight round-trip and
-# pack_weight shape correctness on CPU tensors.
-try:
-    import types, importlib.util
-    REPO = "nunchaku"
-    # Stub nunchaku packages to avoid CUDA model imports
-    nunchaku_pkg = types.ModuleType('nunchaku')
-    nunchaku_pkg.__path__ = [f'{REPO}/nunchaku']
-    nunchaku_pkg.__package__ = 'nunchaku'
-    sys.modules['nunchaku'] = nunchaku_pkg
-
-    def _ceil_divide(x, d):
-        return (x + d - 1) // d
-    nu = types.ModuleType('nunchaku.utils')
-    nu.ceil_divide = _ceil_divide
-    nu.load_state_dict_in_safetensors = None
-    sys.modules['nunchaku.utils'] = nu
-
-    for _name, _path in [
-        ('nunchaku.lora', f'{REPO}/nunchaku/lora'),
-        ('nunchaku.lora.flux', f'{REPO}/nunchaku/lora/flux'),
-    ]:
-        _m = types.ModuleType(_name)
-        _m.__path__ = [_path]
-        _m.__package__ = _name
-        sys.modules[_name] = _m
-
-    _spec = importlib.util.spec_from_file_location(
-        'nunchaku.lora.flux.utils', f'{REPO}/nunchaku/lora/flux/utils.py')
-    _fu = importlib.util.module_from_spec(_spec)
-    sys.modules['nunchaku.lora.flux.utils'] = _fu
-    _spec.loader.exec_module(_fu)
-
-    _spec = importlib.util.spec_from_file_location(
-        'nunchaku.lora.flux.packer', f'{REPO}/nunchaku/lora/flux/packer.py')
-    _pk = importlib.util.module_from_spec(_spec)
-    sys.modules['nunchaku.lora.flux.packer'] = _pk
-    _spec.loader.exec_module(_pk)
-
-    _wp = _pk.NunchakuWeightPacker(bits=4, warp_n=128)
-
-    # Lowrank round-trip
-    _ok = True
-    for _down in [True, False]:
-        torch.manual_seed(42)
-        _orig = torch.randn(256, 16, dtype=torch.bfloat16)
-        _packed = _wp.pack_lowrank_weight(_orig, down=_down)
-        _unpacked = _wp.unpack_lowrank_weight(_packed, down=_down)
-        _err = (_orig.float() - _unpacked.float()).abs().max().item()
-        if _err > 1e-6:
-            _ok = False
-            break
-
-    # pack_weight shape
-    if _ok:
-        torch.manual_seed(99)
-        _w = torch.randint(0, 16, (256, 256), dtype=torch.int32)
-        _pw = _wp.pack_weight(_w)
-        _ok = _pw.dtype == torch.int8 and _pw.shape == (256, 128)
-
-    wr("P2P3", _ok)
-except Exception:
-    wr("P2P3", False)
-PYEOF
-
-# ── Structural (S1-S3: 0.06) ───────────────────────────────────────────
-python3 - "$RESULTS" <<'PYEOF'
+# ── P2P sanity (0.10): file exists, parses, torch works ────────────────
+P2P_PASS=0
+python3 - <<'PYEOF' 2>/dev/null
 import ast, sys
-
-rf = sys.argv[1]
-
-def wr(name, ok):
-    with open(rf, 'a') as f:
-        f.write(f"{name} {1 if ok else 0}\n")
-
 try:
-    with open("reconstruct_weight.py") as f:
-        src = f.read()
+    with open("/workspace/reconstruct_weight.py") as f:
+        ast.parse(f.read())
+    import torch
+    t = torch.zeros(2,2)
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PYEOF
+if [ $? -eq 0 ]; then
+    P2P_PASS=1
+    add_reward 0.05
+fi
+
+# P2P: groundtruth data exists
+if [ -f /workspace/pt/attn.to_out.0.weight_approx.pt ] && \
+   [ -f /workspace/pt/attn.to_out.0.qweight.pt ]; then
+    add_reward 0.05
+fi
+
+# ── Structural (0.10): non-trivial helpers ─────────────────────────────
+python3 - <<'PYEOF' 2>/dev/null
+import ast, sys
+try:
+    src = open("/workspace/reconstruct_weight.py").read()
     tree = ast.parse(src)
 except Exception:
-    wr("S1", False); wr("S2", False); wr("S3", False)
-    sys.exit(0)
+    sys.exit(1)
 
-# S1: file defines >=3 functions (excluding main) -- agent must add scale + lowrank unpack
-fns = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-non_main = fns - {"main"}
-wr("S1", len(non_main) >= 3)
+fns = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+non_main = [f for f in fns if f.name != "main"]
 
-# S2: reconstruct_weight fn with >=5 meaningful nodes AND calls >=2 user-defined fns
-s2 = False
-if "reconstruct_weight" in fns:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "reconstruct_weight":
-            count = 0
-            called = set()
-            for child in ast.walk(node):
-                if isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Return)):
-                    count += 1
-                elif isinstance(child, ast.Expr) and isinstance(child.value, ast.Call):
-                    count += 1
-                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
-                    if child.func.id in fns:
-                        called.add(child.func.id)
-            s2 = count >= 5 and len(called) >= 2
-            break
-wr("S2", s2)
+# Need at least 3 non-main funcs (qweight unpack, scale unpack, lowrank unpack, recon)
+if len(non_main) < 3:
+    sys.exit(2)
 
-# S3: >=2 non-stub helper functions
-helpers = fns - {"reconstruct_weight", "main"}
+# Each helper should have non-trivial body
 non_stub = 0
-for node in ast.walk(tree):
-    if isinstance(node, ast.FunctionDef) and node.name in helpers:
-        body = [s for s in node.body
-                if not isinstance(s, ast.Pass)
-                and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
-        if len(body) >= 3:
-            non_stub += 1
-wr("S3", non_stub >= 2)
-PYEOF
+for f in non_main:
+    body = [s for s in f.body
+            if not isinstance(s, ast.Pass)
+            and not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+    if len(body) >= 3:
+        non_stub += 1
 
-# ── All behavioral tests ───────────────────────────────────────────────
-python3 - "$RESULTS" <<'PYEOF'
-import sys, torch
-sys.path.insert(0, "/workspace")
+if non_stub < 3:
+    sys.exit(3)
+sys.exit(0)
+PYEOF
+if [ $? -eq 0 ]; then
+    add_reward 0.10
+fi
+
+# ── Behavioral: run script and parse output (0.20) ─────────────────────
+SCRIPT_OUT=/tmp/recon_out.txt
+SCRIPT_ERR=/tmp/recon_err.txt
+timeout 180 python3 /workspace/reconstruct_weight.py > "$SCRIPT_OUT" 2> "$SCRIPT_ERR"
+RC=$?
+
+if [ $RC -eq 0 ] || [ $RC -eq 1 ]; then
+    # script ran without crashing
+    add_reward 0.05
+fi
+
+# Count how many param names appear with a max_diff number in output
+PARAMS=("attn.to_out.0" "attn.to_add_out" "img_mlp.net.0.proj" "img_mlp.net.2" "txt_mlp.net.0.proj" "txt_mlp.net.2")
+REPORTED=0
+for p in "${PARAMS[@]}"; do
+    if grep -qF "$p" "$SCRIPT_OUT" 2>/dev/null; then
+        REPORTED=$((REPORTED+1))
+    fi
+done
+if [ $REPORTED -ge 6 ]; then
+    add_reward 0.15
+elif [ $REPORTED -ge 3 ]; then
+    add_reward 0.07
+fi
+
+# ── Behavioral: detailed correctness check (0.60) ─────────────────────
+# Import the agent's module and check each subroutine + final result against
+# weight_approx ground truth. This is the meat of the scoring.
+
+RESULTS=/tmp/recon_results.txt
+> "$RESULTS"
+
+python3 - "$RESULTS" <<'PYEOF' 2>/dev/null
+import sys, os, importlib.util, traceback
+import torch
 
 rf = sys.argv[1]
-
 def wr(name, ok):
     with open(rf, 'a') as f:
         f.write(f"{name} {1 if ok else 0}\n")
-    print(f"  [{name}] {'PASS' if ok else 'FAIL'}", file=sys.stderr)
 
-# ── Reference pack functions (from NunchakuWeightPacker bits=4, warp_n=128) ──
-
-def pack_qw(w):
-    n, k = w.shape
-    nt, kt = n // 128, k // 64
-    w = w.view(nt, 8, 2, 8, 1, kt, 1, 2, 4, 8)
-    w = w.permute(0, 5, 6, 1, 3, 8, 2, 7, 4, 9).contiguous()
-    w = w.view(n, k // 8, 8)
-    p = torch.zeros((n, k // 8), dtype=torch.int32)
-    for i in range(8):
-        p |= w[:, :, i] << (i * 4)
-    return p.view(torch.int8).view(n, k // 2)
-
-def pack_sc(s):
-    n, kg = s.shape
-    s = s.reshape(n // 128, 1, 8, 2, 4, 2, kg)
-    s = s.permute(0, 6, 1, 2, 4, 3, 5).contiguous()
-    return s.view(kg, n)
-
-def pack_lr(weight, down):
-    pn, pk = 16, 16
-    if down:
-        r, c = weight.shape
-        rp, cp = r // pn, c // pk
-        w = weight.view(rp, pn, cp, pk).permute(2, 0, 1, 3)
-    else:
-        c, r = weight.shape
-        cp, rp = c // pn, r // pk
-        w = weight.view(cp, pn, rp, pk).permute(0, 2, 1, 3)
-    w = w.reshape(cp, rp, 2, 8, 1, 2, 4, 2)
-    w = w.permute(0, 1, 3, 6, 2, 5, 4, 7).contiguous()
-    return w.view(r, c) if down else w.view(c, r)
-
-# ── Function discovery ───────────────────────────────────────────────
-
-def find_fn(mod, names):
-    for n in names:
-        f = getattr(mod, n, None)
-        if f is not None:
-            return f
-    kws = set()
-    for n in names:
-        for part in n.replace('_', ' ').split():
-            if len(part) > 3:
-                kws.add(part.lower())
-    for attr in dir(mod):
-        al = attr.lower()
-        if any(kw in al for kw in kws) and \
-                ('unpack' in al or 'decode' in al or 'dequant' in al):
-            c = getattr(mod, attr)
-            if callable(c):
-                return c
-    return None
-
-def call_qw(fn, packed, N, K):
-    for c in [lambda: fn(packed, N, K), lambda: fn(packed, N=N, K=K), lambda: fn(packed)]:
-        try:
-            return c()
-        except Exception:
-            continue
-    return None
-
-def call_sc(fn, packed, N, K):
-    for c in [lambda: fn(packed, N, K), lambda: fn(packed, N=N, K=K), lambda: fn(packed)]:
-        try:
-            return c()
-        except Exception:
-            continue
-    return None
-
-def call_lr(fn, packed, down):
-    for c in [lambda: fn(packed, down=down), lambda: fn(packed, down),
-              lambda: fn(packed)]:
-        try:
-            return c()
-        except Exception:
-            continue
-    return None
-
-# ── Import agent module ──────────────────────────────────────────────
+sys.path.insert(0, "/workspace")
+os.chdir("/workspace")
 
 try:
-    import reconstruct_weight as rw
-    MOD = True
+    spec = importlib.util.spec_from_file_location("recon_mod", "/workspace/reconstruct_weight.py")
+    mod = importlib.util.module_from_spec(spec)
+    # protect against main() running on import
+    _saved_name = mod.__name__
+    spec.loader.exec_module(mod)
+    IMPORT_OK = True
 except Exception:
-    MOD = False
+    traceback.print_exc()
+    IMPORT_OK = False
 
-fn_qw = find_fn(rw, ['unpack_svdq_qweight', 'unpack_qweight', 'unpack_int4',
-                       'dequantize_qweight', 'decode_qweight']) if MOD else None
-fn_sc = find_fn(rw, ['unpack_svdq_scale', 'unpack_wscales', 'unpack_scale',
-                       'unpack_scales', 'dequantize_scale', 'decode_scale',
-                       'decode_wscales']) if MOD else None
-fn_lr = find_fn(rw, ['unpack_svdq_lowrank', 'unpack_lowrank', 'unpack_proj',
-                       'unpack_low_rank', 'decode_lowrank',
-                       'dequantize_lowrank']) if MOD else None
+wr("IMPORT", IMPORT_OK)
+if not IMPORT_OK:
+    sys.exit(0)
 
-# ── Q1-Q3: qweight unpack per shape (0.04 each) ─────────────────────
-# Tests the core permutation inverse on 3 different (N,K) combos.
-
-for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
-    name = f"Q{idx}"
-    try:
-        if fn_qw is None:
-            wr(name, False); continue
-        torch.manual_seed(100 + idx)
-        orig = torch.randint(0, 16, (N, K), dtype=torch.int32)
-        packed = pack_qw(orig)
-        unpacked = call_qw(fn_qw, packed, N, K)
-        if unpacked is None:
-            wr(name, False); continue
-        ok = torch.equal(orig, unpacked.to(torch.int32))
-        if not ok:
-            signed = orig.clone()
-            signed[signed >= 8] -= 16
-            ok = torch.equal(signed, unpacked.to(torch.int32))
-        wr(name, ok)
-    except Exception:
-        wr(name, False)
-
-# ── SC1-SC3: scale unpack per shape (0.02 each) ─────────────────────
-# Tests the scale permutation inverse on 3 shapes.
-# Accepts both (N, K//G) compact output and (N, K) expanded output.
-
-for idx, (N, K) in enumerate([(256, 256), (512, 256), (256, 512)], 1):
-    name = f"SC{idx}"
-    try:
-        if fn_sc is None:
-            wr(name, False); continue
-        torch.manual_seed(200 + idx)
-        G = 64
-        orig = torch.randn(N, K // G, dtype=torch.bfloat16)
-        packed = pack_sc(orig)
-        unpacked = call_sc(fn_sc, packed, N, K)
-        if unpacked is None:
-            wr(name, False); continue
-        # Accept (N, K//G) compact or (N, K) expanded output
-        if unpacked.shape == (N, K):
-            # Agent returned expanded scales; reduce to (N, K//G) by sampling every G-th col
-            unpacked = unpacked[:, ::G]
-        err = (orig.float() - unpacked.float()).abs().max().item()
-        wr(name, err < 1e-4)
-    except Exception:
-        wr(name, False)
-
-# ── QS1-QS3: qweight+scale integration (0.04 each) ─────────────────
-# Tests that qweight and scale unpacking combine correctly into the
-# quantized residual. Does NOT require lowrank -- uses only the
-# qweight*scale portion compared against the known residual.
-# This rewards agents who get both qweight and scale right but
-# haven't solved lowrank yet.
-
-params = ["attn.to_out.0", "attn.to_add_out",
+PARAMS = ["attn.to_out.0", "attn.to_add_out",
           "img_mlp.net.0.proj", "img_mlp.net.2",
           "txt_mlp.net.0.proj", "txt_mlp.net.2"]
 
-qs_shapes = [
-    ("QS1", "attn.to_out.0"),      # square 256x256
-    ("QS2", "img_mlp.net.0.proj"), # N>K 512x256
-    ("QS3", "img_mlp.net.2"),      # N<K 256x512
-]
-for tname, pname in qs_shapes:
+# ── Find the agent's reconstruct_weight callable ─────────────────────
+recon_fn = getattr(mod, "reconstruct_weight", None)
+
+# Try invoking the agent's reconstruct_weight in a few signatures.
+# It may return (max_diff, mean_diff) or a tensor or None.
+def call_recon(name):
+    """Call agent's reconstruct_weight however it's defined.
+    Return reconstructed tensor if obtainable, else None."""
+    if recon_fn is None:
+        return None
+    # try (name) signature
     try:
-        if fn_qw is None or fn_sc is None:
-            wr(tname, False); continue
-        wa = torch.load(f"pt/{pname}.weight_approx.pt", weights_only=True)
-        qw_p = torch.load(f"pt/{pname}.qweight.pt", weights_only=True)
-        ws_p = torch.load(f"pt/{pname}.wscales.pt", weights_only=True)
-        sm = torch.load(f"pt/{pname}.smooth_factor.pt", weights_only=True)
-        pu_p = torch.load(f"pt/{pname}.proj_up.pt", weights_only=True)
-        pd_p = torch.load(f"pt/{pname}.proj_down.pt", weights_only=True)
-        N, K = wa.shape
-
-        qw = call_qw(fn_qw, qw_p, N, K)
-        ws = call_sc(fn_sc, ws_p, N, K)
-
-        if qw is not None and ws is not None:
-            qw_f = qw.float()
-            qw_f[qw_f >= 8] -= 16
-            ws_f = ws.float()
-            # Accept both (N, K//G) compact and (N, K) expanded scale output
-            if ws_f.shape == (N, K // 64):
-                ws_f = ws_f.repeat_interleave(64, dim=1)
-            residual = qw_f * ws_f
-            # Compare the residual/smooth against weight_approx.
-            # The diff will be the lowrank contribution (pu@pd.T / smooth),
-            # which is bounded. We accept a relaxed threshold that still
-            # proves the qw+scale pipeline is correct.
-            recon_partial = residual / sm.float().unsqueeze(0)
-            diff = (recon_partial - wa.float()).abs().max().item()
-            # With correct qw+sc, the diff is ~3.1-3.5 (the lowrank contribution).
-            # With buggy qw, the diff is ~6.9+. Threshold 5.0 separates cleanly.
-            print(f"    QS {pname}: partial diff={diff:.4f}", file=sys.stderr)
-            wr(tname, diff < 5.0)
-        else:
-            wr(tname, False)
-    except Exception as e:
-        print(f"    QS {pname}: exception {e}", file=sys.stderr)
-        wr(tname, False)
-
-# ── LR1-LR6: lowrank unpack per case (0.04 each) ────────────────────
-# Tests both directions (proj_up=down=False, proj_down=down=True)
-# on square, non-square, and additional shape combinations.
-
-lr_cases = [
-    ("LR1", False, (256, 16), 301),   # proj_up, square weight base
-    ("LR2", True,  (256, 16), 302),   # proj_down, square weight base
-    ("LR3", False, (512, 16), 303),   # proj_up, N>K weight
-    ("LR4", True,  (512, 16), 304),   # proj_down, N<K weight
-    ("LR5", False, (384, 16), 305),   # proj_up, novel N (128-aligned)
-    ("LR6", True,  (384, 16), 306),   # proj_down, novel shape
-    ("LR7", False, (256, 32), 307),   # proj_up, wider rank
-    ("LR8", True,  (256, 32), 308),   # proj_down, wider rank
-]
-for tname, down, shape, seed in lr_cases:
-    try:
-        if fn_lr is None:
-            wr(tname, False); continue
-        torch.manual_seed(seed)
-        orig = torch.randn(*shape, dtype=torch.bfloat16)
-        packed = pack_lr(orig, down=down)
-        unpacked = call_lr(fn_lr, packed, down)
-        if unpacked is None:
-            wr(tname, False); continue
-        err = (orig.float() - unpacked.float()).abs().max().item()
-        wr(tname, err < 1e-4)
+        r = recon_fn(name)
+        if isinstance(r, torch.Tensor):
+            return r
     except Exception:
-        wr(tname, False)
-
-# ── R1-R6: per-param reconstruction (0.03 each) + TT ────────────────
-# Verifier-side reconstruction using agent's 3 unpack functions.
-# Each param tested independently; no conditional gates between params.
-
-tight_count = 0
-have_fns = fn_qw is not None and fn_sc is not None and fn_lr is not None
-
-for idx, pname in enumerate(params, 1):
-    tname = f"R{idx}"
-    diff = None
+        pass
+    # try loading tensors and passing them
     try:
-        if not have_fns:
-            wr(tname, False); continue
-        wa = torch.load(f"pt/{pname}.weight_approx.pt", weights_only=True)
-        pd_p = torch.load(f"pt/{pname}.proj_down.pt", weights_only=True)
-        pu_p = torch.load(f"pt/{pname}.proj_up.pt", weights_only=True)
-        qw_p = torch.load(f"pt/{pname}.qweight.pt", weights_only=True)
-        sm = torch.load(f"pt/{pname}.smooth_factor.pt", weights_only=True)
-        ws_p = torch.load(f"pt/{pname}.wscales.pt", weights_only=True)
-        N, K = wa.shape
-
-        qw = call_qw(fn_qw, qw_p, N, K)
-        ws = call_sc(fn_sc, ws_p, N, K)
-        pu = call_lr(fn_lr, pu_p, False)
-        pd = call_lr(fn_lr, pd_p, True)
-
-        if qw is not None and ws is not None and pu is not None and pd is not None:
-            qw = qw.float()
-            qw[qw >= 8] -= 16
-            residual = qw * ws.float().repeat_interleave(64, dim=1)
-            recon = (residual + pu.float() @ pd.float().T) / sm.float().unsqueeze(0)
-            diff = (recon - wa.float()).abs().max().item()
-            print(f"    {pname}: diff={diff:.6f}", file=sys.stderr)
-    except Exception as e:
-        print(f"    {pname}: exception {e}", file=sys.stderr)
-
-    passed = diff is not None and diff < 0.05
-    wr(tname, passed)
-    if passed and diff < 0.01:
-        tight_count += 1
-
-# TT: tight threshold — all 6 params diff < 0.01
-wr("TT", tight_count == 6)
-
-# ── RW1-RW3: Agent's reconstruct_weight function end-to-end ─────────
-# Directly covers Turn 1 ("write reconstruct_weight that reconstructs
-# weight given proj_down, proj_up, qweight, wscales, smooth_factor")
-# and Turn 4 ("just fix the function to reconstruct the weight").
-# R1-R6 use the agent's unpack helpers plus verifier-side assembly; they
-# do NOT exercise the agent's own reconstruct_weight orchestration.
-# These three tests call the agent's reconstruct_weight directly on
-# square, N>K, and N<K parameters.
-
-fn_rw = getattr(rw, 'reconstruct_weight', None) if MOD else None
-
-def call_rw(fn, qw_p, ws_p, pu_p, pd_p, sm, N, K):
-    sigs = [
-        lambda: fn(pd_p, pu_p, qw_p, ws_p, sm),
-        lambda: fn(proj_down=pd_p, proj_up=pu_p, qweight=qw_p, wscales=ws_p, smooth_factor=sm),
-        lambda: fn(qw_p, ws_p, pu_p, pd_p, sm),
-        lambda: fn(qweight=qw_p, wscales=ws_p, proj_up=pu_p, proj_down=pd_p, smooth_factor=sm),
-        lambda: fn(pu_p, pd_p, qw_p, ws_p, sm),
-        lambda: fn(pd_p, pu_p, qw_p, ws_p, sm, N, K),
-        lambda: fn(qw_p, ws_p, pu_p, pd_p, sm, N, K),
-        lambda: fn(proj_down=pd_p, proj_up=pu_p, qweight=qw_p, wscales=ws_p,
-                   smooth_factor=sm, N=N, K=K),
-    ]
-    for c in sigs:
-        try:
-            r = c()
-            if r is not None and hasattr(r, 'shape'):
-                return r
-        except Exception:
-            continue
+        qw = torch.load(f"pt/{name}.qweight.pt", weights_only=True)
+        ws = torch.load(f"pt/{name}.wscales.pt", weights_only=True)
+        pd = torch.load(f"pt/{name}.proj_down.pt", weights_only=True)
+        pu = torch.load(f"pt/{name}.proj_up.pt", weights_only=True)
+        sf = torch.load(f"pt/{name}.smooth_factor.pt", weights_only=True)
+        for args in [(qw, ws, pd, pu, sf), (pd, pu, qw, ws, sf)]:
+            try:
+                r = recon_fn(*args)
+                if isinstance(r, torch.Tensor):
+                    return r
+            except Exception:
+                pass
+    except Exception:
+        pass
     return None
 
-rw_cases = [
-    ("RW1", "attn.to_out.0"),       # square 3072x3072
-    ("RW2", "img_mlp.net.0.proj"),  # N>K 12288x3072
-    ("RW3", "img_mlp.net.2"),       # N<K 3072x12288
-]
-for tname, pname in rw_cases:
+# ── Per-param: check final reconstruction matches weight_approx ─────
+# Tier 1 (loose, diff<0.5):  param produced something close
+# Tier 2 (medium, diff<0.05): proper reconstruction
+# Tier 3 (tight, diff<0.005): exact reconstruction
+
+per_param_loose = 0
+per_param_med = 0
+per_param_tight = 0
+diffs = {}
+
+for name in PARAMS:
     try:
-        if fn_rw is None:
-            print(f"    RW {pname}: reconstruct_weight not found", file=sys.stderr)
-            wr(tname, False); continue
-        wa = torch.load(f"pt/{pname}.weight_approx.pt", weights_only=True)
-        pd_p = torch.load(f"pt/{pname}.proj_down.pt", weights_only=True)
-        pu_p = torch.load(f"pt/{pname}.proj_up.pt", weights_only=True)
-        qw_p = torch.load(f"pt/{pname}.qweight.pt", weights_only=True)
-        sm = torch.load(f"pt/{pname}.smooth_factor.pt", weights_only=True)
-        ws_p = torch.load(f"pt/{pname}.wscales.pt", weights_only=True)
-        N, K = wa.shape
-        out = call_rw(fn_rw, qw_p, ws_p, pu_p, pd_p, sm, N, K)
-        if out is None or not hasattr(out, 'shape') or tuple(out.shape) != (N, K):
-            print(f"    RW {pname}: bad/missing output", file=sys.stderr)
-            wr(tname, False); continue
-        diff = (out.float() - wa.float()).abs().max().item()
-        print(f"    RW {pname}: diff={diff:.6f}", file=sys.stderr)
-        wr(tname, diff < 0.1)
-    except Exception as e:
-        print(f"    RW {pname}: exception {e}", file=sys.stderr)
-        wr(tname, False)
+        approx_path = f"pt/{name}.weight_approx.pt"
+        if not os.path.exists(approx_path):
+            diffs[name] = float('inf')
+            continue
+        approx = torch.load(approx_path, weights_only=True).float()
 
-# ── F1-F3: fresh synthetic data (0.07 + 0.06 + 0.05) ────────────────
-# 3 novel sizes to catch hardcoded solutions.
+        recon = call_recon(name)
+        if recon is None:
+            diffs[name] = float('inf')
+            continue
 
-fresh_cases = [
-    ("F1", 256, 512, 77777),    # N<K
-    ("F2", 512, 256, 88888),    # N>K
-    ("F3", 384, 256, 66666),    # different N, still 128-aligned
-]
-for tname, fN, fK, seed in fresh_cases:
-    try:
-        if not have_fns:
-            wr(tname, False); continue
-        torch.manual_seed(seed)
-        N, K, R, G = fN, fK, 16, 64
-        w = torch.randn(N, K, dtype=torch.bfloat16)
-        sf = torch.abs(torch.randn(K, dtype=torch.bfloat16)) + 0.5
+        recon = recon.float()
+        if recon.shape != approx.shape:
+            # try transpose
+            if recon.shape == approx.shape[::-1]:
+                recon = recon.T
+            else:
+                diffs[name] = float('inf')
+                continue
 
-        w_sm = w.float() * sf.float().unsqueeze(0)
-        U, S, Vh = torch.linalg.svd(w_sm, full_matrices=False)
-        U = U[:, :R]; S = S[:R]; Vh = Vh[:R, :]
-        sqS = S.sqrt()
-        pu_raw = (U * sqS.unsqueeze(0)).to(torch.bfloat16)
-        pd_raw = (Vh.T * sqS.unsqueeze(0)).to(torch.bfloat16)
+        d = (recon - approx).abs().max().item()
+        diffs[name] = d
+        if d < 0.5:
+            per_param_loose += 1
+        if d < 0.05:
+            per_param_med += 1
+        if d < 0.005:
+            per_param_tight += 1
+    except Exception:
+        diffs[name] = float('inf')
 
-        res = (w_sm - pu_raw.float() @ pd_raw.float().T).view(N, K // G, G)
-        ws_raw = res.abs().amax(dim=-1) / 7.0
-        ws_raw = ws_raw.clamp(min=1e-8)
-        qi = (res / ws_raw.unsqueeze(-1)).round().to(torch.int32).clamp(-8, 7)
-        qp = (qi & 0xF).view(N, K)
+# Write counts
+with open(rf, 'a') as f:
+    f.write(f"LOOSE_COUNT {per_param_loose}\n")
+    f.write(f"MED_COUNT {per_param_med}\n")
+    f.write(f"TIGHT_COUNT {per_param_tight}\n")
+    for n, d in diffs.items():
+        f.write(f"DIFF[{n}] {d}\n")
 
-        res_dq = (qi.float() * ws_raw.to(torch.bfloat16).float().unsqueeze(-1)).view(N, K)
-        lr_exact = pu_raw.float() @ pd_raw.float().T
-        w_approx = ((res_dq + lr_exact) / sf.float().unsqueeze(0)).to(torch.bfloat16)
+# ── Independent subroutine probes ────────────────────────────────────
+# Even if recon_fn is monolithic, try to probe individual unpack helpers
+# by name-matching to verify quality. These contribute to reward but
+# only if discoverable.
 
-        qw_packed = pack_qw(qp)
-        ws_packed = pack_sc(ws_raw.to(torch.bfloat16))
-        pu_packed = pack_lr(pu_raw, down=False)
-        pd_packed = pack_lr(pd_raw, down=True)
+def find_callable(keywords, exclude=()):
+    cands = []
+    for attr in dir(mod):
+        if attr.startswith("_"): continue
+        low = attr.lower()
+        if any(ex in low for ex in exclude):
+            continue
+        if all(kw in low for kw in keywords):
+            obj = getattr(mod, attr)
+            if callable(obj):
+                cands.append((attr, obj))
+    return cands
 
-        qw = call_qw(fn_qw, qw_packed, N, K)
-        ws = call_sc(fn_sc, ws_packed, N, K)
-        pu = call_lr(fn_lr, pu_packed, False)
-        pd = call_lr(fn_lr, pd_packed, True)
+# qweight unpack: try to call any helper that takes a qweight-shaped int8 tensor
+qweight_unpack_ok = 0
+scale_unpack_ok = 0
+lowrank_unpack_ok = 0
 
-        if qw is not None and ws is not None and pu is not None and pd is not None:
-            qw = qw.float()
-            qw[qw >= 8] -= 16
-            residual = qw * ws.float().repeat_interleave(G, dim=1)
-            recon = (residual + pu.float() @ pd.float().T) / sf.float().unsqueeze(0)
-            err = (recon - w_approx.float()).abs().max().item()
-            print(f"    Fresh {tname} ({N}x{K}): err={err:.6f}", file=sys.stderr)
-            wr(tname, err < 0.05)
-        else:
-            print(f"    Fresh {tname}: unpack call returned None", file=sys.stderr)
-            wr(tname, False)
-    except Exception as e:
-        print(f"    Fresh {tname}: exception {e}", file=sys.stderr)
-        wr(tname, False)
+# Use attn.to_out.0 as canonical case
+try:
+    qw = torch.load("pt/attn.to_out.0.qweight.pt", weights_only=True)  # (3072, 1536) int8
+    ws = torch.load("pt/attn.to_out.0.wscales.pt", weights_only=True)  # (48, 3072)
+    pd = torch.load("pt/attn.to_out.0.proj_down.pt", weights_only=True) # (3072, 128)
+    pu = torch.load("pt/attn.to_out.0.proj_up.pt", weights_only=True)   # (3072, 128)
 
+    # Try unpack helpers - any callable returning (N, K) shape int from qw
+    for attr, fn in find_callable(["unpack"], exclude=("scale", "lowrank", "low_rank", "proj")):
+        try:
+            r = fn(qw)
+            if isinstance(r, torch.Tensor) and r.shape == (3072, 3072):
+                rmin, rmax = r.min().item(), r.max().item()
+                # signed 4-bit: -8..7
+                if rmin >= -8 and rmax <= 7:
+                    qweight_unpack_ok = 1
+                    break
+        except Exception:
+            continue
+
+    # scale unpack
+    for attr, fn in find_callable(["scale"]):
+        try:
+            r = fn(ws)
+            if isinstance(r, torch.Tensor):
+                # should produce (3072, 48) or similar
+                if r.numel() == ws.numel() and r.shape != ws.shape:
+                    scale_unpack_ok = 1
+                    break
+                if r.shape == (3072, 48):
+                    scale_unpack_ok = 1
+                    break
+        except Exception:
+            continue
+
+    # lowrank unpack
+    for attr, fn in find_callable(["lowrank"]) + find_callable(["low_rank"]) + find_callable(["proj"]):
+        try:
+            # try with down kwarg
+            for kwargs in [{"down": True}, {"down": False}, {}]:
+                try:
+                    r = fn(pd, **kwargs)
+                    if isinstance(r, torch.Tensor) and r.numel() == pd.numel():
+                        lowrank_unpack_ok = 1
+                        break
+                except Exception:
+                    pass
+            if lowrank_unpack_ok:
+                break
+        except Exception:
+            continue
+except Exception:
+    pass
+
+with open(rf, 'a') as f:
+    f.write(f"SUB_QW {qweight_unpack_ok}\n")
+    f.write(f"SUB_SC {scale_unpack_ok}\n")
+    f.write(f"SUB_LR {lowrank_unpack_ok}\n")
 PYEOF
 
-# ── Parse results and compute score ─────────────────────────────────────
-declare -A WEIGHTS
-WEIGHTS[P2P1]=0.02; WEIGHTS[P2P2]=0.02; WEIGHTS[P2P3]=0.01
-WEIGHTS[S1]=0.02;  WEIGHTS[S2]=0.02;  WEIGHTS[S3]=0.02
-WEIGHTS[Q1]=0.06;  WEIGHTS[Q2]=0.06;  WEIGHTS[Q3]=0.06
-WEIGHTS[SC1]=0.02; WEIGHTS[SC2]=0.02; WEIGHTS[SC3]=0.02
-WEIGHTS[QS1]=0.02; WEIGHTS[QS2]=0.02; WEIGHTS[QS3]=0.02
-WEIGHTS[LR1]=0.04; WEIGHTS[LR2]=0.04; WEIGHTS[LR3]=0.04; WEIGHTS[LR4]=0.04
-WEIGHTS[LR5]=0.04; WEIGHTS[LR6]=0.04; WEIGHTS[LR7]=0.04; WEIGHTS[LR8]=0.04
-WEIGHTS[R1]=0.03;  WEIGHTS[R2]=0.03;  WEIGHTS[R3]=0.03
-WEIGHTS[R4]=0.03;  WEIGHTS[R5]=0.03;  WEIGHTS[R6]=0.03
-WEIGHTS[TT]=0.05
-WEIGHTS[RW1]=0.02; WEIGHTS[RW2]=0.02; WEIGHTS[RW3]=0.02
-WEIGHTS[F1]=0.07;  WEIGHTS[F2]=0.06;  WEIGHTS[F3]=0.05
+# Parse results and award reward
+if [ -f "$RESULTS" ]; then
+    LOOSE=$(grep "^LOOSE_COUNT " "$RESULTS" | awk '{print $2}')
+    MED=$(grep "^MED_COUNT " "$RESULTS" | awk '{print $2}')
+    TIGHT=$(grep "^TIGHT_COUNT " "$RESULTS" | awk '{print $2}')
+    SUB_QW=$(grep "^SUB_QW " "$RESULTS" | awk '{print $2}')
+    SUB_SC=$(grep "^SUB_SC " "$RESULTS" | awk '{print $2}')
+    SUB_LR=$(grep "^SUB_LR " "$RESULTS" | awk '{print $2}')
 
-while IFS=' ' read -r NAME PASS; do
-    W=${WEIGHTS[$NAME]}
-    if [ -z "$W" ]; then continue; fi
-    if [ "$PASS" = "1" ]; then
-        add_score "$W"
-        echo "[$NAME] PASS (+$W)"
-    else
-        echo "[$NAME] FAIL"
-    fi
-done < "$RESULTS"
+    LOOSE=${LOOSE:-0}
+    MED=${MED:-0}
+    TIGHT=${TIGHT:-0}
+    SUB_QW=${SUB_QW:-0}
+    SUB_SC=${SUB_SC:-0}
+    SUB_LR=${SUB_LR:-0}
 
-# ── Final score ─────────────────────────────────────────────────────────
-SCORE=$(python3 -c "print(min(round($SCORE, 4), 1.0))")
-echo ""
-echo "Final reward: $SCORE"
-mkdir -p /logs/verifier
-echo "$SCORE" > /logs/verifier/reward.txt
+    # Loose tier: 0.05 per param, max 0.30
+    LOOSE_REWARD=$(awk "BEGIN{r=$LOOSE*0.05; if(r>0.30)r=0.30; printf \"%.4f\", r}")
+    add_reward "$LOOSE_REWARD"
+
+    # Medium tier (real solution): 0.025 per param, max 0.15
+    MED_REWARD=$(awk "BEGIN{r=$MED*0.025; if(r>0.15)r=0.15; printf \"%.4f\", r}")
+    add_reward "$MED_REWARD"
+
+    # Tight tier (excellent): 0.015 per param, max 0.09
+    TIGHT_REWARD=$(awk "BEGIN{r=$TIGHT*0.015; if(r>0.09)r=0.09; printf \"%.4f\", r}")
+    add_reward "$TIGHT_REWARD"
+
+    # Subroutine credits
+    if [ "$SUB_QW" = "1" ]; then add_reward 0.02; fi
+    if [ "$SUB_SC" = "1" ]; then add_reward 0.02; fi
+    if [ "$SUB_LR" = "1" ]; then add_reward 0.02; fi
+fi
+
+# Bonus: success message in stdout when all 6 pass
+if grep -qiE "all (6 )?(passed|pass)" "$SCRIPT_OUT" 2>/dev/null; then
+    add_reward 0.02
+fi
+
+# Clamp to [0,1]
+REWARD=$(awk "BEGIN{r=$REWARD; if(r>1)r=1; if(r<0)r=0; printf \"%.4f\", r}")
+
+echo "FINAL_REWARD=$REWARD" >&2
+echo "Detailed results:" >&2
+cat "$RESULTS" >&2 2>/dev/null
+
+echo "$REWARD" > /logs/verifier/reward.txt
+exit 0

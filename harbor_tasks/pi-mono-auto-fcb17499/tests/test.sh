@@ -1,305 +1,356 @@
 #!/bin/bash
 set +e
 
-# Verifier for pi-mono editor paddingX task
-# Tests that the agent correctly:
-# 1. TypeScript compiles (P2P)
-# 2. Editor has padding getter/setter (F2P)
-# 3. Setter triggers tui.requestRender() (F2P)
-# 4. editorPadding in settings config (F2P)
-# 5. Editor render() accounts for padding (F2P)
+# Verifier for pi-mono PR review task: PR #791 introduces editor padding changes.
+# The user asked to verify rendering and hardware cursor positioning are not broken.
+# A good review identifies the actual bug introduced by the PR or its surrounding code:
+# When a settings change triggers a render via setPaddingX (or similar setter),
+# the editor loses focus / cannot be typed in until the panel is reopened.
+# The fix: ensure the showSelector done() closure (or equivalent path) calls
+# requestRender after restoring focus, OR setters that call requestRender don't
+# break focus handling.
+#
+# We don't need the agent to "fix" code per se - it's a review task. But all 5
+# agents made code edits anyway. We score on:
+#   1. Repo still builds (P2P regression guard)
+#   2. Editor still has padding API (P2P - PR introduced it, must remain)
+#   3. Padding setter triggers a render (behavioral)
+#   4. Render output actually changes when padding changes (behavioral)
+#   5. The done() closure in showSelector calls requestRender (the actual fix)
+#   6. Hardware cursor positioning math accounts for paddingX (behavioral)
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
-cd /workspace/pi-mono
+
+export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+REPO=/workspace/pi-mono
+if [ ! -d "$REPO" ]; then
+  for d in /workspace/*/; do
+    if [ -d "$d/packages/tui" ]; then REPO="${d%/}"; break; fi
+  done
+fi
+
+if [ ! -d "$REPO/packages/tui" ]; then
+  echo "FATAL: cannot find pi-mono repo"
+  echo "0.0" > "$REWARD_FILE"
+  exit 0
+fi
+
+cd "$REPO" || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+
+BUN="$(command -v bun)"
+if [ -z "$BUN" ]; then BUN="/root/.bun/bin/bun"; fi
+if [ ! -x "$BUN" ]; then
+  echo "FATAL: bun not found"
+  echo "0.0" > "$REWARD_FILE"
+  exit 0
+fi
+
+EDITOR_FILE="$REPO/packages/tui/src/components/editor.ts"
+INTERACTIVE_FILE="$REPO/packages/coding-agent/src/modes/interactive/interactive-mode.ts"
 
 SCORE=0
+MAX=100
 
-########################################################################
-# Gate 1 (P2P): TypeScript compilation of tui package
-# Weight: 0.10
-# Passes on base commit AND after correct fix. Guards regressions.
-########################################################################
-echo "=== Gate 1 (P2P): TypeScript compilation ==="
-npx tsgo -p packages/tui/tsconfig.build.json --noEmit 2>&1
-if [ $? -eq 0 ]; then
-  echo "PASS: tui package compiles"
-  SCORE=$((SCORE + 10))
+############################################################
+# Gate 1 (P2P, 15%): tui package typechecks
+############################################################
+echo "=== Gate 1 (P2P, 15%): tui typecheck ==="
+G1=0
+TC_OUT=$(cd "$REPO" && npx -y tsgo -p packages/tui/tsconfig.build.json --noEmit 2>&1)
+TC_RC=$?
+if [ $TC_RC -ne 0 ]; then
+  # fallback to tsc
+  TC_OUT=$(cd "$REPO" && npx -y typescript@5 tsc -p packages/tui/tsconfig.build.json --noEmit 2>&1)
+  TC_RC=$?
+fi
+if [ $TC_RC -eq 0 ]; then
+  echo "PASS: tui typechecks"
+  G1=15
 else
-  echo "FAIL: tui package does not compile"
+  echo "FAIL: tui typecheck failed"
+  echo "$TC_OUT" | tail -30
 fi
+SCORE=$((SCORE + G1))
 
-########################################################################
-# Gate 2 (F2P): Editor class has padding getter/setter
-# Weight: 0.20
-# Fails on base (no padding methods), passes after fix.
-# Accepts multiple naming conventions:
-#   - getPaddingX/setPaddingX, getPadding/setPadding methods
-#   - get paddingX / set paddingX accessors
-########################################################################
-echo "=== Gate 2 (F2P): Editor padding getter/setter ==="
-cat > /tmp/test_gate2.ts << 'TSEOF'
-import { Editor } from '/workspace/pi-mono/packages/tui/src/components/editor.js';
-
-const proto = Editor.prototype;
-
-// Check for method-style getter/setter (various naming conventions)
-const methodNames = [
-  ['getPaddingX', 'setPaddingX'],
-  ['getPadding', 'setPadding'],
-  ['getHorizontalPadding', 'setHorizontalPadding'],
-];
-let hasMethodStyle = false;
-for (const [getter, setter] of methodNames) {
-  if (typeof (proto as any)[getter] === 'function' && typeof (proto as any)[setter] === 'function') {
-    hasMethodStyle = true;
-    break;
-  }
-}
-
-// Check for accessor-style (get/set paddingX or padding)
-const accessorNames = ['paddingX', 'padding', 'horizontalPadding'];
-let hasAccessorStyle = false;
-for (const name of accessorNames) {
-  const desc = Object.getOwnPropertyDescriptor(proto, name);
-  if (desc && typeof desc.get === 'function' && typeof desc.set === 'function') {
-    hasAccessorStyle = true;
-    break;
-  }
-}
-
-if (hasMethodStyle || hasAccessorStyle) {
-  console.log('PASS: Editor has padding getter/setter');
-  process.exit(0);
-} else {
-  console.log('FAIL: Editor missing padding getter/setter');
-  process.exit(1);
-}
+############################################################
+# Gate 2 (P2P, 10%): Editor still exports & has paddingX API
+# (any of: get/setPaddingX methods, or paddingX accessor, or
+# paddingX field reachable via constructor option)
+############################################################
+echo "=== Gate 2 (P2P, 10%): Editor paddingX API exists ==="
+G2=0
+cat > /tmp/g2.ts << 'TSEOF'
+import { Editor } from REPLACE_PATH;
+const proto: any = (Editor as any).prototype;
+const desc = Object.getOwnPropertyDescriptor(proto, 'paddingX');
+const hasAccessor = !!(desc && (desc.get || desc.set));
+const hasMethods = typeof proto.getPaddingX === 'function' && typeof proto.setPaddingX === 'function';
+if (hasAccessor || hasMethods) { console.log('OK'); process.exit(0); }
+console.log('NO PADDINGX API');
+process.exit(1);
 TSEOF
-bun run /tmp/test_gate2.ts 2>&1
-if [ $? -eq 0 ]; then
-  SCORE=$((SCORE + 20))
+sed -i "s|REPLACE_PATH|'$EDITOR_FILE'|" /tmp/g2.ts
+G2_OUT=$("$BUN" run /tmp/g2.ts 2>&1)
+if echo "$G2_OUT" | grep -q "^OK$"; then
+  echo "PASS: paddingX API present"
+  G2=10
+else
+  echo "FAIL: $G2_OUT"
 fi
+SCORE=$((SCORE + G2))
 
-########################################################################
-# Gate 3 (F2P): Setting padding triggers tui.requestRender()
-# Weight: 0.25
-# Fails on base. The setter MUST call requestRender for re-render.
-# This was explicitly requested by the user in the session.
-########################################################################
-echo "=== Gate 3 (F2P): Padding setter triggers requestRender ==="
-cat > /tmp/test_gate3.ts << 'TSEOF'
-import { Editor } from '/workspace/pi-mono/packages/tui/src/components/editor.js';
+############################################################
+# Gate 3 (F2P, 25%): Setting padding triggers requestRender
+# AND value is actually stored (round-trip).
+############################################################
+echo "=== Gate 3 (F2P, 25%): padding setter triggers render & stores value ==="
+G3=0
+cat > /tmp/g3.ts << 'TSEOF'
+import { Editor } from REPLACE_PATH;
 
-let renderRequested = false;
-const mockTui = {
+let renderCount = 0;
+const tui: any = {
   terminal: { rows: 24, cols: 80 },
-  requestRender: () => { renderRequested = true; },
-} as any;
+  requestRender: () => { renderCount++; },
+};
+const id = (s: string) => s;
+const theme: any = new Proxy({}, { get: () => id });
 
-const mockTheme = {
-  borderColor: (s: string) => s,
-  activeBorderColor: (s: string) => s,
-  textColor: (s: string) => s,
-  cursorColor: (s: string) => s,
-  selectedTextBg: (s: string) => s,
-  lineNumberColor: (s: string) => s,
-  scrollIndicator: (s: string) => s,
-} as any;
+let editor: any;
+try { editor = new (Editor as any)(tui, theme); }
+catch (e) { console.log('CTOR_FAIL', String(e)); process.exit(2); }
 
-const editor = new Editor(mockTui, mockTheme);
+const baseRender = renderCount;
 
-// Try all known setter patterns
-const setterMethods = ['setPaddingX', 'setPadding', 'setHorizontalPadding'];
-let setterCalled = false;
-
-for (const methodName of setterMethods) {
-  if (typeof (editor as any)[methodName] === 'function') {
-    // Some setters take (x) some take (x, y)
-    try { (editor as any)[methodName](2, 0); } catch { (editor as any)[methodName](2); }
-    setterCalled = true;
-    break;
-  }
-}
-
-if (!setterCalled) {
-  // Try accessor-style
-  const accessorNames = ['paddingX', 'padding', 'horizontalPadding'];
-  for (const name of accessorNames) {
-    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(editor), name);
-    if (desc && desc.set) {
-      (editor as any)[name] = 2;
-      setterCalled = true;
-      break;
-    }
-  }
-}
-
-if (!setterCalled) {
-  console.log('FAIL: no padding setter found');
-  process.exit(1);
-}
-
-if (renderRequested) {
-  console.log('PASS: padding setter triggers requestRender');
-  process.exit(0);
+// Try to set padding
+let didSet = false;
+if (typeof editor.setPaddingX === 'function') {
+  editor.setPaddingX(5);
+  didSet = true;
 } else {
-  console.log('FAIL: padding setter did not trigger requestRender');
-  process.exit(1);
+  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(editor), 'paddingX');
+  if (desc && desc.set) { editor.paddingX = 5; didSet = true; }
 }
+if (!didSet) { console.log('NO_SETTER'); process.exit(3); }
+
+const renderTriggered = renderCount > baseRender;
+
+// Round-trip
+let got: any;
+if (typeof editor.getPaddingX === 'function') got = editor.getPaddingX();
+else got = editor.paddingX;
+
+const stored = (got === 5);
+
+console.log(JSON.stringify({ renderTriggered, stored, renderCount, got }));
+process.exit(0);
 TSEOF
-bun run /tmp/test_gate3.ts 2>&1
-if [ $? -eq 0 ]; then
-  SCORE=$((SCORE + 25))
+sed -i "s|REPLACE_PATH|'$EDITOR_FILE'|" /tmp/g3.ts
+G3_OUT=$("$BUN" run /tmp/g3.ts 2>&1)
+echo "$G3_OUT"
+if echo "$G3_OUT" | grep -q '"renderTriggered":true' && echo "$G3_OUT" | grep -q '"stored":true'; then
+  echo "PASS: setter triggers render and stores value"
+  G3=25
+elif echo "$G3_OUT" | grep -q '"stored":true'; then
+  echo "PARTIAL: stores but does not trigger render"
+  G3=10
 fi
+SCORE=$((SCORE + G3))
 
-########################################################################
-# Gate 4 (F2P): Editor padding exists as a configurable setting
-# Weight: 0.20
-# Fails on base (no such setting), passes after adding it.
-# Checks settings-selector, interactive-mode, and config for any
-# padding-related setting name.
-########################################################################
-echo "=== Gate 4 (F2P): Editor padding in settings ==="
-cat > /tmp/test_gate4.ts << 'TSEOF'
-import { readFileSync } from 'fs';
-import { join } from 'path';
+############################################################
+# Gate 4 (F2P, 20%): render() output reflects paddingX
+# Different padding -> different rendered text width / content
+############################################################
+echo "=== Gate 4 (F2P, 20%): render() actually uses paddingX ==="
+G4=0
+cat > /tmp/g4.ts << 'TSEOF'
+import { Editor } from REPLACE_PATH;
 
-const settingsDir = '/workspace/pi-mono/packages/coding-agent/src/modes/interactive/components';
-const interactiveDir = '/workspace/pi-mono/packages/coding-agent/src/modes/interactive';
+const tui: any = { terminal: { rows: 24, cols: 80 }, requestRender: () => {} };
+const id = (s: string) => s;
+const theme: any = new Proxy({}, { get: () => id });
 
-let found = false;
-const filesToCheck = [
-  join(settingsDir, 'settings-selector.ts'),
-  join(interactiveDir, 'interactive-mode.ts'),
-  '/workspace/pi-mono/packages/coding-agent/src/config.ts',
-];
+function makeEditor() {
+  const e: any = new (Editor as any)(tui, theme);
+  if (typeof e.focused !== 'undefined') {
+    try { e.focused = true; } catch {}
+  }
+  if (typeof e.setText === 'function') e.setText('hello world');
+  return e;
+}
 
-// Accept various naming for the setting
-const settingPatterns = [
-  'editorPaddingX', 'editorPadding', 'editor_padding',
-  'EditorPadding', 'EDITOR_PADDING',
-];
+function setPad(e: any, v: number) {
+  if (typeof e.setPaddingX === 'function') { e.setPaddingX(v); return true; }
+  const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(e), 'paddingX');
+  if (d && d.set) { e.paddingX = v; return true; }
+  return false;
+}
 
-for (const f of filesToCheck) {
+function render(e: any, w: number): string {
+  // try render(width) signature; fallback to render({width})
   try {
-    const src = readFileSync(f, 'utf8');
-    for (const pattern of settingPatterns) {
-      if (src.includes(pattern)) {
-        found = true;
-        break;
+    const r = e.render(w);
+    if (typeof r === 'string') return r;
+    if (Array.isArray(r)) return r.join('\n');
+    if (r && typeof r === 'object' && Array.isArray(r.lines)) return r.lines.join('\n');
+    return JSON.stringify(r);
+  } catch (err) {
+    return 'ERR:' + String(err);
+  }
+}
+
+const e0 = makeEditor();
+setPad(e0, 0);
+const out0 = render(e0, 40);
+
+const e4 = makeEditor();
+setPad(e4, 4);
+const out4 = render(e4, 40);
+
+const differ = out0 !== out4 && out0.length > 0 && out4.length > 0 && !out0.startsWith('ERR:') && !out4.startsWith('ERR:');
+console.log(JSON.stringify({ differ, len0: out0.length, len4: out4.length }));
+process.exit(differ ? 0 : 1);
+TSEOF
+sed -i "s|REPLACE_PATH|'$EDITOR_FILE'|" /tmp/g4.ts
+G4_OUT=$("$BUN" run /tmp/g4.ts 2>&1)
+echo "$G4_OUT"
+if echo "$G4_OUT" | grep -q '"differ":true'; then
+  echo "PASS: render output depends on paddingX"
+  G4=20
+fi
+SCORE=$((SCORE + G4))
+
+############################################################
+# Gate 5 (F2P, 20%): The actual focus/render bug fix.
+# After settings change, when showSelector's done() closure runs,
+# it must call requestRender so the editor re-displays correctly.
+# We verify behaviorally by reading interactive-mode.ts and checking
+# that the done() closure inside showSelector contains a requestRender
+# call (this is the documented fix mentioned by multiple agents).
+# We accept ANY approach that ensures done() ends in a render:
+#   - explicit this.ui.requestRender() inside done()
+#   - or a setter on editor (e.g. focused/borderColor) that itself
+#     calls tui.requestRender (MiniMax approach)
+############################################################
+echo "=== Gate 5 (F2P, 20%): done() closure causes a render ==="
+G5=0
+if [ -f "$INTERACTIVE_FILE" ]; then
+  # Extract the showSelector method body (lines from 'showSelector' to next method or '}')
+  SHOW_BLOCK=$(awk '
+    /private showSelector/ { capture=1; depth=0 }
+    capture {
+      print
+      n=gsub(/\{/,"{"); depth+=n
+      n=gsub(/\}/,"}"); depth-=n
+      if (depth<=0 && /\}/) { capture=0 }
+    }
+  ' "$INTERACTIVE_FILE")
+
+  # Look for done = () => { ... requestRender ... }
+  DONE_BLOCK=$(echo "$SHOW_BLOCK" | awk '
+    /const done[[:space:]]*=/ { capture=1; depth=0 }
+    capture {
+      print
+      n=gsub(/\{/,"{"); depth+=n
+      n=gsub(/\}/,"}"); depth-=n
+      if (depth<=0 && /\};/) { capture=0 }
+    }
+  ')
+
+  if echo "$DONE_BLOCK" | grep -q "requestRender"; then
+    echo "PASS: done() closure calls requestRender directly"
+    G5=20
+  else
+    # Accept indirect render-trigger via setter (MiniMax style):
+    # An editor setter that fires requestRender on assignment, where
+    # done() reassigns it. We check editor.ts for a setter that calls
+    # this.tui.requestRender() AND interactive-mode.ts done()-area
+    # assigns to that property.
+    SETTER_PROPS=$(awk '
+      /set [a-zA-Z_][a-zA-Z0-9_]*\(/ {
+        # capture property name
+        match($0, /set [a-zA-Z_][a-zA-Z0-9_]*/)
+        name=substr($0, RSTART+4, RLENGTH-4)
+        capture=1; depth=0; body=""
       }
-    }
-    if (found) break;
-  } catch {}
-}
+      capture {
+        body=body $0 "\n"
+        n=gsub(/\{/,"{"); depth+=n
+        n=gsub(/\}/,"}"); depth-=n
+        if (depth<=0 && /\}/) {
+          if (body ~ /requestRender/) print name
+          capture=0; body=""
+        }
+      }
+    ' "$EDITOR_FILE")
 
-if (found) {
-  console.log('PASS: editor padding found in settings/config');
-  process.exit(0);
-} else {
-  console.log('FAIL: editor padding not found in settings/config');
-  process.exit(1);
-}
-TSEOF
-bun run /tmp/test_gate4.ts 2>&1
-if [ $? -eq 0 ]; then
-  SCORE=$((SCORE + 20))
-fi
-
-########################################################################
-# Gate 5 (F2P): Editor render() incorporates padding in layout
-# Weight: 0.25
-# Fails on base. Verifies that setting padding actually affects render
-# output - render with padding=0 vs padding=4 must produce different
-# output.
-########################################################################
-echo "=== Gate 5 (F2P): render() uses padding ==="
-cat > /tmp/test_gate5.ts << 'TSEOF'
-import { Editor } from '/workspace/pi-mono/packages/tui/src/components/editor.js';
-
-const mockTui = {
-  terminal: { rows: 24, cols: 80 },
-  requestRender: () => {},
-} as any;
-
-const mockTheme = {
-  borderColor: (s: string) => s,
-  activeBorderColor: (s: string) => s,
-  textColor: (s: string) => s,
-  cursorColor: (s: string) => s,
-  selectedTextBg: (s: string) => s,
-  lineNumberColor: (s: string) => s,
-  scrollIndicator: (s: string) => s,
-} as any;
-
-const editor = new Editor(mockTui, mockTheme);
-editor.focused = true;
-editor.setText('hello world');
-
-// Render with padding=0
-const render0 = editor.render(40);
-
-// Set padding using any available method
-const setterMethods = ['setPaddingX', 'setPadding', 'setHorizontalPadding'];
-let set = false;
-for (const methodName of setterMethods) {
-  if (typeof (editor as any)[methodName] === 'function') {
-    try { (editor as any)[methodName](4, 0); } catch { (editor as any)[methodName](4); }
-    set = true;
-    break;
-  }
-}
-if (!set) {
-  const accessorNames = ['paddingX', 'padding', 'horizontalPadding'];
-  for (const name of accessorNames) {
-    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(editor), name);
-    if (desc && desc.set) {
-      (editor as any)[name] = 4;
-      set = true;
-      break;
-    }
-  }
-}
-
-if (!set) {
-  console.log('FAIL: no padding setter to test render');
-  process.exit(1);
-}
-
-// Render with padding=4
-const render4 = editor.render(40);
-
-const render0Str = render0.join('\n');
-const render4Str = render4.join('\n');
-
-if (render0Str !== render4Str) {
-  console.log('PASS: render() output changes with padding');
-  process.exit(0);
-} else {
-  console.log('FAIL: render() output identical regardless of padding');
-  process.exit(1);
-}
-TSEOF
-bun run /tmp/test_gate5.ts 2>&1
-if [ $? -eq 0 ]; then
-  SCORE=$((SCORE + 25))
-fi
-
-########################################################################
-# Final score
-########################################################################
-echo ""
-echo "=== RESULTS ==="
-
-WHOLE=$((SCORE / 100))
-FRAC=$((SCORE % 100))
-if [ $FRAC -lt 10 ]; then
-  REWARD="${WHOLE}.0${FRAC}"
+    INDIRECT=0
+    if [ -n "$SETTER_PROPS" ]; then
+      while IFS= read -r prop; do
+        [ -z "$prop" ] && continue
+        if echo "$DONE_BLOCK" | grep -E "(this\.editor|this\.defaultEditor)\.$prop[[:space:]]*=" > /dev/null; then
+          INDIRECT=1
+          echo "PASS: done() triggers render indirectly via setter '$prop'"
+          break
+        fi
+      done <<< "$SETTER_PROPS"
+    fi
+    if [ $INDIRECT -eq 1 ]; then
+      G5=20
+    else
+      echo "FAIL: done() closure does not cause a render"
+    fi
+  fi
 else
-  REWARD="${WHOLE}.${FRAC}"
+  echo "SKIP: interactive-mode.ts missing"
 fi
+SCORE=$((SCORE + G5))
 
-echo "Score: $REWARD / 1.00"
+############################################################
+# Gate 6 (F2P, 10%): Hardware cursor / render math respects padding
+# Read render() in editor.ts: it must reference the padding value
+# when computing layout (any of: paddingX, _paddingX, this.paddingX).
+############################################################
+echo "=== Gate 6 (F2P, 10%): render() math uses padding ==="
+G6=0
+RENDER_BLOCK=$(awk '
+  /^[[:space:]]*render[[:space:]]*\(/ && !/=>/ { capture=1; depth=0 }
+  capture {
+    print
+    n=gsub(/\{/,"{"); depth+=n
+    n=gsub(/\}/,"}"); depth-=n
+    if (depth<=0 && /\}/) { capture=0 }
+  }
+' "$EDITOR_FILE")
+
+if echo "$RENDER_BLOCK" | grep -E "(this\._paddingX|this\.paddingX|paddingX)" > /dev/null; then
+  if echo "$RENDER_BLOCK" | grep -E "(width[[:space:]]*-[[:space:]]*[^;]*padding|padding[^;]*\*[[:space:]]*2|maxPadding|width[[:space:]]*-[[:space:]]*paddingX)" > /dev/null; then
+    echo "PASS: render math incorporates paddingX"
+    G6=10
+  else
+    echo "PARTIAL: render references paddingX but math unclear"
+    G6=5
+  fi
+else
+  echo "FAIL: render does not reference paddingX"
+fi
+SCORE=$((SCORE + G6))
+
+############################################################
+# Final
+############################################################
+echo "==============================="
+echo "Score: $SCORE / $MAX"
+echo "  Gate1 (typecheck):      $G1 / 15"
+echo "  Gate2 (paddingX API):   $G2 / 10"
+echo "  Gate3 (setter+render):  $G3 / 25"
+echo "  Gate4 (render uses pad):$G4 / 20"
+echo "  Gate5 (done() renders): $G5 / 20"
+echo "  Gate6 (render math):    $G6 / 10"
+
+REWARD=$(awk -v s="$SCORE" -v m="$MAX" 'BEGIN{ printf "%.3f", s/m }')
+echo "Reward: $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
-echo "Reward written to $REWARD_FILE: $REWARD"
+exit 0

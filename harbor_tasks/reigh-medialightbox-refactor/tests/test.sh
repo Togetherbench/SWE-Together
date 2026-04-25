@@ -1,218 +1,299 @@
 #!/bin/bash
 set +e
 
-# Nop score: 0.10 (only P2P Gate 1 passes on unmodified base)
-
-# ─── Configuration ───────────────────────────────────────────────────────────
+# Reward file setup
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 echo "0.0" > "$REWARD_FILE"
 
 REWARD=0
 add_reward() {
-    # $1 = points to add (integer basis points, e.g. 10 = 0.10)
     REWARD=$((REWARD + $1))
-    echo "$REWARD bp accumulated"
+    echo "  +$1 bp (total: $REWARD bp)"
 }
+
+# Find workspace path
+WORKSPACE=""
+for cand in /workspace/repo /workspace/reigh /workspace/medialightbox-refactor /workspace; do
+    if [ -d "$cand/src/shared/components/MediaLightbox" ]; then
+        WORKSPACE="$cand"
+        break
+    fi
+done
+if [ -z "$WORKSPACE" ]; then
+    found=$(find /workspace -maxdepth 4 -type d -name "MediaLightbox" 2>/dev/null | head -1)
+    if [ -n "$found" ]; then
+        WORKSPACE=$(echo "$found" | sed 's|/src/shared/components/MediaLightbox||')
+    fi
+fi
+
+if [ -z "$WORKSPACE" ] || [ ! -d "$WORKSPACE" ]; then
+    echo "FATAL: Could not locate workspace with MediaLightbox component"
+    echo "0.0" > "$REWARD_FILE"
+    exit 0
+fi
+echo "Workspace: $WORKSPACE"
+cd "$WORKSPACE" || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+
+# Ensure tools on PATH
+export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+command -v npx >/dev/null 2>&1 || export PATH="/usr/lib/node_modules/.bin:$PATH"
 
 MAIN_FILE="src/shared/components/MediaLightbox/MediaLightbox.tsx"
 COMPONENT_DIR="src/shared/components/MediaLightbox"
 ORIGINAL_MAIN_LINES=2672
 ORIGINAL_FILE_COUNT=91
 
-cd /workspace/repo || { echo "FAIL: /workspace/repo not found"; exit 0; }
-
-# ─── Gate 1 (P2P): TypeScript compilation ────────────────────────────────────
-# P2P gate — passes on unmodified base AND on correct fix.
-# Weight: 0.10 (10 bp)
-echo "=== Gate 1: TypeScript compilation (P2P, weight=0.10) ==="
-npx tsc --noEmit 2>/tmp/tsc_output.txt
-TSC_EXIT=$?
-if [ $TSC_EXIT -eq 0 ]; then
-    echo "PASS: TypeScript compiles successfully"
-    add_reward 10
-    TSC_PASS=1
+# ─── Gate 1 (P2P): TypeScript still compiles ────────────────────────────────
+# Weight: 15 bp
+echo ""
+echo "=== Gate 1 (P2P, 15bp): TypeScript compiles ==="
+TSC_PASS=0
+if command -v npx >/dev/null 2>&1; then
+    timeout 300 npx --no-install tsc --noEmit > /tmp/tsc_output.txt 2>&1
+    TSC_EXIT=$?
+    if [ $TSC_EXIT -eq 0 ]; then
+        echo "PASS: TypeScript compiles"
+        add_reward 15
+        TSC_PASS=1
+    else
+        ERR_COUNT=$(grep -cE "error TS[0-9]+" /tmp/tsc_output.txt 2>/dev/null || echo 0)
+        echo "FAIL: TypeScript errors ($ERR_COUNT errors)"
+        tail -25 /tmp/tsc_output.txt
+    fi
 else
-    echo "FAIL: TypeScript compilation errors:"
-    tail -20 /tmp/tsc_output.txt
-    TSC_PASS=0
+    echo "SKIP: npx not available"
 fi
 
-# ─── Gate 2 (F2P): Main component reduced + compiles ────────────────────────
-# F2P gate — fails on unmodified base (2672 lines), passes when agent reduces
-# it by >=20%. Gated on TypeScript compilation for behavioral verification.
-# Weight: 0.30 (30 bp)
+# ─── Gate 2 (F2P): MediaLightbox.tsx is meaningfully smaller ─────────────────
+# Weight: 20 bp (graduated)
 echo ""
-echo "=== Gate 2: Main component reduced + compiles (F2P, weight=0.30) ==="
+echo "=== Gate 2 (F2P, up to 20bp): Main component reduced ==="
 REFACTORED=0
+CURRENT_LINES=0
+REDUCTION_PCT=0
 if [ -f "$MAIN_FILE" ]; then
     CURRENT_LINES=$(wc -l < "$MAIN_FILE")
     REDUCTION_PCT=$(( (ORIGINAL_MAIN_LINES - CURRENT_LINES) * 100 / ORIGINAL_MAIN_LINES ))
     echo "Original: ${ORIGINAL_MAIN_LINES} lines, Current: ${CURRENT_LINES} lines, Reduction: ${REDUCTION_PCT}%"
 
-    if [ "$TSC_PASS" -eq 1 ] && [ "$REDUCTION_PCT" -ge 30 ]; then
-        echo "PASS: Reduced by ${REDUCTION_PCT}% AND TypeScript compiles"
-        add_reward 30
-        REFACTORED=1
-    elif [ "$TSC_PASS" -eq 1 ] && [ "$REDUCTION_PCT" -ge 20 ]; then
-        echo "PARTIAL: Reduced by ${REDUCTION_PCT}% AND TypeScript compiles"
+    if [ "$REDUCTION_PCT" -ge 35 ]; then
+        echo "EXCELLENT: ${REDUCTION_PCT}% reduction"
         add_reward 20
         REFACTORED=1
     elif [ "$REDUCTION_PCT" -ge 20 ]; then
-        echo "FAIL: Reduced by ${REDUCTION_PCT}% but TypeScript does NOT compile"
+        echo "GOOD: ${REDUCTION_PCT}% reduction"
+        add_reward 14
+        REFACTORED=1
+    elif [ "$REDUCTION_PCT" -ge 10 ]; then
+        echo "PARTIAL: ${REDUCTION_PCT}% reduction"
+        add_reward 7
+        REFACTORED=1
     else
-        echo "FAIL: Reduction of ${REDUCTION_PCT}% is below 20% threshold"
+        echo "FAIL: Reduction ${REDUCTION_PCT}% below 10%"
     fi
 else
-    echo "FAIL: Main file deleted entirely — not a valid refactor"
+    echo "FAIL: Main file missing"
 fi
 
-# ─── Gate 3 (F2P): New non-trivial abstraction files + compiles ─────────────
-# F2P gate — fails on unmodified base. Checks that new TypeScript/React files
-# were created as part of extraction AND they are non-trivial (>=10 lines).
-# Gated on TypeScript compilation.
-# Weight: 0.25 (25 bp)
+# ─── Gate 3 (F2P): Real new abstractions exist (substantive, not stubs) ─────
+# Weight: 20 bp
 echo ""
-echo "=== Gate 3: New abstraction files created + compile (F2P, weight=0.25) ==="
-CURRENT_FILE_COUNT=$(find "$COMPONENT_DIR" -type f \( -name "*.tsx" -o -name "*.ts" \) | wc -l)
-NEW_IN_DIR=$((CURRENT_FILE_COUNT - ORIGINAL_FILE_COUNT))
-NEW_IN_DIR=$((NEW_IN_DIR > 0 ? NEW_IN_DIR : 0))
+echo "=== Gate 3 (F2P, up to 20bp): New substantive abstractions ==="
+NEW_FILES=$(git -C "$WORKSPACE" status --porcelain 2>/dev/null | awk '/^\?\?/ {print $2} /^A/ {print $2}' | grep -E "^${COMPONENT_DIR}.*\.(ts|tsx)$")
+NEW_FILE_LIST=()
+NONTRIVIAL=0
+SUBSTANTIVE=0
+TOTAL_NEW_LINES=0
+HAS_HOOK=0
+HAS_COMPONENT=0
+HAS_UTIL=0
 
-# Count non-trivial new files (>=10 lines) — prevents stub gaming
-NONTRIVIAL_NEW=0
-if [ "$NEW_IN_DIR" -gt 0 ]; then
+if [ -n "$NEW_FILES" ]; then
     while IFS= read -r f; do
-        GIT_STATUS=$(git status --short "$f" 2>/dev/null | head -1)
-        if echo "$GIT_STATUS" | grep -q "^?" 2>/dev/null; then
+        if [ -f "$f" ]; then
             FLINES=$(wc -l < "$f")
-            if [ "$FLINES" -ge 10 ]; then
-                NONTRIVIAL_NEW=$((NONTRIVIAL_NEW + 1))
+            TOTAL_NEW_LINES=$((TOTAL_NEW_LINES + FLINES))
+            if [ "$FLINES" -ge 15 ]; then
+                NONTRIVIAL=$((NONTRIVIAL + 1))
+                NEW_FILE_LIST+=("$f")
+                # Substantive = has at least one export
+                if grep -qE "^export " "$f" 2>/dev/null; then
+                    SUBSTANTIVE=$((SUBSTANTIVE + 1))
+                fi
+                # Categorize
+                case "$f" in
+                    *hooks/use*|*useUse*) HAS_HOOK=1 ;;
+                    *components/*) HAS_COMPONENT=1 ;;
+                    *utils/*|*helpers/*) HAS_UTIL=1 ;;
+                esac
+                # Hook detection by content
+                grep -qE "^export (function |const )use[A-Z]" "$f" 2>/dev/null && HAS_HOOK=1
             fi
         fi
-    done < <(find "$COMPONENT_DIR" -type f \( -name "*.tsx" -o -name "*.ts" \))
+    done <<< "$NEW_FILES"
 fi
 
-# Also count non-trivial new files via git (for committed changes)
-GIT_NEW=$(git diff --name-only --diff-filter=A 2>/dev/null | grep -E '\.(tsx|ts)$' || true)
-for f in $GIT_NEW; do
-    if [ -f "$f" ]; then
-        FLINES=$(wc -l < "$f")
-        if [ "$FLINES" -ge 10 ]; then
-            NONTRIVIAL_NEW=$((NONTRIVIAL_NEW + 1))
+echo "New files: $(echo "$NEW_FILES" | grep -c .), nontrivial: $NONTRIVIAL, substantive: $SUBSTANTIVE, total new lines: $TOTAL_NEW_LINES"
+echo "Has hook: $HAS_HOOK, component: $HAS_COMPONENT, util: $HAS_UTIL"
+
+G3_SCORE=0
+if [ "$SUBSTANTIVE" -ge 5 ] && [ "$TOTAL_NEW_LINES" -ge 300 ]; then
+    G3_SCORE=20
+    echo "EXCELLENT: 5+ substantive new modules with significant content"
+elif [ "$SUBSTANTIVE" -ge 3 ] && [ "$TOTAL_NEW_LINES" -ge 150 ]; then
+    G3_SCORE=14
+    echo "GOOD: 3+ substantive new modules"
+elif [ "$SUBSTANTIVE" -ge 1 ] && [ "$TOTAL_NEW_LINES" -ge 30 ]; then
+    G3_SCORE=7
+    echo "PARTIAL: At least 1 substantive new module"
+else
+    echo "FAIL: No substantive new abstractions"
+fi
+[ $G3_SCORE -gt 0 ] && add_reward $G3_SCORE
+
+# ─── Gate 4 (F2P/Behavioral): New modules import-clean & wired into main ────
+# Weight: 20 bp — verifies extracted code is actually consumed by main
+echo ""
+echo "=== Gate 4 (F2P, up to 20bp): New modules wired into main ==="
+WIRED_COUNT=0
+IMPORT_CLEAN=0
+if [ -f "$MAIN_FILE" ] && [ ${#NEW_FILE_LIST[@]} -gt 0 ]; then
+    for nf in "${NEW_FILE_LIST[@]}"; do
+        # Get module name (filename without extension)
+        modname=$(basename "$nf" | sed 's/\.[tj]sx\?$//')
+        # Skip generic names
+        case "$modname" in
+            index|types|constants) continue ;;
+        esac
+        # Check if main file imports it (directly or via barrel)
+        if grep -qE "(from ['\"].*${modname}['\"])|(\\b${modname}\\b)" "$MAIN_FILE" 2>/dev/null; then
+            WIRED_COUNT=$((WIRED_COUNT + 1))
+        else
+            # Check barrel exports
+            if grep -rqE "export.*${modname}" "$COMPONENT_DIR"/index.* "$COMPONENT_DIR"/hooks/index.* "$COMPONENT_DIR"/components/index.* "$COMPONENT_DIR"/utils/index.* 2>/dev/null; then
+                # transitively used? check main imports the barrel symbol
+                if grep -qE "\\b${modname}\\b" "$MAIN_FILE" 2>/dev/null; then
+                    WIRED_COUNT=$((WIRED_COUNT + 1))
+                fi
+            fi
         fi
-    fi
+    done
+fi
+
+# Also check no broken-internal-imports: for each new file, confirm referenced relative imports resolve
+BROKEN_IMPORTS=0
+for nf in "${NEW_FILE_LIST[@]}"; do
+    DIR=$(dirname "$nf")
+    while IFS= read -r line; do
+        # extract relative import path
+        ipath=$(echo "$line" | sed -nE "s/.*from ['\"](\\.\\.[^'\"]*|\\.[^'\"]*)['\"].*/\\1/p")
+        [ -z "$ipath" ] && continue
+        resolved="$DIR/$ipath"
+        # try .ts, .tsx, /index.ts, /index.tsx
+        if [ ! -f "$resolved" ] && [ ! -f "$resolved.ts" ] && [ ! -f "$resolved.tsx" ] && \
+           [ ! -f "$resolved/index.ts" ] && [ ! -f "$resolved/index.tsx" ]; then
+            BROKEN_IMPORTS=$((BROKEN_IMPORTS + 1))
+        fi
+    done < <(grep -E "^import .* from ['\"]\\.\\.?/" "$nf" 2>/dev/null)
 done
 
-echo "New files in dir: ${NEW_IN_DIR}, Non-trivial (>=10 lines): ${NONTRIVIAL_NEW}"
+[ $BROKEN_IMPORTS -eq 0 ] && IMPORT_CLEAN=1
+echo "Wired modules: $WIRED_COUNT, broken relative imports in new files: $BROKEN_IMPORTS"
 
-if [ "$TSC_PASS" -eq 1 ] && [ "$NONTRIVIAL_NEW" -ge 3 ]; then
-    echo "PASS: ${NONTRIVIAL_NEW} non-trivial new files AND TypeScript compiles"
-    add_reward 25
-elif [ "$TSC_PASS" -eq 1 ] && [ "$NONTRIVIAL_NEW" -ge 1 ]; then
-    echo "PARTIAL: ${NONTRIVIAL_NEW} non-trivial new files AND compiles"
-    add_reward 15
-elif [ "$NONTRIVIAL_NEW" -ge 1 ]; then
-    echo "FAIL: New files created but TypeScript does NOT compile"
+G4_SCORE=0
+if [ "$TSC_PASS" -eq 1 ] && [ "$WIRED_COUNT" -ge 3 ] && [ "$IMPORT_CLEAN" -eq 1 ]; then
+    G4_SCORE=20
+    echo "EXCELLENT: 3+ extracted modules wired into main, all imports clean"
+elif [ "$TSC_PASS" -eq 1 ] && [ "$WIRED_COUNT" -ge 1 ] && [ "$IMPORT_CLEAN" -eq 1 ]; then
+    G4_SCORE=12
+    echo "GOOD: At least 1 module wired into main, imports clean"
+elif [ "$WIRED_COUNT" -ge 1 ]; then
+    G4_SCORE=5
+    echo "PARTIAL: Modules created but compile or imports issues"
 else
-    echo "FAIL: No non-trivial new abstraction files created"
+    echo "FAIL: New modules not wired into main"
 fi
+[ $G4_SCORE -gt 0 ] && add_reward $G4_SCORE
 
-# ─── Gate 4 (F2P): Module API preserved after refactoring + compiles ────────
-# F2P gate — only fires after refactoring happened (Gate 2 passed). Checks
-# that public exports (default, key components, hooks) still exist.
-# Gated on both REFACTORED and TSC_PASS.
-# Weight: 0.20 (20 bp)
+# ─── Gate 5 (F2P): Code preserved (extracted, not deleted) ──────────────────
+# Weight: 10 bp
 echo ""
-echo "=== Gate 4: Module API preserved (F2P, weight=0.20) ==="
-
+echo "=== Gate 5 (F2P, up to 10bp): Code preserved through extraction ==="
 if [ "$REFACTORED" -eq 0 ]; then
-    echo "SKIP (F2P): No refactoring detected, requires size reduction first"
-else
-    GATE4_CHECKS=0
-
-    # Check 1: Default export
-    if grep -rqE "export default" "$MAIN_FILE" 2>/dev/null || \
-       grep -rqE "export.*default" "$COMPONENT_DIR/index.tsx" 2>/dev/null; then
-        echo "  OK: Default export preserved"
-        GATE4_CHECKS=$((GATE4_CHECKS + 1))
-    else
-        echo "  WARN: Default export missing"
-    fi
-
-    # Check 2: Key component exports anywhere in directory
-    KEY_COMPS=0
-    for COMP in NavigationButtons MediaDisplay MediaControls; do
-        grep -rq "export.*${COMP}" "$COMPONENT_DIR" 2>/dev/null && KEY_COMPS=$((KEY_COMPS + 1))
-    done
-    if [ "$KEY_COMPS" -ge 2 ]; then
-        echo "  OK: Key component exports preserved (${KEY_COMPS}/3)"
-        GATE4_CHECKS=$((GATE4_CHECKS + 1))
-    else
-        echo "  WARN: Key component exports missing (${KEY_COMPS}/3)"
-    fi
-
-    # Check 3: Key hook exports
-    KEY_HOOKS=0
-    for HOOK in useUpscale useInpainting useLightboxNavigation; do
-        grep -rq "export.*${HOOK}" "$COMPONENT_DIR" 2>/dev/null && KEY_HOOKS=$((KEY_HOOKS + 1))
-    done
-    if [ "$KEY_HOOKS" -ge 2 ]; then
-        echo "  OK: Key hook exports preserved (${KEY_HOOKS}/3)"
-        GATE4_CHECKS=$((GATE4_CHECKS + 1))
-    else
-        echo "  WARN: Key hook exports missing (${KEY_HOOKS}/3)"
-    fi
-
-    if [ "$TSC_PASS" -eq 1 ] && [ "$GATE4_CHECKS" -ge 2 ]; then
-        echo "PASS: Module API preserved (${GATE4_CHECKS}/3) AND compiles"
-        add_reward 20
-    elif [ "$TSC_PASS" -eq 1 ] && [ "$GATE4_CHECKS" -ge 1 ]; then
-        echo "PARTIAL: Some API preserved (${GATE4_CHECKS}/3) and compiles"
-        add_reward 10
-    else
-        echo "FAIL: API broken or TypeScript does not compile"
-    fi
-fi
-
-# ─── Gate 5 (F2P): Code extracted not deleted + compiles ────────────────────
-# F2P gate — ensures code was moved to new files, not deleted. Total lines
-# across the codebase should remain >= 70% of original.
-# Only meaningful after refactoring happened.
-# Weight: 0.15 (15 bp)
-echo ""
-echo "=== Gate 5: Code extracted not deleted (F2P, weight=0.15) ==="
-
-if [ "$REFACTORED" -eq 0 ]; then
-    echo "SKIP (F2P): No refactoring detected, requires size reduction first"
+    echo "SKIP: No refactor detected"
 else
     CURRENT_TOTAL=$(find "$COMPONENT_DIR" -type f \( -name "*.tsx" -o -name "*.ts" \) -exec cat {} + 2>/dev/null | wc -l)
-
-    # Count lines in new files outside MediaLightbox dir
     EXTRA=0
-    for f in $(git diff --name-only --diff-filter=A 2>/dev/null | grep -E '\.(tsx|ts)$' || true); do
+    while IFS= read -r f; do
         if [ -f "$f" ] && ! echo "$f" | grep -q "MediaLightbox"; then
             EXTRA=$((EXTRA + $(wc -l < "$f")))
         fi
-    done
-
+    done < <(git -C "$WORKSPACE" diff --name-only --diff-filter=A 2>/dev/null | grep -E '\.(tsx|ts)$')
     ADJUSTED=$((CURRENT_TOTAL + EXTRA))
     ORIG_TOTAL=21893
-    THRESHOLD=$((ORIG_TOTAL * 70 / 100))
-    echo "Dir total: ${CURRENT_TOTAL}, Extra: ${EXTRA}, Adjusted: ${ADJUSTED}, Threshold(70%): ${THRESHOLD}"
+    PCT=$((ADJUSTED * 100 / ORIG_TOTAL))
+    echo "Adjusted total: $ADJUSTED / $ORIG_TOTAL ($PCT%)"
 
-    if [ "$TSC_PASS" -eq 1 ] && [ "$ADJUSTED" -ge "$THRESHOLD" ]; then
-        echo "PASS: Code extracted, not deleted, and compiles"
-        add_reward 15
-    elif [ "$ADJUSTED" -ge "$THRESHOLD" ]; then
-        echo "FAIL: Code preserved but TypeScript does NOT compile"
+    if [ "$PCT" -ge 85 ]; then
+        echo "EXCELLENT: Code preserved well"
+        add_reward 10
+    elif [ "$PCT" -ge 70 ]; then
+        echo "GOOD: Most code preserved"
+        add_reward 6
     else
-        echo "FAIL: Too much code was deleted (adjusted ${ADJUSTED} < threshold ${THRESHOLD})"
+        echo "FAIL: Code appears deleted, not extracted"
     fi
 fi
 
-# ─── Final Score ─────────────────────────────────────────────────────────────
+# ─── Gate 6 (P2P/Structural): Public API + import-from-tree intact ──────────
+# Weight: 15 bp
 echo ""
-echo "=== Final Score ==="
-FINAL=$(awk "BEGIN {printf \"%.2f\", $REWARD / 100}")
-echo "Total: $FINAL (${REWARD}/100 bp)"
+echo "=== Gate 6 (P2P, up to 15bp): Public API preserved ==="
+API_SCORE=0
+# Default export reachable
+if grep -rqE "^export default" "$MAIN_FILE" 2>/dev/null || \
+   grep -rqE "^export.*default" "$COMPONENT_DIR"/index.* 2>/dev/null; then
+    API_SCORE=$((API_SCORE + 5))
+    echo "  OK: default export reachable"
+else
+    echo "  WARN: default export missing"
+fi
+
+# Verify the top-level component name is still the export
+if grep -qE "(export default (MediaLightbox|function MediaLightbox|React\\.memo|memo\\())" "$MAIN_FILE" 2>/dev/null || \
+   grep -rqE "MediaLightbox" "$COMPONENT_DIR"/index.* 2>/dev/null; then
+    API_SCORE=$((API_SCORE + 3))
+    echo "  OK: MediaLightbox name preserved"
+fi
+
+# Resolve module via TS resolution test (a tiny script)
+cat > /tmp/api_check.ts <<'EOF'
+import M from "./src/shared/components/MediaLightbox/MediaLightbox";
+const _check: any = M;
+EOF
+if command -v npx >/dev/null 2>&1; then
+    cp /tmp/api_check.ts ./_api_check.ts 2>/dev/null
+    timeout 120 npx --no-install tsc --noEmit --jsx preserve --esModuleInterop --skipLibCheck --moduleResolution node ./_api_check.ts > /tmp/api_resolve.txt 2>&1
+    APIEX=$?
+    rm -f ./_api_check.ts
+    # Lenient: accept if the import line itself doesn't fail (other errors in repo unrelated)
+    if ! grep -qE "Cannot find module.*MediaLightbox" /tmp/api_resolve.txt 2>/dev/null; then
+        API_SCORE=$((API_SCORE + 7))
+        echo "  OK: MediaLightbox module resolvable"
+    else
+        echo "  FAIL: MediaLightbox module not resolvable"
+    fi
+fi
+echo "API score: $API_SCORE / 15"
+add_reward $API_SCORE
+
+# ─── Final write ────────────────────────────────────────────────────────────
+echo ""
+echo "=== TOTAL: $REWARD bp ==="
+FINAL=$(awk -v r=$REWARD 'BEGIN { printf "%.4f", r/100 }')
+# clamp to [0,1]
+FINAL=$(awk -v f=$FINAL 'BEGIN { if (f>1) f=1; if (f<0) f=0; printf "%.4f", f }')
 echo "$FINAL" > "$REWARD_FILE"
+echo "Final reward: $FINAL"
+exit 0

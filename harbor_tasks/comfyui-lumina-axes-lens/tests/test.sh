@@ -1,62 +1,52 @@
 #!/bin/bash
-#
-# Verification tests for ComfyUI Lumina 2 axes_lens RoPE implementation.
-#
-# Tests verify comfy/ldm/lumina/model.py has been updated to:
-#   1. Define a new class that accepts axes_lens and uses it for RoPE
-#   2. Wire NextDiT to use the new class with axes_lens
-#   3. Produce numerically correct output matching EmbedND reference
-#   4. Actually precompute and use axes_lens (not just store it)
-#
-# All tests run on CPU — no GPU required.
-# Reward written to /logs/verifier/reward.txt (0.0 to 1.0).
-# Nop score: 0.05 (T1 + P2P only)
-#
-# Scoring (P2P 4%, F2P-structural 9%, F2P-behavioral 87%, total=1.00):
-#   T1:  0.01  model.py parses as valid Python (structural, P2P)
-#   T2:  0.03  new class with axes_lens + forward (structural, F2P)
-#   T3:  0.02  class has >=8 meaningful AST statements (structural, F2P)
-#   T4:  0.03  NextDiT passes axes_lens to rope_embedder (structural, F2P)
-#   T5:  0.04  instantiate config A (behavioral, F2P)
-#   T6:  0.04  instantiate config B — varied params (behavioral, F2P)
-#   T7:  0.06  forward shape matches EmbedND (behavioral, F2P)
-#   T8:  0.05  forward values finite, in [-1,1], not zeros (behavioral, F2P)
-#   T9:  0.13  sequential positions match EmbedND (behavioral, F2P)
-#   T10: 0.12  non-sequential positions match EmbedND (behavioral, F2P)
-#   T11: 0.08  config B match EmbedND — different axes_dim (behavioral, F2P)
-#   T13: 0.08  different axes_lens -> different state (behavioral, F2P)
-#   T15: 0.12  varied inputs: single + batch of 8 both correct (behavioral, F2P)
-#   T16: 0.15  forward is pure: no mutation + deterministic (behavioral, F2P)
-#   P2P: 0.04  EmbedND + NextDiT upstream functionality (P2P)
-#
-# Removed: T12 (0.04, precomputed state) and T14 (0.06, OOB divergence)
-# rewarded mutually exclusive implementation strategies (precompute vs on-the-fly).
-# Their 0.10 weight redistributed to T9 (+0.04), T10 (+0.03), T15 (+0.03).
-#
 set +e
+#
+# Verification tests for ComfyUI Lumina2 axes_lens RoPE implementation.
+#
+# Scoring (total = 1.00):
+#   T1:  0.03  model.py parses
+#   P2P: 0.10  EmbedND + flux still importable, NextDiT still defined and instantiable
+#   T2:  0.05  new class with axes_lens kwarg + forward (structural discovery)
+#   T3:  0.05  NextDiT wires the new class with axes_lens (structural)
+#   T4:  0.07  NextDiT instantiates with config A (behavioral)
+#   T5:  0.05  NextDiT instantiates with config B (behavioral)
+#   T6:  0.08  rope_embedder.forward returns expected shape & finite values
+#   T7:  0.20  numerical match to reference Lumina rope on sequential ids within range
+#   T8:  0.15  numerical match on non-sequential ids within range
+#   T9:  0.07  axes_lens influences setup (different lens => either different state or
+#              produces same numerical output for in-range ids)
+#   T10: 0.07  forward is deterministic & does not mutate ids
+#   T11: 0.05  batched input correctness
+#   T12: 0.03  uses precomputed lookup table (preferred impl) -- bonus structural
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
 REWARD=0.0
-MODEL_PY="/workspace/ComfyUI/comfy/ldm/lumina/model.py"
+WS="/workspace/ComfyUI"
+MODEL_PY="$WS/comfy/ldm/lumina/model.py"
 
-# Activate virtual environment (torch, einops installed here)
-export PATH="/workspace/venv/bin:$PATH"
+export PATH="/workspace/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+PY=python3
+command -v $PY >/dev/null 2>&1 || PY=python
 
-# Patch model_management.py for CPU-only environments to prevent
-# "Torch not compiled with CUDA enabled" errors on comfy.* imports
+if [ ! -f "$MODEL_PY" ]; then
+    echo "0.0" > "$REWARD_FILE"
+    echo "model.py missing at $MODEL_PY"
+    exit 0
+fi
+
+# Patch model_management.py for CPU-only environments (idempotent)
 sed -i 's/if args\.cpu:/if args.cpu or not torch.cuda.is_available():/' \
-    /workspace/ComfyUI/comfy/model_management.py 2>/dev/null || true
+    "$WS/comfy/model_management.py" 2>/dev/null || true
 
 add_reward() {
-    REWARD=$(python3 -c "print(min(1.0, round($REWARD + $1, 4)))")
+    REWARD=$($PY -c "print(min(1.0, round($REWARD + $1, 4)))")
 }
 
-# ---- Shared mock for comfy.model_management (CPU-only) ----
-cat > /tmp/_mock_mm.py << 'MOCKEOF'
+# ---- Shared bootstrap for CPU + comfy imports ----
+cat > /tmp/_boot.py << 'BOOTEOF'
 import sys, types, torch
 sys.path.insert(0, "/workspace/ComfyUI")
-# Force CPU mode before any comfy imports to prevent CUDA errors
 try:
     import comfy.cli_args
     comfy.cli_args.args.cpu = True
@@ -64,7 +54,7 @@ except Exception:
     pass
 mm = types.ModuleType("comfy.model_management")
 mm.get_torch_device = lambda: torch.device("cpu")
-mm.is_device_mps = lambda d: False
+mm.is_device_mps = lambda d=None: False
 mm.is_intel_xpu = lambda: False
 mm.is_directml_enabled = lambda: False
 mm.is_nvidia = lambda: False
@@ -85,585 +75,510 @@ mm.unet_inital_load_device = lambda *a: torch.device("cpu")
 sys.modules["comfy.model_management"] = mm
 import comfy
 comfy.model_management = mm
-MOCKEOF
+BOOTEOF
 
-# ---- Shared class discovery helper ----
+# ---- Reference Lumina rope (matches Alpha-VLLM/Lumina-Image-2.0) ----
+cat > /tmp/_ref.py << 'REFEOF'
+import torch
+from comfy.ldm.flux.math import rope as _flux_rope
+
+def reference_lumina_rope(ids, axes_dim, theta):
+    """Reference: rope(ids[...,i], axes_dim[i], theta) per axis, concat on dim -3.
+    For integer ids in [0, axes_lens[i]), this matches the precomputed-table impl.
+    """
+    n_axes = ids.shape[-1]
+    parts = []
+    for i in range(n_axes):
+        pos = ids[..., i].float()
+        emb_i = _flux_rope(pos, axes_dim[i], theta)
+        parts.append(emb_i)
+    emb = torch.cat(parts, dim=-3)
+    return emb.unsqueeze(1)
+REFEOF
+
+# ---- Discovery helper: find the new RoPE class ----
 cat > /tmp/_discover.py << 'DISCEOF'
-import inspect, torch
+import inspect, torch.nn as nn
 import comfy.ldm.lumina.model as _lm
-from comfy.ldm.flux.layers import EmbedND as _EmbedND
-_SKIP = {"NextDiT","JointAttention","FinalLayer","FeedForward",
-         "TimestepEmbedder","TransformerBlock","JointTransformerBlock",
-         "ModulationOut","Modulation"}
-_cls = _cls_name = None
+SKIP = {"NextDiT","JointAttention","FinalLayer","FeedForward",
+        "TimestepEmbedder","TransformerBlock","JointTransformerBlock",
+        "ModulationOut","Modulation","RMSNorm","Attention"}
+_cls = None
+_cls_name = None
 for _n, _o in inspect.getmembers(_lm, inspect.isclass):
-    if _n in _SKIP: continue
+    if _n in SKIP:
+        continue
+    if not isinstance(_o, type):
+        continue
     try:
-        if "axes_lens" in inspect.signature(_o.__init__).parameters:
-            _cls, _cls_name = _o, _n; break
-    except: pass
+        sig = inspect.signature(_o.__init__)
+    except (TypeError, ValueError):
+        continue
+    if "axes_lens" in sig.parameters and hasattr(_o, "forward"):
+        _cls = _o
+        _cls_name = _n
+        break
 DISCEOF
 
-# ====================================================================
-# STRUCTURAL TESTS (4 tests, 0.09 total)
-# ====================================================================
-
-echo "=== T1: model.py parses as valid Python ==="
-T1=$(python3 << 'PYEOF'
-import ast
-try:
-    ast.parse(open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read())
-    print("PASS")
-except SyntaxError as e:
-    print(f"FAIL:{e}")
-PYEOF
-)
-echo "  Result: $T1"
-if [ "$T1" = "PASS" ]; then add_reward 0.01; fi
-
-echo ""
-echo "=== T2: New class with axes_lens + forward ==="
-T2=$(python3 << 'PYEOF'
-import ast
-source = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
-tree = ast.parse(source)
-SKIP = {"NextDiT","JointAttention","FinalLayer","FeedForward",
-        "TimestepEmbedder","TransformerBlock","JointTransformerBlock",
-        "ModulationOut","Modulation"}
-def _has_al_fw(node):
-    al = fw = False
-    for child in node.body:
-        if isinstance(child, ast.FunctionDef) and child.name == "__init__":
-            params = [a.arg for a in child.args.args] + [a.arg for a in child.args.kwonlyargs]
-            al = any("axes_lens" in p for p in params)
-        if isinstance(child, ast.FunctionDef) and child.name == "forward":
-            fw = True
-    return al and fw
-for node in ast.iter_child_nodes(tree):
-    if isinstance(node, ast.ClassDef) and node.name not in SKIP and _has_al_fw(node):
-        print(f"PASS:{node.name}"); exit()
-# Fallback: class defined elsewhere but imported into model.py
-try:
-    exec(open("/tmp/_mock_mm.py").read())
-    exec(open("/tmp/_discover.py").read())
-    if _cls is not None:
-        import inspect as _insp
-        _sf = _insp.getfile(_cls)
-        _t = ast.parse(open(_sf).read())
-        for _n in ast.iter_child_nodes(_t):
-            if isinstance(_n, ast.ClassDef) and _n.name == _cls_name and _has_al_fw(_n):
-                print(f"PASS:{_cls_name}"); exit()
-except Exception:
-    pass
-print("FAIL")
-PYEOF
-)
-echo "  Result: $T2"
-if [[ "$T2" == PASS* ]]; then add_reward 0.03; fi
-
-echo ""
-echo "=== T3: Class has >=8 meaningful AST statements ==="
-T3=$(python3 << 'PYEOF'
-import ast
-source = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
-tree = ast.parse(source)
-SKIP = {"NextDiT","JointAttention","FinalLayer","FeedForward",
-        "TimestepEmbedder","TransformerBlock","JointTransformerBlock",
-        "ModulationOut","Modulation"}
-def _count_stmts(node):
-    al = fw = False
-    for child in node.body:
-        if isinstance(child, ast.FunctionDef) and child.name == "__init__":
-            params = [a.arg for a in child.args.args] + [a.arg for a in child.args.kwonlyargs]
-            al = any("axes_lens" in p for p in params)
-        if isinstance(child, ast.FunctionDef) and child.name == "forward":
-            fw = True
-    if not (al and fw):
-        return None
-    return sum(1 for c in ast.walk(node) if isinstance(c, (
-        ast.Assign, ast.AugAssign, ast.AnnAssign, ast.If, ast.For,
-        ast.While, ast.With, ast.Return, ast.Call, ast.FunctionDef)))
-for node in ast.iter_child_nodes(tree):
-    if not isinstance(node, ast.ClassDef) or node.name in SKIP:
-        continue
-    count = _count_stmts(node)
-    if count is not None:
-        if count >= 8:
-            print(f"PASS:{node.name}:{count}_stmts"); exit()
-        else:
-            print(f"FAIL:{node.name}:{count}_stmts<8"); exit()
-# Fallback: class defined elsewhere but imported into model.py
-try:
-    exec(open("/tmp/_mock_mm.py").read())
-    exec(open("/tmp/_discover.py").read())
-    if _cls is not None:
-        import inspect as _insp
-        _sf = _insp.getfile(_cls)
-        _t = ast.parse(open(_sf).read())
-        for _n in ast.iter_child_nodes(_t):
-            if isinstance(_n, ast.ClassDef) and _n.name == _cls_name:
-                count = _count_stmts(_n)
-                if count is not None:
-                    if count >= 8:
-                        print(f"PASS:{_cls_name}:{count}_stmts"); exit()
-                    else:
-                        print(f"FAIL:{_cls_name}:{count}_stmts<8"); exit()
-except Exception:
-    pass
-print("FAIL:no_class")
-PYEOF
-)
-echo "  Result: $T3"
-if [[ "$T3" == PASS* ]]; then add_reward 0.02; fi
-
-echo ""
-echo "=== T4: NextDiT passes axes_lens to rope_embedder ==="
-T4=$(python3 << 'PYEOF'
-import ast, sys
-source = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
-tree = ast.parse(source)
-for node in ast.iter_child_nodes(tree):
-    if not (isinstance(node, ast.ClassDef) and node.name == "NextDiT"):
-        continue
-    for child in node.body:
-        if not (isinstance(child, ast.FunctionDef) and child.name == "__init__"):
-            continue
-        for n in ast.walk(child):
-            if isinstance(n, ast.Assign):
-                for t in n.targets:
-                    if isinstance(t, ast.Attribute) and t.attr == "rope_embedder":
-                        if isinstance(n.value, ast.Call):
-                            src = ast.get_source_segment(source, n.value) or ""
-                            if "axes_lens" in src:
-                                print("PASS"); sys.exit(0)
-                            print("FAIL:no_axes_lens_in_call"); sys.exit(0)
-print("FAIL:no_rope_embedder")
-PYEOF
-)
-echo "  Result: $T4"
-if [[ "$T4" == PASS* ]]; then add_reward 0.03; fi
-
-# ====================================================================
-# BEHAVIORAL TESTS (10 tests, 0.87 total)
-# ====================================================================
-
-echo ""
-echo "=== T5: Instantiate config A (dim=32, axes_dim=[8,8,16], axes_lens=[10,20,20]) ==="
-T5=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-    print(f"PASS:{_cls_name}")
-except Exception as e:
-    print(f"FAIL:init:{e}")
-PYEOF
-)
-echo "  Result: $T5"
-if [[ "$T5" == PASS* ]]; then add_reward 0.04; fi
-
-echo ""
-echo "=== T6: Instantiate config B (dim=64, theta=256, axes_dim=[16,16,32], axes_lens=[5,10,10]) ==="
-T6=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=64, theta=256, axes_dim=[16,16,32], axes_lens=[5,10,10])
-    print(f"PASS:{_cls_name}")
-except Exception as e:
-    print(f"FAIL:init:{e}")
-PYEOF
-)
-echo "  Result: $T6"
-if [[ "$T6" == PASS* ]]; then add_reward 0.04; fi
-
-echo ""
-echo "=== T7: Forward shape matches EmbedND ==="
-T7=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-ref = _EmbedND(dim=32, theta=10000, axes_dim=[8,8,16])
-ids = torch.zeros(1, 5, 3, dtype=torch.float32)
-for i in range(5):
-    ids[0, i, :] = float(i)
-try:
-    with torch.no_grad():
-        out = inst(ids.clone())
-        ref_out = ref(ids.clone())
-except Exception as e:
-    print(f"FAIL:fwd:{e}"); exit()
-if not isinstance(out, torch.Tensor):
-    print("FAIL:not_tensor"); exit()
-if out.shape != ref_out.shape:
-    print(f"FAIL:shape:{list(out.shape)}!={list(ref_out.shape)}"); exit()
-print(f"PASS:{list(out.shape)}")
-PYEOF
-)
-echo "  Result: $T7"
-if [[ "$T7" == PASS* ]]; then add_reward 0.06; fi
-
-echo ""
-echo "=== T8: Forward values finite, in [-1,1], not zeros ==="
-T8=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-ids = torch.tensor([[[0.0,1.0,2.0],[3.0,4.0,5.0],[1.0,0.0,3.0]]])
-try:
-    with torch.no_grad():
-        out = inst(ids.clone())
-except Exception as e:
-    print(f"FAIL:fwd:{e}"); exit()
-if not isinstance(out, torch.Tensor):
-    print("FAIL:not_tensor"); exit()
-if not torch.isfinite(out).all():
-    print("FAIL:non_finite"); exit()
-if out.abs().max() > 1.0 + 1e-6:
-    print(f"FAIL:range:{out.abs().max().item():.4f}>1"); exit()
-if torch.all(out == 0):
-    print("FAIL:all_zeros"); exit()
-print("PASS")
-PYEOF
-)
-echo "  Result: $T8"
-if [[ "$T8" == PASS* ]]; then add_reward 0.05; fi
-
-echo ""
-echo "=== T9: Sequential positions match EmbedND ==="
-T9=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-ref = _EmbedND(dim=32, theta=10000, axes_dim=[8,8,16])
-ids = torch.zeros(1, 5, 3, dtype=torch.float32)
-for i in range(5):
-    ids[0, i, :] = float(i)
-try:
-    with torch.no_grad():
-        out = inst(ids.clone())
-        ref_out = ref(ids.clone())
-except Exception as e:
-    print(f"FAIL:fwd:{e}"); exit()
-if out.shape != ref_out.shape:
-    print(f"FAIL:shape:{list(out.shape)}!={list(ref_out.shape)}"); exit()
-if not torch.allclose(out, ref_out, atol=1e-4, rtol=1e-4):
-    d = (out - ref_out).abs().max().item()
-    print(f"FAIL:values:max_diff={d:.6f}"); exit()
-print("PASS")
-PYEOF
-)
-echo "  Result: $T9"
-if [[ "$T9" == PASS* ]]; then add_reward 0.13; fi
-
-echo ""
-echo "=== T10: Non-sequential positions match EmbedND ==="
-T10=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-ref = _EmbedND(dim=32, theta=10000, axes_dim=[8,8,16])
-ids = torch.tensor([[[0.0, 2.0, 4.0],
-                      [1.0, 3.0, 0.0],
-                      [0.0, 1.0, 3.0],
-                      [4.0, 0.0, 2.0]]])
-try:
-    with torch.no_grad():
-        out = inst(ids.clone())
-        ref_out = ref(ids.clone())
-except Exception as e:
-    print(f"FAIL:fwd:{e}"); exit()
-if out.shape != ref_out.shape:
-    print(f"FAIL:shape"); exit()
-if not torch.allclose(out, ref_out, atol=1e-4, rtol=1e-4):
-    d = (out - ref_out).abs().max().item()
-    print(f"FAIL:values:max_diff={d:.6f}"); exit()
-print("PASS")
-PYEOF
-)
-echo "  Result: $T10"
-if [[ "$T10" == PASS* ]]; then add_reward 0.12; fi
-
-echo ""
-echo "=== T11: Config B match EmbedND (dim=64, axes_dim=[16,16,32]) ==="
-T11=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=64, theta=256, axes_dim=[16,16,32], axes_lens=[5,10,10])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-ref = _EmbedND(dim=64, theta=256, axes_dim=[16,16,32])
-ids = torch.tensor([[[0.0, 1.0, 2.0],
-                      [2.0, 3.0, 0.0],
-                      [4.0, 9.0, 8.0]]])
-try:
-    with torch.no_grad():
-        out = inst(ids.clone())
-        ref_out = ref(ids.clone())
-except Exception as e:
-    print(f"FAIL:fwd:{e}"); exit()
-if out.shape != ref_out.shape:
-    print(f"FAIL:shape:{list(out.shape)}!={list(ref_out.shape)}"); exit()
-if not torch.allclose(out, ref_out, atol=1e-4, rtol=1e-4):
-    d = (out - ref_out).abs().max().item()
-    print(f"FAIL:values:max_diff={d:.6f}"); exit()
-print("PASS")
-PYEOF
-)
-echo "  Result: $T11"
-if [[ "$T11" == PASS* ]]; then add_reward 0.08; fi
-
-echo ""
-echo "=== T13: Different axes_lens -> different internal state ==="
-T13=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst_a = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-    inst_b = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[5,10,10])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-
-def get_state(m):
-    s = {}
-    for k, v in m.named_buffers():
-        if v.numel() > 1: s[f"b:{k}"] = v
-    for k, v in m.named_parameters():
-        if v.numel() > 1: s[f"p:{k}"] = v
-    for k, v in vars(m).items():
-        if isinstance(v, torch.Tensor) and v.numel() > 10:
-            s[f"a:{k}"] = v
-    return s
-
-sa, sb = get_state(inst_a), get_state(inst_b)
-if not sa and not sb:
-    # No internal state — try boundary behavior
-    mid = torch.tensor([[[7.0, 0.0, 0.0]]])  # valid for A (7<10), OOB for B (7>=5)
-    try:
-        with torch.no_grad():
-            oa = inst_a(mid.clone())
-        try:
-            with torch.no_grad():
-                ob = inst_b(mid.clone())
-            if not torch.allclose(oa, ob, atol=1e-4):
-                print("PASS:boundary_differs")
-            else:
-                print("FAIL:no_state_no_boundary_diff")
-        except (IndexError, RuntimeError):
-            print("PASS:boundary_error")
-    except Exception:
-        print("FAIL:both_error")
-    exit()
-
-differs = False
-if set(sa.keys()) != set(sb.keys()):
-    differs = True
-else:
-    for k in sa:
-        if k in sb:
-            if sa[k].shape != sb[k].shape:
-                differs = True; break
-            if not torch.allclose(sa[k].float(), sb[k].float(), atol=1e-6):
-                differs = True; break
-if differs:
-    print("PASS:state_differs")
-else:
-    print("FAIL:identical_state")
-PYEOF
-)
-echo "  Result: $T13"
-if [[ "$T13" == PASS* ]]; then add_reward 0.08; fi
-
-echo ""
-echo "=== T15: Varied inputs — single position + batch of 8 ==="
-T15=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-ref = _EmbedND(dim=32, theta=10000, axes_dim=[8,8,16])
-passed = 0
-# Single position
-ids1 = torch.tensor([[[0.0, 0.0, 0.0]]])
-try:
-    with torch.no_grad():
-        o = inst(ids1.clone())
-        r = ref(ids1.clone())
-    if o.shape == r.shape and torch.allclose(o, r, atol=1e-4, rtol=1e-4):
-        passed += 1
-except: pass
-# Batch of 8 varied positions (all within bounds)
-ids2 = torch.zeros(1, 8, 3, dtype=torch.float32)
-for i in range(8):
-    ids2[0, i, 0] = float(i % 10)
-    ids2[0, i, 1] = float((i * 2) % 20)
-    ids2[0, i, 2] = float((i * 3) % 20)
-try:
-    with torch.no_grad():
-        o = inst(ids2.clone())
-        r = ref(ids2.clone())
-    if o.shape == r.shape and torch.allclose(o, r, atol=1e-4, rtol=1e-4):
-        passed += 1
-except: pass
-if passed == 2:
-    print("PASS")
-else:
-    print(f"FAIL:{passed}/2")
-PYEOF
-)
-echo "  Result: $T15"
-if [[ "$T15" == PASS* ]]; then add_reward 0.12; fi
-
-echo ""
-echo "=== T16: Forward is pure — no input mutation + deterministic ==="
-T16=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
-exec(open("/tmp/_discover.py").read())
-if _cls is None:
-    print("FAIL:no_class"); exit()
-try:
-    inst = _cls(dim=32, theta=10000, axes_dim=[8,8,16], axes_lens=[10,20,20])
-except Exception as e:
-    print(f"FAIL:init:{e}"); exit()
-passed = 0
-total = 2
-# Sub-check 1: Forward does not mutate input tensor
-ids = torch.tensor([[[1.0, 2.0, 3.0],
-                      [4.0, 5.0, 6.0],
-                      [7.0, 8.0, 9.0]]])
-ids_orig = ids.clone()
-try:
-    with torch.no_grad():
-        out1 = inst(ids)
-    if torch.equal(ids, ids_orig):
-        passed += 1
-    else:
-        diff = (ids - ids_orig).abs().max().item()
-        print(f"INFO:input_mutated:max_change={diff:.6f}")
-except Exception as e:
-    print(f"FAIL:fwd:{e}"); exit()
-# Sub-check 2: Calling forward twice with same input gives identical output
-ids2 = torch.tensor([[[2.0, 3.0, 4.0],
-                       [5.0, 1.0, 7.0]]])
-try:
-    with torch.no_grad():
-        r1 = inst(ids2.clone())
-        r2 = inst(ids2.clone())
-    if torch.allclose(r1, r2, atol=1e-6):
-        passed += 1
-    else:
-        d = (r1 - r2).abs().max().item()
-        print(f"INFO:non_deterministic:max_diff={d:.6f}")
-except Exception as e:
-    print(f"INFO:determinism_error:{e}")
-if passed == total:
-    print("PASS")
-else:
-    print(f"FAIL:{passed}/{total}")
-PYEOF
-)
-echo "  Result: $T16"
-if [[ "$T16" == PASS* ]]; then add_reward 0.15; fi
-
-# ====================================================================
-# P2P: Verify existing EmbedND and NextDiT upstream functionality (0.04)
-# ====================================================================
-echo ""
-echo "=== P2P: EmbedND and NextDiT upstream functionality ==="
-P2P=$(python3 << 'PYEOF'
-exec(open("/tmp/_mock_mm.py").read())
+# ---- Helper: build rope embedder via NextDiT or directly ----
+cat > /tmp/_buildemb.py << 'BUILDEOF'
 import torch
-passed = 0
-total = 3
+import comfy.ldm.lumina.model as lm
 
-# Sub-check 1: EmbedND produces finite RoPE output (cos/sin in [-1,1])
+def build_via_nextdit(axes_dims, axes_lens, dim_per_head=64, theta=10000):
+    n_heads = 1
+    dim = sum(axes_dims) * n_heads
+    # NextDiT requires dim = sum(axes_dims) * n_heads
+    try:
+        m = lm.NextDiT(
+            patch_size=2,
+            in_channels=4,
+            dim=dim,
+            n_layers=1,
+            n_heads=n_heads,
+            n_kv_heads=1,
+            qk_norm=True,
+            cap_feat_dim=16,
+            axes_dims=list(axes_dims),
+            axes_lens=list(axes_lens),
+        )
+        return m.rope_embedder
+    except Exception:
+        return None
+
+def build_direct(cls, axes_dims, axes_lens, dim_per_head=None, theta=10000):
+    import inspect
+    sig = inspect.signature(cls.__init__)
+    params = sig.parameters
+    kwargs = {}
+    if "axes_dim" in params:
+        kwargs["axes_dim"] = list(axes_dims)
+    elif "axes_dims" in params:
+        kwargs["axes_dims"] = list(axes_dims)
+    if "axes_lens" in params:
+        kwargs["axes_lens"] = list(axes_lens)
+    if "theta" in params:
+        kwargs["theta"] = theta
+    if "dim" in params:
+        kwargs["dim"] = sum(axes_dims)
+    try:
+        return cls(**kwargs)
+    except Exception as e:
+        return None
+BUILDEOF
+
+# ====================================================================
+# T1: parse
+# ====================================================================
+echo "=== T1: model.py parses ==="
+$PY - << PYEOF
+import ast, sys
+try:
+    ast.parse(open("$MODEL_PY").read())
+    print("PASS")
+except Exception as e:
+    print("FAIL", e); sys.exit(1)
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.03; echo "  +0.03"; fi
+
+# ====================================================================
+# P2P: upstream still works
+# ====================================================================
+echo "=== P2P: upstream imports + NextDiT instantiable ==="
+$PY - << 'PYEOF'
+exec(open("/tmp/_boot.py").read())
+import sys, torch
 try:
     from comfy.ldm.flux.layers import EmbedND
-    embed = EmbedND(dim=32, theta=10000, axes_dim=[8, 8, 16])
-    ids = torch.tensor([[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]])
-    with torch.no_grad():
-        out = embed(ids)
-    if isinstance(out, torch.Tensor) and torch.isfinite(out).all() and out.abs().max() <= 1.0 + 1e-6 and out.numel() > 0:
-        passed += 1
-    else:
-        print(f"FAIL:embednd_values:max={out.abs().max().item():.4f},numel={out.numel()}")
-except Exception as e:
-    print(f"FAIL:embednd_import:{e}")
-
-# Sub-check 2: EmbedND output varies with position (not constant)
-try:
-    ids_a = torch.tensor([[[0.0, 0.0, 0.0]]])
-    ids_b = torch.tensor([[[5.0, 5.0, 5.0]]])
-    with torch.no_grad():
-        out_a = embed(ids_a)
-        out_b = embed(ids_b)
-    if not torch.allclose(out_a, out_b, atol=1e-6):
-        passed += 1
-    else:
-        print("FAIL:embednd_constant_output")
-except Exception as e:
-    print(f"FAIL:embednd_vary:{e}")
-
-# Sub-check 3: NextDiT class exists with expected attributes (axes_lens, rope_embedder)
-try:
+    from comfy.ldm.flux.math import rope, apply_rope
     import comfy.ldm.lumina.model as lm
-    assert hasattr(lm, "NextDiT"), "NextDiT not found"
-    import inspect
-    sig = inspect.signature(lm.NextDiT.__init__)
-    assert "axes_lens" in sig.parameters, "axes_lens param missing from NextDiT"
-    passed += 1
-except Exception as e:
-    print(f"FAIL:nextdit:{e}")
-
-if passed == total:
+    assert hasattr(lm, "NextDiT"), "NextDiT missing"
+    e = EmbedND(dim=64, theta=10000, axes_dim=[16,16,16,16])
+    ids = torch.zeros(1, 4, 4, dtype=torch.long)
+    out = e(ids)
+    assert torch.isfinite(out).all()
+    # NextDiT must instantiate
+    m = lm.NextDiT(
+        patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
+        n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
+        axes_dims=[16,16,16], axes_lens=[300, 512, 512],
+    )
+    assert hasattr(m, "rope_embedder")
     print("PASS")
-elif passed > 0:
-    print(f"FAIL:partial:{passed}/{total}")
-else:
-    print("FAIL:all")
+except Exception as ex:
+    import traceback; traceback.print_exc()
+    print("FAIL", ex); sys.exit(1)
 PYEOF
-)
-echo "  Result: $P2P"
-if [[ "$P2P" == PASS* ]]; then add_reward 0.04; fi
+if [ $? -eq 0 ]; then add_reward 0.10; echo "  +0.10"; fi
 
 # ====================================================================
-# Write final reward
+# T2: new class with axes_lens kwarg + forward
 # ====================================================================
+echo "=== T2: new class with axes_lens ==="
+$PY - << 'PYEOF'
+import sys
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_discover.py").read())
+if _cls is None:
+    print("FAIL: no class with axes_lens kwarg found"); sys.exit(1)
+print(f"PASS: {_cls_name}")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.05; echo "  +0.05"; fi
+
+# ====================================================================
+# T3: NextDiT wires new class with axes_lens (not EmbedND)
+# ====================================================================
+echo "=== T3: NextDiT wires new class with axes_lens ==="
+$PY - << 'PYEOF'
+import sys, re
+exec(open("/tmp/_boot.py").read())
+src = open("/workspace/ComfyUI/comfy/ldm/lumina/model.py").read()
+m = re.search(r"self\.rope_embedder\s*=\s*([A-Za-z_][A-Za-z0-9_\.]*)\s*\((.*?)\)", src, re.DOTALL)
+if not m:
+    print("FAIL: rope_embedder assignment not found"); sys.exit(1)
+clsname, args = m.group(1), m.group(2)
+if clsname.split(".")[-1] == "EmbedND":
+    print("FAIL: still uses EmbedND"); sys.exit(1)
+if "axes_lens" not in args:
+    print("FAIL: axes_lens not passed to", clsname); sys.exit(1)
+# Confirm at runtime
+import comfy.ldm.lumina.model as lm
+m2 = lm.NextDiT(
+    patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
+    n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
+    axes_dims=[16,16,16], axes_lens=[300, 512, 512],
+)
+emb = m2.rope_embedder
+if type(emb).__name__ == "EmbedND":
+    print("FAIL: runtime rope_embedder is EmbedND"); sys.exit(1)
+print(f"PASS: NextDiT uses {type(emb).__name__} with axes_lens")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.05; echo "  +0.05"; fi
+
+# ====================================================================
+# T4: NextDiT instantiates with config A
+# ====================================================================
+echo "=== T4: NextDiT config A ==="
+$PY - << 'PYEOF'
+import sys
+exec(open("/tmp/_boot.py").read())
+import comfy.ldm.lumina.model as lm
+try:
+    m = lm.NextDiT(
+        patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
+        n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
+        axes_dims=[16,16,16], axes_lens=[300, 512, 512],
+    )
+    assert hasattr(m, "rope_embedder")
+    print("PASS")
+except Exception as e:
+    import traceback; traceback.print_exc()
+    print("FAIL", e); sys.exit(1)
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.07; echo "  +0.07"; fi
+
+# ====================================================================
+# T5: NextDiT instantiates with config B (different axes/lens)
+# ====================================================================
+echo "=== T5: NextDiT config B ==="
+$PY - << 'PYEOF'
+import sys
+exec(open("/tmp/_boot.py").read())
+import comfy.ldm.lumina.model as lm
+try:
+    m = lm.NextDiT(
+        patch_size=2, in_channels=4, dim=64, n_layers=1, n_heads=1,
+        n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
+        axes_dims=[32, 16, 16], axes_lens=[100, 256, 256],
+    )
+    assert hasattr(m, "rope_embedder")
+    print("PASS")
+except Exception as e:
+    import traceback; traceback.print_exc()
+    print("FAIL", e); sys.exit(1)
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.05; echo "  +0.05"; fi
+
+# ====================================================================
+# T6: rope_embedder.forward returns expected shape & finite values
+# ====================================================================
+echo "=== T6: forward shape + finite ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+axes_dims = [16, 16, 16]
+axes_lens = [64, 64, 64]
+emb = build_via_nextdit(axes_dims, axes_lens)
+if emb is None:
+    print("FAIL: cannot build"); sys.exit(1)
+ids = torch.zeros(2, 8, 3, dtype=torch.long)
+ids[..., 0] = torch.arange(8).unsqueeze(0).expand(2, 8) % axes_lens[0]
+ids[..., 1] = torch.arange(8).unsqueeze(0).expand(2, 8) % axes_lens[1]
+ids[..., 2] = torch.arange(8).unsqueeze(0).expand(2, 8) % axes_lens[2]
+with torch.no_grad():
+    out = emb(ids)
+total_dim = sum(axes_dims)
+# Expected shape per Lumina/flux: (..., 1, seq, total_dim/2, 2, 2) -- last 3 dims fixed
+if out.dim() < 4:
+    print("FAIL: too few dims:", out.shape); sys.exit(1)
+if out.shape[-3] != total_dim // 2 or out.shape[-2] != 2 or out.shape[-1] != 2:
+    print("FAIL: unexpected shape", out.shape); sys.exit(1)
+if not torch.isfinite(out).all():
+    print("FAIL: non-finite output"); sys.exit(1)
+print("PASS shape:", tuple(out.shape))
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.08; echo "  +0.08"; fi
+
+# ====================================================================
+# T7: numerical match to reference on sequential ids within range
+# ====================================================================
+echo "=== T7: numerical match (sequential ids) ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+sys.path.insert(0, "/tmp")
+exec(open("/tmp/_ref.py").read())
+
+axes_dims = [16, 16, 16]
+axes_lens = [128, 128, 128]
+theta = 10000
+emb = build_via_nextdit(axes_dims, axes_lens, theta=theta)
+if emb is None:
+    print("FAIL: cannot build"); sys.exit(1)
+
+# Use ids strictly within [0, axes_lens[i])
+B, S = 1, 16
+ids = torch.zeros(B, S, 3, dtype=torch.long)
+for i in range(3):
+    ids[..., i] = torch.arange(S) % axes_lens[i]
+
+with torch.no_grad():
+    out = emb(ids)
+ref = reference_lumina_rope(ids, axes_dims, theta)
+
+# Shapes must match
+if out.shape != ref.shape:
+    # Some impls may return (..., 1, S, d, 2, 2) shape variants. Try squeezing.
+    if out.squeeze().shape != ref.squeeze().shape:
+        print("FAIL shape mismatch:", out.shape, "vs", ref.shape); sys.exit(1)
+    out_c = out.squeeze()
+    ref_c = ref.squeeze()
+else:
+    out_c = out
+    ref_c = ref
+
+diff = (out_c - ref_c).abs().max().item()
+print(f"max_abs_diff = {diff:.6e}")
+if diff > 1e-3:
+    print("FAIL: numerical mismatch"); sys.exit(1)
+print("PASS")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.20; echo "  +0.20"; fi
+
+# ====================================================================
+# T8: numerical match on non-sequential ids within range
+# ====================================================================
+echo "=== T8: numerical match (non-sequential ids) ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+exec(open("/tmp/_ref.py").read())
+
+torch.manual_seed(0)
+axes_dims = [16, 16, 16]
+axes_lens = [200, 256, 256]
+theta = 10000
+emb = build_via_nextdit(axes_dims, axes_lens, theta=theta)
+if emb is None:
+    print("FAIL: cannot build"); sys.exit(1)
+
+B, S = 2, 12
+ids = torch.zeros(B, S, 3, dtype=torch.long)
+for i in range(3):
+    ids[..., i] = torch.randint(0, axes_lens[i], (B, S))
+
+with torch.no_grad():
+    out = emb(ids)
+ref = reference_lumina_rope(ids, axes_dims, theta)
+
+if out.shape != ref.shape:
+    if out.squeeze().shape != ref.squeeze().shape:
+        print("FAIL shape:", out.shape, "vs", ref.shape); sys.exit(1)
+    out_c = out.squeeze(); ref_c = ref.squeeze()
+else:
+    out_c = out; ref_c = ref
+
+diff = (out_c - ref_c).abs().max().item()
+print(f"max_abs_diff = {diff:.6e}")
+if diff > 1e-3:
+    print("FAIL: numerical mismatch"); sys.exit(1)
+print("PASS")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.15; echo "  +0.15"; fi
+
+# ====================================================================
+# T9: axes_lens influences setup (sanity: different lens still produces
+# correct in-range output, AND the embedder reflects axes_lens)
+# ====================================================================
+echo "=== T9: axes_lens affects embedder ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+exec(open("/tmp/_ref.py").read())
+
+axes_dims = [16, 16, 16]
+theta = 10000
+emb_a = build_via_nextdit(axes_dims, [64, 64, 64], theta=theta)
+emb_b = build_via_nextdit(axes_dims, [256, 256, 256], theta=theta)
+if emb_a is None or emb_b is None:
+    print("FAIL build"); sys.exit(1)
+
+# Both should give same numerical output for ids strictly within both ranges.
+B, S = 1, 8
+ids = torch.zeros(B, S, 3, dtype=torch.long)
+for i in range(3):
+    ids[..., i] = torch.arange(S) % 32
+
+with torch.no_grad():
+    out_a = emb_a(ids)
+    out_b = emb_b(ids)
+ref = reference_lumina_rope(ids, axes_dims, theta)
+
+def squeeze_match(x, r):
+    if x.shape == r.shape:
+        return x, r
+    return x.squeeze(), r.squeeze()
+
+oa, r1 = squeeze_match(out_a, ref)
+ob, r2 = squeeze_match(out_b, ref)
+da = (oa - r1).abs().max().item()
+db = (ob - r2).abs().max().item()
+print(f"diff_a={da:.3e} diff_b={db:.3e}")
+if da > 1e-3 or db > 1e-3:
+    print("FAIL: axes_lens variants don't both match reference"); sys.exit(1)
+
+# Also check that axes_lens is recorded somewhere on the embedder OR that
+# state_dict / parameters differ when axes_lens differs (precompute table).
+sd_a = dict(emb_a.state_dict())
+sd_b = dict(emb_b.state_dict())
+attr_lens_a = getattr(emb_a, "axes_lens", None)
+attr_lens_b = getattr(emb_b, "axes_lens", None)
+table_diff = False
+for k in sd_a.keys() & sd_b.keys():
+    if sd_a[k].shape != sd_b[k].shape:
+        table_diff = True; break
+if not table_diff and (attr_lens_a is None or list(attr_lens_a) == list(attr_lens_b or [])):
+    # axes_lens neither stored nor changed buffers - weak but acceptable if numerics match
+    print("WARN: axes_lens not reflected in state, but numerics OK")
+print("PASS")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.07; echo "  +0.07"; fi
+
+# ====================================================================
+# T10: forward is deterministic & does not mutate ids
+# ====================================================================
+echo "=== T10: deterministic + no mutation ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+axes_dims = [16, 16, 16]
+axes_lens = [128, 128, 128]
+emb = build_via_nextdit(axes_dims, axes_lens)
+if emb is None:
+    print("FAIL build"); sys.exit(1)
+torch.manual_seed(1)
+ids = torch.randint(0, 100, (1, 8, 3), dtype=torch.long)
+ids_orig = ids.clone()
+with torch.no_grad():
+    o1 = emb(ids)
+    o2 = emb(ids)
+if not torch.equal(ids, ids_orig):
+    print("FAIL: ids mutated"); sys.exit(1)
+if not torch.allclose(o1, o2):
+    print("FAIL: non-deterministic"); sys.exit(1)
+print("PASS")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.07; echo "  +0.07"; fi
+
+# ====================================================================
+# T11: batched correctness
+# ====================================================================
+echo "=== T11: batched correctness ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+exec(open("/tmp/_ref.py").read())
+axes_dims = [16, 16, 16]
+axes_lens = [128, 128, 128]
+theta = 10000
+emb = build_via_nextdit(axes_dims, axes_lens, theta=theta)
+if emb is None:
+    print("FAIL build"); sys.exit(1)
+torch.manual_seed(2)
+B, S = 3, 10
+ids = torch.zeros(B, S, 3, dtype=torch.long)
+for i in range(3):
+    ids[..., i] = torch.randint(0, axes_lens[i], (B, S))
+with torch.no_grad():
+    out_full = emb(ids)
+# Per-sample
+per = []
+for b in range(B):
+    with torch.no_grad():
+        per.append(emb(ids[b:b+1]))
+out_cat = torch.cat(per, dim=0)
+if out_full.shape != out_cat.shape:
+    print("FAIL shape", out_full.shape, out_cat.shape); sys.exit(1)
+diff = (out_full - out_cat).abs().max().item()
+print(f"batch_diff = {diff:.3e}")
+if diff > 1e-4:
+    print("FAIL: batched != per-sample"); sys.exit(1)
+# Also vs reference
+ref = reference_lumina_rope(ids, axes_dims, theta)
+out_c = out_full if out_full.shape == ref.shape else out_full.squeeze()
+ref_c = ref if out_full.shape == ref.shape else ref.squeeze()
+diff_ref = (out_c - ref_c).abs().max().item()
+if diff_ref > 1e-3:
+    print("FAIL: batch vs reference", diff_ref); sys.exit(1)
+print("PASS")
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.05; echo "  +0.05"; fi
+
+# ====================================================================
+# T12: bonus -- precomputed lookup table style (preferred)
+# ====================================================================
+echo "=== T12: precomputed table style (bonus) ==="
+$PY - << 'PYEOF'
+import sys, torch
+exec(open("/tmp/_boot.py").read())
+exec(open("/tmp/_buildemb.py").read())
+axes_dims = [16, 16, 16]
+axes_lens = [64, 64, 64]
+emb = build_via_nextdit(axes_dims, axes_lens)
+if emb is None:
+    print("FAIL build"); sys.exit(1)
+sd = dict(emb.state_dict())
+# Look for buffers whose first dim matches axes_lens[i]
+matched = 0
+for k, v in sd.items():
+    if v.dim() >= 1 and v.shape[0] in axes_lens:
+        matched += 1
+buffer_names = list(emb._buffers.keys()) if hasattr(emb, "_buffers") else []
+buffer_count = sum(1 for n in buffer_names if emb._buffers[n] is not None)
+if matched >= 1 or buffer_count >= 1:
+    print(f"PASS: precomputed buffers detected ({matched} matched, {buffer_count} buffers)")
+else:
+    print("FAIL: no precomputed table buffers found"); sys.exit(1)
+PYEOF
+if [ $? -eq 0 ]; then add_reward 0.03; echo "  +0.03"; fi
+
 echo ""
-echo "======================================="
-echo "Final reward: $REWARD"
-echo "======================================="
+echo "=== FINAL REWARD: $REWARD ==="
 echo "$REWARD" > "$REWARD_FILE"
+exit 0

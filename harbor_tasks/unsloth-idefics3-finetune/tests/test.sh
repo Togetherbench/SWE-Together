@@ -1,22 +1,4 @@
 #!/bin/bash
-#
-# Verification for unsloth-idefics3-finetune
-# Tests: Idefics3 VLM support addition + hook compatibility fix
-# Writes reward (0.0-1.0) to /logs/verifier/reward.txt
-#
-# Tier split (F2P total 0.95 + P2P total 0.05 = 1.00):
-#   F2P behavioral:    Check 1 (0.20) — hook compatibility fix
-#   F2P behavioral:    Check 2 (0.10) — from_pretrained quality (AST+import)
-#   F2P behavioral:    Check 3 (0.10) — VLLM_SUPPORTED_VLM registration
-#   F2P behavioral:    Check 4 (0.05) — __init__.py export
-#   F2P structural:    Check 5 (0.20) — code substance (methods+LoRA+dispatch+depth)
-#   F2P structural:    Check 6 (0.25) — implementation completeness (VLM PEFT+utilities)
-#   F2P behavioral:    Check 7 (0.05) — T1 integration (class importable+registered)
-#   P2P behavioral:    P2P-1 (0.01) — source integrity (parse + key files)
-#   P2P behavioral:    P2P-2 (0.02) — peft_utils public API preserved
-#   P2P behavioral:    P2P-3 (0.01) — existing VLLM_SUPPORTED_VLM entries preserved
-#   P2P behavioral:    P2P-4 (0.01) — existing model exports preserved
-#
 set +e
 
 REWARD=0.0
@@ -25,19 +7,24 @@ LOG_DIR="/logs/verifier"
 mkdir -p "$LOG_DIR"
 
 add_reward() {
-    REWARD=$(python3 -c "print(round(min(1.0, $REWARD + $1), 4))")
+    REWARD=$(awk -v r="$REWARD" -v a="$1" 'BEGIN{s=r+a; if(s>1.0) s=1.0; printf "%.4f", s}')
 }
 
-# Write a reusable CPU compat preamble
+cd "$WORKSPACE" 2>/dev/null || { echo "0.0" > "$LOG_DIR/reward.txt"; exit 0; }
+
+# CPU compat preamble shared by all python invocations
 cat > /tmp/_cpu_compat.py << 'CPUEOF'
 import sys, types, os, site
 
 os.environ["UNSLOTH_IS_PRESENT"] = "1"
 
-_sp = site.getsitepackages()[0]
+try:
+    _sp = site.getsitepackages()[0]
+except Exception:
+    _sp = "/usr/local/lib/python3.12/site-packages"
 _uz_path = os.path.join(_sp, 'unsloth_zoo')
 
-if 'unsloth_zoo' not in sys.modules:
+if 'unsloth_zoo' not in sys.modules and os.path.isdir(_uz_path):
     _uz = types.ModuleType('unsloth_zoo')
     _uz.__path__ = [_uz_path]
     _uz.__package__ = 'unsloth_zoo'
@@ -54,1216 +41,514 @@ if 'unsloth_zoo.device_type' not in sys.modules:
     _dt.ALLOW_PREQUANTIZED_MODELS = True
     _dt.ALLOW_BITSANDBYTES = False
     sys.modules['unsloth_zoo.device_type'] = _dt
-    sys.modules['unsloth_zoo'].device_type = _dt
-
-if 'unsloth_zoo.utils' not in sys.modules:
-    _utils_path = os.path.join(_uz_path, 'utils.py')
-    if os.path.exists(_utils_path):
-        import importlib.util
-        _spec = importlib.util.spec_from_file_location('unsloth_zoo.utils', _utils_path)
-        _umod = importlib.util.module_from_spec(_spec)
-        sys.modules['unsloth_zoo.utils'] = _umod
-        try:
-            _spec.loader.exec_module(_umod)
-        except Exception:
-            pass
+    if 'unsloth_zoo' in sys.modules:
+        sys.modules['unsloth_zoo'].device_type = _dt
 CPUEOF
 
-cd "$WORKSPACE"
-
-# ── Locate the agent's idefics module ──
+# Find the agent's idefics module
 IDEFICS_PY=$(python3 << 'PYEOF'
 import glob, ast, os
-
 candidates = sorted(glob.glob('unsloth/models/*idefics*.py'))
-
 if not candidates:
-    original_files = {
-        'granite.py', 'llama.py', 'qwen2.py', 'mistral.py', 'gemma.py',
-        'gemma3.py', 'vision.py', '__init__.py', 'mapper.py', 'loader.py',
-        'cohere.py', 'dbrx.py', 'phi3.py', 'phi4.py', '_utils.py',
-    }
+    original = {'granite.py','llama.py','qwen2.py','mistral.py','gemma.py','gemma3.py',
+                'vision.py','__init__.py','mapper.py','loader.py','cohere.py','dbrx.py',
+                'phi3.py','phi4.py','_utils.py','dpo.py','rl.py','rl_replacements.py',
+                'sentence_transformer.py','falcon_h1.py'}
     for f in sorted(glob.glob('unsloth/models/*.py')):
-        basename = os.path.basename(f)
-        if basename in original_files:
-            continue
+        if os.path.basename(f) in original: continue
         try:
             tree = ast.parse(open(f).read())
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef) and 'Idefics' in node.name:
-                    candidates.append(f)
-                    break
-        except Exception:
-            pass
-
-if not candidates:
-    for f in sorted(glob.glob('unsloth/models/*.py')):
-        try:
-            tree = ast.parse(open(f).read())
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef) and 'Idefics' in node.name:
-                    candidates.append(f)
-                    break
-        except Exception:
-            pass
-
+                    candidates.append(f); break
+        except: pass
 print(candidates[0] if candidates else '')
 PYEOF
 )
-
 export IDEFICS_PY
-echo "Idefics module: ${IDEFICS_PY:-not found}"
+echo "Idefics module: ${IDEFICS_PY:-NOT FOUND}"
 
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 1 (0.20) — F2P BEHAVIORAL: Hook compatibility fix
-#
-# Path A (0.20): Monkey-patch/modify the hook or enclosing function
-# Path B (0.15): Override get_input_embeddings to return Embedding
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 1 [0.20] F2P: Hook compatibility fix ---"
-
-CHECK1=$(python3 << 'PYEOF'
-import sys, os, importlib, importlib.util, inspect, ast
-exec(open('/tmp/_cpu_compat.py').read())
-
-idefics_path = os.environ.get('IDEFICS_PY', '')
-
-hook_safe = False
-returns_correct = False
-embed_override = False
-
-# ═══ PATH A: Was the hook/function itself fixed? ═══
-try:
-    import unsloth_zoo.peft_utils as pu
-    src = inspect.getsource(pu.requires_grad_for_gradient_checkpointing)
-
-    if 'len(input) == 0' in src:
-        lines = src.split('\n')
-        for i, line in enumerate(lines):
-            if 'len(input) == 0' in line.strip():
-                for j in range(i+1, min(i+5, len(lines))):
-                    nxt = lines[j].strip()
-                    if not nxt or nxt.startswith('#'):
-                        continue
-                    if 'raise' not in nxt:
-                        hook_safe = True
-                        returns_correct = True
-                    break
-                break
-    elif 'requires_grad_pre_hook' not in src:
-        hook_safe = True
-        returns_correct = True
-except Exception:
-    pass
-
-# A2: Check agent's module for monkey-patch code
-if not hook_safe and os.path.exists(idefics_path):
+# ════════════════════════════════════════════════════════════════
+# CHECK 1 (0.08) — P2P: Source files parse cleanly
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 1 [0.08] P2P: Source integrity ---"
+PARSE_OK=$(python3 << 'PYEOF'
+import ast, os
+files = ['unsloth/models/vision.py', 'unsloth/models/__init__.py',
+         'unsloth/models/loader.py', 'unsloth/models/llama.py']
+ok = 0
+for f in files:
+    if not os.path.exists(f):
+        print(f"MISSING: {f}"); continue
     try:
-        with open(idefics_path) as f:
-            agent_src = f.read()
-
-        patches_hook = (
-            'requires_grad_for_gradient_checkpointing' in agent_src or
-            'requires_grad_pre_hook' in agent_src
-        )
-
-        if patches_hook:
-            tree = ast.parse(agent_src)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        attr_name = ''
-                        if isinstance(target, ast.Attribute):
-                            attr_name = target.attr
-                        if 'requires_grad' in attr_name:
-                            hook_safe = True
-                            returns_correct = True
-                            break
-                if isinstance(node, ast.FunctionDef):
-                    if 'requires_grad' in node.name and 'pre_hook' in node.name:
-                        hook_safe = True
-                        returns_correct = True
-                        break
-                    if node.name == 'requires_grad_for_gradient_checkpointing':
-                        hook_safe = True
-                        returns_correct = True
-                        break
-                if hook_safe:
-                    break
-    except Exception:
-        pass
-
-    if not hook_safe:
-        for patch_file in ['unsloth/patch.py', 'unsloth/models/patch.py',
-                           'unsloth/hooks.py', 'unsloth/models/hooks.py']:
-            if not os.path.exists(patch_file):
-                continue
-            try:
-                with open(patch_file) as f:
-                    psrc = f.read()
-                if 'requires_grad_pre_hook' in psrc or 'requires_grad_for_gradient_checkpointing' in psrc:
-                    hook_safe = True
-                    returns_correct = True
-                    break
-            except Exception:
-                pass
-
-# A3: Dynamic test
-if not hook_safe:
-    try:
-        import unsloth_zoo.peft_utils as pu
-        import torch
-
-        if os.path.exists(idefics_path):
-            try:
-                spec = importlib.util.spec_from_file_location(
-                    'unsloth.models.idefics_c1a', idefics_path)
-                mod = importlib.util.module_from_spec(spec)
-                sys.modules['unsloth.models.idefics_c1a'] = mod
-                spec.loader.exec_module(mod)
-            except Exception:
-                pass
-
-        patched_hook = getattr(pu, 'requires_grad_pre_hook', None)
-        if patched_hook is not None:
-            dummy = torch.nn.Linear(1, 1)
-            try:
-                result = patched_hook(dummy, ())
-                hook_safe = True
-                if result is None or (isinstance(result, tuple) and len(result) == 0):
-                    returns_correct = True
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-# ═══ PATH B: get_input_embeddings override ═══
-if not hook_safe:
-    if os.path.exists(idefics_path):
-        try:
-            with open(idefics_path) as f:
-                tree = ast.parse(f.read())
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef) and \
-                   ('Idefics' in node.name or 'Granite' in node.name):
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef) and \
-                           item.name == 'get_input_embeddings':
-                            for sub in ast.walk(item):
-                                if isinstance(sub, ast.Return) and sub.value is not None:
-                                    embed_override = True
-                                    break
-                            break
-                    break
-        except Exception:
-            pass
-
-    if not embed_override and os.path.exists(idefics_path):
-        try:
-            spec = importlib.util.spec_from_file_location(
-                'unsloth.models.idefics_c1b', idefics_path)
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules['unsloth.models.idefics_c1b'] = mod
-            spec.loader.exec_module(mod)
-
-            import torch
-            embed = torch.nn.Embedding(10, 4)
-            cls = None
-            for name in dir(mod):
-                obj = getattr(mod, name)
-                if isinstance(obj, type) and ('Idefics' in name or 'Granite' in name):
-                    cls = obj
-                    break
-
-            if cls and 'get_input_embeddings' in cls.__dict__:
-                instance = cls.__new__(cls)
-                mock_structures = [
-                    ('model', type('M', (), {
-                        'text_model': type('TM', (), {'embed_tokens': embed})()
-                    })()),
-                    ('model', type('M', (), {'embed_tokens': embed})()),
-                    ('language_model', type('LM', (), {
-                        'model': type('M', (), {'embed_tokens': embed})()
-                    })()),
-                ]
-                for attr_name, mock_obj in mock_structures:
-                    setattr(instance, attr_name, mock_obj)
-                    try:
-                        result = instance.get_input_embeddings()
-                        if isinstance(result, (torch.nn.Embedding, torch.nn.Module)):
-                            params = list(result.parameters())
-                            if len(params) > 0:
-                                embed_override = True
-                                break
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-if hook_safe and returns_correct:
-    print('PASS_A')
-elif hook_safe:
-    print('PASS_A_PARTIAL')
-elif embed_override:
-    print('PASS_B')
-else:
-    print('FAIL')
-PYEOF
-)
-
-echo "  Result: $CHECK1"
-case "$CHECK1" in
-    PASS_A) add_reward 0.20 ;;
-    PASS_A_PARTIAL) add_reward 0.12 ;;
-    PASS_B) add_reward 0.15 ;;
-esac
-
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 2 (0.10) — SILVER BEHAVIORAL: from_pretrained quality
-#
-# AST-based check:
-# (a) from_pretrained method exists with proper parameters (0.05)
-# (b) from_pretrained has delegation (calls another from_pretrained) (0.05)
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 2 [0.10] Silver: from_pretrained quality ---"
-
-CHECK2=$(python3 << 'PYEOF'
-import ast, os, sys
-
-idefics_path = os.environ.get('IDEFICS_PY', '')
-has_method = False
-has_delegation = False
-
-if not os.path.exists(idefics_path):
-    print('FAIL:no_file')
-    sys.exit(0)
-
-try:
-    with open(idefics_path) as f:
-        src = f.read()
-    tree = ast.parse(src)
-except Exception as e:
-    print(f'FAIL:parse:{e}')
-    sys.exit(0)
-
-target_class = None
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef) and ('Idefics' in node.name or 'Granite' in node.name):
-        target_class = node
-        break
-
-if target_class is None:
-    print('FAIL:no_class')
-    sys.exit(0)
-
-fp_method = None
-for item in target_class.body:
-    if isinstance(item, ast.FunctionDef) and item.name == 'from_pretrained':
-        fp_method = item
-        break
-
-if fp_method is None:
-    # ── Inheritance fallback: check if from_pretrained is inherited ──
-    # If class body is trivial (e.g. `pass`) but inherits from a parent
-    # that has from_pretrained, give credit.
-    base_names = [b.id if isinstance(b, ast.Name) else
-                  (b.attr if isinstance(b, ast.Attribute) else '')
-                  for b in target_class.bases]
-    inherits_model = any(
-        'Model' in bn or 'Vision' in bn or 'Base' in bn
-        for bn in base_names
-    )
-    if inherits_model:
-        # Try dynamic import to verify inherited from_pretrained
-        try:
-            exec(open('/tmp/_cpu_compat.py').read())
-            import importlib.util as _ilu
-            _spec = _ilu.spec_from_file_location('unsloth.models.idefics_c2inh', idefics_path)
-            _mod = _ilu.module_from_spec(_spec)
-            sys.modules['unsloth.models.idefics_c2inh'] = _mod
-            _spec.loader.exec_module(_mod)
-            _cls = None
-            for _name in dir(_mod):
-                _obj = getattr(_mod, _name)
-                if isinstance(_obj, type) and ('Idefics' in _name or 'Granite' in _name):
-                    _cls = _obj
-                    break
-            if _cls and hasattr(_cls, 'from_pretrained'):
-                has_method = True
-                has_delegation = True  # inherited implies delegation to parent
-        except Exception:
-            pass
-        if not has_method:
-            # Static fallback: parent class defined in same file has from_pretrained
-            for pnode in ast.walk(tree):
-                if isinstance(pnode, ast.ClassDef) and pnode.name in base_names:
-                    for pitem in pnode.body:
-                        if isinstance(pitem, ast.FunctionDef) and pitem.name == 'from_pretrained':
-                            has_method = True
-                            has_delegation = True
-                            break
-                    break
-    if not has_method:
-        print('FAIL:no_from_pretrained')
-        sys.exit(0)
-else:
-    # (a) Check proper parameters
-    param_names = set()
-    for arg in fp_method.args.args:
-        param_names.add(arg.arg)
-    for kwonly in fp_method.args.kwonlyargs:
-        param_names.add(kwonly.arg)
-
-    expected_params = {'model_name', 'load_in_4bit', 'dtype', 'max_seq_length'}
-    found_params = param_names & expected_params
-    if len(found_params) >= 2:
-        has_method = True
-
-    # (b) Check delegation (calls another .from_pretrained)
-    for node in ast.walk(fp_method):
-        if isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Attribute) and func.attr == 'from_pretrained':
-                has_delegation = True
-            elif isinstance(func, ast.Name) and 'from_pretrained' in func.id:
-                has_delegation = True
-
-results = []
-if has_method:
-    results.append('method')
-if has_delegation:
-    results.append('delegation')
-
-print('|'.join(results) if results else 'FAIL')
-PYEOF
-)
-
-echo "  Result: $CHECK2"
-if echo "$CHECK2" | grep -q "method"; then
-    add_reward 0.05
-fi
-if echo "$CHECK2" | grep -q "delegation"; then
-    add_reward 0.05
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 3 (0.10) — SILVER BEHAVIORAL: VLLM_SUPPORTED_VLM
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 3 [0.10] Silver: VLLM_SUPPORTED_VLM ---"
-
-CHECK3=$(python3 << 'PYEOF'
-import sys, importlib.util, ast
-exec(open('/tmp/_cpu_compat.py').read())
-
-found = False
-
-try:
-    spec = importlib.util.spec_from_file_location(
-        'unsloth.models.vision_c3', 'unsloth/models/vision.py')
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    vlm_list = getattr(mod, 'VLLM_SUPPORTED_VLM', None)
-    if vlm_list is not None and 'idefics3' in vlm_list:
-        found = True
-except Exception:
-    pass
-
-if not found:
-    try:
-        with open('unsloth/models/vision.py') as f:
-            tree = ast.parse(f.read())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id == 'VLLM_SUPPORTED_VLM':
-                        if isinstance(node.value, (ast.List, ast.Tuple, ast.Set)):
-                            for elt in node.value.elts:
-                                if isinstance(elt, ast.Constant) and elt.value == 'idefics3':
-                                    found = True
-    except Exception:
-        pass
-
-print('PASS' if found else 'FAIL')
-PYEOF
-)
-
-echo "  Result: $CHECK3"
-if [ "$CHECK3" = "PASS" ]; then
-    add_reward 0.10
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 4 (0.05) — SILVER BEHAVIORAL: __init__.py export
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 4 [0.05] Silver: __init__.py export ---"
-
-CHECK4=$(python3 << 'PYEOF'
-import sys, importlib.util, ast
-exec(open('/tmp/_cpu_compat.py').read())
-
-found = False
-
-try:
-    spec = importlib.util.spec_from_file_location(
-        'unsloth.models.init_c4', 'unsloth/models/__init__.py')
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    for name in dir(mod):
-        if 'Idefics' in name or 'Granite' in name:
-            obj = getattr(mod, name)
-            if isinstance(obj, type):
-                found = True
-                break
-except Exception:
-    pass
-
-if not found:
-    try:
-        with open('unsloth/models/__init__.py') as f:
-            tree = ast.parse(f.read())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    if alias.name and 'Idefics' in alias.name:
-                        found = True
-                    if alias.name == '*' and node.module and 'idefics' in node.module:
-                        found = True
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name and 'Idefics' in alias.name:
-                        found = True
-            if found:
-                break
-    except Exception:
-        pass
-
-print('PASS' if found else 'FAIL')
-PYEOF
-)
-
-echo "  Result: $CHECK4"
-if [ "$CHECK4" = "PASS" ]; then
-    add_reward 0.05
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 5 (0.20) — BRONZE STRUCTURAL: Code substance
-#
-# Proportional: 0.05 per subcheck (4 subchecks x 0.05 = 0.20):
-#   (a) Class has >=2 methods with >=2 non-trivial stmts each
-#   (b) >=3 distinct LoRA/PEFT indicators
-#   (c) "idefics3" or FastIdefics referenced in other files (dispatch)
-#   (d) from_pretrained has >=2 non-trivial stmts
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 5 [0.20] Bronze: Code substance (proportional) ---"
-
-CHECK5=$(python3 << 'PYEOF'
-import ast, sys, os, glob
-
-idefics_path = os.environ.get('IDEFICS_PY', '')
-results = {'methods': False, 'lora': False, 'dispatch': False, 'depth': False}
-
-try:
-    with open(idefics_path) as f:
-        src = f.read()
-    tree = ast.parse(src)
-except Exception:
-    print('FAIL:parse_error')
-    sys.exit(0)
-
-def meaningful_stmts(func_node):
-    """Count stmts that are NOT pass, docstrings, or bare constant exprs."""
-    count = 0
-    for child in ast.walk(func_node):
-        if isinstance(child, ast.stmt) and child is not func_node:
-            if isinstance(child, ast.Pass):
-                continue
-            if isinstance(child, ast.Expr) and isinstance(child.value, ast.Constant):
-                continue
-            count += 1
-    return count
-
-# ---- (a) Class >=2 methods with >=2 meaningful stmts ----
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef) and ('Idefics' in node.name or 'Granite' in node.name):
-        substantial = 0
-        for item in node.body:
-            if isinstance(item, ast.FunctionDef) and meaningful_stmts(item) >= 2:
-                substantial += 1
-        if substantial >= 2:
-            results['methods'] = True
-        else:
-            # Inheritance fallback: if class inherits from a model base,
-            # check if parent class (in same file or dynamically) has methods
-            base_names_5a = [b.id if isinstance(b, ast.Name) else
-                             (b.attr if isinstance(b, ast.Attribute) else '')
-                             for b in node.bases]
-            inherits_model_5a = any(
-                'Model' in bn or 'Vision' in bn or 'Base' in bn
-                for bn in base_names_5a
-            )
-            if inherits_model_5a:
-                # Check parent class in same file
-                for pnode in ast.walk(tree):
-                    if isinstance(pnode, ast.ClassDef) and pnode.name in base_names_5a:
-                        parent_substantial = 0
-                        for pitem in pnode.body:
-                            if isinstance(pitem, ast.FunctionDef) and meaningful_stmts(pitem) >= 2:
-                                parent_substantial += 1
-                        if parent_substantial >= 2:
-                            results['methods'] = True
-                        break
-                # Dynamic fallback
-                if not results['methods']:
-                    try:
-                        exec(open('/tmp/_cpu_compat.py').read())
-                        import importlib.util as _ilu5a
-                        _spec5a = _ilu5a.spec_from_file_location('unsloth.models.idefics_c5a', idefics_path)
-                        _mod5a = _ilu5a.module_from_spec(_spec5a)
-                        sys.modules['unsloth.models.idefics_c5a'] = _mod5a
-                        _spec5a.loader.exec_module(_mod5a)
-                        for _name5a in dir(_mod5a):
-                            _obj5a = getattr(_mod5a, _name5a)
-                            if isinstance(_obj5a, type) and ('Idefics' in _name5a or 'Granite' in _name5a):
-                                # Count callable methods (non-dunder) on the class
-                                _meths = [m for m in dir(_obj5a) if not m.startswith('_') and callable(getattr(_obj5a, m, None))]
-                                if len(_meths) >= 2:
-                                    results['methods'] = True
-                                break
-                    except Exception:
-                        pass
-        break
-
-# ---- (b) >=3 distinct LoRA/PEFT indicators ----
-indicators = set()
-proj_names = {'q_proj', 'k_proj', 'v_proj', 'o_proj',
-              'gate_proj', 'up_proj', 'down_proj'}
-lora_ids = {'LoraConfig', 'get_peft_model', 'target_modules',
-            'lora_r', 'lora_alpha', 'lora_dropout'}
-
-for node in ast.walk(tree):
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        if node.value in proj_names:
-            indicators.add('proj_layers')
-    if isinstance(node, ast.Name) and node.id in lora_ids:
-        indicators.add(node.id)
-    if isinstance(node, ast.Attribute) and node.attr in lora_ids:
-        indicators.add(node.attr)
-    if isinstance(node, ast.ImportFrom) and node.module and 'peft' in node.module.lower():
-        indicators.add('peft_import')
-    if isinstance(node, ast.Name) and node.id.lower() == 'peft':
-        indicators.add('peft_ref')
-    # Also count parameter names that reference LoRA concepts
-    if isinstance(node, ast.arg) and node.arg in lora_ids:
-        indicators.add(node.arg)
-
-if len(indicators) >= 3:
-    results['lora'] = True
-
-# ---- (c) "idefics3" or FastIdefics referenced in OTHER files ----
-idefics_abs = os.path.abspath(idefics_path)
-for fpath in sorted(glob.glob('unsloth/**/*.py', recursive=True)):
-    if os.path.abspath(fpath) == idefics_abs:
-        continue
-    try:
-        with open(fpath) as f:
-            ftree = ast.parse(f.read())
-    except Exception:
-        continue
-    for nd in ast.walk(ftree):
-        if isinstance(nd, ast.Constant) and isinstance(nd.value, str):
-            if nd.value == 'idefics3' or 'idefics' in nd.value.lower():
-                results['dispatch'] = True
-        if isinstance(nd, ast.Name) and 'FastIdefics' in nd.id:
-            results['dispatch'] = True
-        if isinstance(nd, ast.Attribute) and 'FastIdefics' in nd.attr:
-            results['dispatch'] = True
-        if results['dispatch']:
-            break
-    if results['dispatch']:
-        break
-
-# ---- (d) from_pretrained >=2 meaningful stmts ----
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef) and ('Idefics' in node.name or 'Granite' in node.name):
-        found_fp_5d = False
-        for item in node.body:
-            if isinstance(item, ast.FunctionDef) and item.name == 'from_pretrained':
-                if meaningful_stmts(item) >= 2:
-                    results['depth'] = True
-                found_fp_5d = True
-                break
-        if not found_fp_5d:
-            # Inheritance fallback: check if parent class has from_pretrained
-            base_names_5d = [b.id if isinstance(b, ast.Name) else
-                             (b.attr if isinstance(b, ast.Attribute) else '')
-                             for b in node.bases]
-            inherits_model_5d = any(
-                'Model' in bn or 'Vision' in bn or 'Base' in bn
-                for bn in base_names_5d
-            )
-            if inherits_model_5d:
-                # Check parent in same file
-                for pnode5d in ast.walk(tree):
-                    if isinstance(pnode5d, ast.ClassDef) and pnode5d.name in base_names_5d:
-                        for pitem5d in pnode5d.body:
-                            if isinstance(pitem5d, ast.FunctionDef) and pitem5d.name == 'from_pretrained':
-                                if meaningful_stmts(pitem5d) >= 2:
-                                    results['depth'] = True
-                                break
-                        break
-                # Dynamic fallback
-                if not results['depth']:
-                    try:
-                        exec(open('/tmp/_cpu_compat.py').read())
-                        import importlib.util as _ilu5d
-                        _spec5d = _ilu5d.spec_from_file_location('unsloth.models.idefics_c5d', idefics_path)
-                        _mod5d = _ilu5d.module_from_spec(_spec5d)
-                        sys.modules['unsloth.models.idefics_c5d'] = _mod5d
-                        _spec5d.loader.exec_module(_mod5d)
-                        for _name5d in dir(_mod5d):
-                            _obj5d = getattr(_mod5d, _name5d)
-                            if isinstance(_obj5d, type) and ('Idefics' in _name5d or 'Granite' in _name5d):
-                                if hasattr(_obj5d, 'from_pretrained'):
-                                    results['depth'] = True
-                                break
-                    except Exception:
-                        pass
-        break
-
-detail = ' | '.join(f'{k}={"OK" if v else "MISS"}' for k, v in results.items())
-print(f"{'PASS' if all(results.values()) else 'FAIL'} [{detail}]")
-PYEOF
-)
-
-echo "  Result: $CHECK5"
-if echo "$CHECK5" | grep -q "methods=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK5" | grep -q "lora=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK5" | grep -q "dispatch=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK5" | grep -q "depth=OK"; then
-    add_reward 0.05
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 6 (0.25) — BRONZE STRUCTURAL: Implementation completeness
-#
-# Proportional scoring for how complete the VLM class implementation is:
-#   (a) Has get_peft_model method (0.05)
-#   (b) get_peft_model accepts basic LoRA parameters (0.05)
-#   (c) get_peft_model has VLM-specific params: finetune_vision_layers
-#       and/or finetune_language_layers (0.05)
-#   (d) get_peft_model has fine-grained module selection:
-#       finetune_attention_modules and/or finetune_mlp_modules (0.05)
-#   (e) Has >=2 utility methods beyond from_pretrained/get_peft_model (0.05)
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 6 [0.25] Bronze: Implementation completeness ---"
-
-CHECK6=$(python3 << 'PYEOF'
-import ast, sys, os
-
-idefics_path = os.environ.get('IDEFICS_PY', '')
-results = {
-    'peft_method': False,
-    'peft_params': False,
-    'vlm_params': False,
-    'module_params': False,
-    'utilities': False,
-}
-
-if not os.path.exists(idefics_path):
-    detail = ' | '.join(f'{k}={"OK" if v else "MISS"}' for k, v in results.items())
-    print(f'FAIL [{detail}]')
-    sys.exit(0)
-
-try:
-    with open(idefics_path) as f:
-        src = f.read()
-    tree = ast.parse(src)
-except Exception:
-    detail = ' | '.join(f'{k}={"OK" if v else "MISS"}' for k, v in results.items())
-    print(f'FAIL:parse [{detail}]')
-    sys.exit(0)
-
-target_class = None
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef) and ('Idefics' in node.name or 'Granite' in node.name):
-        target_class = node
-        break
-
-if target_class is None:
-    detail = ' | '.join(f'{k}={"OK" if v else "MISS"}' for k, v in results.items())
-    print(f'FAIL:no_class [{detail}]')
-    sys.exit(0)
-
-# Collect all methods in the class
-all_methods = []
-for item in target_class.body:
-    if isinstance(item, ast.FunctionDef):
-        all_methods.append(item.name)
-
-# (a) Has get_peft_model method
-if 'get_peft_model' in all_methods:
-    results['peft_method'] = True
-
-# Find get_peft_model and analyze its parameters
-peft_param_names = set()
-for item in target_class.body:
-    if isinstance(item, ast.FunctionDef) and item.name == 'get_peft_model':
-        for arg in item.args.args:
-            peft_param_names.add(arg.arg)
-        for kwonly in item.args.kwonlyargs:
-            peft_param_names.add(kwonly.arg)
-        break
-
-# (b) Basic LoRA parameters
-basic_lora = {'r', 'lora_alpha', 'lora_dropout', 'target_modules', 'bias'}
-if len(peft_param_names & basic_lora) >= 3:
-    results['peft_params'] = True
-
-# (c) VLM-specific parameters — the KEY discriminator
-vlm_params = {'finetune_vision_layers', 'finetune_language_layers'}
-if len(peft_param_names & vlm_params) >= 1:
-    results['vlm_params'] = True
-
-# (d) Fine-grained module selection parameters
-module_params = {'finetune_attention_modules', 'finetune_mlp_modules'}
-if len(peft_param_names & module_params) >= 1:
-    results['module_params'] = True
-
-# (e) Has >=2 utility methods beyond from_pretrained/get_peft_model/__init__
-base_methods = {'from_pretrained', 'get_peft_model', '__init__', '__new__', '__repr__', '__str__'}
-utility_methods = [m for m in all_methods if m not in base_methods and not m.startswith('__')]
-if len(utility_methods) >= 2:
-    results['utilities'] = True
-
-# ── Inheritance fallback for Check 6 ──
-# If class body is trivial (e.g. `pass`) but inherits from a model base,
-# check if the parent provides the expected methods/params.
-if not all(results.values()):
-    base_names_6 = [b.id if isinstance(b, ast.Name) else
-                    (b.attr if isinstance(b, ast.Attribute) else '')
-                    for b in target_class.bases]
-    inherits_model_6 = any(
-        'Model' in bn or 'Vision' in bn or 'Base' in bn
-        for bn in base_names_6
-    )
-    if inherits_model_6:
-        # Try to find parent class in the same file first (AST)
-        parent_class_6 = None
-        for pn6 in ast.walk(tree):
-            if isinstance(pn6, ast.ClassDef) and pn6.name in base_names_6:
-                parent_class_6 = pn6
-                break
-
-        if parent_class_6 is not None:
-            parent_methods_6 = []
-            for pitem6 in parent_class_6.body:
-                if isinstance(pitem6, ast.FunctionDef):
-                    parent_methods_6.append(pitem6.name)
-
-            if not results['peft_method'] and 'get_peft_model' in parent_methods_6:
-                results['peft_method'] = True
-
-            if not results['peft_params'] or not results['vlm_params'] or not results['module_params']:
-                parent_peft_params = set()
-                for pitem6 in parent_class_6.body:
-                    if isinstance(pitem6, ast.FunctionDef) and pitem6.name == 'get_peft_model':
-                        for arg6 in pitem6.args.args:
-                            parent_peft_params.add(arg6.arg)
-                        for kw6 in pitem6.args.kwonlyargs:
-                            parent_peft_params.add(kw6.arg)
-                        break
-                if not results['peft_params'] and len(parent_peft_params & basic_lora) >= 3:
-                    results['peft_params'] = True
-                if not results['vlm_params'] and len(parent_peft_params & vlm_params) >= 1:
-                    results['vlm_params'] = True
-                if not results['module_params'] and len(parent_peft_params & module_params) >= 1:
-                    results['module_params'] = True
-
-            if not results['utilities']:
-                parent_utility = [m for m in parent_methods_6 if m not in base_methods and not m.startswith('__')]
-                if len(parent_utility) >= 2:
-                    results['utilities'] = True
-
-        # Dynamic fallback: import the module and inspect the class via MRO
-        if not all(results.values()):
-            try:
-                exec(open('/tmp/_cpu_compat.py').read())
-                import importlib.util as _ilu6, inspect as _insp6
-                _spec6 = _ilu6.spec_from_file_location('unsloth.models.idefics_c6', idefics_path)
-                _mod6 = _ilu6.module_from_spec(_spec6)
-                sys.modules['unsloth.models.idefics_c6'] = _mod6
-                _spec6.loader.exec_module(_mod6)
-                _cls6 = None
-                for _n6 in dir(_mod6):
-                    _o6 = getattr(_mod6, _n6)
-                    if isinstance(_o6, type) and ('Idefics' in _n6 or 'Granite' in _n6):
-                        _cls6 = _o6
-                        break
-                if _cls6:
-                    if not results['peft_method'] and hasattr(_cls6, 'get_peft_model'):
-                        results['peft_method'] = True
-                    if hasattr(_cls6, 'get_peft_model') and (not results['peft_params'] or not results['vlm_params'] or not results['module_params']):
-                        try:
-                            _sig6 = _insp6.signature(_cls6.get_peft_model)
-                            _dyn_params6 = set(_sig6.parameters.keys())
-                            if not results['peft_params'] and len(_dyn_params6 & basic_lora) >= 3:
-                                results['peft_params'] = True
-                            if not results['vlm_params'] and len(_dyn_params6 & vlm_params) >= 1:
-                                results['vlm_params'] = True
-                            if not results['module_params'] and len(_dyn_params6 & module_params) >= 1:
-                                results['module_params'] = True
-                        except Exception:
-                            pass
-                    if not results['utilities']:
-                        _all_meths6 = [m for m in dir(_cls6) if not m.startswith('_') and callable(getattr(_cls6, m, None))]
-                        _base_set6 = {'from_pretrained', 'get_peft_model'}
-                        _util6 = [m for m in _all_meths6 if m not in _base_set6]
-                        if len(_util6) >= 2:
-                            results['utilities'] = True
-            except Exception:
-                pass
-
-detail = ' | '.join(f'{k}={"OK" if v else "MISS"}' for k, v in results.items())
-print(f"{'PASS' if all(results.values()) else 'FAIL'} [{detail}]")
-PYEOF
-)
-
-echo "  Result: $CHECK6"
-if echo "$CHECK6" | grep -q "peft_method=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK6" | grep -q "peft_params=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK6" | grep -q "vlm_params=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK6" | grep -q "module_params=OK"; then
-    add_reward 0.05
-fi
-if echo "$CHECK6" | grep -q "utilities=OK"; then
-    add_reward 0.05
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# P2P TESTS (0.05 total): Existing functionality still works
-# ═══════════════════════════════════════════════════════════════════
-
-echo "--- P2P-1 [0.01]: Source integrity ---"
-
-P2P1_RESULT=$(python3 << 'PYEOF'
-import ast, sys, os, glob
-workspace = "/workspace/unsloth"
-os.chdir(workspace)
-
-init_py = os.path.join(workspace, "unsloth/models/__init__.py")
-if not os.path.isfile(init_py):
-    print("FAIL:init_missing"); sys.exit(0)
-try:
-    with open(init_py) as f:
-        ast.parse(f.read())
-except SyntaxError as e:
-    print(f"FAIL:init_syntax:{e}"); sys.exit(0)
-
-vision_py = os.path.join(workspace, "unsloth/models/vision.py")
-if os.path.isfile(vision_py):
-    try:
-        with open(vision_py) as f:
-            ast.parse(f.read())
+        ast.parse(open(f).read()); ok += 1
     except SyntaxError as e:
-        print(f"FAIL:vision_syntax:{e}"); sys.exit(0)
-
-model_dir = os.path.join(workspace, "unsloth/models")
-py_files = sorted(glob.glob(os.path.join(model_dir, "*.py")))
-if len(py_files) < 3:
-    print(f"FAIL:too_few_files:{len(py_files)}"); sys.exit(0)
-
-for fpath in py_files:
-    try:
-        with open(fpath) as f:
-            ast.parse(f.read())
-    except SyntaxError as e:
-        print(f"FAIL:syntax:{os.path.basename(fpath)}:{e}"); sys.exit(0)
-
-basenames = [os.path.basename(f).lower() for f in py_files]
-existing_models = [b for b in basenames if any(m in b for m in ["llama", "qwen", "gemma", "mistral"])]
-if len(existing_models) < 1:
-    print(f"FAIL:no_existing_models"); sys.exit(0)
-
-print("PASS")
+        print(f"SYNTAX FAIL {f}: {e}")
+print(ok)
 PYEOF
 )
-
-echo "  Result: $P2P1_RESULT"
-if [ "$P2P1_RESULT" = "PASS" ]; then
-    add_reward 0.01
+PARSE_NUM=$(echo "$PARSE_OK" | tail -1)
+if [ "$PARSE_NUM" = "4" ]; then
+    add_reward 0.08
+    echo "  PASS"
+else
+    echo "  FAIL: $PARSE_NUM/4"
 fi
 
-echo "--- P2P-2 [0.02]: peft_utils public API preserved ---"
-
-P2P2_RESULT=$(python3 << 'PYEOF'
-import sys
-exec(open('/tmp/_cpu_compat.py').read())
-
+# ════════════════════════════════════════════════════════════════
+# CHECK 2 (0.05) — P2P: Existing VLM entries preserved
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 2 [0.05] P2P: VLLM_SUPPORTED_VLM preserves existing ---"
+EXIST_OK=$(python3 << 'PYEOF'
+import ast
 try:
-    import unsloth_zoo.peft_utils as pu
-except ImportError as e:
-    print(f"FAIL:import:{e}"); sys.exit(0)
-
-skip_list = getattr(pu, 'SKIP_QUANTIZATION_MODULES', None)
-if skip_list is None:
-    print("FAIL:no_SKIP_QUANTIZATION_MODULES"); sys.exit(0)
-required_skips = {"lm_head", "multi_modal_projector", "router"}
-found_skips = set(skip_list)
-missing = required_skips - found_skips
-if missing:
-    print(f"FAIL:missing_skip_modules:{missing}"); sys.exit(0)
-
-get_peft_regex = getattr(pu, 'get_peft_regex', None)
-if get_peft_regex is None or not callable(get_peft_regex):
-    print("FAIL:no_get_peft_regex"); sys.exit(0)
-
-rg_fn = getattr(pu, 'requires_grad_for_gradient_checkpointing', None)
-if rg_fn is None or not callable(rg_fn):
-    print("FAIL:no_requires_grad_fn"); sys.exit(0)
-
-lora_fn = getattr(pu, 'get_lora_layer_modules', None)
-if lora_fn is None or not callable(lora_fn):
-    print("FAIL:no_get_lora_layer_modules"); sys.exit(0)
-
-print("PASS")
-PYEOF
-)
-
-echo "  Result: $P2P2_RESULT"
-if [ "$P2P2_RESULT" = "PASS" ]; then
-    add_reward 0.02
-fi
-
-echo "--- P2P-3 [0.01]: Existing VLLM_SUPPORTED_VLM entries preserved ---"
-
-P2P3_RESULT=$(python3 << 'PYEOF'
-import sys, ast
-
-try:
-    with open('/workspace/unsloth/unsloth/models/vision.py') as f:
-        tree = ast.parse(f.read())
+    src = open('unsloth/models/vision.py').read()
+    tree = ast.parse(src)
+    found = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == 'VLLM_SUPPORTED_VLM':
+                    if isinstance(node.value, ast.List):
+                        found = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+    needed = {'qwen2_5_vl','gemma3','mistral3','qwen3_vl'}
+    if found and needed.issubset(set(found)):
+        print("OK")
+    else:
+        print(f"MISS: {found}")
 except Exception as e:
-    print(f"FAIL:parse:{e}"); sys.exit(0)
+    print(f"ERR: {e}")
+PYEOF
+)
+if echo "$EXIST_OK" | grep -q "^OK"; then
+    add_reward 0.05
+    echo "  PASS"
+else
+    echo "  FAIL"
+fi
 
-existing_entries = {"qwen2_5_vl", "gemma3", "mistral3", "qwen3_vl"}
-found_entries = set()
+# ════════════════════════════════════════════════════════════════
+# CHECK 3 (0.05) — P2P: Existing model exports preserved
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 3 [0.05] P2P: Existing exports preserved ---"
+EXPORTS_OK=$(python3 << 'PYEOF'
+src = open('unsloth/models/__init__.py').read()
+needed = ['FastLlamaModel', 'FastModel', 'FastVisionModel', 'FastLanguageModel']
+miss = [n for n in needed if n not in src]
+print('OK' if not miss else f'MISS: {miss}')
+PYEOF
+)
+if echo "$EXPORTS_OK" | grep -q "^OK"; then
+    add_reward 0.05
+    echo "  PASS"
+else
+    echo "  FAIL"
+fi
 
+# ════════════════════════════════════════════════════════════════
+# CHECK 4 (0.07) — F2P: idefics3 registered in VLLM_SUPPORTED_VLM
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 4 [0.07] F2P: idefics3 in VLLM_SUPPORTED_VLM ---"
+VLM_REG=$(python3 << 'PYEOF'
+import ast
+src = open('unsloth/models/vision.py').read()
+tree = ast.parse(src)
+found = False
 for node in ast.walk(tree):
     if isinstance(node, ast.Assign):
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == 'VLLM_SUPPORTED_VLM':
-                if isinstance(node.value, (ast.List, ast.Tuple, ast.Set)):
-                    for elt in node.value.elts:
-                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                            found_entries.add(elt.value)
-
-missing = existing_entries - found_entries
-if missing:
-    print(f"FAIL:missing_entries:{missing}")
-    sys.exit(0)
-
-print("PASS")
+        for t in node.targets:
+            if isinstance(t, ast.Name) and t.id == 'VLLM_SUPPORTED_VLM':
+                if isinstance(node.value, ast.List):
+                    vals = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+                    if 'idefics3' in vals:
+                        found = True
+print("OK" if found else "MISS")
 PYEOF
 )
-
-echo "  Result: $P2P3_RESULT"
-if [ "$P2P3_RESULT" = "PASS" ]; then
-    add_reward 0.01
+if echo "$VLM_REG" | grep -q "^OK"; then
+    add_reward 0.07
+    echo "  PASS"
+else
+    echo "  FAIL"
 fi
 
-echo "--- P2P-4 [0.01]: Existing model exports preserved ---"
+# ════════════════════════════════════════════════════════════════
+# CHECK 5 (0.05) — F2P: FastIdefics3Model exported in __init__.py
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 5 [0.05] F2P: FastIdefics3Model export ---"
+EXPORT_FOUND=$(python3 << 'PYEOF'
+import re
+src = open('unsloth/models/__init__.py').read()
+if re.search(r'from\s+\.\w+\s+import\s+[^#\n]*FastIdefics3Model', src):
+    print("OK")
+elif 'FastIdefics3Model' in src:
+    print("PARTIAL")
+else:
+    print("MISS")
+PYEOF
+)
+if echo "$EXPORT_FOUND" | grep -q "^OK"; then
+    add_reward 0.05
+    echo "  PASS"
+elif echo "$EXPORT_FOUND" | grep -q "^PARTIAL"; then
+    add_reward 0.025
+    echo "  PARTIAL"
+else
+    echo "  FAIL"
+fi
 
-P2P4_RESULT=$(python3 << 'PYEOF'
-import sys, ast
-
+# ════════════════════════════════════════════════════════════════
+# CHECK 6 (0.10) — F2P: idefics module structural quality
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 6 [0.10] F2P: FastIdefics3Model class quality ---"
+CLASS_SCORE=0
+if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
+    CLASS_SCORE=$(python3 << PYEOF
+import ast
+score = 0
 try:
-    with open('/workspace/unsloth/unsloth/models/__init__.py') as f:
-        tree = ast.parse(f.read())
+    src = open("$IDEFICS_PY").read()
+    tree = ast.parse(src)
+    has_class = False
+    has_from_pretrained = False
+    has_substantive_fp = False
+    has_extra_methods = False
+    references_idefics = ('Idefics3' in src) or ('idefics3' in src.lower())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and 'Idefics' in node.name:
+            has_class = True
+            method_count = 0
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    method_count += 1
+                    if item.name == 'from_pretrained':
+                        has_from_pretrained = True
+                        if len(item.body) >= 2:
+                            has_substantive_fp = True
+            # If class inherits AND has from_pretrained, treat as substantive
+            if node.bases and has_from_pretrained:
+                has_substantive_fp = True
+            if method_count >= 2 or node.bases:
+                has_extra_methods = True
+    if has_class: score += 1
+    if has_from_pretrained: score += 1
+    if has_substantive_fp: score += 1
+    if has_extra_methods: score += 1
+    if references_idefics: score += 1
 except Exception as e:
-    print(f"FAIL:parse:{e}"); sys.exit(0)
-
-required_exports = {
-    "FastLlamaModel", "FastLanguageModel", "FastMistralModel",
-    "FastGraniteModel",
-}
-
-found_names = set()
-for node in ast.walk(tree):
-    if isinstance(node, ast.ImportFrom):
-        for alias in node.names:
-            if alias.name == '*':
-                pass
-            elif alias.asname:
-                found_names.add(alias.asname)
-            else:
-                found_names.add(alias.name)
-
-missing = required_exports - found_names
-if missing:
-    print(f"FAIL:missing_exports:{missing}")
-    sys.exit(0)
-
-print("PASS")
+    pass
+print(score)
 PYEOF
 )
-
-echo "  Result: $P2P4_RESULT"
-if [ "$P2P4_RESULT" = "PASS" ]; then
-    add_reward 0.01
 fi
+CLASS_SCORE=$(echo "$CLASS_SCORE" | tail -1)
+case "$CLASS_SCORE" in
+    5) add_reward 0.10; echo "  PASS (5/5)" ;;
+    4) add_reward 0.08; echo "  GOOD (4/5)" ;;
+    3) add_reward 0.05; echo "  PARTIAL (3/5)" ;;
+    2) add_reward 0.025; echo "  WEAK (2/5)" ;;
+    *) echo "  FAIL ($CLASS_SCORE/5)" ;;
+esac
 
-# ═══════════════════════════════════════════════════════════════════
-# CHECK 7 (0.05) — T1 INTEGRATION: Idefics-named class end-to-end
-#
-# The T1 instruction asks for FastIdefics3Model specifically. Check 4
-# accepts "Granite" as a fallback; this check is stricter — it requires
-# an Idefics-named class to be importable from unsloth.models namespace
-# AND verifies that the same module defines a non-trivial class body
-# (rejects a bare `class FastIdefics3Model: pass` stub). This ties the
-# T1 ask (create + register + export + hook-fix) to one behavioral
-# assertion that cannot be satisfied by only fixing the hook.
-#
-# Subchecks (0.025 each):
-#   (a) Class with "Idefics" in its name importable from unsloth.models
-#   (b) That class has a non-trivial body (>=1 method OR attrs), paired
-#       with 'idefics3' being registered in VLLM_SUPPORTED_VLM
-# ═══════════════════════════════════════════════════════════════════
-echo "--- Check 7 [0.05] T1 integration: Idefics class importable & registered ---"
-
-CHECK7=$(python3 << 'PYEOF'
-import sys, os, ast, importlib.util
+# ════════════════════════════════════════════════════════════════
+# CHECK 7 (0.12) — F2P BEHAVIORAL: idefics module imports & references valid HF class
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 7 [0.12] F2P BEHAVIORAL: module imports without errors ---"
+IMPORT_RESULT="MISS"
+if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
+    MODNAME=$(python3 -c "import os; print(os.path.splitext(os.path.basename('$IDEFICS_PY'))[0])")
+    IMPORT_RESULT=$(python3 << PYEOF 2>&1
+import sys
+sys.path.insert(0, '/tmp')
 exec(open('/tmp/_cpu_compat.py').read())
 
-idefics_class_importable = False
-non_trivial_and_registered = False
-
-init_path = 'unsloth/models/__init__.py'
-vision_path = 'unsloth/models/vision.py'
-
-# (a) Idefics-named class importable from unsloth.models namespace
+# Block torch heavy backend imports being problematic - install minimal stubs as needed
 try:
-    spec = importlib.util.spec_from_file_location(
-        'unsloth.models.init_c7', init_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    import importlib
+    # Try importing the module directly
+    mod = importlib.import_module('unsloth.models.$MODNAME')
+    # Look for any FastIdefics-like class
+    found = None
     for name in dir(mod):
-        if 'Idefics' in name:
-            obj = getattr(mod, name)
-            if isinstance(obj, type):
-                idefics_class_importable = True
+        if 'Idefics' in name and 'Fast' in name:
+            cls = getattr(mod, name)
+            if isinstance(cls, type) or callable(cls):
+                found = name
                 break
-except Exception:
-    pass
-
-# Static fallback: explicit `from ... import FastIdefics...` in __init__.py
-if not idefics_class_importable:
-    try:
-        with open(init_path) as f:
-            tree = ast.parse(f.read())
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.ImportFrom, ast.Import)):
-                for alias in getattr(node, 'names', []):
-                    nm = alias.asname or alias.name or ''
-                    if 'Idefics' in nm:
-                        idefics_class_importable = True
-                        break
-            if idefics_class_importable:
-                break
-    except Exception:
-        pass
-
-# (b) Non-trivial class body AND 'idefics3' in VLLM_SUPPORTED_VLM.
-#     The pairing is what makes this discriminating: a bare stub class
-#     won't carry substantive methods; a registered-but-empty module
-#     won't satisfy integration.
-idefics_py = os.environ.get('IDEFICS_PY', '')
-has_substantive_class = False
-if idefics_py and os.path.exists(idefics_py):
-    try:
-        with open(idefics_py) as f:
-            tree = ast.parse(f.read())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and 'Idefics' in node.name:
-                method_count = sum(
-                    1 for item in node.body
-                    if isinstance(item, ast.FunctionDef)
-                )
-                non_trivial_body = any(
-                    not isinstance(item, ast.Pass) and
-                    not (isinstance(item, ast.Expr) and
-                         isinstance(item.value, ast.Constant))
-                    for item in node.body
-                )
-                if method_count >= 1 or (non_trivial_body and len(node.body) >= 2):
-                    has_substantive_class = True
-                    break
-    except Exception:
-        pass
-
-registered_in_vlm = False
-try:
-    with open(vision_path) as f:
-        vtree = ast.parse(f.read())
-    for node in ast.walk(vtree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == 'VLLM_SUPPORTED_VLM':
-                    if isinstance(node.value, (ast.List, ast.Tuple, ast.Set)):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Constant) and elt.value == 'idefics3':
-                                registered_in_vlm = True
-except Exception:
-    pass
-
-if has_substantive_class and registered_in_vlm:
-    non_trivial_and_registered = True
-
-results = []
-if idefics_class_importable:
-    results.append('importable')
-if non_trivial_and_registered:
-    results.append('integrated')
-print('|'.join(results) if results else 'FAIL')
+    if found:
+        print(f"OK:{found}")
+    else:
+        # Maybe it has from_pretrained referencing Idefics3ForConditionalGeneration
+        src = open("$IDEFICS_PY").read()
+        if 'Idefics3ForConditionalGeneration' in src or 'AutoModelForVision2Seq' in src:
+            print("PARTIAL:no_class_but_hf_ref")
+        else:
+            print("PARTIAL:imported_no_class")
+except Exception as e:
+    msg = str(e)[:200]
+    print(f"FAIL:{type(e).__name__}:{msg}")
 PYEOF
 )
-
-echo "  Result: $CHECK7"
-if echo "$CHECK7" | grep -q "importable"; then
-    add_reward 0.025
 fi
-if echo "$CHECK7" | grep -q "integrated"; then
-    add_reward 0.025
+echo "  Result: $IMPORT_RESULT" | head -1
+if echo "$IMPORT_RESULT" | grep -q "^OK:"; then
+    add_reward 0.12
+    echo "  PASS"
+elif echo "$IMPORT_RESULT" | grep -q "^PARTIAL:"; then
+    add_reward 0.06
+    echo "  PARTIAL"
+else
+    echo "  FAIL"
 fi
 
-echo ""
-echo "======================================="
-echo "  Tier breakdown:"
-echo "    [0.20] Check 1: F2P hook compatibility fix (behavioral)"
-echo "    [0.10] Check 2: F2P from_pretrained quality (AST-based)"
-echo "    [0.10] Check 3: F2P VLLM_SUPPORTED_VLM (behavioral)"
-echo "    [0.05] Check 4: F2P __init__.py export (behavioral)"
-echo "    [0.20] Check 5: F2P Code substance — 0.05 each: methods, LoRA, dispatch, depth"
-echo "    [0.25] Check 6: F2P Implementation completeness — 0.05 each: peft, params,"
-echo "                     vlm_params, module_params, utilities"
-echo "    [0.05] Check 7: F2P T1 integration — importable(0.025) + integrated(0.025)"
-echo "    [0.01] P2P-1: Source integrity"
-echo "    [0.02] P2P-2: peft_utils public API preserved"
-echo "    [0.01] P2P-3: Existing VLLM_SUPPORTED_VLM entries preserved"
-echo "    [0.01] P2P-4: Existing model exports preserved"
-echo "    F2P: 0.95 | P2P: 0.05 | Total: 1.00"
-echo "  Final reward: $REWARD"
-echo "======================================="
+# ════════════════════════════════════════════════════════════════
+# CHECK 8 (0.10) — F2P BEHAVIORAL: vision.py imports cleanly with idefics3
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 8 [0.10] F2P BEHAVIORAL: unsloth.models.vision imports ---"
+VISION_RES=$(python3 << 'PYEOF' 2>&1
+exec(open('/tmp/_cpu_compat.py').read())
+try:
+    import unsloth.models.vision as v
+    vlms = getattr(v, 'VLLM_SUPPORTED_VLM', [])
+    if 'idefics3' in vlms:
+        print(f"OK:{len(vlms)}")
+    else:
+        print(f"FAIL:no_idefics3:{vlms}")
+except Exception as e:
+    print(f"FAIL:{type(e).__name__}:{str(e)[:150]}")
+PYEOF
+)
+echo "  Result: $VISION_RES"
+if echo "$VISION_RES" | grep -q "^OK:"; then
+    add_reward 0.10
+    echo "  PASS"
+else
+    echo "  FAIL"
+fi
+
+# ════════════════════════════════════════════════════════════════
+# CHECK 9 (0.15) — F2P BEHAVIORAL: hook fix actually works for empty-tuple input
+# This is the core requirement: requires_grad_pre_hook should not crash on empty
+# tuple, OR FastIdefics3Model.get_input_embeddings should be overridden to return
+# a torch.nn.Embedding directly, OR the fix is applied to a model wrapper.
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 9 [0.15] F2P BEHAVIORAL: hook compatibility fix ---"
+HOOK_RES=$(python3 << 'PYEOF' 2>&1
+import sys, os
+exec(open('/tmp/_cpu_compat.py').read())
+
+score = 0
+notes = []
+
+# Approach 1: import the agent's idefics module — many fixes apply patches at import time
+try:
+    import importlib, glob
+    mod_files = sorted(glob.glob('unsloth/models/*idefics*.py'))
+    if mod_files:
+        modname = os.path.splitext(os.path.basename(mod_files[0]))[0]
+        try:
+            importlib.import_module(f'unsloth.models.{modname}')
+            notes.append('module_imported')
+        except Exception as e:
+            notes.append(f'module_import_fail:{type(e).__name__}')
+except Exception as e:
+    notes.append(f'discover_fail:{e}')
+
+# Approach 2: check that the hook in unsloth_zoo handles empty input tuple
+# Either it was monkey-patched at idefics import time, or the source has been edited
+hook_handles_empty = False
+try:
+    import torch
+    import unsloth_zoo.peft_utils as pu
+    # Inspect the source for graceful handling, OR look for early-return on empty input
+    src = open(pu.__file__).read()
+    # Patched in source by some agents (GLM4.7 patches the source file directly)
+    if 'last_hidden_state' in src or 'pixel_values' in src.lower():
+        # extra robustness added
+        score += 1
+        notes.append('source_extended')
+    # Try actually invoking the pre-hook with empty input
+    pre_hook = getattr(pu, 'requires_grad_pre_hook', None)
+    if pre_hook is None:
+        # find it inside requires_grad_for_gradient_checkpointing scope - use functional check
+        notes.append('no_global_pre_hook')
+    else:
+        try:
+            class M(torch.nn.Module):
+                def forward(self, x): return x
+            m = M()
+            # Empty tuple input — should not raise after the fix
+            try:
+                pre_hook(m, ())
+                hook_handles_empty = True
+                notes.append('pre_hook_handles_empty')
+            except RuntimeError as re:
+                if 'Failed to make input require gradients' in str(re):
+                    notes.append('pre_hook_still_crashes')
+                else:
+                    notes.append(f'pre_hook_other_runtime:{str(re)[:60]}')
+            except Exception as e:
+                notes.append(f'pre_hook_exc:{type(e).__name__}:{str(e)[:60]}')
+        except Exception as e:
+            notes.append(f'hook_invoke_setup_fail:{e}')
+except Exception as e:
+    notes.append(f'peft_utils_unavailable:{type(e).__name__}:{str(e)[:80]}')
+
+# Approach 3: check that FastIdefics3Model overrides get_input_embeddings
+try:
+    import importlib, glob, ast
+    mod_files = sorted(glob.glob('unsloth/models/*idefics*.py'))
+    if mod_files:
+        src = open(mod_files[0]).read()
+        if 'get_input_embeddings' in src:
+            notes.append('overrides_get_input_embeddings')
+            score += 1
+        # Or patches the encoder instance with a get_input_embeddings lambda
+        if 'encoder.get_input_embeddings' in src or '_patch_vision_encoder' in src or '_patch_idefics3' in src.lower():
+            notes.append('patches_encoder')
+            score += 1
+        # Or monkey-patches the hook
+        if 'requires_grad_pre_hook' in src or 'requires_grad_for_gradient_checkpointing' in src:
+            notes.append('patches_hook')
+            score += 1
+except Exception as e:
+    notes.append(f'static_check_fail:{e}')
+
+if hook_handles_empty:
+    score += 3  # Strongest signal: actually fixed at runtime
+
+print(f"SCORE:{score}|" + ",".join(notes))
+PYEOF
+)
+echo "  Result: $HOOK_RES"
+HOOK_SCORE=$(echo "$HOOK_RES" | grep -oE 'SCORE:[0-9]+' | head -1 | sed 's/SCORE://')
+HOOK_SCORE=${HOOK_SCORE:-0}
+if [ "$HOOK_SCORE" -ge 4 ]; then
+    add_reward 0.15
+    echo "  PASS (full hook fix)"
+elif [ "$HOOK_SCORE" -ge 2 ]; then
+    add_reward 0.10
+    echo "  GOOD (partial fix)"
+elif [ "$HOOK_SCORE" -ge 1 ]; then
+    add_reward 0.05
+    echo "  WEAK"
+else
+    echo "  FAIL"
+fi
+
+# ════════════════════════════════════════════════════════════════
+# CHECK 10 (0.10) — F2P BEHAVIORAL: full unsloth.models package imports
+# AND FastIdefics3Model symbol is reachable from unsloth.models
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 10 [0.10] F2P BEHAVIORAL: top-level package import ---"
+PKG_RES=$(python3 << 'PYEOF' 2>&1
+exec(open('/tmp/_cpu_compat.py').read())
+try:
+    import unsloth.models as M
+    has = hasattr(M, 'FastIdefics3Model')
+    has_existing = all(hasattr(M, n) for n in ['FastModel','FastVisionModel','FastLanguageModel'])
+    if has and has_existing:
+        print("OK")
+    elif has_existing:
+        print("PARTIAL:no_idefics_attr")
+    else:
+        print("FAIL:missing_existing")
+except Exception as e:
+    print(f"FAIL:{type(e).__name__}:{str(e)[:150]}")
+PYEOF
+)
+echo "  Result: $PKG_RES"
+if echo "$PKG_RES" | grep -q "^OK"; then
+    add_reward 0.10
+    echo "  PASS"
+elif echo "$PKG_RES" | grep -q "^PARTIAL"; then
+    add_reward 0.04
+    echo "  PARTIAL"
+else
+    echo "  FAIL"
+fi
+
+# ════════════════════════════════════════════════════════════════
+# CHECK 11 (0.08) — F2P BEHAVIORAL: FastIdefics3Model has callable from_pretrained
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 11 [0.08] F2P BEHAVIORAL: from_pretrained callable ---"
+FP_RES=$(python3 << 'PYEOF' 2>&1
+exec(open('/tmp/_cpu_compat.py').read())
+try:
+    import unsloth.models as M
+    cls = getattr(M, 'FastIdefics3Model', None)
+    if cls is None:
+        print("FAIL:no_class")
+    else:
+        fp = getattr(cls, 'from_pretrained', None)
+        if fp is None or not callable(fp):
+            print("FAIL:no_from_pretrained")
+        else:
+            # Check signature accepts a model name
+            import inspect
+            try:
+                sig = inspect.signature(fp)
+                params = list(sig.parameters.keys())
+                if len(params) >= 1:
+                    print(f"OK:params={params[:5]}")
+                else:
+                    print("PARTIAL:no_params")
+            except Exception:
+                print("OK:signature_unavailable")
+except Exception as e:
+    print(f"FAIL:{type(e).__name__}:{str(e)[:120]}")
+PYEOF
+)
+echo "  Result: $FP_RES"
+if echo "$FP_RES" | grep -q "^OK"; then
+    add_reward 0.08
+    echo "  PASS"
+elif echo "$FP_RES" | grep -q "^PARTIAL"; then
+    add_reward 0.03
+    echo "  PARTIAL"
+else
+    echo "  FAIL"
+fi
+
+# ════════════════════════════════════════════════════════════════
+# CHECK 12 (0.05) — Quality: implementation depth (LoRA targets / patch logic)
+# ════════════════════════════════════════════════════════════════
+echo "--- Check 12 [0.05] Quality: implementation depth ---"
+DEPTH_SCORE=0
+if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
+    DEPTH_SCORE=$(python3 << PYEOF
+src = open("$IDEFICS_PY").read()
+score = 0
+# References to projection/LoRA targets
+import re
+if re.search(r'(target_modules|lora_targets|q_proj|k_proj|v_proj|o_proj)', src):
+    score += 1
+# References to vision/text components
+if re.search(r'(vision_model|text_model|connector|modality_projection)', src):
+    score += 1
+# Has substantial body (>50 non-blank lines)
+nonblank = sum(1 for L in src.splitlines() if L.strip() and not L.strip().startswith('#'))
+if nonblank >= 30: score += 1
+if nonblank >= 80: score += 1
+print(score)
+PYEOF
+)
+fi
+DEPTH_SCORE=$(echo "$DEPTH_SCORE" | tail -1)
+case "$DEPTH_SCORE" in
+    4) add_reward 0.05 ;;
+    3) add_reward 0.04 ;;
+    2) add_reward 0.025 ;;
+    1) add_reward 0.01 ;;
+    *) : ;;
+esac
+echo "  Depth: $DEPTH_SCORE/4"
+
+# ════════════════════════════════════════════════════════════════
+# Finalize
+# ════════════════════════════════════════════════════════════════
+echo "════════════════════════════════════════════════════════════════"
+echo "FINAL REWARD: $REWARD"
+echo "════════════════════════════════════════════════════════════════"
 echo "$REWARD" > "$LOG_DIR/reward.txt"
+exit 0

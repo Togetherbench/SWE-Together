@@ -3,38 +3,36 @@ set +e
 
 mkdir -p /logs/verifier
 
-# Baseline extensions at commit 5133697 (skip when scanning)
-BASELINE_EXTENSIONS="diff.ts files.ts prompt-url-widget.ts redraws.ts tps.ts"
+export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 REWARD=0
-
-# Nop baseline score: 0.10 (only P2P gates 1+2 pass on unmodified base)
 
 add_reward() {
     REWARD=$(awk "BEGIN {printf \"%.2f\", $REWARD + $1}")
 }
 
-cd /workspace/pi-mono
+cd /workspace/pi-mono 2>/dev/null || { echo "0.00" > /logs/verifier/reward.txt; exit 0; }
+
+BASELINE_EXTENSIONS="diff.ts files.ts prompt-url-widget.ts redraws.ts tps.ts"
 
 # ============================================================
-# Gate 1 (P2P): Environment sanity — node and bun available
-# Weight: 0.05
+# Gate 1 (P2P): Environment sanity (0.05)
 # ============================================================
-echo "=== Gate 1 (P2P): Environment sanity ==="
-if node --version >/dev/null 2>&1 && bun --version >/dev/null 2>&1; then
+echo "=== Gate 1 (P2P): Environment ==="
+if command -v node >/dev/null 2>&1 && command -v bun >/dev/null 2>&1; then
     add_reward 0.05
     echo "PASS (0.05)"
 else
-    echo "FAIL"
+    echo "FAIL: node=$(command -v node) bun=$(command -v bun)"
 fi
 
 # ============================================================
-# Gate 2 (P2P): pi-mono repo intact
-# Weight: 0.05
+# Gate 2 (P2P): pi-mono repo structure intact (0.05)
 # ============================================================
-echo "=== Gate 2 (P2P): pi-mono repo intact ==="
+echo "=== Gate 2 (P2P): repo intact ==="
 if [ -d /workspace/pi-mono/packages/coding-agent ] && \
-   [ -f /workspace/pi-mono/package.json ]; then
+   [ -f /workspace/pi-mono/package.json ] && \
+   [ -d /workspace/pi-mono/.pi ]; then
     add_reward 0.05
     echo "PASS (0.05)"
 else
@@ -42,307 +40,419 @@ else
 fi
 
 # ============================================================
-# Detect new TypeScript extension files
+# Locate new extension file
 # ============================================================
-echo "=== Scanning for new extension files ==="
-
+echo "=== Locating new extension ==="
 NEW_EXTS=""
-
-for f in $(git ls-files --others --exclude-standard 2>/dev/null | grep '\.ts$'); do
-    NEW_EXTS="$NEW_EXTS $f"
+for f in $(git -C /workspace/pi-mono ls-files --others --exclude-standard 2>/dev/null | grep '\.ts$'); do
+    NEW_EXTS="$NEW_EXTS /workspace/pi-mono/$f"
+done
+for f in $(git -C /workspace/pi-mono diff --name-only HEAD 2>/dev/null | grep '\.ts$'); do
+    case "$NEW_EXTS" in *"$f"*) ;; *) NEW_EXTS="$NEW_EXTS /workspace/pi-mono/$f" ;; esac
 done
 
-for f in $(git diff --name-only HEAD 2>/dev/null | grep '\.ts$'); do
-    NEW_EXTS="$NEW_EXTS $f"
-done
-
-for f in $(find /workspace -name '*.ts' -newer /workspace/pi-mono/.git/HEAD \
-    -not -path '*/node_modules/*' -not -path '*/.git/*' 2>/dev/null); do
-    BASENAME=$(basename "$f")
-    IS_BASELINE=0
-    for b in $BASELINE_EXTENSIONS; do
-        if [ "$BASENAME" = "$b" ]; then IS_BASELINE=1; break; fi
-    done
-    if [ $IS_BASELINE -eq 0 ]; then
-        REL=$(echo "$f" | sed "s|^/workspace/pi-mono/||")
-        case "$NEW_EXTS" in
-            *"$REL"*) ;;
-            *) NEW_EXTS="$NEW_EXTS $REL" ;;
-        esac
-    fi
-done
-
-NEW_EXTS=$(echo "$NEW_EXTS" | xargs)
-FIRST_EXT=$(echo "$NEW_EXTS" | awk '{print $1}')
-echo "New files: ${NEW_EXTS:-none}"
-
+# Prefer .pi/extensions/*.ts that aren't baseline
 EXT_ABS=""
-if [ -n "$FIRST_EXT" ]; then
-    if [ -f "$FIRST_EXT" ]; then
-        EXT_ABS="$(realpath "$FIRST_EXT" 2>/dev/null || echo "$FIRST_EXT")"
-    elif [ -f "/workspace/pi-mono/$FIRST_EXT" ]; then
-        EXT_ABS="/workspace/pi-mono/$FIRST_EXT"
-    fi
+for f in $NEW_EXTS; do
+    [ -f "$f" ] || continue
+    BN=$(basename "$f")
+    SKIP=0
+    for b in $BASELINE_EXTENSIONS; do
+        [ "$BN" = "$b" ] && SKIP=1 && break
+    done
+    [ $SKIP -eq 1 ] && continue
+    case "$f" in
+        */.pi/extensions/*.ts)
+            EXT_ABS="$f"
+            break
+            ;;
+    esac
+done
+
+# Fallback: any new .ts
+if [ -z "$EXT_ABS" ]; then
+    for f in $NEW_EXTS; do
+        [ -f "$f" ] || continue
+        BN=$(basename "$f")
+        SKIP=0
+        for b in $BASELINE_EXTENSIONS; do
+            [ "$BN" = "$b" ] && SKIP=1 && break
+        done
+        [ $SKIP -eq 1 ] && continue
+        EXT_ABS="$f"
+        break
+    done
 fi
 
+# Last resort: scan .pi/extensions for non-baseline
+if [ -z "$EXT_ABS" ]; then
+    for f in /workspace/pi-mono/.pi/extensions/*.ts; do
+        [ -f "$f" ] || continue
+        BN=$(basename "$f")
+        SKIP=0
+        for b in $BASELINE_EXTENSIONS; do
+            [ "$BN" = "$b" ] && SKIP=1 && break
+        done
+        [ $SKIP -eq 1 ] || { EXT_ABS="$f"; break; }
+    done
+fi
+
+echo "Extension: ${EXT_ABS:-<none>}"
+
 # ============================================================
-# Gate 3 (F2P): New extension file exists
-# Weight: 0.10
+# Gate 3 (Structural): New extension file exists (0.05)
 # ============================================================
-echo "=== Gate 3 (F2P): New extension file exists ==="
-if [ -n "$EXT_ABS" ] && [ -f "$EXT_ABS" ]; then
-    add_reward 0.10
-    echo "PASS (0.10): $EXT_ABS"
+echo "=== Gate 3: Extension file exists ==="
+if [ -n "$EXT_ABS" ] && [ -f "$EXT_ABS" ] && [ -s "$EXT_ABS" ]; then
+    add_reward 0.05
+    echo "PASS (0.05)"
 else
     echo "FAIL"
 fi
 
 # ============================================================
-# Gate 4 (F2P): Extension compiles — bun transpile
-# Weight: 0.10
-# Basic syntax check via bun build --no-bundle.
+# Gate 4 (Structural): Compiles via bun --no-bundle (0.05)
 # ============================================================
-echo "=== Gate 4 (F2P): Extension compiles (bun build) ==="
+echo "=== Gate 4: Extension compiles ==="
+G4_OK=0
 if [ -n "$EXT_ABS" ]; then
     rm -rf /tmp/ext-compile && mkdir -p /tmp/ext-compile
     COMPILE_OUT=$(cd /workspace/pi-mono && bun build --no-bundle "$EXT_ABS" --outdir /tmp/ext-compile 2>&1)
-    if echo "$COMPILE_OUT" | grep -qi "error"; then
-        echo "FAIL: compilation errors"
-    elif echo "$COMPILE_OUT" | grep -qi "transpiled"; then
+    if ! echo "$COMPILE_OUT" | grep -qi "error" && echo "$COMPILE_OUT" | grep -qiE "transpiled|bundled|written"; then
+        add_reward 0.05
+        G4_OK=1
+        echo "PASS (0.05)"
+    else
+        echo "FAIL: $COMPILE_OUT" | head -20
+    fi
+fi
+
+# ============================================================
+# Build a reusable mock harness
+# ============================================================
+mkdir -p /tmp/sigtest
+cat > /tmp/sigtest/harness.ts <<'HARNESS'
+// Generic harness: load extension, capture handlers + commands, expose helpers.
+const extPath = process.argv[2];
+const action = process.argv[3] || "summary";
+
+const handlers: Record<string, Function> = {};
+const commands: Record<string, any> = {};
+const widgets: Record<string, any> = {};
+const notifications: any[] = [];
+const events: any[] = [];
+
+const uiMock = {
+    notify: (msg: string, kind?: string) => { notifications.push({ msg, kind }); },
+    setWidget: (id: string, w: any) => { widgets[id] = w; },
+    setStatus: (_id: string, _v: any) => {},
+    setWorkingMessage: (_v: any) => {},
+    setWorkingIndicator: (_v: any) => {},
+    select: async () => null,
+    confirm: async () => true,
+    theme: {
+        fg: (_c: string, t: string) => t,
+        bg: (_c: string, t: string) => t,
+    },
+};
+
+const ctxMock: any = {
+    hasUI: true,
+    ui: uiMock,
+    session: { id: "test-session" },
+};
+
+const piMock: any = new Proxy({}, {
+    get(_t: any, p: string) {
+        if (p === "on") return (e: string, h: Function) => { handlers[e] = h; };
+        if (p === "registerCommand") return (n: string, o: any) => { commands[n] = o; };
+        if (p === "events") return { emit: (e: string, d: any) => events.push({ e, d }), on: () => {} };
+        if (p === "then") return undefined;
+        return (..._a: any[]) => undefined;
+    },
+});
+
+let mod: any;
+try {
+    mod = await import(extPath);
+} catch (e: any) {
+    console.log(`LOAD_ERROR: ${e.message}`);
+    process.exit(2);
+}
+
+const extFn = mod.default || (mod && Object.values(mod).find((v: any) => typeof v === "function"));
+if (typeof extFn !== "function") {
+    console.log("NO_EXPORT");
+    process.exit(2);
+}
+
+try {
+    const r = extFn(piMock);
+    if (r && typeof r.then === "function") await r;
+} catch (e: any) {
+    console.log(`INIT_ERROR: ${e.message}`);
+    process.exit(2);
+}
+
+// Try to activate via any "start"-like command
+async function activate() {
+    const candidates = Object.keys(commands).filter((n) =>
+        /start|activate|signal|begin|enable|on/i.test(n)
+    );
+    for (const name of candidates) {
+        const cmd = commands[name];
+        const handler = typeof cmd === "function" ? cmd : (cmd && cmd.handler);
+        if (typeof handler === "function") {
+            try {
+                const r = handler("", ctxMock);
+                if (r && r.then) await r;
+                return name;
+            } catch {}
+        }
+    }
+    return null;
+}
+
+async function callBeforeAgentStart() {
+    const h = handlers["before_agent_start"];
+    if (!h) return null;
+    try {
+        return await h(
+            { systemPrompt: "Base prompt.", message: null, messages: [] },
+            ctxMock,
+        );
+    } catch (e: any) {
+        return { __error: e.message };
+    }
+}
+
+async function callMessageEnd(text: string) {
+    const h = handlers["message_end"];
+    if (!h) return null;
+    const message = {
+        role: "assistant",
+        content: [{ type: "text", text }],
+        stopReason: "end_turn",
+    };
+    try {
+        return await h({ message, assistantMessageEvent: { type: "text_delta", delta: text } }, ctxMock);
+    } catch (e: any) {
+        return { __error: e.message };
+    }
+}
+
+async function callMessageUpdate(text: string, delta: string) {
+    const h = handlers["message_update"];
+    if (!h) return null;
+    const message = {
+        role: "assistant",
+        content: [{ type: "text", text }],
+    };
+    try {
+        return await h(
+            { message, assistantMessageEvent: { type: "text_delta", delta } },
+            ctxMock,
+        );
+    } catch (e: any) {
+        return { __error: e.message };
+    }
+}
+
+if (action === "summary") {
+    console.log(JSON.stringify({
+        handlers: Object.keys(handlers),
+        commands: Object.keys(commands),
+    }));
+} else if (action === "before_start") {
+    const activated = await activate();
+    const r = await callBeforeAgentStart();
+    console.log(JSON.stringify({
+        activated,
+        result: r,
+    }));
+} else if (action === "signal_detect") {
+    await activate();
+    await callBeforeAgentStart();
+
+    // Try a variety of signal styles models might emit
+    const signalText = "Sure, I'll help. [[SHOW_UI]] [[OPEN_UI]] [[SIGNAL_OPEN_UI]] Working on it. [[DONE]] [[SIGNAL_DONE]]";
+
+    // Stream via message_update token by token
+    let acc = "";
+    const tokens = signalText.split(/(\s+)/);
+    for (const tok of tokens) {
+        acc += tok;
+        await callMessageUpdate(acc, tok);
+    }
+    // Then fire message_end
+    await callMessageEnd(signalText);
+
+    console.log(JSON.stringify({
+        notifications,
+        widgets: Object.keys(widgets).reduce((acc: any, k) => {
+            acc[k] = widgets[k] !== undefined ? "set" : "cleared";
+            return acc;
+        }, {}),
+        events,
+    }));
+} else if (action === "no_signal_noop") {
+    await activate();
+    await callBeforeAgentStart();
+    const plainText = "Hello, this is a normal message with no special tokens.";
+    let acc = "";
+    for (const tok of plainText.split(/(\s+)/)) {
+        acc += tok;
+        await callMessageUpdate(acc, tok);
+    }
+    await callMessageEnd(plainText);
+    console.log(JSON.stringify({
+        notifications: notifications.length,
+        widgetsTouched: Object.keys(widgets).length,
+    }));
+}
+HARNESS
+
+run_harness() {
+    cd /workspace/pi-mono && timeout 30 bun run /tmp/sigtest/harness.ts "$EXT_ABS" "$1" 2>&1
+}
+
+# ============================================================
+# Gate 5 (F2P Behavioral): Registers handlers + at least one command (0.10)
+# ============================================================
+echo "=== Gate 5 (F2P): Handler & command registration ==="
+HANDLERS=""
+COMMANDS=""
+if [ -n "$EXT_ABS" ] && [ "$G4_OK" = "1" ]; then
+    SUMMARY=$(run_harness "summary")
+    echo "$SUMMARY" | tail -5
+    LAST=$(echo "$SUMMARY" | tail -1)
+    HANDLERS=$(echo "$LAST" | grep -oE '"handlers":\[[^]]*\]' | head -1)
+    COMMANDS=$(echo "$LAST" | grep -oE '"commands":\[[^]]*\]' | head -1)
+    HCOUNT=$(echo "$HANDLERS" | grep -oE '"[a-z_]+"' | wc -l)
+    CCOUNT=$(echo "$COMMANDS" | grep -oE '"[a-z_-]+"' | wc -l)
+    echo "handlers=$HCOUNT commands=$CCOUNT"
+    if [ "$HCOUNT" -ge 1 ] && [ "$CCOUNT" -ge 1 ]; then
+        add_reward 0.10
+        echo "PASS (0.10)"
+    elif [ "$HCOUNT" -ge 1 ]; then
+        add_reward 0.05
+        echo "PARTIAL (0.05): handlers but no commands"
+    else
+        echo "FAIL"
+    fi
+fi
+
+# ============================================================
+# Gate 6 (F2P Behavioral): Listens for assistant output (message_end or message_update) (0.10)
+# ============================================================
+echo "=== Gate 6 (F2P): Listens to assistant message stream ==="
+if [ -n "$HANDLERS" ]; then
+    if echo "$HANDLERS" | grep -qE '"message_end"|"message_update"'; then
         add_reward 0.10
         echo "PASS (0.10)"
     else
-        echo "FAIL"
+        echo "FAIL: no message_end/message_update handler"
     fi
-else
-    echo "SKIP"
 fi
 
 # ============================================================
-# Gate 5 (F2P): Registers event handlers AND slash commands
-# Weight: 0.10
+# Gate 7 (F2P Behavioral): Injects signal protocol when activated (0.20)
+# Strong: must mention signal-style tokens AND at least one verb (open/close/done/ui/show/hide/complete)
+# Partial credit if injection present but no clear protocol vocabulary.
 # ============================================================
-echo "=== Gate 5 (F2P): Registers handlers and commands ==="
-if [ -n "$EXT_ABS" ]; then
-    cat > /tmp/test-gate5.ts <<'HARNESS'
-const extPath = process.argv[2];
-const mod = await import(extPath.startsWith("/") ? extPath : `${process.cwd()}/${extPath}`);
-const extFn = mod.default || mod[Object.keys(mod).find(k => typeof mod[k] === "function") || ""];
-if (typeof extFn !== "function") { console.log("FAIL: no callable export"); process.exit(1); }
-const handlers: Record<string, any> = {};
-const commands: Record<string, any> = {};
-const mockPi: any = new Proxy({}, {
-    get(_t: any, p: string) {
-        if (p === "on") return (e: string, h: any) => { handlers[e] = h; };
-        if (p === "registerCommand") return (n: string, o: any) => { commands[n] = o; };
-        if (p === "then") return undefined;
-        return (..._a: any[]) => undefined;
-    }
-});
-try { const r = extFn(mockPi); if (r?.then) await r; } catch(e: any) { console.log(`FAIL: ${e.message}`); process.exit(1); }
-const h = Object.keys(handlers).length, c = Object.keys(commands).length;
-if (h > 0 && c > 0) { console.log(`PASS: ${h} handlers, ${c} commands`); process.exit(0); }
-else { console.log(`FAIL: handlers=${h} commands=${c}`); process.exit(1); }
-HARNESS
-    G5=$(cd /workspace/pi-mono && bun run /tmp/test-gate5.ts "$EXT_ABS" 2>&1)
-    echo "$G5"
-    if echo "$G5" | grep -q "^PASS"; then
-        add_reward 0.10
-        echo "PASS (0.10)"
+echo "=== Gate 7 (F2P): Signal protocol injection ==="
+if [ -n "$EXT_ABS" ] && [ "$G4_OK" = "1" ]; then
+    BS_OUT=$(run_harness "before_start")
+    echo "$BS_OUT" | tail -3
+    LAST=$(echo "$BS_OUT" | tail -1)
+
+    HAS_RESULT=0
+    HAS_SP=0
+    HAS_TOKENS=0
+    HAS_VERBS=0
+
+    if echo "$LAST" | grep -q '"result"'; then HAS_RESULT=1; fi
+    if echo "$LAST" | grep -qE '"systemPrompt":"[^"]'; then HAS_SP=1; fi
+    # Look for [[ ... ]] tokens or "signal" vocabulary inside the result
+    if echo "$LAST" | grep -qiE '\[\[[A-Z_]+|SIGNAL_|signal '; then HAS_TOKENS=1; fi
+    if echo "$LAST" | grep -qiE 'open|close|done|complete|show|hide|panel|ui'; then HAS_VERBS=1; fi
+
+    if [ $HAS_SP -eq 1 ] && [ $HAS_TOKENS -eq 1 ] && [ $HAS_VERBS -eq 1 ]; then
+        add_reward 0.20
+        echo "PASS (0.20): full protocol injection"
+    elif [ $HAS_SP -eq 1 ] && [ $HAS_TOKENS -eq 1 ]; then
+        add_reward 0.12
+        echo "PARTIAL (0.12): tokens but limited vocabulary"
+    elif [ $HAS_RESULT -eq 1 ] && ([ $HAS_TOKENS -eq 1 ] || [ $HAS_VERBS -eq 1 ]); then
+        add_reward 0.07
+        echo "PARTIAL (0.07): some injection via message"
     else
-        echo "FAIL"
+        echo "FAIL: no signal protocol detected"
     fi
-else
-    echo "SKIP"
 fi
 
 # ============================================================
-# Gate 6 (F2P): before_agent_start injects signal protocol
-# Weight: 0.15
-# Calls handler and checks systemPrompt is augmented with signals.
+# Gate 8 (F2P Behavioral, KEY): Signals from model output trigger reactions (0.30)
+# This is the core behavioral test — does the extension actually react to
+# [[SIGNAL_*]] / [[SHOW_UI]] / [[DONE]] / [[OPEN_UI]] tokens in assistant text?
+# Tiered:
+#   - 0.30: triggers >=2 distinct reactions (notify or setWidget)
+#   - 0.20: triggers exactly 1 reaction
+#   - 0.10: events.emit or some side effect
+#   - 0.00: nothing
 # ============================================================
-echo "=== Gate 6 (F2P): before_agent_start injects signal instructions ==="
-if [ -n "$EXT_ABS" ]; then
-    cat > /tmp/test-gate6.ts <<'HARNESS'
-const extPath = process.argv[2];
-const mod = await import(extPath.startsWith("/") ? extPath : `${process.cwd()}/${extPath}`);
-const extFn = mod.default || mod[Object.keys(mod).find(k => typeof mod[k] === "function") || ""];
-if (typeof extFn !== "function") { console.log("FAIL"); process.exit(1); }
-const handlers: Record<string, any> = {};
-const commands: Record<string, any> = {};
-const mockPi: any = new Proxy({}, {
-    get(_t: any, p: string) {
-        if (p === "on") return (e: string, h: any) => { handlers[e] = h; };
-        if (p === "registerCommand") return (n: string, o: any) => { commands[n] = o; };
-        if (p === "then") return undefined;
-        return (..._a: any[]) => undefined;
-    }
-});
-try { const r = extFn(mockPi); if (r?.then) await r; } catch(e: any) { console.log(`FAIL: ${e.message}`); process.exit(1); }
+echo "=== Gate 8 (F2P): Signal token detection triggers reaction ==="
+if [ -n "$EXT_ABS" ] && [ "$G4_OK" = "1" ]; then
+    SD_OUT=$(run_harness "signal_detect")
+    echo "$SD_OUT" | tail -3
+    LAST=$(echo "$SD_OUT" | tail -1)
 
-// Activate by calling a start-like command
-for (const [name, cmd] of Object.entries(commands)) {
-    if (/start|activate|signal|begin/i.test(name)) {
-        const handler = typeof cmd === "function" ? cmd : (cmd as any)?.handler;
-        if (typeof handler === "function") {
-            try { await handler("", { ui: { notify:()=>{}, select:async()=>null, confirm:async()=>true } }); } catch(_e) {}
-        }
-        break;
-    }
-}
+    NOTIF_COUNT=$(echo "$LAST" | grep -oE '"msg":' | wc -l)
+    WIDGET_SET=$(echo "$LAST" | grep -oE '"set"' | wc -l)
+    EVENT_COUNT=$(echo "$LAST" | grep -oE '"e":' | wc -l)
 
-const bas = handlers["before_agent_start"];
-if (!bas) { console.log("FAIL: no before_agent_start"); process.exit(1); }
-try {
-    const result = await bas({ systemPrompt: "Base prompt.", message: null, messages: [] }, {});
-    if (!result) { console.log("FAIL: returned nothing"); process.exit(1); }
-    if (typeof result.systemPrompt === "string") {
-        const sp = result.systemPrompt.toLowerCase();
-        if (/signal|marker|\[\[/.test(sp) && /open|close|ui|done|complete|input|checkpoint/.test(sp)) {
-            console.log("PASS: systemPrompt augmented with signal protocol");
-            process.exit(0);
-        }
-        console.log("FAIL: systemPrompt modified but missing signal keywords");
-        process.exit(1);
-    }
-    if (result.message && /signal|marker|\[\[/.test(JSON.stringify(result.message).toLowerCase())) {
-        console.log("PASS: signal instructions via message");
-        process.exit(0);
-    }
-    console.log("FAIL: no signal injection detected");
-    process.exit(1);
-} catch(e: any) { console.log(`FAIL: ${e.message}`); process.exit(1); }
-HARNESS
-    G6=$(cd /workspace/pi-mono && bun run /tmp/test-gate6.ts "$EXT_ABS" 2>&1)
-    echo "$G6"
-    if echo "$G6" | grep -q "^PASS"; then
-        add_reward 0.15
-        echo "PASS (0.15)"
-    else
-        echo "FAIL"
-    fi
-else
-    echo "SKIP"
-fi
+    echo "notifications=$NOTIF_COUNT widgets_set=$WIDGET_SET events=$EVENT_COUNT"
 
-# ============================================================
-# Gate 7 (F2P): message_end detects embedded signals
-# Weight: 0.15
-# ============================================================
-echo "=== Gate 7 (F2P): message_end detects signals ==="
-if [ -n "$EXT_ABS" ]; then
-    cat > /tmp/test-gate7.ts <<'HARNESS'
-const extPath = process.argv[2];
-const mod = await import(extPath.startsWith("/") ? extPath : `${process.cwd()}/${extPath}`);
-const extFn = mod.default || mod[Object.keys(mod).find(k => typeof mod[k] === "function") || ""];
-if (typeof extFn !== "function") { console.log("FAIL"); process.exit(1); }
-const handlers: Record<string, any> = {};
-const commands: Record<string, any> = {};
-const logs: string[] = [];
-const origLog = console.log;
-console.log = (...args: any[]) => { logs.push(args.join(" ")); };
-const mockPi: any = new Proxy({}, {
-    get(_t: any, p: string) {
-        if (p === "on") return (e: string, h: any) => { handlers[e] = h; };
-        if (p === "registerCommand") return (n: string, o: any) => { commands[n] = o; };
-        if (p === "then") return undefined;
-        return (..._a: any[]) => undefined;
-    }
-});
-try { const r = extFn(mockPi); if (r?.then) await r; } catch(e: any) { origLog(`FAIL: ${e.message}`); process.exit(1); }
+    REACTIONS=$((NOTIF_COUNT + WIDGET_SET))
 
-// Activate
-for (const [name, cmd] of Object.entries(commands)) {
-    if (/start|activate|signal|begin/i.test(name)) {
-        const handler = typeof cmd === "function" ? cmd : (cmd as any)?.handler;
-        if (typeof handler === "function") {
-            try { await handler("", { ui: { notify:()=>{}, select:async()=>null, confirm:async()=>true } }); } catch(_e) {}
-        }
-        break;
-    }
-}
-
-const me = handlers["message_end"];
-if (!me) { origLog("FAIL: no message_end handler"); process.exit(1); }
-
-const signalText = "Here is content [[SIGNAL_OPEN_UI]] with text";
-try {
-    logs.length = 0;
-    const result = await me({
-        content: signalText,
-        message: { role: "assistant", content: [{ type: "text", text: signalText }] },
-    }, { ui: { notify:()=>{}, setWidget:()=>{} } });
-    console.log = origLog;
-    const logStr = logs.join(" ").toLowerCase();
-    if (/signal|open|detect|received|found/.test(logStr) ||
-        (result && JSON.stringify(result).toLowerCase().includes("signal"))) {
-        origLog("PASS: signal detected and processed");
-        process.exit(0);
-    }
-    origLog("FAIL: no signal detection evidence");
-    process.exit(1);
-} catch(e: any) {
-    console.log = origLog;
-    origLog(`FAIL: message_end threw: ${e.message}`);
-    process.exit(1);
-}
-HARNESS
-    G7=$(cd /workspace/pi-mono && bun run /tmp/test-gate7.ts "$EXT_ABS" 2>&1)
-    echo "$G7"
-    if echo "$G7" | grep -q "^PASS"; then
-        add_reward 0.15
-        echo "PASS (0.15)"
-    else
-        echo "FAIL"
-    fi
-else
-    echo "SKIP"
-fi
-
-# ============================================================
-# Gate 8 (F2P): TypeScript strict type-check passes
-# Weight: 0.30
-# Runs npx tsc --noEmit with a tsconfig that includes the
-# agent's extension. Checks for NEW type errors (beyond the
-# baseline errors in existing .pi/extensions/ files).
-# A correct implementation should match the ExtensionAPI types.
-# ============================================================
-echo "=== Gate 8 (F2P): TypeScript strict type-check ==="
-if [ -n "$EXT_ABS" ]; then
-    # Get the relative path from pi-mono root
-    EXT_REL=$(echo "$EXT_ABS" | sed "s|^/workspace/pi-mono/||")
-
-    # Create a tsconfig that includes .pi/extensions/
-    cat > /workspace/pi-mono/tsconfig-verify.json <<'TSCFG'
-{
-    "extends": "./tsconfig.json",
-    "include": [".pi/extensions/**/*", "packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
-    "exclude": ["packages/web-ui/**/*", "**/dist/**"]
-}
-TSCFG
-
-    # Count errors ONLY from the agent's new extension file
-    TSC_OUT=$(npx tsc --noEmit --project tsconfig-verify.json 2>&1)
-    NEW_ERRORS=$(echo "$TSC_OUT" | grep "^${EXT_REL}" | wc -l)
-    rm -f /workspace/pi-mono/tsconfig-verify.json
-
-    echo "Type errors in $EXT_REL: $NEW_ERRORS"
-    if [ "$NEW_ERRORS" -gt 0 ]; then
-        echo "$TSC_OUT" | grep "^${EXT_REL}" | head -5
-        echo "FAIL: $NEW_ERRORS type errors in extension"
-    else
+    if [ $REACTIONS -ge 2 ]; then
         add_reward 0.30
-        echo "PASS (0.30)"
+        echo "PASS (0.30): multi-reaction signal handling"
+    elif [ $REACTIONS -ge 1 ]; then
+        add_reward 0.20
+        echo "PARTIAL (0.20): single reaction"
+    elif [ $EVENT_COUNT -ge 1 ]; then
+        add_reward 0.10
+        echo "PARTIAL (0.10): event emission only"
+    else
+        echo "FAIL: no observable reaction to signal tokens"
     fi
-else
-    echo "SKIP"
 fi
 
 # ============================================================
-# Final score
+# Gate 9 (F2P Behavioral): No spurious reactions on normal text (0.10)
+# Quality check: when no signal tokens appear, the extension should not
+# fire UI side effects.
 # ============================================================
-echo ""
-echo "============================================"
-echo "FINAL SCORE: $REWARD"
-echo "============================================"
+echo "=== Gate 9 (F2P): No spurious reactions on plain text ==="
+if [ -n "$EXT_ABS" ] && [ "$G4_OK" = "1" ]; then
+    NN_OUT=$(run_harness "no_signal_noop")
+    echo "$NN_OUT" | tail -3
+    LAST=$(echo "$NN_OUT" | tail -1)
+    NN_NOTIF=$(echo "$LAST" | grep -oE '"notifications":[0-9]+' | grep -oE '[0-9]+')
+    NN_WIDGETS=$(echo "$LAST" | grep -oE '"widgetsTouched":[0-9]+' | grep -oE '[0-9]+')
+    NN_NOTIF=${NN_NOTIF:-0}
+    NN_WIDGETS=${NN_WIDGETS:-0}
+    if [ "$NN_NOTIF" = "0" ] && [ "$NN_WIDGETS" = "0" ]; then
+        add_reward 0.10
+        echo "PASS (0.10): clean no-op"
+    elif [ "$NN_NOTIF" -le 1 ] && [ "$NN_WIDGETS" -le 1 ]; then
+        add_reward 0.05
+        echo "PARTIAL (0.05): minor noise"
+    else
+        echo "FAIL: spurious reactions ($NN_NOTIF notif, $NN_WIDGETS widgets)"
+    fi
+fi
+
+echo "=== FINAL REWARD: $REWARD ==="
 echo "$REWARD" > /logs/verifier/reward.txt

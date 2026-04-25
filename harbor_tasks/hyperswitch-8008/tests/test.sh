@@ -1,240 +1,274 @@
 #!/bin/bash
-# Test script for hyperswitch-8008: Move stripe connector from router to hyperswitch_connectors
-#
-# Verifies structural correctness of the refactoring:
-# - Stripe code moved to hyperswitch_connectors crate
-# - Module declarations and re-exports updated
-# - Import patterns adapted for new crate
-# - Old code removed from router crate
-
 set +e
 
+# Test script for hyperswitch-8008: Move stripe connector from router to hyperswitch_connectors
+# Multi-tier: behavioral (cargo check) dominates, structural checks support it.
+
 REPO="/workspace/hyperswitch"
-HC_CONNECTORS="$REPO/crates/hyperswitch_connectors/src/connectors"
-ROUTER_CONNECTOR="$REPO/crates/router/src/connector"
+HC="$REPO/crates/hyperswitch_connectors"
+HC_CONNECTORS="$HC/src/connectors"
+ROUTER="$REPO/crates/router"
+ROUTER_CONNECTOR="$ROUTER/src/connector"
 REWARD_FILE="/logs/verifier/reward.txt"
 
 mkdir -p /logs/verifier
 
-total_tests=0
-passed_tests=0
+# Ensure cargo is on PATH
+export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
+if ! command -v cargo >/dev/null 2>&1; then
+    if [ -f "$HOME/.cargo/env" ]; then
+        . "$HOME/.cargo/env"
+    fi
+fi
 
-pass() {
-    passed_tests=$((passed_tests + 1))
-    total_tests=$((total_tests + 1))
-    echo "PASS: $1"
+REWARD=0
+
+# Helper: add weight (float) to REWARD
+add_reward() {
+    local w="$1"
+    local label="$2"
+    REWARD=$(awk -v r="$REWARD" -v w="$w" 'BEGIN{printf "%.4f", r+w}')
+    echo "PASS [+$w]: $label  (running=$REWARD)"
 }
 
-fail() {
-    total_tests=$((total_tests + 1))
-    echo "FAIL: $1"
+skip_reward() {
+    echo "FAIL [+0]: $1"
 }
 
-# ========================================================================
-# TEST 1: stripe.rs exists in hyperswitch_connectors (weight: high)
-# ========================================================================
-if [ -f "$HC_CONNECTORS/stripe.rs" ]; then
-    # Check it has substantial content (not just a stub)
-    line_count=$(wc -l < "$HC_CONNECTORS/stripe.rs")
-    if [ "$line_count" -gt 100 ]; then
-        pass "T1: stripe.rs exists in hyperswitch_connectors with $line_count lines"
+cd "$REPO" 2>/dev/null || {
+    echo "FATAL: repo path $REPO not found"
+    echo "0" > "$REWARD_FILE"
+    exit 0
+}
+
+# ============================================================================
+# TIER 1: STRUCTURAL VERIFICATIONS (≈ 0.20 total)
+# ============================================================================
+
+# S1 (0.05): stripe.rs exists in hyperswitch_connectors with substantial content
+NEW_STRIPE="$HC_CONNECTORS/stripe.rs"
+if [ -f "$NEW_STRIPE" ]; then
+    lc=$(wc -l < "$NEW_STRIPE")
+    if [ "$lc" -gt 800 ]; then
+        add_reward 0.05 "stripe.rs in hyperswitch_connectors ($lc lines)"
+    elif [ "$lc" -gt 100 ]; then
+        add_reward 0.025 "stripe.rs exists but small ($lc lines)"
     else
-        fail "T1: stripe.rs in hyperswitch_connectors is too small ($line_count lines), likely a stub"
+        skip_reward "stripe.rs is a stub ($lc lines)"
     fi
 else
-    fail "T1: stripe.rs does not exist in hyperswitch_connectors"
+    skip_reward "stripe.rs missing in hyperswitch_connectors"
 fi
 
-# ========================================================================
-# TEST 2: stripe transformers exist in hyperswitch_connectors
-# ========================================================================
-if [ -f "$HC_CONNECTORS/stripe/transformers.rs" ] || [ -d "$HC_CONNECTORS/stripe" ]; then
-    # Check for substantial transformers content
-    if [ -f "$HC_CONNECTORS/stripe/transformers.rs" ]; then
-        tl=$(wc -l < "$HC_CONNECTORS/stripe/transformers.rs")
-        if [ "$tl" -gt 500 ]; then
-            pass "T2: stripe/transformers.rs exists in hyperswitch_connectors ($tl lines)"
+# S2 (0.05): transformers exist with substantial content
+TRANSFORMERS_FILE="$HC_CONNECTORS/stripe/transformers.rs"
+TRANSFORMERS_DIR="$HC_CONNECTORS/stripe"
+if [ -f "$TRANSFORMERS_FILE" ]; then
+    tl=$(wc -l < "$TRANSFORMERS_FILE")
+    if [ "$tl" -gt 1500 ]; then
+        add_reward 0.05 "stripe/transformers.rs ($tl lines)"
+    elif [ "$tl" -gt 500 ]; then
+        add_reward 0.025 "stripe/transformers.rs medium ($tl lines)"
+    else
+        skip_reward "stripe/transformers.rs too small ($tl lines)"
+    fi
+elif [ -d "$TRANSFORMERS_DIR" ]; then
+    total=$(find "$TRANSFORMERS_DIR" -name "*.rs" -exec cat {} + 2>/dev/null | wc -l)
+    if [ "$total" -gt 1500 ]; then
+        add_reward 0.05 "stripe/ dir ($total lines total)"
+    else
+        skip_reward "stripe/ dir too small ($total lines)"
+    fi
+else
+    skip_reward "no stripe transformers"
+fi
+
+# S3 (0.04): pub mod stripe; declared and Stripe re-exported
+CONNECTORS_RS="$HC/src/connectors.rs"
+mod_ok=0
+reexport_ok=0
+if grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$CONNECTORS_RS" 2>/dev/null; then
+    mod_ok=1
+fi
+if grep -qE 'stripe::Stripe' "$CONNECTORS_RS" 2>/dev/null; then
+    reexport_ok=1
+fi
+if [ "$mod_ok" -eq 1 ] && [ "$reexport_ok" -eq 1 ]; then
+    add_reward 0.04 "pub mod stripe + Stripe re-export in connectors.rs"
+elif [ "$mod_ok" -eq 1 ] || [ "$reexport_ok" -eq 1 ]; then
+    add_reward 0.02 "partial: mod or re-export only"
+else
+    skip_reward "neither mod nor re-export of stripe"
+fi
+
+# S4 (0.03): router crate no longer has stripe.rs (or it's a stub) AND no stripe dir module
+ROUTER_STRIPE_RS="$ROUTER_CONNECTOR/stripe.rs"
+ROUTER_STRIPE_DIR="$ROUTER_CONNECTOR/stripe"
+ROUTER_CONNECTOR_RS="$ROUTER/src/connector.rs"
+removed_ok=0
+if [ ! -f "$ROUTER_STRIPE_RS" ] && [ ! -d "$ROUTER_STRIPE_DIR" ]; then
+    removed_ok=1
+elif [ -f "$ROUTER_STRIPE_RS" ]; then
+    rs_lines=$(wc -l < "$ROUTER_STRIPE_RS")
+    if [ "$rs_lines" -lt 50 ]; then
+        removed_ok=1
+    fi
+fi
+# Also confirm router/src/connector.rs no longer declares `pub mod stripe;`
+mod_decl_removed=1
+if grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$ROUTER_CONNECTOR_RS" 2>/dev/null; then
+    mod_decl_removed=0
+fi
+if [ "$removed_ok" -eq 1 ] && [ "$mod_decl_removed" -eq 1 ]; then
+    add_reward 0.03 "router stripe module removed"
+elif [ "$removed_ok" -eq 1 ] || [ "$mod_decl_removed" -eq 1 ]; then
+    add_reward 0.015 "router stripe partly removed"
+else
+    skip_reward "router still has stripe module"
+fi
+
+# S5 (0.03): router connector.rs re-exports Stripe from hyperswitch_connectors
+if grep -qE 'stripe::Stripe' "$ROUTER_CONNECTOR_RS" 2>/dev/null; then
+    # Make sure it's in the hyperswitch_connectors re-export block, not local
+    if grep -B2 -A50 'pub use hyperswitch_connectors::connectors' "$ROUTER_CONNECTOR_RS" 2>/dev/null | grep -qE 'stripe::Stripe'; then
+        add_reward 0.03 "router re-exports stripe::Stripe from hyperswitch_connectors"
+    else
+        add_reward 0.015 "router references stripe::Stripe (location unclear)"
+    fi
+else
+    skip_reward "router connector.rs does not re-export Stripe"
+fi
+
+# ============================================================================
+# TIER 2: IMPORT-HYGIENE (≈ 0.10 total) — adapted code patterns
+# ============================================================================
+
+# I1 (0.05): new stripe.rs uses hyperswitch_interfaces / hyperswitch_domain_models
+if [ -f "$NEW_STRIPE" ]; then
+    if grep -qE 'use hyperswitch_interfaces' "$NEW_STRIPE" && grep -qE 'use hyperswitch_domain_models' "$NEW_STRIPE"; then
+        add_reward 0.05 "new stripe.rs uses hyperswitch_interfaces + domain_models"
+    elif grep -qE 'hyperswitch_interfaces|hyperswitch_domain_models' "$NEW_STRIPE"; then
+        add_reward 0.025 "new stripe.rs uses one of the hs crates"
+    else
+        skip_reward "new stripe.rs missing expected imports"
+    fi
+else
+    skip_reward "no new stripe.rs to inspect"
+fi
+
+# I2 (0.05): new stripe.rs does NOT have router-specific crate:: imports
+if [ -f "$NEW_STRIPE" ]; then
+    bad=$(grep -cE '^\s*use\s+crate::(configs|core::|services::|consts::|headers;|types::api|utils::crypto)' "$NEW_STRIPE" 2>/dev/null)
+    bad=${bad:-0}
+    bad=$(echo "$bad" | tr -d '[:space:]')
+    if [ "${bad:-0}" -eq 0 ]; then
+        add_reward 0.05 "no router-specific crate:: imports"
+    elif [ "$bad" -lt 3 ]; then
+        add_reward 0.02 "few residual crate:: imports ($bad)"
+    else
+        skip_reward "$bad router-specific crate:: imports remain"
+    fi
+else
+    skip_reward "no new stripe.rs to inspect"
+fi
+
+# ============================================================================
+# TIER 3: BEHAVIORAL — cargo check (≈ 0.70 total)
+# ============================================================================
+
+if ! command -v cargo >/dev/null 2>&1; then
+    skip_reward "cargo not available; skipping behavioral checks"
+    echo "$REWARD" > "$REWARD_FILE"
+    echo "FINAL REWARD: $REWARD"
+    exit 0
+fi
+
+LOG_DIR="/logs/verifier"
+mkdir -p "$LOG_DIR"
+
+# B1 (0.40): cargo check on hyperswitch_connectors crate
+echo "==> Running cargo check on hyperswitch_connectors (this may take a while)..."
+HC_LOG="$LOG_DIR/cargo_hc.log"
+timeout 1500 cargo check -p hyperswitch_connectors --message-format=short > "$HC_LOG" 2>&1
+HC_RC=$?
+
+if [ "$HC_RC" -eq 0 ]; then
+    add_reward 0.40 "hyperswitch_connectors compiles cleanly"
+else
+    # Partial credit based on error count
+    err_count=$(grep -cE '^error(\[E[0-9]+\])?:' "$HC_LOG" 2>/dev/null)
+    err_count=${err_count:-999}
+    err_count=$(echo "$err_count" | tr -d '[:space:]')
+    err_count=${err_count:-999}
+    if [ "$err_count" -le 5 ]; then
+        add_reward 0.20 "hyperswitch_connectors near-compiles ($err_count errors)"
+    elif [ "$err_count" -le 20 ]; then
+        add_reward 0.10 "hyperswitch_connectors many errors ($err_count)"
+    elif [ "$err_count" -le 100 ]; then
+        add_reward 0.03 "hyperswitch_connectors heavy errors ($err_count)"
+    else
+        skip_reward "hyperswitch_connectors fails ($err_count errors)"
+    fi
+    # Show first few errors for debugging
+    echo "--- first errors from hyperswitch_connectors check ---"
+    grep -E '^error' "$HC_LOG" 2>/dev/null | head -8
+    echo "------"
+fi
+
+# B2 (0.25): cargo check on router crate (verifies the re-export works)
+echo "==> Running cargo check on router..."
+ROUTER_LOG="$LOG_DIR/cargo_router.log"
+timeout 1500 cargo check -p router --message-format=short > "$ROUTER_LOG" 2>&1
+ROUTER_RC=$?
+
+if [ "$ROUTER_RC" -eq 0 ]; then
+    add_reward 0.25 "router crate compiles cleanly"
+else
+    err_count=$(grep -cE '^error(\[E[0-9]+\])?:' "$ROUTER_LOG" 2>/dev/null)
+    err_count=${err_count:-999}
+    err_count=$(echo "$err_count" | tr -d '[:space:]')
+    err_count=${err_count:-999}
+    if [ "$err_count" -le 5 ]; then
+        add_reward 0.12 "router near-compiles ($err_count errors)"
+    elif [ "$err_count" -le 20 ]; then
+        add_reward 0.06 "router many errors ($err_count)"
+    elif [ "$err_count" -le 100 ]; then
+        add_reward 0.02 "router heavy errors ($err_count)"
+    else
+        skip_reward "router fails ($err_count errors)"
+    fi
+    echo "--- first errors from router check ---"
+    grep -E '^error' "$ROUTER_LOG" 2>/dev/null | head -8
+    echo "------"
+fi
+
+# B3 (0.05): symbol resolves — `cargo check` with explicit --tests is too costly,
+# so instead verify the Stripe symbol path is reachable via doc/check on a tiny stub.
+# We do a lighter check: cargo check on hyperswitch_connectors with --features default still
+# resolves stripe::Stripe in connectors.rs. Use rustc to grep for the symbol from the
+# successful compilation already done.
+if [ "$HC_RC" -eq 0 ] && [ "$ROUTER_RC" -eq 0 ]; then
+    add_reward 0.05 "both crates build — refactor end-to-end works"
+else
+    # If cargo metadata still resolves the package and stripe module is wired in
+    if cargo metadata --format-version 1 --no-deps >/dev/null 2>&1; then
+        if grep -qE 'stripe::Stripe' "$CONNECTORS_RS" && grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$CONNECTORS_RS"; then
+            add_reward 0.02 "wiring present though build incomplete"
         else
-            fail "T2: stripe/transformers.rs too small ($tl lines), expected 500+"
+            skip_reward "wiring missing"
         fi
-    elif [ -d "$HC_CONNECTORS/stripe" ]; then
-        # Maybe transformers is a module with subfiles
-        total_stripe_lines=$(find "$HC_CONNECTORS/stripe" -name "*.rs" -exec cat {} + | wc -l)
-        if [ "$total_stripe_lines" -gt 500 ]; then
-            pass "T2: stripe/ directory in hyperswitch_connectors has $total_stripe_lines lines total"
-        else
-            fail "T2: stripe/ directory too small ($total_stripe_lines lines)"
-        fi
-    fi
-else
-    fail "T2: No stripe transformers found in hyperswitch_connectors"
-fi
-
-# ========================================================================
-# TEST 3: Module declaration in hyperswitch_connectors/src/connectors.rs
-# ========================================================================
-connectors_rs="$REPO/crates/hyperswitch_connectors/src/connectors.rs"
-if grep -q 'pub mod stripe;' "$connectors_rs" 2>/dev/null || grep -q 'pub mod stripe$' "$connectors_rs" 2>/dev/null; then
-    # Make sure it's 'stripe' not just 'stripebilling'
-    if grep -qE '^\s*pub\s+mod\s+stripe\s*;' "$connectors_rs" 2>/dev/null; then
-        pass "T3: 'pub mod stripe;' declared in hyperswitch_connectors connectors.rs"
     else
-        fail "T3: Only found stripebilling, not stripe module declaration"
+        skip_reward "cargo metadata fails"
     fi
-else
-    fail "T3: No 'pub mod stripe;' in hyperswitch_connectors connectors.rs"
 fi
 
-# ========================================================================
-# TEST 4: Stripe struct re-exported from hyperswitch_connectors
-# ========================================================================
-if grep -qE 'stripe::Stripe' "$connectors_rs" 2>/dev/null; then
-    pass "T4: Stripe struct re-exported from hyperswitch_connectors"
-else
-    fail "T4: Stripe struct not re-exported from hyperswitch_connectors connectors.rs"
-fi
+# ============================================================================
+# Cap reward at 1.0
+# ============================================================================
+REWARD=$(awk -v r="$REWARD" 'BEGIN{ if (r>1.0) r=1.0; if (r<0) r=0; printf "%.4f", r }')
 
-# ========================================================================
-# TEST 5: Router crate no longer has stripe as local module (or greatly reduced)
-# ========================================================================
-router_connector_rs="$REPO/crates/router/src/connector.rs"
-router_stripe_rs="$ROUTER_CONNECTOR/stripe.rs"
-
-if [ -f "$router_stripe_rs" ]; then
-    old_lines=$(wc -l < "$router_stripe_rs")
-    if [ "$old_lines" -lt 100 ]; then
-        pass "T5: Router stripe.rs reduced to $old_lines lines (likely re-export stub)"
-    else
-        fail "T5: Router stripe.rs still has $old_lines lines — code not moved"
-    fi
-else
-    # File doesn't exist — good, it's been moved
-    pass "T5: Router stripe.rs removed (code moved to hyperswitch_connectors)"
-fi
-
-# ========================================================================
-# TEST 6: Router connector.rs updated — stripe re-exported from hyperswitch_connectors
-# ========================================================================
-if grep -qE 'hyperswitch_connectors.*stripe.*Stripe|stripe,\s*stripe::Stripe' "$router_connector_rs" 2>/dev/null; then
-    pass "T6: Router connector.rs re-exports Stripe from hyperswitch_connectors"
-elif ! [ -f "$router_stripe_rs" ] || [ "$(wc -l < "$router_stripe_rs" 2>/dev/null || echo 0)" -lt 50 ]; then
-    # If stripe.rs was fully removed and there's a re-export in connector.rs
-    if grep -q 'stripe' "$router_connector_rs" 2>/dev/null; then
-        pass "T6: Router connector.rs references stripe (likely re-exported)"
-    else
-        fail "T6: Router connector.rs has no stripe reference"
-    fi
-else
-    fail "T6: Router connector.rs doesn't re-export Stripe from hyperswitch_connectors"
-fi
-
-# ========================================================================
-# TEST 7: New stripe.rs uses hyperswitch_interfaces imports (not crate:: router imports)
-# ========================================================================
-new_stripe="$HC_CONNECTORS/stripe.rs"
-if [ -f "$new_stripe" ]; then
-    # Check for hyperswitch_interfaces or hyperswitch_domain_models imports
-    if grep -qE 'hyperswitch_interfaces|hyperswitch_domain_models' "$new_stripe" 2>/dev/null; then
-        pass "T7: New stripe.rs uses hyperswitch_interfaces/domain_models imports"
-    else
-        fail "T7: New stripe.rs does not use expected hyperswitch crate imports"
-    fi
-else
-    fail "T7: Cannot check imports — new stripe.rs doesn't exist"
-fi
-
-# ========================================================================
-# TEST 8: New stripe.rs does NOT have router-specific crate:: imports
-# ========================================================================
-if [ -f "$new_stripe" ]; then
-    # Check for router-specific imports that should have been adapted
-    bad_imports=$(grep -cE 'use crate::(configs|core|services|consts|headers|types::self|utils::crypto)' "$new_stripe" 2>/dev/null || true)
-    bad_imports=$(echo "$bad_imports" | tr -d '[:space:]')
-    bad_imports=${bad_imports:-0}
-    if [ "$bad_imports" -eq 0 ]; then
-        pass "T8: No router-specific crate:: imports found in new stripe.rs"
-    else
-        fail "T8: Found $bad_imports router-specific crate:: imports in new stripe.rs (not adapted)"
-    fi
-else
-    fail "T8: Cannot check imports — new stripe.rs doesn't exist"
-fi
-
-# ========================================================================
-# TEST 9: Stripe struct definition exists in new location
-# ========================================================================
-if [ -f "$new_stripe" ]; then
-    if grep -qE 'pub struct Stripe' "$new_stripe" 2>/dev/null; then
-        pass "T9: 'pub struct Stripe' found in new stripe.rs"
-    else
-        fail "T9: 'pub struct Stripe' not found in new stripe.rs"
-    fi
-else
-    fail "T9: Cannot check struct — new stripe.rs doesn't exist"
-fi
-
-# ========================================================================
-# TEST 10: Transformers moved — check connect.rs submodule
-# ========================================================================
-if [ -f "$HC_CONNECTORS/stripe/transformers/connect.rs" ]; then
-    cl=$(wc -l < "$HC_CONNECTORS/stripe/transformers/connect.rs")
-    if [ "$cl" -gt 50 ]; then
-        pass "T10: connect.rs submodule moved to hyperswitch_connectors ($cl lines)"
-    else
-        fail "T10: connect.rs too small ($cl lines)"
-    fi
-elif [ -d "$HC_CONNECTORS/stripe" ]; then
-    # Maybe the transformers structure was flattened, check total content
-    if find "$HC_CONNECTORS/stripe" -name "*.rs" | xargs grep -l 'connect\|Connect' 2>/dev/null | head -1 | grep -q '.'; then
-        pass "T10: Connect-related code found in stripe directory"
-    else
-        fail "T10: No connect submodule/code found in hyperswitch_connectors stripe directory"
-    fi
-else
-    fail "T10: No stripe directory in hyperswitch_connectors"
-fi
-
-# ========================================================================
-# TEST 11: Router's stripe/transformers removed or greatly reduced
-# ========================================================================
-old_transformers="$ROUTER_CONNECTOR/stripe/transformers.rs"
-if [ -f "$old_transformers" ]; then
-    ot_lines=$(wc -l < "$old_transformers")
-    if [ "$ot_lines" -lt 100 ]; then
-        pass "T11: Router stripe/transformers.rs reduced to $ot_lines lines"
-    else
-        fail "T11: Router stripe/transformers.rs still has $ot_lines lines — not moved"
-    fi
-else
-    pass "T11: Router stripe/transformers.rs removed"
-fi
-
-# ========================================================================
-# TEST 12: New code implements ConnectorCommon trait
-# ========================================================================
-if [ -f "$new_stripe" ]; then
-    if grep -qE 'impl\s+ConnectorCommon\s+for\s+Stripe' "$new_stripe" 2>/dev/null; then
-        pass "T12: ConnectorCommon implemented for Stripe in new location"
-    else
-        fail "T12: ConnectorCommon not implemented for Stripe in new stripe.rs"
-    fi
-else
-    fail "T12: Cannot check trait impl — new stripe.rs doesn't exist"
-fi
-
-# ========================================================================
-# Compute final reward
-# ========================================================================
-if [ "$total_tests" -gt 0 ]; then
-    reward=$(awk "BEGIN {printf \"%.2f\", $passed_tests / $total_tests}")
-else
-    reward="0.00"
-fi
-
-echo ""
-echo "========================================"
-echo "RESULTS: $passed_tests / $total_tests tests passed"
-echo "REWARD: $reward"
-echo "========================================"
-
-echo "$reward" > "$REWARD_FILE"
+echo "============================================"
+echo "FINAL REWARD: $REWARD"
+echo "============================================"
+echo "$REWARD" > "$REWARD_FILE"
+exit 0

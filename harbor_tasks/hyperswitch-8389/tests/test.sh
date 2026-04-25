@@ -1,245 +1,469 @@
 #!/bin/bash
+set +e
+
 # Verifier for hyperswitch-8389: KV Redis feature for V2 models
-#
-# Tests check for correct V2 KV Redis support implementation:
-# - V2 route handlers with proper auth
-# - V2 route registration
-# - V2 OpenAPI docs
-# - Proper V1/V2 feature gating (CRITICAL for compilation)
-# - Storage and diesel model changes
-#
-# BASE STATE (commit c5c0e67): No V2 KV support exists.
+# Behavioral-leaning multi-tier scoring focused on:
+#   - V2 PaymentIntentUpdateInternal::apply_changeset implementation (no todo!)
+#   - V2 PaymentAttemptUpdate / PaymentAttemptUpdateInternal apply_changeset (no todo!)
+#   - V2 storage_impl payment_intent KV branch implementation (insert/update/find)
+#   - V2 UniqueConstraints impl for PaymentAttempt
+#   - Cargo check parses (compiles syntactically) for diesel_models with v2 feature
+#   - Structural plumbing: openapi_v2 KV reference, app.rs/admin.rs registration
 
-set -euo pipefail
+REPO_DIR=""
+for cand in /workspace/hyperswitch /workspace/hyperswitch_pool_0 ./repos/hyperswitch_pool_0 /workspace/repo; do
+    if [ -d "$cand" ]; then REPO_DIR="$cand"; break; fi
+done
 
-REPO_DIR="/workspace/hyperswitch"
-REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 
-TOTAL=0
-PASSED=0
+if [ -z "$REPO_DIR" ] || [ ! -d "$REPO_DIR" ]; then
+    echo "FATAL: repo not found"
+    echo "0.0" > /logs/verifier/reward.txt
+    exit 0
+fi
 
-pass() {
-    PASSED=$((PASSED + 1))
-    TOTAL=$((TOTAL + 1))
-    echo "PASS: $1"
-}
+cd "$REPO_DIR" || { echo "0.0" > /logs/verifier/reward.txt; exit 0; }
 
-fail() {
-    TOTAL=$((TOTAL + 1))
-    echo "FAIL: $1"
-}
-
-cd "$REPO_DIR"
+export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
+if ! command -v cargo >/dev/null 2>&1; then
+    for p in /usr/local/cargo/bin /root/.cargo/bin /opt/cargo/bin; do
+        [ -x "$p/cargo" ] && export PATH="$p:$PATH"
+    done
+fi
 
 BASE_COMMIT="c5c0e677f2a2d43170a66330c98e0ebc4d771717"
+DIESEL_PI="crates/diesel_models/src/payment_intent.rs"
+DIESEL_PA="crates/diesel_models/src/payment_attempt.rs"
+SI_LIB="crates/storage_impl/src/lib.rs"
+SI_PI="crates/storage_impl/src/payments/payment_intent.rs"
+SI_PA="crates/storage_impl/src/payments/payment_attempt.rs"
 ADMIN_RS="crates/router/src/routes/admin.rs"
 APP_RS="crates/router/src/routes/app.rs"
-OPENAPI_RS="crates/openapi/src/routes/merchant_account.rs"
+OPENAPI_V2="crates/openapi/src/openapi_v2.rs"
 
-# Helper: check if file was changed from base
-file_changed() {
-    local file="$1"
-    local base_content curr_content
-    base_content=$(git show "${BASE_COMMIT}:${file}" 2>/dev/null || echo "__MISSING__")
-    curr_content=$(cat "$file" 2>/dev/null || echo "__MISSING2__")
-    [ "$base_content" != "$curr_content" ]
+SCORE=0.0
+
+add_score() {
+    local v="$1"
+    SCORE=$(awk -v a="$SCORE" -v b="$v" 'BEGIN{printf "%.4f", a+b}')
+    echo "  +$v -> total=$SCORE ($2)"
 }
 
-# ============================================================
-# TEST 1: admin.rs has V2 KV toggle function
-# Base: 1 kv_for_merchant call. V2 adds a second.
-# ============================================================
-KV_MERCHANT_COUNT=$(grep -c 'kv_for_merchant' "$ADMIN_RS" 2>/dev/null || echo "0")
-if [ "$KV_MERCHANT_COUNT" -ge 2 ]; then
-    pass "T1: V2 KV toggle function added ($KV_MERCHANT_COUNT kv_for_merchant calls)"
-else
-    fail "T1: No V2 KV toggle (kv_for_merchant count: $KV_MERCHANT_COUNT)"
-fi
+file_get_base() {
+    git show "${BASE_COMMIT}:$1" 2>/dev/null
+}
 
-# ============================================================
-# TEST 2: V2 KV toggle uses V2AdminApiAuth
-# ============================================================
-KV_LINES=$(grep -n 'kv_for_merchant' "$ADMIN_RS" 2>/dev/null | cut -d: -f1)
-FOUND_V2_AUTH=0
-for line in $KV_LINES; do
-    START=$((line - 20))
-    END=$((line + 10))
-    if [ "$START" -lt 1 ]; then START=1; fi
-    if sed -n "${START},${END}p" "$ADMIN_RS" 2>/dev/null | grep -qE 'V2AdminApiAuth'; then
-        FOUND_V2_AUTH=1
-        break
-    fi
-done
-if [ "$FOUND_V2_AUTH" -eq 1 ]; then
-    pass "T2: V2 KV toggle uses V2AdminApiAuth"
-else
-    fail "T2: V2AdminApiAuth not found near kv_for_merchant"
-fi
+count_in_file() {
+    # count_in_file <file> <pattern>
+    local f="$1" p="$2"
+    local n
+    n=$(grep -c -E "$p" "$f" 2>/dev/null)
+    [ -z "$n" ] && n=0
+    echo "$n"
+}
 
-# ============================================================
-# TEST 3: app.rs V2 MerchantAccount block registers /kv route
-# ============================================================
-FOUND_V2_KV=0
-while IFS= read -r line_num; do
-    PREV_START=$((line_num - 3))
-    if [ "$PREV_START" -lt 1 ]; then PREV_START=1; fi
-    CONTEXT=$(sed -n "${PREV_START},${line_num}p" "$APP_RS" 2>/dev/null)
-    if echo "$CONTEXT" | grep -qE 'cfg.*v2.*olap|cfg.*olap.*v2'; then
-        BLOCK=$(sed -n "${line_num},$((line_num + 40))p" "$APP_RS" 2>/dev/null | sed '/^#\[cfg/q' | head -n -1)
-        if echo "$BLOCK" | grep -q 'v2/merchant-accounts' && echo "$BLOCK" | grep -qE '"/kv"|/kv\)|toggle_kv'; then
-            FOUND_V2_KV=1
-            break
+# Extract a function/impl block by signature pattern; prints first matching block
+extract_block_after_match() {
+    local file="$1" pattern="$2" max_lines="${3:-200}"
+    awk -v pat="$pattern" -v maxl="$max_lines" '
+        BEGIN{found=0; depth=0; printed=0}
+        {
+            if (!found && match($0, pat)) {
+                found=1
+                # find first {
+            }
+            if (found) {
+                line=$0
+                # count braces
+                n1=gsub(/\{/,"{",line)
+                n2=gsub(/\}/,"}",line)
+                # restore $0 (gsub modifies copy)
+                print $0
+                started=started+n1
+                depth+=n1
+                depth-=n2
+                printed++
+                if (started>0 && depth<=0) exit
+                if (printed>=maxl) exit
+            }
+        }
+    ' "$file" 2>/dev/null
+}
+
+echo "=== TIER A: V2 apply_changeset implementations (max 0.25) ==="
+
+# A1: PaymentIntentUpdateInternal::apply_changeset for v2 — must NOT be todo!() (0.13)
+A1_OK=0
+if [ -f "$DIESEL_PI" ]; then
+    # Find any v2-gated impl of apply_changeset taking PaymentIntent source
+    # Check that it constructs PaymentIntent { ... } with multiple field assignments and ..source
+    BLOCK=$(awk '
+        /#\[cfg\(feature = "v2"\)\]/ {gate=1; buf=""; next}
+        gate==1 && /^[[:space:]]*$/ {next}
+        gate==1 {
+            if ($0 ~ /impl[[:space:]]+PaymentIntentUpdate(Internal)?[[:space:]]*\{/) {
+                inblock=1; depth=0
+            } else {
+                gate=0
+            }
+        }
+        inblock {
+            print
+            n1=gsub(/\{/,"{")
+            n2=gsub(/\}/,"}")
+            depth += n1 - n2
+            if (depth<=0 && /\}/) {inblock=0; gate=0; print "---END---"}
+        }
+    ' "$DIESEL_PI")
+    if echo "$BLOCK" | grep -q 'apply_changeset'; then
+        # Extract just the apply_changeset function body
+        FN_BODY=$(echo "$BLOCK" | awk '
+            /fn apply_changeset/ {found=1; depth=0}
+            found {
+                print
+                n1=gsub(/\{/,"{")
+                n2=gsub(/\}/,"}")
+                depth += n1 - n2
+                if (depth<=0 && /\}/) exit
+            }
+        ')
+        if [ -n "$FN_BODY" ]; then
+            HAS_TODO=$(echo "$FN_BODY" | grep -cE 'todo!\(\)|todo!\("')
+            HAS_PI_CTOR=$(echo "$FN_BODY" | grep -cE 'PaymentIntent[[:space:]]*\{')
+            HAS_SOURCE=$(echo "$FN_BODY" | grep -cE '\.\.source')
+            FIELD_COUNT=$(echo "$FN_BODY" | grep -cE '(unwrap_or|\.or)\(source\.')
+            if [ "$HAS_TODO" -eq 0 ] && [ "$HAS_PI_CTOR" -ge 1 ] && [ "$HAS_SOURCE" -ge 1 ] && [ "$FIELD_COUNT" -ge 10 ]; then
+                A1_OK=1
+            elif [ "$HAS_TODO" -eq 0 ] && [ "$HAS_PI_CTOR" -ge 1 ] && [ "$FIELD_COUNT" -ge 5 ]; then
+                A1_OK=2
+            fi
         fi
     fi
-done < <(grep -n 'impl MerchantAccount' "$APP_RS" 2>/dev/null | cut -d: -f1)
-if [ "$FOUND_V2_KV" -eq 1 ]; then
-    pass "T3: V2 MerchantAccount block has /kv route"
+fi
+if [ "$A1_OK" = "1" ]; then
+    add_score 0.13 "A1: V2 PaymentIntentUpdate(Internal)::apply_changeset fully implemented"
+elif [ "$A1_OK" = "2" ]; then
+    add_score 0.07 "A1-partial: V2 apply_changeset partially implemented"
 else
-    fail "T3: V2 MerchantAccount block missing /kv route"
+    echo "  A1 FAIL: V2 PaymentIntentUpdate(Internal)::apply_changeset missing/todo"
 fi
 
-# ============================================================
-# TEST 4: OpenAPI V2 KV endpoint documentation
-# ============================================================
-if file_changed "$OPENAPI_RS"; then
-    if grep -qE 'v2/merchant.accounts.*kv|v2.*accounts.*kv' "$OPENAPI_RS" 2>/dev/null; then
-        pass "T4: OpenAPI has V2 KV endpoint path"
-    elif grep -B2 -A5 'cfg.*v2' "$OPENAPI_RS" 2>/dev/null | grep -qiE 'kv|toggle'; then
-        pass "T4: OpenAPI has V2-gated KV docs"
-    else
-        fail "T4: OpenAPI changed but no V2 KV endpoint"
-    fi
-else
-    fail "T4: OpenAPI not modified"
-fi
-
-# ============================================================
-# TEST 5: V1 merchant_account_toggle_kv properly feature-gated
-# CRITICAL: Without cfg(v1) on V1 version, having duplicate function names
-# (V1 ungated + V2 with cfg(v2)) causes compilation failure.
-# Check: the FIRST occurrence of merchant_account_toggle_kv must have cfg(v1).
-# ============================================================
-FIRST_TOGGLE_LINE=$(grep -n 'pub async fn merchant_account_toggle_kv' "$ADMIN_RS" 2>/dev/null | head -1 | cut -d: -f1)
-if [ -n "$FIRST_TOGGLE_LINE" ]; then
-    GATE_START=$((FIRST_TOGGLE_LINE - 5))
-    if [ "$GATE_START" -lt 1 ]; then GATE_START=1; fi
-    GATE_CONTEXT=$(sed -n "${GATE_START},${FIRST_TOGGLE_LINE}p" "$ADMIN_RS" 2>/dev/null)
-    TOGGLE_COUNT=$(grep -c 'pub async fn merchant_account_toggle_kv' "$ADMIN_RS" 2>/dev/null || echo "0")
-    if [ "$TOGGLE_COUNT" -lt 2 ]; then
-        fail "T5: Only $TOGGLE_COUNT toggle_kv version(s) - V2 version not added"
-    elif echo "$GATE_CONTEXT" | grep -qE 'cfg.*feature.*"v1"'; then
-        pass "T5: V1 toggle_kv properly gated with cfg(v1)"
-    else
-        fail "T5: V1 toggle_kv MISSING cfg(v1) gate (compile error risk)"
-    fi
-else
-    fail "T5: merchant_account_toggle_kv not found"
-fi
-
-# ============================================================
-# TEST 6: V1 merchant_account_kv_status properly feature-gated
-# Same issue: the V1 kv_status function needs cfg(v1) when a V2 version exists.
-# ============================================================
-FIRST_STATUS_LINE=$(grep -n 'pub async fn merchant_account_kv_status' "$ADMIN_RS" 2>/dev/null | head -1 | cut -d: -f1)
-if [ -n "$FIRST_STATUS_LINE" ]; then
-    GATE_START=$((FIRST_STATUS_LINE - 5))
-    if [ "$GATE_START" -lt 1 ]; then GATE_START=1; fi
-    GATE_CONTEXT=$(sed -n "${GATE_START},${FIRST_STATUS_LINE}p" "$ADMIN_RS" 2>/dev/null)
-    STATUS_COUNT=$(grep -c 'pub async fn merchant_account_kv_status' "$ADMIN_RS" 2>/dev/null || echo "0")
-    if [ "$STATUS_COUNT" -lt 2 ]; then
-        fail "T6: Only $STATUS_COUNT kv_status version(s) - V2 version not added"
-    elif echo "$GATE_CONTEXT" | grep -qE 'cfg.*feature.*"v1"'; then
-        pass "T6: V1 kv_status properly gated with cfg(v1)"
-    else
-        fail "T6: V1 kv_status MISSING cfg(v1) gate (compile error risk)"
-    fi
-else
-    fail "T6: merchant_account_kv_status not found"
-fi
-
-# ============================================================
-# TEST 7: Agent committed changes
-# ============================================================
-CURRENT_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
-if [ "$CURRENT_HEAD" != "$BASE_COMMIT" ] && [ -n "$CURRENT_HEAD" ]; then
-    pass "T7: Agent committed changes"
-else
-    CHANGED_FILES=$(git diff --name-only 2>/dev/null | wc -l)
-    if [ "$CHANGED_FILES" -gt 0 ]; then
-        pass "T7: Agent made changes ($CHANGED_FILES files, not committed)"
-    else
-        fail "T7: No changes detected"
+# A2: PaymentAttempt apply_changeset for v2 — must NOT be todo!() (0.12)
+A2_OK=0
+if [ -f "$DIESEL_PA" ]; then
+    # Look for v2 apply_changeset on PaymentAttemptUpdate or PaymentAttemptUpdateInternal
+    PA_FN=$(awk '
+        /#\[cfg\(feature = "v2"\)\]/ {gate=1; next}
+        gate==1 && /^[[:space:]]*$/ {next}
+        gate==1 && /impl[[:space:]]+PaymentAttemptUpdate(Internal)?[[:space:]]*\{/ {inimpl=1; depth=0}
+        gate==1 && !/impl[[:space:]]+PaymentAttemptUpdate/ {gate=0}
+        inimpl {
+            print
+            n1=gsub(/\{/,"{")
+            n2=gsub(/\}/,"}")
+            depth += n1 - n2
+            if (depth<=0 && /\}/) {inimpl=0; gate=0}
+        }
+    ' "$DIESEL_PA")
+    if echo "$PA_FN" | grep -q 'fn apply_changeset'; then
+        # Get the apply_changeset body for v2
+        BODY=$(echo "$PA_FN" | awk '
+            /fn apply_changeset/ {found=1; depth=0}
+            found {
+                print
+                n1=gsub(/\{/,"{")
+                n2=gsub(/\}/,"}")
+                depth += n1 - n2
+                if (depth<=0 && /\}/) exit
+            }
+        ')
+        # Filter out commented lines for evaluation
+        UNCOMMENTED=$(echo "$BODY" | grep -vE '^\s*//')
+        HAS_TODO=$(echo "$UNCOMMENTED" | grep -cE 'todo!\(\)|todo!\("')
+        HAS_PA_CTOR=$(echo "$UNCOMMENTED" | grep -cE 'PaymentAttempt[[:space:]]*\{')
+        HAS_SOURCE=$(echo "$UNCOMMENTED" | grep -cE '\.\.source')
+        FIELD_COUNT=$(echo "$UNCOMMENTED" | grep -cE '(unwrap_or|\.or)\((source|self)\.')
+        if [ "$HAS_TODO" -eq 0 ] && [ "$HAS_PA_CTOR" -ge 1 ] && [ "$HAS_SOURCE" -ge 1 ] && [ "$FIELD_COUNT" -ge 10 ]; then
+            A2_OK=1
+        elif [ "$HAS_TODO" -eq 0 ] && [ "$HAS_PA_CTOR" -ge 1 ] && [ "$FIELD_COUNT" -ge 5 ]; then
+            A2_OK=2
+        fi
     fi
 fi
-
-# ============================================================
-# TEST 8: storage_impl payment files modified for V2 KV support
-# ============================================================
-PI_CHANGED=0
-PA_CHANGED=0
-if file_changed "crates/storage_impl/src/payments/payment_intent.rs" 2>/dev/null; then PI_CHANGED=1; fi
-if file_changed "crates/storage_impl/src/payments/payment_attempt.rs" 2>/dev/null; then PA_CHANGED=1; fi
-STORAGE_CHANGED=$((PI_CHANGED + PA_CHANGED))
-if [ "$STORAGE_CHANGED" -ge 1 ]; then
-    pass "T8: storage_impl payment files modified ($STORAGE_CHANGED files)"
+if [ "$A2_OK" = "1" ]; then
+    add_score 0.12 "A2: V2 PaymentAttemptUpdate(Internal)::apply_changeset fully implemented"
+elif [ "$A2_OK" = "2" ]; then
+    add_score 0.06 "A2-partial: V2 PaymentAttempt apply_changeset partially implemented"
 else
-    if file_changed "crates/storage_impl/src/payments.rs" 2>/dev/null || \
-       file_changed "crates/storage_impl/src/lib.rs" 2>/dev/null; then
-        pass "T8: storage_impl modified (alternative location)"
-    else
-        fail "T8: No storage_impl payment files modified"
-    fi
-fi
-
-# ============================================================
-# TEST 9: diesel_models V2 KV changes
-# ============================================================
-DIESEL_CHANGED=0
-for f in "crates/diesel_models/src/kv.rs" "crates/diesel_models/src/payment_intent.rs" "crates/diesel_models/src/payment_attempt.rs"; do
-    if file_changed "$f" 2>/dev/null; then
-        DIESEL_CHANGED=$((DIESEL_CHANGED + 1))
-    fi
-done
-if [ "$DIESEL_CHANGED" -ge 1 ]; then
-    pass "T9: diesel_models modified ($DIESEL_CHANGED files)"
-else
-    if file_changed "crates/storage_impl/src/payments.rs" 2>/dev/null && \
-       grep -qE 'cfg.*v2' "crates/storage_impl/src/payments.rs" 2>/dev/null; then
-        pass "T9: V2 KvStorePartition in payments.rs (alternative)"
-    else
-        fail "T9: No diesel_models or V2 KvStorePartition changes"
-    fi
-fi
-
-# ============================================================
-# TEST 10: Comprehensive scope (>= 7 files changed)
-# A thorough implementation touches admin.rs, app.rs, openapi, storage_impl
-# payment files, diesel_models, and possibly lib.rs. Minimal solutions
-# that miss integration points score lower.
-# ============================================================
-if [ "$CURRENT_HEAD" != "$BASE_COMMIT" ] && [ -n "$CURRENT_HEAD" ]; then
-    TOTAL_CHANGED=$(git diff "${BASE_COMMIT}" --name-only 2>/dev/null | wc -l)
-else
-    TOTAL_CHANGED=$(git diff --name-only 2>/dev/null | wc -l)
-fi
-if [ "$TOTAL_CHANGED" -ge 7 ]; then
-    pass "T10: Comprehensive scope ($TOTAL_CHANGED files)"
-else
-    fail "T10: Limited scope ($TOTAL_CHANGED files, need >= 7)"
-fi
-
-# ============================================================
-# Calculate reward
-# ============================================================
-if [ "$TOTAL" -eq 0 ]; then
-    REWARD="0.0"
-else
-    REWARD=$(awk "BEGIN {printf \"%.2f\", $PASSED / $TOTAL}")
+    echo "  A2 FAIL: V2 PaymentAttempt apply_changeset missing/todo"
 fi
 
 echo ""
-echo "===== RESULTS ====="
-echo "Passed: $PASSED / $TOTAL"
-echo "Reward: $REWARD"
-echo "$REWARD" > "$REWARD_FILE"
+echo "=== TIER B: V2 storage_impl KV branch behavior (max 0.30) ==="
+
+# B1: Imports for kv/HsetnxReply/kv_store unblocked for v2 (0.06)
+B1_OK=0
+if [ -f "$SI_PI" ]; then
+    BASE_V1_GATES=$(file_get_base "$SI_PI" | grep -c '#\[cfg(feature = "v1")\]')
+    CURR_V1_GATES=$(grep -c '#\[cfg(feature = "v1")\]' "$SI_PI")
+    [ -z "$BASE_V1_GATES" ] && BASE_V1_GATES=0
+    [ -z "$CURR_V1_GATES" ] && CURR_V1_GATES=0
+    # Check that key KV imports are no longer v1-only
+    HAS_KV_IMPORT=$(grep -cE 'use diesel_models::kv\b|use diesel_models::\{kv' "$SI_PI")
+    HAS_HSETNX=$(grep -cE 'use redis_interface::HsetnxReply' "$SI_PI")
+    HAS_KV_STORE=$(grep -cE 'kv_store::\{[^}]*kv_wrapper|kv_wrapper,[^}]*KvOperation' "$SI_PI")
+    # Verify v1 gate count dropped
+    if [ "$CURR_V1_GATES" -lt "$BASE_V1_GATES" ] && [ "$HAS_KV_IMPORT" -ge 1 ] && [ "$HAS_HSETNX" -ge 1 ]; then
+        B1_OK=1
+    elif [ "$CURR_V1_GATES" -lt "$BASE_V1_GATES" ]; then
+        B1_OK=2
+    fi
+fi
+if [ "$B1_OK" = "1" ]; then
+    add_score 0.06 "B1: storage_impl payment_intent.rs v1-only gates lifted on KV imports"
+elif [ "$B1_OK" = "2" ]; then
+    add_score 0.03 "B1-partial: some v1 gates lifted"
+else
+    echo "  B1 FAIL: KV imports still v1-gated"
+fi
+
+# Helper: extract v2 function body from storage_impl payment_intent
+extract_v2_fn() {
+    local file="$1" fname="$2"
+    awk -v fn="$fname" '
+        /#\[cfg\(feature = "v2"\)\]/ {gate=1; next}
+        gate==1 && /^[[:space:]]*#\[/ {next}
+        gate==1 && match($0, "async fn " fn "\\b") {capture=1; depth=0; gate=0}
+        gate==1 && /^[[:space:]]*$/ {next}
+        gate==1 && !/async fn/ {gate=0}
+        capture {
+            print
+            n1=gsub(/\{/,"{")
+            n2=gsub(/\}/,"}")
+            depth += n1 - n2
+            if (depth>0) started=1
+            if (started && depth<=0) {capture=0; exit}
+        }
+    ' "$file" 2>/dev/null
+}
+
+# B2: V2 insert_payment_intent has KV branch (no todo!, has kv_wrapper or HsetnxReply usage) (0.08)
+B2_OK=0
+if [ -f "$SI_PI" ]; then
+    BLK=$(extract_v2_fn "$SI_PI" "insert_payment_intent")
+    if [ -n "$BLK" ]; then
+        HAS_TODO=$(echo "$BLK" | grep -cE 'todo!\(\)|todo!\("Implement payment intent insert')
+        HAS_KV=$(echo "$BLK" | grep -cE 'kv_wrapper|HsetnxReply|KvOperation::Hset|RedisKv[[:space:]]*=>')
+        HAS_REDIS_BRANCH=$(echo "$BLK" | grep -cE 'MerchantStorageScheme::RedisKv')
+        if [ "$HAS_TODO" -eq 0 ] && [ "$HAS_KV" -ge 2 ] && [ "$HAS_REDIS_BRANCH" -ge 1 ]; then
+            B2_OK=1
+        elif [ "$HAS_TODO" -eq 0 ] && [ "$HAS_KV" -ge 1 ]; then
+            B2_OK=2
+        fi
+    fi
+fi
+if [ "$B2_OK" = "1" ]; then
+    add_score 0.08 "B2: V2 insert_payment_intent KV branch implemented"
+elif [ "$B2_OK" = "2" ]; then
+    add_score 0.04 "B2-partial: KV partially in insert_payment_intent"
+else
+    echo "  B2 FAIL: V2 insert_payment_intent still todo or no KV"
+fi
+
+# B3: V2 update_payment_intent has KV branch (0.08)
+B3_OK=0
+if [ -f "$SI_PI" ]; then
+    BLK=$(extract_v2_fn "$SI_PI" "update_payment_intent")
+    if [ -n "$BLK" ]; then
+        HAS_TODO=$(echo "$BLK" | grep -cE 'todo!\(\)|todo!\("')
+        HAS_KV=$(echo "$BLK" | grep -cE 'kv_wrapper|KvOperation::Hset|Op::Update|PartitionKey')
+        HAS_REDIS_BRANCH=$(echo "$BLK" | grep -cE 'MerchantStorageScheme::RedisKv')
+        if [ "$HAS_TODO" -eq 0 ] && [ "$HAS_KV" -ge 2 ] && [ "$HAS_REDIS_BRANCH" -ge 1 ]; then
+            B3_OK=1
+        elif [ "$HAS_TODO" -eq 0 ] && [ "$HAS_KV" -ge 1 ]; then
+            B3_OK=2
+        fi
+    fi
+fi
+if [ "$B3_OK" = "1" ]; then
+    add_score 0.08 "B3: V2 update_payment_intent KV branch implemented"
+elif [ "$B3_OK" = "2" ]; then
+    add_score 0.04 "B3-partial: KV partially in update_payment_intent"
+else
+    echo "  B3 FAIL: V2 update_payment_intent still todo or no KV"
+fi
+
+# B4: V2 find_payment_intent_by_id uses KV/decide_storage_scheme path (0.04)
+B4_OK=0
+if [ -f "$SI_PI" ]; then
+    BLK=$(extract_v2_fn "$SI_PI" "find_payment_intent_by_id")
+    if [ -n "$BLK" ]; then
+        HAS_KV=$(echo "$BLK" | grep -cE 'try_redis_get_else_try_database_get|kv_wrapper|decide_storage_scheme|KvOperation')
+        if [ "$HAS_KV" -ge 1 ]; then
+            B4_OK=1
+        fi
+    fi
+fi
+if [ "$B4_OK" = "1" ]; then
+    add_score 0.04 "B4: V2 find_payment_intent_by_id uses KV path"
+else
+    echo "  B4 FAIL: V2 find_payment_intent_by_id no KV path"
+fi
+
+# B5: storage_impl/lib.rs has v2 UniqueConstraints for PaymentAttempt (0.04)
+B5_OK=0
+if [ -f "$SI_LIB" ]; then
+    # Look for v2 impl UniqueConstraints for PaymentAttempt
+    HAS_V2_UNIQUE=$(awk '
+        /#\[cfg\(feature = "v2"\)\]/ {gate=1; next}
+        gate==1 && /impl[[:space:]]+UniqueConstraints[[:space:]]+for[[:space:]]+diesel_models::PaymentAttempt/ {found=1; gate=0}
+        gate==1 && !/^[[:space:]]*$/ {gate=0}
+        END {print found+0}
+    ' "$SI_LIB")
+    [ "$HAS_V2_UNIQUE" = "1" ] && B5_OK=1
+fi
+if [ "$B5_OK" = "1" ]; then
+    add_score 0.04 "B5: V2 UniqueConstraints for PaymentAttempt added"
+else
+    echo "  B5 FAIL: no V2 UniqueConstraints for PaymentAttempt"
+fi
+
+echo ""
+echo "=== TIER C: Compile sanity for diesel_models (max 0.20) ==="
+
+# C1: cargo check on diesel_models crate with v2 feature (0.20) — behavioral
+C1_OK=0
+if command -v cargo >/dev/null 2>&1; then
+    # Run cargo check restricted to diesel_models with v2 feature, with timeout
+    LOG=/tmp/cargo_check_diesel_v2.log
+    timeout 480 cargo check -p diesel_models --no-default-features --features "v2" --message-format=short > "$LOG" 2>&1
+    RC=$?
+    if [ "$RC" -eq 0 ]; then
+        C1_OK=1
+    else
+        # Check that errors are not in our target file (apply_changeset region)
+        # Partial credit if compile fails but apply_changeset is well-formed
+        ERR_COUNT=$(grep -cE '^error(\[|:)' "$LOG")
+        APPLY_ERR=$(grep -cE 'apply_changeset' "$LOG")
+        if [ "$ERR_COUNT" = "0" ]; then
+            C1_OK=1
+        elif [ "$APPLY_ERR" = "0" ] && [ "$ERR_COUNT" -lt 5 ]; then
+            C1_OK=2
+        fi
+    fi
+    tail -50 "$LOG" > /logs/verifier/cargo_check_tail.log 2>/dev/null
+else
+    echo "  cargo not on PATH, skipping compile check"
+fi
+if [ "$C1_OK" = "1" ]; then
+    add_score 0.20 "C1: cargo check diesel_models --features v2 OK"
+elif [ "$C1_OK" = "2" ]; then
+    add_score 0.08 "C1-partial: compile errors but not in apply_changeset"
+else
+    echo "  C1 FAIL: cargo check failed or skipped"
+fi
+
+echo ""
+echo "=== TIER D: V2 routing/openapi plumbing (max 0.15) ==="
+
+# D1: openapi_v2.rs references KV merchant_account operation (0.05)
+D1_OK=0
+if [ -f "$OPENAPI_V2" ]; then
+    if grep -qE 'merchant_account_(toggle_kv|kv_status)(_v2)?' "$OPENAPI_V2"; then
+        D1_OK=1
+    fi
+fi
+[ "$D1_OK" = "1" ] && add_score 0.05 "D1: openapi_v2 references merchant_account KV op" || echo "  D1 FAIL: no openapi_v2 KV reference"
+
+# D2: app.rs registers /kv route in v2 MerchantAccount block (0.05)
+D2_OK=0
+if [ -f "$APP_RS" ]; then
+    # Look for v2 cfg gate near MerchantAccount with /kv path
+    if awk '
+        /cfg\(.*feature[[:space:]]*=[[:space:]]*"v2"/ {gate=1; depth=0; next}
+        gate {
+            print
+            n1=gsub(/\{/,"{")
+            n2=gsub(/\}/,"}")
+            depth += n1 - n2
+            if (depth<0) {gate=0; depth=0}
+        }
+    ' "$APP_RS" | grep -qE '/kv|toggle_kv|kv_status'; then
+        D2_OK=1
+    fi
+    # Alternative: any /kv route within feature v2 olap merchant context
+    if [ "$D2_OK" = "0" ]; then
+        if grep -B 3 -A 80 'MerchantAccount' "$APP_RS" | grep -qE '"/kv"|"kv"'; then
+            # check it's also near v2
+            if grep -B 30 -A 5 '"/kv"' "$APP_RS" 2>/dev/null | grep -qE 'feature[[:space:]]*=[[:space:]]*"v2"'; then
+                D2_OK=1
+            fi
+        fi
+    fi
+fi
+[ "$D2_OK" = "1" ] && add_score 0.05 "D2: V2 /kv route registered" || echo "  D2 FAIL: no V2 /kv route"
+
+# D3: admin.rs has v2-gated merchant_account_toggle_kv handler (0.05)
+D3_OK=0
+if [ -f "$ADMIN_RS" ]; then
+    # find v2-gated toggle_kv
+    LINES=$(grep -n 'pub async fn merchant_account_toggle_kv' "$ADMIN_RS" | cut -d: -f1)
+    for L in $LINES; do
+        S=$((L - 8))
+        [ "$S" -lt 1 ] && S=1
+        CTX=$(sed -n "${S},${L}p" "$ADMIN_RS")
+        if echo "$CTX" | grep -qE 'cfg.*feature[[:space:]]*=[[:space:]]*"v2"'; then
+            D3_OK=1
+            break
+        fi
+    done
+fi
+[ "$D3_OK" = "1" ] && add_score 0.05 "D3: V2-gated toggle_kv handler in admin.rs" || echo "  D3 FAIL: no V2-gated toggle_kv"
+
+echo ""
+echo "=== TIER E: Regression guards (max 0.10) ==="
+
+# E1: V1 KV path still intact - V1 apply_changeset still exists in payment_intent.rs (0.05)
+E1_OK=0
+if [ -f "$DIESEL_PI" ]; then
+    # V1 PaymentIntentUpdate::apply_changeset must still be present
+    HAS_V1_APPLY=$(awk '
+        /#\[cfg\(feature = "v1"\)\]/ {gate=1; next}
+        gate==1 && /impl[[:space:]]+PaymentIntentUpdate[[:space:]]*\{/ {inimpl=1; depth=0; gate=0}
+        gate==1 && !/^[[:space:]]*$/ {gate=0}
+        inimpl {
+            if (/fn apply_changeset/) {found=1}
+            n1=gsub(/\{/,"{")
+            n2=gsub(/\}/,"}")
+            depth += n1 - n2
+            if (depth<=0 && /\}/) inimpl=0
+        }
+        END {print found+0}
+    ' "$DIESEL_PI")
+    [ "$HAS_V1_APPLY" = "1" ] && E1_OK=1
+fi
+[ "$E1_OK" = "1" ] && add_score 0.05 "E1: V1 apply_changeset preserved" || echo "  E1 FAIL: V1 apply_changeset broken"
+
+# E2: A commit was created with the task tag (0.05)
+E2_OK=0
+if git log --oneline -20 2>/dev/null | grep -qE 'hyperswitch-8389|task juspay__hyperswitch-8389|8389'; then
+    E2_OK=1
+elif git log --oneline -1 2>/dev/null | grep -qiE 'kv|v2'; then
+    E2_OK=2
+fi
+if [ "$E2_OK" = "1" ]; then
+    add_score 0.05 "E2: commit tagged with task id"
+elif [ "$E2_OK" = "2" ]; then
+    add_score 0.02 "E2-partial: recent commit but not tagged"
+else
+    echo "  E2 FAIL: no commit"
+fi
+
+echo ""
+echo "==================================="
+REWARD=$(awk -v s="$SCORE" 'BEGIN{if (s>1.0) s=1.0; if (s<0) s=0; printf "%.4f", s}')
+echo "FINAL REWARD: $REWARD"
+echo "==================================="
+echo "$REWARD" > /logs/verifier/reward.txt
+exit 0

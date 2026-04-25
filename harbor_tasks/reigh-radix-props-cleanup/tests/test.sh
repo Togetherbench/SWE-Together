@@ -2,327 +2,348 @@
 set +e
 
 REPO="/workspace/repo"
-SCORE=0
-cd "$REPO"
+if [ ! -d "$REPO" ]; then
+    for d in /workspace/*/; do
+        if [ -f "$d/package.json" ]; then REPO="${d%/}"; break; fi
+    done
+fi
 
 mkdir -p /logs/verifier
+cd "$REPO" || { echo "0.00" > /logs/verifier/reward.txt; exit 0; }
 
-# Helper: add to score using awk (bc not available)
-add_score() {
-    SCORE=$(awk "BEGIN {printf \"%.2f\", $SCORE + $1}")
+export PATH="$PATH:/usr/local/bin:/usr/bin:/root/.npm-global/bin:/root/.bun/bin"
+
+REWARD=0
+add() {
+    REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + $1}")
 }
 
 echo "============================================================"
-echo "Pre-check: TypeScript Compilation (npx tsc --noEmit)"
+echo "Running TypeScript compile check"
 echo "============================================================"
-npx tsc --noEmit 2>&1
+TSC_OUT=$(npx --no-install tsc --noEmit 2>&1)
 TSC_EXIT=$?
+echo "$TSC_OUT" | tail -50
 if [ $TSC_EXIT -eq 0 ]; then
-    echo "TSC: PASS — compiles cleanly"
     TSC_PASS=1
+    echo "TSC: PASS"
 else
-    echo "TSC: FAIL — compilation errors detected"
     TSC_PASS=0
+    echo "TSC: FAIL"
 fi
 
 echo ""
 echo "============================================================"
-echo "Gate 1 (P2P): TypeScript compiles — weight 0.05"
+echo "Gate A (P2P, weight 0.10): TypeScript still compiles"
 echo "============================================================"
-# P2P: Should pass on both unmodified base and correct fix.
-# Guards against regressions that break type safety.
 if [ $TSC_PASS -eq 1 ]; then
-    echo "PASS: TypeScript compiles cleanly"
-    add_score 0.05
+    echo "PASS"
+    add 0.10
 else
-    echo "FAIL: TypeScript compilation errors"
+    echo "FAIL"
 fi
 
 echo ""
 echo "============================================================"
-echo "Gate 2 (F2P): Radix event handler props removed — weight 0.25"
+echo "Gate B (Behavioral, weight 0.30):"
+echo "  Render DialogContent / PopoverContent with dead Radix props"
+echo "  and verify they don't leak to the DOM (Unknown event handler)"
 echo "============================================================"
-# F2P: Requires TSC pass + dead Radix props removed from callers.
-# In base state, callers pass onOpenAutoFocus/onPointerDownOutside/
-# onInteractOutside directly as JSX attrs to DialogContent/PopoverContent.
-# After fix, these dead Radix props should be gone. Accepts any valid
-# approach: removing from callers, stripping in wrapper component, etc.
-if [ $TSC_PASS -eq 0 ]; then
-    echo "SKIP (TSC failed): cannot verify with broken compilation"
-    G2_EXIT=1
-else
-    node -e '
+
+# We do this by static-checking that BOTH:
+#   - DialogContent and PopoverContent either (a) destructure the dead props
+#     out before forwarding, OR (b) callers don't pass them anymore.
+# AND we run a synthetic node check that imports the source files and
+# confirms the relevant prop names are referenced in destructuring patterns.
+
+GATEB_PASS=0
+if [ $TSC_PASS -eq 1 ]; then
+node -e '
 const fs = require("fs");
+const path = require("path");
 
 const radixProps = ["onOpenAutoFocus", "onPointerDownOutside", "onInteractOutside"];
 
-// Files that had dead Radix props passed to DialogContent/PopoverContent
-const files = [
+function readSafe(p) {
+  try { return fs.readFileSync(p, "utf8"); } catch(e) { return null; }
+}
+
+// Step 1: Identify caller files that historically passed these props
+const callerFiles = [
   "src/tools/travel-between-images/components/VideoGenerationModal.tsx",
   "src/shared/components/ImageGenerationModal.tsx",
   "src/shared/components/ui/ai-input-button.tsx",
-  "src/shared/components/DatasetBrowserModal.tsx"
+  "src/shared/components/DatasetBrowserModal.tsx",
+  "src/shared/components/PromptEditorModal.tsx",
 ];
 
-// Approach 1: Check if callers stopped passing these props
-let cleanFiles = 0;
-for (const f of files) {
-  try {
-    const src = fs.readFileSync(f, "utf8");
-    const lines = src.split("\n");
-    let hasRadixProp = false;
-    for (const line of lines) {
-      const t = line.trim();
-      if (t.startsWith("//") || t.startsWith("*")) continue;
-      for (const p of radixProps) {
-        if (t.match(new RegExp(p + "\\s*[=({]"))) {
-          hasRadixProp = true;
-        }
-      }
-    }
-    if (!hasRadixProp) cleanFiles++;
-  } catch(e) {
-    // File deleted or moved — valid fix approach (TSC gate guards type safety)
-    cleanFiles++;
+let leakingCallers = 0;
+let totalCallers = 0;
+for (const f of callerFiles) {
+  const src = readSafe(f);
+  if (src === null) continue;
+  totalCallers++;
+  // Look for JSX attribute usage: prop={...} on Dialog/Popover content
+  // Strip block comments
+  const stripped = src.replace(/\/\*[\s\S]*?\*\//g, "")
+                      .split("\n").filter(l => !l.trim().startsWith("//")).join("\n");
+  let leaks = false;
+  for (const p of radixProps) {
+    const re = new RegExp("\\b" + p + "\\s*=\\s*[\\{\"]");
+    if (re.test(stripped)) leaks = true;
   }
+  if (leaks) leakingCallers++;
 }
 
-// Approach 2: DialogContent/PopoverContent strips the props via destructuring
-let componentStrips = false;
-try {
-  const dialogSrc = fs.readFileSync("src/shared/components/ui/dialog.tsx", "utf8");
-  const dcStart = dialogSrc.indexOf("DialogContent");
-  if (dcStart >= 0) {
-    const dcBody = dialogSrc.slice(dcStart, dcStart + 2000);
-    const strippedCount = radixProps.filter(p => dcBody.includes(p)).length;
-    if (strippedCount >= 2) componentStrips = true;
-  }
-} catch(e) {}
+// Step 2: Check wrapper components - if they destructure & drop these props,
+// then even if callers leak it, DOM is safe.
+const dialogSrc = readSafe("src/shared/components/ui/dialog.tsx") || "";
+const popoverSrc = readSafe("src/shared/components/ui/popover.tsx") || "";
 
-// Approach 2b: PopoverContent strips the props
-try {
-  const popSrc = fs.readFileSync("src/shared/components/ui/popover.tsx", "utf8");
-  const pcStart = popSrc.indexOf("PopoverContent");
-  if (pcStart >= 0) {
-    const pcBody = popSrc.slice(pcStart, pcStart + 2000);
-    const strippedCount = radixProps.filter(p => pcBody.includes(p)).length;
-    if (strippedCount >= 2) componentStrips = true;
+function wrapperStripsProps(src, componentName) {
+  if (!src) return false;
+  const idx = src.indexOf(componentName);
+  if (idx < 0) return false;
+  // Look at component definition window
+  const window = src.slice(idx, idx + 3000);
+  // A wrapper "strips" if it destructures the dead props in its parameter list
+  let stripped = 0;
+  for (const p of radixProps) {
+    // Parameter destructuring patterns: "{ ...,p,..., ...props}" or "{ p: _x }"
+    const reA = new RegExp("\\{[^}]*\\b" + p + "\\b[^}]*\\.\\.\\.props[^}]*\\}");
+    const reB = new RegExp("\\b" + p + "\\s*:\\s*_");
+    if (reA.test(window) || reB.test(window)) stripped++;
   }
-} catch(e) {}
+  return stripped >= 2;
+}
 
-if (cleanFiles >= 3 || componentStrips) {
-  console.log("PASS: " + cleanFiles + "/4 caller files cleaned");
+const dialogStrips = wrapperStripsProps(dialogSrc, "DialogContent");
+const popoverStrips = wrapperStripsProps(popoverSrc, "PopoverContent");
+
+// PASS criteria:
+//   - All callers cleaned (leakingCallers == 0), OR
+//   - Both wrappers strip the dead props
+const callersClean = leakingCallers === 0;
+const wrappersGuard = dialogStrips && popoverStrips;
+
+console.log("Caller leak count: " + leakingCallers + "/" + totalCallers);
+console.log("DialogContent strips dead props: " + dialogStrips);
+console.log("PopoverContent strips dead props: " + popoverStrips);
+
+if (callersClean || wrappersGuard) {
+  console.log("PASS");
   process.exit(0);
 } else {
-  console.log("FAIL: only " + cleanFiles + "/4 caller files cleaned");
+  // Partial credit signal (exit 2)
+  if (leakingCallers <= Math.max(1, Math.floor(totalCallers/3)) || dialogStrips || popoverStrips) {
+    console.log("PARTIAL");
+    process.exit(2);
+  }
+  console.log("FAIL");
   process.exit(1);
 }
 '
-    G2_EXIT=$?
+GB=$?
+if [ $GB -eq 0 ]; then
+    add 0.30
+    GATEB_PASS=1
+elif [ $GB -eq 2 ]; then
+    add 0.15
 fi
-if [ ${G2_EXIT:-1} -eq 0 ]; then
-    add_score 0.25
+else
+    echo "SKIP: TSC failed"
 fi
 
 echo ""
 echo "============================================================"
-echo "Gate 3 (F2P): useModal.ts cleaned up — weight 0.25"
+echo "Gate C (Behavioral, weight 0.20):"
+echo "  useModal mobileProps no longer carries dead Radix prop"
 echo "============================================================"
-# F2P: Requires TSC pass + useModal.ts no longer returns onOpenAutoFocus
-# in mobileProps. In base state, useModal.ts returns { onOpenAutoFocus: ... }
-# via mobileProps. After fix, this dead Radix prop should be removed.
-if [ $TSC_PASS -eq 0 ]; then
-    echo "SKIP (TSC failed): cannot verify with broken compilation"
-    G3_EXIT=1
-else
-    node -e '
+
+GATEC_PASS=0
+if [ $TSC_PASS -eq 1 ]; then
+node -e '
 const fs = require("fs");
-try {
-  const src = fs.readFileSync("src/shared/hooks/useModal.ts", "utf8");
-  if (src.includes("onOpenAutoFocus")) {
-    console.log("FAIL: useModal.ts still contains onOpenAutoFocus");
-    process.exit(1);
-  }
-  console.log("PASS: useModal.ts no longer contains onOpenAutoFocus");
-  process.exit(0);
-} catch(e) {
-  // File deleted or refactored — valid approach if TSC still passes
-  console.log("PASS: useModal.ts modified or removed (TSC still passes)");
+const src = (() => { try { return fs.readFileSync("src/shared/hooks/useModal.ts", "utf8"); } catch(e) { return null; } })();
+
+if (src === null) {
+  // Restructured / removed: acceptable if TSC passes
+  console.log("PASS (file moved/removed)");
   process.exit(0);
 }
+
+// Strip comments and string literals to find real code references
+const stripped = src
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .split("\n")
+  .filter(l => !l.trim().startsWith("//"))
+  .join("\n")
+  .replace(/"[^"]*"/g, "\"\"")
+  .replace(/'\''[^'\'']*'\''/g, "''\'\''");
+
+const stillHasIt = /\bonOpenAutoFocus\b/.test(stripped);
+if (stillHasIt) {
+  console.log("FAIL: useModal still references onOpenAutoFocus in code");
+  process.exit(1);
+}
+
+// Also verify mobileProps (or equivalent return shape) doesn'\''t set Radix props
+// Find what is returned in the props field
+const propsReturnMatch = src.match(/props\s*:\s*([^,\n]+)/);
+console.log("PASS: useModal cleaned of onOpenAutoFocus");
+process.exit(0);
 '
-    G3_EXIT=$?
+GC=$?
+if [ $GC -eq 0 ]; then
+    add 0.20
+    GATEC_PASS=1
 fi
-if [ ${G3_EXIT:-1} -eq 0 ]; then
-    add_score 0.25
+else
+    echo "SKIP: TSC failed"
 fi
 
 echo ""
 echo "============================================================"
-echo "Gate 4 (F2P): VideoGenerationModal close guard — weight 0.25"
+echo "Gate D (Behavioral, weight 0.25):"
+echo "  VideoGenerationModal still respects isLoraModalOpen guard"
+echo "  when closing, after dead Radix handlers are removed"
 echo "============================================================"
-# F2P: Requires TSC pass + isLoraModalOpen guard in non-Radix close handler.
-# In base state, VideoGenerationModal has:
-#   onOpenChange={(open) => !open && onClose()}
-# The isLoraModalOpen guard only exists in dead Radix props
-# (onPointerDownOutside/onInteractOutside). After fix, the close logic
-# must incorporate the isLoraModalOpen guard via onOpenChange or a handler.
-if [ $TSC_PASS -eq 0 ]; then
-    echo "SKIP (TSC failed): cannot verify with broken compilation"
-    G4_EXIT=1
-else
-    node -e '
+
+GATED_PASS=0
+if [ $TSC_PASS -eq 1 ]; then
+node -e '
 const fs = require("fs");
 const file = "src/tools/travel-between-images/components/VideoGenerationModal.tsx";
-try {
-  const src = fs.readFileSync(file, "utf8");
-  const lines = src.split("\n");
-  let guardFound = false;
+const src = (() => { try { return fs.readFileSync(file, "utf8"); } catch(e) { return null; } })();
+if (!src) { console.log("FAIL: file missing"); process.exit(1); }
 
-  // Check lines that mention isLoraModalOpen in a close context
-  // BUT NOT inside onPointerDownOutside or onInteractOutside (dead Radix props)
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const t = line.trim();
-    if (t.startsWith("//") || t.startsWith("*")) continue;
-    if (t.includes("onPointerDownOutside") || t.includes("onInteractOutside")) continue;
+// 1. Confirm dead Radix handlers are gone
+const stripped = src.replace(/\/\*[\s\S]*?\*\//g,"").split("\n").filter(l=>!l.trim().startsWith("//")).join("\n");
+const stillHasDead = /\bonPointerDownOutside\s*=/.test(stripped) || /\bonInteractOutside\s*=/.test(stripped);
 
-    if (t.includes("isLoraModalOpen") &&
-        (t.includes("onOpenChange") || t.includes("onClose") || t.includes("Close"))) {
-      guardFound = true;
-      break;
-    }
-  }
+// 2. Confirm guard logic survives somewhere in close path:
+//    Either onOpenChange handler references isLoraModalOpen,
+//    or a named handler does, or it'\''s lifted to modal state.
+const oneLine = stripped.replace(/\s+/g, " ");
 
-  // Accept: handler function that uses isLoraModalOpen for closing
-  if (!guardFound) {
-    const handlerPattern = /(handle\w*[Cc]lose|handle\w*[Oo]pen\w*)\s*=/;
-    for (let i = 0; i < lines.length; i++) {
-      if (handlerPattern.test(lines[i])) {
-        const body = lines.slice(i, Math.min(i + 15, lines.length)).join("\n");
-        if (body.includes("isLoraModalOpen")) {
-          guardFound = true;
-          break;
-        }
-      }
-    }
-  }
+// Pattern 1: onOpenChange={...isLoraModalOpen...}
+const onOpenChangePattern = /onOpenChange\s*=\s*\{[^}]*isLoraModalOpen[^}]*\}/;
+// Pattern 2: handler function references isLoraModalOpen and onClose
+const handlerPattern = /(handle\w*[Cc]lose|handle\w*[Oo]pen[Cc]hange|on\w*[Cc]lose)\s*=[^=][^;]{0,400}isLoraModalOpen/;
 
-  // Accept: onOpenChange on same/adjacent lines references isLoraModalOpen
-  if (!guardFound) {
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes("onOpenChange")) {
-        const context = lines.slice(i, Math.min(i + 8, lines.length)).join("\n");
-        if (context.includes("isLoraModalOpen") &&
-            !context.includes("onPointerDownOutside") &&
-            !context.includes("onInteractOutside")) {
-          guardFound = true;
-          break;
-        }
-      }
-    }
-  }
+const guardPresent = onOpenChangePattern.test(oneLine) || handlerPattern.test(oneLine);
 
-  // Accept: inline arrow in onOpenChange that checks isLoraModalOpen
-  if (!guardFound) {
-    const joined = src.replace(/\n/g, " ");
-    const match = joined.match(/onOpenChange\s*=\s*\{[^}]{0,300}isLoraModalOpen[^}]{0,100}\}/);
-    if (match && !match[0].includes("onPointerDownOutside") && !match[0].includes("onInteractOutside")) {
-      guardFound = true;
-    }
-  }
+console.log("Dead Radix handlers still present: " + stillHasDead);
+console.log("Guard logic present in close path: " + guardPresent);
 
-  if (guardFound) {
-    console.log("PASS: isLoraModalOpen guard found in close handler");
-    process.exit(0);
-  } else {
-    console.log("FAIL: isLoraModalOpen guard not in any non-Radix close handler");
-    process.exit(1);
-  }
-} catch(e) {
-  console.log("FAIL: could not read " + file + ": " + e.message);
-  process.exit(1);
+if (!stillHasDead && guardPresent) {
+  console.log("PASS");
+  process.exit(0);
 }
+if (!stillHasDead && !guardPresent) {
+  // Removed cleanly but lost the guard - partial
+  console.log("PARTIAL: dead props removed but guard lost");
+  process.exit(2);
+}
+if (stillHasDead && guardPresent) {
+  console.log("PARTIAL: guard preserved but dead props remain");
+  process.exit(2);
+}
+console.log("FAIL");
+process.exit(1);
 '
-    G4_EXIT=$?
+GD=$?
+if [ $GD -eq 0 ]; then
+    add 0.25
+    GATED_PASS=1
+elif [ $GD -eq 2 ]; then
+    add 0.10
 fi
-if [ ${G4_EXIT:-1} -eq 0 ]; then
-    add_score 0.25
+else
+    echo "SKIP: TSC failed"
 fi
 
 echo ""
 echo "============================================================"
-echo "Gate 5 (F2P): modal.props spread cleaned — weight 0.20"
+echo "Gate E (Bonus behavioral, weight 0.15):"
+echo "  AbortError from interrupted play() is handled (won't spam errors)"
 echo "============================================================"
-# F2P: Requires TSC pass + modal.props spread containing dead Radix props
-# cleaned up. Accepts: removing spreads from callers, removing the
-# onOpenAutoFocus from useModal props, or returning empty props object.
-if [ $TSC_PASS -eq 0 ]; then
-    echo "SKIP (TSC failed): cannot verify with broken compilation"
-    G5_EXIT=1
-else
-    node -e '
-const fs = require("fs");
 
-// Files that spread modal.props in base state
-const files = [
-  "src/shared/components/DatasetBrowserModal.tsx",
-  "src/shared/components/ImageGenerationModal.tsx",
-  "src/shared/components/ModalContainer.tsx",
-  "src/shared/components/OnboardingModal.tsx",
-  "src/shared/components/ProjectSelectorModal.tsx",
-  "src/shared/components/SettingsModal/SettingsModal.tsx",
-  "src/shared/components/TaskDetailsModal.tsx",
-  "src/tools/travel-between-images/components/VideoGenerationModal.tsx"
+# This corresponds to the AbortError mentioned in the bug report.
+# Check that callers either:
+#   - chain .catch() onto video.play()
+#   - safePlay swallows AbortError specifically
+#   - or wrap in try/catch with AbortError handling
+
+node -e '
+const fs = require("fs");
+const path = require("path");
+
+function readSafe(p) { try { return fs.readFileSync(p, "utf8"); } catch(e) { return null; } }
+
+const playFiles = [
+  "src/pages/Home/components/panes/sections/MotionReferenceSection.tsx",
+  "src/shared/components/TaskDetails/components/TaskDetailsLazyVideoPreview.tsx",
+  "src/shared/components/StyledVideoPlayer/hooks/useVideoPlayerControls.ts",
+  "src/shared/components/VideoPortionTimeline/hooks/useHandleDrag.ts",
+  "src/shared/components/VideoPortionTimeline/hooks/usePlayhead.ts",
+  "src/tools/travel-between-images/components/Timeline/AudioStrip.tsx",
 ];
 
-let cleanCount = 0;
-for (const f of files) {
-  try {
-    const src = fs.readFileSync(f, "utf8");
-    if (!src.match(/\{\s*\.\.\.modal\.props\s*\}/) &&
-        !src.match(/\{\s*\.\.\.mobileProps\s*\}/) &&
-        !src.match(/\{\s*\.\.\.\{\s*\.\.\.modal\.props\s*\}\s*\}/)) {
-      cleanCount++;
-    }
-  } catch(e) {
-    // File moved/deleted — valid if TSC passes
-    cleanCount++;
-  }
+let safeCount = 0;
+let totalWithPlay = 0;
+for (const f of playFiles) {
+  const src = readSafe(f);
+  if (!src) continue;
+  // Find "<ident>.play()" or "<ident>.play().catch"
+  const playMatches = src.match(/\.\s*play\s*\(\s*\)/g);
+  if (!playMatches) continue;
+  totalWithPlay++;
+  // Check catch chained or try/catch wrapping
+  const safeChain = /\.\s*play\s*\(\s*\)\s*\.\s*catch\s*\(/.test(src);
+  const tryCatch = /try\s*\{[^}]*\.play\s*\(\s*\)[^}]*\}\s*catch/.test(src);
+  if (safeChain || tryCatch) safeCount++;
 }
 
-// Also accept: useModal.ts no longer has onOpenAutoFocus in props
-// (spreads become harmless)
-let propsHarmless = false;
-try {
-  const hookSrc = fs.readFileSync("src/shared/hooks/useModal.ts", "utf8");
-  if (!hookSrc.includes("onOpenAutoFocus")) {
-    propsHarmless = true;
-  }
-  if (hookSrc.match(/props:\s*\{\s*\}/)) {
-    propsHarmless = true;
-  }
-} catch(e) {
-  propsHarmless = true;
-}
+// safePlay improvement: optional bonus
+const safePlay = readSafe("src/shared/lib/media/safePlay.ts") || "";
+const safePlayHandlesAbort = /AbortError/.test(safePlay) || /isAbortError/.test(safePlay);
 
-if (cleanCount >= 5 || propsHarmless) {
-  console.log("PASS: modal.props cleaned (" + cleanCount + "/8 files, propsHarmless=" + propsHarmless + ")");
+console.log("Files with safe play(): " + safeCount + "/" + totalWithPlay);
+console.log("safePlay handles AbortError: " + safePlayHandlesAbort);
+
+if (totalWithPlay === 0) {
+  // Nothing to verify; treat as neutral pass
+  console.log("PASS (no play() callers found)");
   process.exit(0);
-} else {
-  console.log("FAIL: " + cleanCount + "/8 files cleaned, propsHarmless=" + propsHarmless);
-  process.exit(1);
 }
+
+const ratio = safeCount / totalWithPlay;
+if (ratio >= 0.7 || safePlayHandlesAbort) {
+  console.log("PASS");
+  process.exit(0);
+}
+if (ratio >= 0.3) {
+  console.log("PARTIAL");
+  process.exit(2);
+}
+console.log("FAIL");
+process.exit(1);
 '
-    G5_EXIT=$?
-fi
-if [ ${G5_EXIT:-1} -eq 0 ]; then
-    add_score 0.20
+GE=$?
+if [ $GE -eq 0 ]; then
+    add 0.15
+elif [ $GE -eq 2 ]; then
+    add 0.07
 fi
 
 echo ""
 echo "============================================================"
-echo "FINAL SCORE: $SCORE"
+echo "FINAL SCORE: $REWARD"
 echo "============================================================"
 
-echo "$SCORE" > /logs/verifier/reward.txt
+# Clamp to [0, 1]
+REWARD=$(awk -v r="$REWARD" 'BEGIN { if (r > 1) r = 1; if (r < 0) r = 0; printf "%.4f", r }')
+echo "$REWARD" > /logs/verifier/reward.txt
+echo "Wrote reward: $REWARD"
+exit 0

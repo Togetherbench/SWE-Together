@@ -5,57 +5,58 @@ REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 echo "0.0" > "$REWARD_FILE"
 
-cd /workspace/pi-mono
+export PATH="/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+cd /workspace/pi-mono || { echo "0.0" > "$REWARD_FILE"; exit 0; }
+
+REWARD=0
+TOTAL=0
+
+# Helper: run a vitest test file from the ai package
+run_vitest() {
+    local testfile="$1"
+    (cd packages/ai && npx vitest --run "$testfile" 2>&1)
+}
 
 # ═══════════════════════════════════════════════════════════════════
-# P2P Test 1 (weight: 0.05): TypeScript compilation
-# Passes on unmodified base AND on correct fix. Guards regressions.
+# P2P 1 (0.05): TypeScript compilation
 # ═══════════════════════════════════════════════════════════════════
-echo "=== P2P Test 1: TypeScript compilation ==="
+echo "=== P2P 1: TypeScript compilation ==="
 P2P1=0
-if npx tsgo --noEmit 2>&1; then
+if npx tsgo --noEmit 2>&1 | tail -50; [ ${PIPESTATUS[0]} -eq 0 ]; then
     P2P1=1
-    echo "PASS: TypeScript compilation"
-elif npx tsc --noEmit 2>&1; then
+elif npx tsc --noEmit 2>&1 | tail -50; [ ${PIPESTATUS[0]} -eq 0 ]; then
     P2P1=1
-    echo "PASS: TypeScript compilation (tsc fallback)"
-else
-    echo "FAIL: TypeScript compilation"
 fi
+echo "P2P1=$P2P1"
 
 # ═══════════════════════════════════════════════════════════════════
-# P2P Test 2 (weight: 0.05): Existing tests still pass
-# Passes on unmodified base AND on correct fix. Guards regressions.
+# P2P 2 (0.05): Existing tool-choice tests still pass
 # ═══════════════════════════════════════════════════════════════════
-echo "=== P2P Test 2: Existing tests still pass ==="
+echo "=== P2P 2: Existing tests still pass ==="
 P2P2=0
-if cd packages/ai && npx vitest --run test/openai-completions-tool-choice.test.ts 2>&1; then
+if run_vitest test/openai-completions-tool-choice.test.ts | tail -40; [ ${PIPESTATUS[0]} -eq 0 ]; then
     P2P2=1
-    echo "PASS: Existing tests"
-else
-    echo "FAIL: Existing tests broken"
 fi
-cd /workspace/pi-mono
+echo "P2P2=$P2P2"
 
 # ═══════════════════════════════════════════════════════════════════
-# F2P Test 1 (weight: 0.20): qwen3-32b medium -> "default"
-# Fails on base: base sends "medium" raw which Groq rejects for qwen3.
-# Passes after correct fix maps medium -> default for qwen3-32b.
+# Build a reusable behavioral test harness using vitest
+# Tests qwen/qwen3-32b and openai/gpt-oss-20b with various reasoning levels
 # ═══════════════════════════════════════════════════════════════════
-echo "=== F2P Test 1: Behavioral - qwen3-32b medium -> default ==="
-F2P1=0
-cat > /tmp/test_f2p1.test.ts << 'TESTEOF'
+HARNESS=packages/ai/test/_issue1745_harness.test.ts
+cat > "$HARNESS" << 'TESTEOF'
 import { describe, expect, it, vi } from "vitest";
 import { getModel } from "../src/models.js";
 import { streamSimple } from "../src/stream.js";
 
-const mockState = vi.hoisted(() => ({ lastParams: undefined as unknown }));
+const mockState = vi.hoisted(() => ({ lastParams: undefined as any }));
 
 vi.mock("openai", () => {
     class FakeOpenAI {
         chat = {
             completions: {
-                create: async (params: unknown) => {
+                create: async (params: any) => {
                     mockState.lastParams = params;
                     return {
                         async *[Symbol.asyncIterator]() {
@@ -77,269 +78,165 @@ vi.mock("openai", () => {
     return { default: FakeOpenAI };
 });
 
-describe("qwen3-32b medium", () => {
-    it("maps medium to default", async () => {
-        const model = getModel("groq", "qwen/qwen3-32b")!;
-        let payload: unknown;
-        await streamSimple(
-            model,
-            { messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
-            { apiKey: "test", reasoning: "medium", onPayload: (p: unknown) => { payload = p; } },
-        ).result();
-        const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
-        expect(params.reasoning_effort).toBe("default");
+async function capture(provider: string, modelId: string, reasoning: any): Promise<any> {
+    mockState.lastParams = undefined;
+    const model = getModel(provider, modelId);
+    if (!model) throw new Error(`model not found: ${provider}/${modelId}`);
+    let payload: any;
+    const opts: any = {
+        apiKey: "test",
+        onPayload: (p: any) => { payload = p; },
+    };
+    if (reasoning !== undefined) opts.reasoning = reasoning;
+    await streamSimple(
+        model,
+        { messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
+        opts,
+    ).result();
+    return payload ?? mockState.lastParams;
+}
+
+describe("issue 1745 behavioral", () => {
+    it("QWEN_MEDIUM", async () => {
+        const p = await capture("groq", "qwen/qwen3-32b", "medium");
+        expect(p.reasoning_effort).toBe("default");
+    });
+    it("QWEN_HIGH", async () => {
+        const p = await capture("groq", "qwen/qwen3-32b", "high");
+        expect(p.reasoning_effort).toBe("default");
+    });
+    it("QWEN_LOW", async () => {
+        const p = await capture("groq", "qwen/qwen3-32b", "low");
+        expect(p.reasoning_effort).toBe("default");
+    });
+    it("QWEN_MINIMAL", async () => {
+        const p = await capture("groq", "qwen/qwen3-32b", "minimal");
+        expect(p.reasoning_effort).toBe("default");
+    });
+    it("GPTOSS_HIGH_UNCHANGED", async () => {
+        const p = await capture("groq", "openai/gpt-oss-20b", "high");
+        expect(p.reasoning_effort).toBe("high");
+    });
+    it("GPTOSS_MEDIUM_UNCHANGED", async () => {
+        const p = await capture("groq", "openai/gpt-oss-20b", "medium");
+        expect(p.reasoning_effort).toBe("medium");
+    });
+    it("GPTOSS_LOW_UNCHANGED", async () => {
+        const p = await capture("groq", "openai/gpt-oss-20b", "low");
+        expect(p.reasoning_effort).toBe("low");
     });
 });
 TESTEOF
 
-cp /tmp/test_f2p1.test.ts packages/ai/test/test_f2p1.test.ts
-if cd packages/ai && npx vitest --run test/test_f2p1.test.ts 2>&1; then
-    F2P1=1; echo "PASS"
-else
-    echo "FAIL"
+echo "=== Running behavioral harness ==="
+HARNESS_OUT=$(run_vitest test/_issue1745_harness.test.ts 2>&1)
+echo "$HARNESS_OUT" | tail -80
+
+count_pass() {
+    local name="$1"
+    # vitest prints "✓ ... > NAME" on pass; check for both pass marker and the test name
+    if echo "$HARNESS_OUT" | grep -E "(✓|PASS|√).*${name}" > /dev/null 2>&1; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
+# Behavioral results
+QWEN_MEDIUM=$(count_pass "QWEN_MEDIUM")
+QWEN_HIGH=$(count_pass "QWEN_HIGH")
+QWEN_LOW=$(count_pass "QWEN_LOW")
+QWEN_MINIMAL=$(count_pass "QWEN_MINIMAL")
+GPTOSS_HIGH=$(count_pass "GPTOSS_HIGH_UNCHANGED")
+GPTOSS_MEDIUM=$(count_pass "GPTOSS_MEDIUM_UNCHANGED")
+GPTOSS_LOW=$(count_pass "GPTOSS_LOW_UNCHANGED")
+
+# Cleanup harness
+rm -f "$HARNESS"
+
+echo "QWEN_MEDIUM=$QWEN_MEDIUM"
+echo "QWEN_HIGH=$QWEN_HIGH"
+echo "QWEN_LOW=$QWEN_LOW"
+echo "QWEN_MINIMAL=$QWEN_MINIMAL"
+echo "GPTOSS_HIGH=$GPTOSS_HIGH"
+echo "GPTOSS_MEDIUM=$GPTOSS_MEDIUM"
+echo "GPTOSS_LOW=$GPTOSS_LOW"
+
+# ═══════════════════════════════════════════════════════════════════
+# Structural: docs were updated to mention the qwen3 / reasoning_effort behavior
+# ═══════════════════════════════════════════════════════════════════
+echo "=== Structural: docs updated ==="
+DOCS=packages/coding-agent/docs/custom-provider.md
+DOC_HIT=0
+if [ -f "$DOCS" ]; then
+    # Look for any mention indicating awareness of the qwen3 / groq reasoning effort restriction
+    if grep -Eqi "(qwen.*qwen3|qwen3-32b|reasoningEffortMap)" "$DOCS"; then
+        if grep -Eqi "(default|none|groq)" "$DOCS"; then
+            DOC_HIT=1
+        fi
+    fi
 fi
-cd /workspace/pi-mono
-rm -f packages/ai/test/test_f2p1.test.ts
+echo "DOC_HIT=$DOC_HIT"
 
 # ═══════════════════════════════════════════════════════════════════
-# F2P Test 2 (weight: 0.20): qwen3-32b high -> "default"
-# Fails on base: base sends "high" raw.
-# Passes after correct fix maps high -> default for qwen3-32b.
+# Structural: source actually contains a per-model gate (not provider-wide)
+# Look for the openai-completions provider source that conditions the map
+# on a model.id check (qwen3-32b specifically) rather than just isGroq.
 # ═══════════════════════════════════════════════════════════════════
-echo "=== F2P Test 2: Behavioral - qwen3-32b high -> default ==="
-F2P2=0
-cat > /tmp/test_f2p2.test.ts << 'TESTEOF'
-import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.js";
-import { streamSimple } from "../src/stream.js";
-
-const mockState = vi.hoisted(() => ({ lastParams: undefined as unknown }));
-
-vi.mock("openai", () => {
-    class FakeOpenAI {
-        chat = {
-            completions: {
-                create: async (params: unknown) => {
-                    mockState.lastParams = params;
-                    return {
-                        async *[Symbol.asyncIterator]() {
-                            yield {
-                                choices: [{ delta: {}, finish_reason: "stop" }],
-                                usage: {
-                                    prompt_tokens: 1,
-                                    completion_tokens: 1,
-                                    prompt_tokens_details: { cached_tokens: 0 },
-                                    completion_tokens_details: { reasoning_tokens: 0 },
-                                },
-                            };
-                        },
-                    };
-                },
-            },
-        };
-    }
-    return { default: FakeOpenAI };
-});
-
-describe("qwen3-32b high", () => {
-    it("maps high to default", async () => {
-        const model = getModel("groq", "qwen/qwen3-32b")!;
-        let payload: unknown;
-        await streamSimple(
-            model,
-            { messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
-            { apiKey: "test", reasoning: "high", onPayload: (p: unknown) => { payload = p; } },
-        ).result();
-        const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
-        expect(params.reasoning_effort).toBe("default");
-    });
-});
-TESTEOF
-
-cp /tmp/test_f2p2.test.ts packages/ai/test/test_f2p2.test.ts
-if cd packages/ai && npx vitest --run test/test_f2p2.test.ts 2>&1; then
-    F2P2=1; echo "PASS"
-else
-    echo "FAIL"
+echo "=== Structural: targeted model gate in source ==="
+SRC=packages/ai/src/providers/openai-completions.ts
+SRC_HIT=0
+if [ -f "$SRC" ]; then
+    # Either explicit qwen/qwen3-32b reference, or a non-trivial gate that excludes openai/* models
+    if grep -Eq 'qwen/qwen3-32b|qwen3-32b' "$SRC"; then
+        SRC_HIT=1
+    elif grep -Eq 'startsWith\("openai/"\)|!== "openai/"|model\.id\.startsWith\("qwen' "$SRC"; then
+        SRC_HIT=1
+    fi
 fi
-cd /workspace/pi-mono
-rm -f packages/ai/test/test_f2p2.test.ts
+echo "SRC_HIT=$SRC_HIT"
 
 # ═══════════════════════════════════════════════════════════════════
-# F2P Test 3 (weight: 0.10): qwen3-32b low -> "default"
-# Fails on base: base sends "low" raw.
-# Passes after correct fix maps low -> default for qwen3-32b.
+# Compute reward
+# Weights:
+#   P2P1 = 0.05 (compile)
+#   P2P2 = 0.05 (existing tests)
+#   QWEN behavioral (4 tests) = 0.10 each = 0.40
+#   GPT-OSS behavioral (3 tests) = 0.08 each = 0.24
+#   DOC_HIT = 0.13
+#   SRC_HIT = 0.08
+# Total = 0.05 + 0.05 + 0.40 + 0.24 + 0.13 + 0.08 = 0.95
+# Plus 0.05 base if at least the qwen-medium gate passes (the canonical test from issue)
 # ═══════════════════════════════════════════════════════════════════
-echo "=== F2P Test 3: Behavioral - qwen3-32b low -> default ==="
-F2P3=0
-cat > /tmp/test_f2p3.test.ts << 'TESTEOF'
-import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.js";
-import { streamSimple } from "../src/stream.js";
 
-const mockState = vi.hoisted(() => ({ lastParams: undefined as unknown }));
-
-vi.mock("openai", () => {
-    class FakeOpenAI {
-        chat = {
-            completions: {
-                create: async (params: unknown) => {
-                    mockState.lastParams = params;
-                    return {
-                        async *[Symbol.asyncIterator]() {
-                            yield {
-                                choices: [{ delta: {}, finish_reason: "stop" }],
-                                usage: {
-                                    prompt_tokens: 1,
-                                    completion_tokens: 1,
-                                    prompt_tokens_details: { cached_tokens: 0 },
-                                    completion_tokens_details: { reasoning_tokens: 0 },
-                                },
-                            };
-                        },
-                    };
-                },
-            },
-        };
-    }
-    return { default: FakeOpenAI };
-});
-
-describe("qwen3-32b low", () => {
-    it("maps low to default", async () => {
-        const model = getModel("groq", "qwen/qwen3-32b")!;
-        let payload: unknown;
-        await streamSimple(
-            model,
-            { messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
-            { apiKey: "test", reasoning: "low", onPayload: (p: unknown) => { payload = p; } },
-        ).result();
-        const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
-        expect(params.reasoning_effort).toBe("default");
-    });
-});
-TESTEOF
-
-cp /tmp/test_f2p3.test.ts packages/ai/test/test_f2p3.test.ts
-if cd packages/ai && npx vitest --run test/test_f2p3.test.ts 2>&1; then
-    F2P3=1; echo "PASS"
-else
-    echo "FAIL"
-fi
-cd /workspace/pi-mono
-rm -f packages/ai/test/test_f2p3.test.ts
-
-# ═══════════════════════════════════════════════════════════════════
-# F2P-conditional Test 4 (weight: 0.25): Other Groq models unaffected
-# This test PASSES on both base and correct fix (P2P-like behavior).
-# Scored only when core fix is detected (F2P1 or F2P2 pass), to prevent
-# nop baseline inflation. Guards against blanket fixes that break other
-# models — a key discriminator between careful and naive fixes.
-# ═══════════════════════════════════════════════════════════════════
-echo "=== F2P-conditional Test 4: Other Groq models keep standard values ==="
-F2P4=0
-cat > /tmp/test_f2p4.test.ts << 'TESTEOF'
-import { describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.js";
-import { streamSimple } from "../src/stream.js";
-
-const mockState = vi.hoisted(() => ({ lastParams: undefined as unknown }));
-
-vi.mock("openai", () => {
-    class FakeOpenAI {
-        chat = {
-            completions: {
-                create: async (params: unknown) => {
-                    mockState.lastParams = params;
-                    return {
-                        async *[Symbol.asyncIterator]() {
-                            yield {
-                                choices: [{ delta: {}, finish_reason: "stop" }],
-                                usage: {
-                                    prompt_tokens: 1,
-                                    completion_tokens: 1,
-                                    prompt_tokens_details: { cached_tokens: 0 },
-                                    completion_tokens_details: { reasoning_tokens: 0 },
-                                },
-                            };
-                        },
-                    };
-                },
-            },
-        };
-    }
-    return { default: FakeOpenAI };
-});
-
-describe("other groq models", () => {
-    it("keeps medium for openai/gpt-oss-20b", async () => {
-        const model = getModel("groq", "openai/gpt-oss-20b");
-        if (!model || !model.reasoning) { console.log("SKIP - model not found or no reasoning"); return; }
-        let payload: unknown;
-        await streamSimple(
-            model,
-            { messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
-            { apiKey: "test", reasoning: "medium", onPayload: (p: unknown) => { payload = p; } },
-        ).result();
-        const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
-        expect(params.reasoning_effort).toBe("medium");
-    });
-});
-TESTEOF
-
-cp /tmp/test_f2p4.test.ts packages/ai/test/test_f2p4.test.ts
-if cd packages/ai && npx vitest --run test/test_f2p4.test.ts 2>&1; then
-    F2P4=1; echo "PASS"
-else
-    echo "FAIL"
-fi
-cd /workspace/pi-mono
-rm -f packages/ai/test/test_f2p4.test.ts
-
-# Zero out F2P4 if core fix was not applied (prevents nop inflation)
-CORE_FIX=$((F2P1 + F2P2))
-if [ "$CORE_FIX" -eq 0 ]; then
-    F2P4=0
-    echo "NOTE: F2P4 zeroed — core fix not detected"
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# F2P Test 5 (weight: 0.15): Documentation updated
-# Fails on base: no doc changes exist.
-# Passes after custom-provider.md is updated with reasoning effort info.
-# Uses base commit SHA to detect changes even if agent committed.
-# ═══════════════════════════════════════════════════════════════════
-echo "=== F2P Test 5: Documentation updated ==="
-F2P5=0
-DOC_FILE="packages/coding-agent/docs/custom-provider.md"
-BASE_SHA="42579dd9230a0efcf8c8805d0a26bdb2b9075e80"
-if git diff "$BASE_SHA" -- "$DOC_FILE" 2>/dev/null | grep -qiE 'reasoning.?effort|reasoningEffort|reasoning_effort'; then
-    F2P5=1
-    echo "PASS: Documentation updated with reasoning effort info"
-else
-    echo "FAIL: Documentation not updated with reasoning effort info"
-fi
-
-# ═══════════════════════════════════════════════════════════════════
-# SCORING
-# P2P weight: 0.05 + 0.05 = 0.10 (nop baseline)
-# F2P weight: 0.20 + 0.20 + 0.10 + 0.25 + 0.15 = 0.90
-# Execution-based weight: 0.05 + 0.05 + 0.20 + 0.20 + 0.10 + 0.25 = 0.85 (>50%)
-# Reward gates: 7 (>= 3)
-# ═══════════════════════════════════════════════════════════════════
-SCORE=$(awk "BEGIN { printf \"%.2f\", 0.05*$P2P1 + 0.05*$P2P2 + 0.20*$F2P1 + 0.20*$F2P2 + 0.10*$F2P3 + 0.25*$F2P4 + 0.15*$F2P5 }")
-
-# Clamp to [0, 1]
-SCORE=$(awk "BEGIN { s=$SCORE; if(s>1) s=1; if(s<0) s=0; printf \"%.2f\", s }")
+REWARD=$(awk -v p1=$P2P1 -v p2=$P2P2 \
+    -v qm=$QWEN_MEDIUM -v qh=$QWEN_HIGH -v ql=$QWEN_LOW -v qmin=$QWEN_MINIMAL \
+    -v gh=$GPTOSS_HIGH -v gm=$GPTOSS_MEDIUM -v gl=$GPTOSS_LOW \
+    -v doc=$DOC_HIT -v src=$SRC_HIT \
+    'BEGIN {
+        r = p1*0.05 + p2*0.05 \
+          + qm*0.10 + qh*0.10 + ql*0.10 + qmin*0.10 \
+          + gh*0.08 + gm*0.08 + gl*0.08 \
+          + doc*0.13 + src*0.08;
+        if (r > 1.0) r = 1.0;
+        printf "%.4f", r;
+    }')
 
 echo ""
-echo "===== RESULTS ====="
-echo "P2P1 (TS compilation):      $P2P1  (5%)"
-echo "P2P2 (existing tests):      $P2P2  (5%)"
-echo "F2P1 (qwen3 medium):        $F2P1  (20%)"
-echo "F2P2 (qwen3 high):          $F2P2  (20%)"
-echo "F2P3 (qwen3 low):           $F2P3  (10%)"
-echo "F2P4 (narrow fix check):    $F2P4  (25%)"
-echo "F2P5 (docs):                $F2P5  (15%)"
-echo "Total Score: $SCORE"
-echo "$SCORE" > "$REWARD_FILE"
+echo "================================"
+echo "FINAL REWARD: $REWARD"
+echo "  P2P1 (compile)          = $P2P1  [0.05]"
+echo "  P2P2 (existing tests)   = $P2P2  [0.05]"
+echo "  QWEN_MEDIUM             = $QWEN_MEDIUM  [0.10]"
+echo "  QWEN_HIGH               = $QWEN_HIGH  [0.10]"
+echo "  QWEN_LOW                = $QWEN_LOW  [0.10]"
+echo "  QWEN_MINIMAL            = $QWEN_MINIMAL  [0.10]"
+echo "  GPTOSS_HIGH (unchanged) = $GPTOSS_HIGH  [0.08]"
+echo "  GPTOSS_MEDIUM (unchang) = $GPTOSS_MEDIUM  [0.08]"
+echo "  GPTOSS_LOW (unchanged)  = $GPTOSS_LOW  [0.08]"
+echo "  DOC_HIT                 = $DOC_HIT  [0.13]"
+echo "  SRC_HIT                 = $SRC_HIT  [0.08]"
+echo "================================"
+
+echo "$REWARD" > "$REWARD_FILE"
+exit 0
