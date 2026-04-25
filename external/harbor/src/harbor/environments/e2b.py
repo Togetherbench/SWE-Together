@@ -122,10 +122,13 @@ class E2BEnvironment(BaseEnvironment):
             "session_id": self.session_id,
         }
 
+        # 5400s = 90 min: longer than any agent_timeout (max 3600) + verifier
+        # margin, but auto-expires soon after to prevent orphan leaks when our
+        # process dies before calling sandbox.kill().
         self._sandbox = await AsyncSandbox.create(
             template=self._template_name,
             metadata=metadata,
-            timeout=86_400,
+            timeout=5_400,
             allow_internet_access=self.task_env_config.allow_internet,
         )
 
