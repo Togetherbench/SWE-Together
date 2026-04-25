@@ -16,7 +16,7 @@ npx tsgo --noEmit 2>&1
 TSC_EXIT=$?
 if [ $TSC_EXIT -eq 0 ]; then
     echo "PASS: TypeScript compilation successful"
-    SCORE=$(echo "$SCORE + 0.10" | bc)
+    SCORE=$(awk -v a="$SCORE" 'BEGIN{printf "%.4f", a+0.10}')
 else
     echo "FAIL: TypeScript compilation failed (exit $TSC_EXIT)"
 fi
@@ -80,7 +80,7 @@ process.exit(0);
 "
 F2P1_EXIT=$?
 if [ $F2P1_EXIT -eq 0 ]; then
-    SCORE=$(echo "$SCORE + 0.35" | bc)
+    SCORE=$(awk -v a="$SCORE" 'BEGIN{printf "%.4f", a+0.35}')
 fi
 
 # ============================================================
@@ -170,7 +170,7 @@ process.exit(0);
 "
 F2P2_EXIT=$?
 if [ $F2P2_EXIT -eq 0 ]; then
-    SCORE=$(echo "$SCORE + 0.30" | bc)
+    SCORE=$(awk -v a="$SCORE" 'BEGIN{printf "%.4f", a+0.30}')
 fi
 
 # ============================================================
@@ -222,7 +222,7 @@ if (callsShutdown && checksStreaming) {
 fi
 
 if [ "${F2P3_EXIT:-1}" -eq 0 ]; then
-    SCORE=$(echo "$SCORE + 0.25" | bc)
+    SCORE=$(awk -v a="$SCORE" 'BEGIN{printf "%.4f", a+0.25}')
 fi
 
 # ============================================================

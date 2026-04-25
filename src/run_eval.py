@@ -87,10 +87,22 @@ AGENT_IMPORT_PATH = "user_agent.user_enabled_claude_code:UserEnabledClaudeCode"
 
 def get_all_tasks() -> list[str]:
     tasks_dir = REPO_ROOT / "harbor_tasks"
-    return sorted(
-        d.name for d in tasks_dir.iterdir()
+    candidates = sorted(
+        d for d in tasks_dir.iterdir()
         if d.is_dir() and (d / "task.toml").exists() and (d / "instruction.md").exists()
     )
+    runnable = []
+    skipped = []
+    for d in candidates:
+        if (d / "tests" / "test.sh").exists():
+            runnable.append(d.name)
+        else:
+            skipped.append(d.name)
+    if skipped:
+        log.warning("Skipping %d tasks missing tests/test.sh: %s",
+                    len(skipped),
+                    ", ".join(skipped[:5]) + (" ..." if len(skipped) > 5 else ""))
+    return runnable
 
 
 def is_task_completed(task_name: str, trials_dir: Path) -> bool:

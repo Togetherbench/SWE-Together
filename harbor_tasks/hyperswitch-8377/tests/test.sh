@@ -1,6 +1,9 @@
 #!/bin/bash
 set +e
 
+# Ensure cargo is on PATH (rust:1.82-slim places it here, but verifier env may not inherit)
+export PATH="/usr/local/cargo/bin:$PATH"
+
 cd /workspace/hyperswitch
 SCORE=0
 
@@ -16,7 +19,7 @@ echo ""
 echo "=== Gate 1 (P2P): router_env crate compiles ==="
 cargo check -p router_env 2>&1 | tail -5
 if [ $? -eq 0 ]; then
-    SCORE=$(echo "$SCORE + 10" | bc)
+    SCORE=$((SCORE + 10))
     echo "PASS: +0.10"
 else
     echo "FAIL"
@@ -49,7 +52,7 @@ if [ $FOUND_MODULE -eq 0 ]; then
     fi
 fi
 if [ $FOUND_MODULE -eq 1 ]; then
-    SCORE=$(echo "$SCORE + 10" | bc)
+    SCORE=$((SCORE + 10))
     echo "PASS: +0.10"
 else
     echo "FAIL: No new attempt/list operation module found"
@@ -71,7 +74,7 @@ if grep -rq "payment_attempts.*Vec\|attempts.*Vec\|Vec.*PaymentAttempt" crates/a
     TYPES_FOUND=$((TYPES_FOUND + 1))
 fi
 if [ $TYPES_FOUND -ge 1 ]; then
-    SCORE=$(echo "$SCORE + 10" | bc)
+    SCORE=$((SCORE + 10))
     echo "PASS: +0.10 (types_found=$TYPES_FOUND)"
 else
     echo "FAIL: No attempt list types found in api_models"
@@ -83,7 +86,7 @@ fi
 echo ""
 echo "=== Gate 4 (F2P): Route registration ==="
 if grep -q "list_attempts\|list_payment_attempts" crates/router/src/routes/app.rs 2>/dev/null; then
-    SCORE=$(echo "$SCORE + 10" | bc)
+    SCORE=$((SCORE + 10))
     echo "PASS: +0.10"
 else
     echo "FAIL: No list_attempts route found in app.rs"
@@ -100,7 +103,7 @@ grep -q "list_payment_attempts\|list_attempts\|PaymentGetListAttempts" crates/ro
 # Check core/payments.rs for the core function
 grep -q "attempt_operation_core\|list_attempts\|PaymentGetListAttempts\|payments_list_attempts" crates/router/src/core/payments.rs 2>/dev/null && HANDLER_OK=1
 if [ $HANDLER_OK -eq 1 ]; then
-    SCORE=$(echo "$SCORE + 10" | bc)
+    SCORE=$((SCORE + 10))
     echo "PASS: +0.10"
 else
     echo "FAIL: No handler/core function for attempt listing"
@@ -124,7 +127,7 @@ grep -q "list_attempts\|list_payment_attempts" crates/router/src/routes/app.rs 2
 [ $HANDLER_OK -eq 1 ] && STRUCT_COUNT=$((STRUCT_COUNT + 1))
 
 if [ $COMPILE_OK -eq 0 ] && [ $STRUCT_COUNT -ge 2 ]; then
-    SCORE=$(echo "$SCORE + 50" | bc)
+    SCORE=$((SCORE + 50))
     echo "PASS: +0.50 (compiles=yes, structural=$STRUCT_COUNT/4)"
 elif [ $COMPILE_OK -eq 0 ]; then
     echo "FAIL (compiles but new code not found: structural=$STRUCT_COUNT/4)"
@@ -133,11 +136,7 @@ else
 fi
 
 # Calculate final reward
-REWARD=$(echo "scale=2; $SCORE / 100" | bc -l)
-# Ensure leading zero
-case $REWARD in
-    .*) REWARD="0$REWARD" ;;
-esac
+REWARD=$(awk -v s="$SCORE" 'BEGIN{printf "%.2f", s/100}')
 
 mkdir -p /logs/verifier
 echo "$REWARD" > /logs/verifier/reward.txt

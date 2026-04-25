@@ -29,7 +29,7 @@ REWARD=0.0
 SRC_FILE="/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.ts"
 
 add_reward() {
-    REWARD=$(echo "$REWARD + $1" | bc)
+    REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{printf "%.4f", a+b}')
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,8 +277,6 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Final Score ==="
-REWARD=$(echo "$REWARD" | bc)
-if (( $(echo "$REWARD > 1.0" | bc -l) )); then REWARD="1.0"; fi
-if (( $(echo "$REWARD < 0.0" | bc -l) )); then REWARD="0.0"; fi
+REWARD=$(awk -v r="$REWARD" 'BEGIN{if(r>1)r=1; if(r<0)r=0; printf "%.4f", r}')
 echo "$REWARD" > "$REWARD_FILE"
 echo "Reward: $REWARD"
