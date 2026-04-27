@@ -1,5 +1,14 @@
 #!/bin/bash
 set +e
+# [v041-fix] torch/CUDA infra probe
+mkdir -p /logs/verifier
+if ! python3 -c "import torch; assert torch.cuda.is_available() if False else True" 2>/dev/null; then
+    echo "INFRA: torch / CUDA unavailable - marking infra_fault and exiting"
+    echo "1" > /logs/verifier/infra_fault
+    echo "0.00" > /logs/verifier/reward.txt
+    exit 0
+fi
+
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"

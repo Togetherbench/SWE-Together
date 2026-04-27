@@ -1,5 +1,11 @@
 #!/bin/bash
 set +e
+# [v041-fix] rustup default stable
+if command -v rustup >/dev/null 2>&1; then
+    rustup default stable >/dev/null 2>&1 || true
+fi
+export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
+
 
 # Verifier for hyperswitch-8338: refactor auth analytics to support profile, org and merchant level auth
 # Core principle: a no-op patch MUST produce 0.0. All reward comes from F2P behavioral changes.

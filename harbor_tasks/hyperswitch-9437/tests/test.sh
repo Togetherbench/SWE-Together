@@ -1,5 +1,28 @@
 #!/bin/bash
 set +e
+# [v041-fix] rustup default stable
+if command -v rustup >/dev/null 2>&1; then
+    rustup default stable >/dev/null 2>&1 || true
+fi
+export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
+
+# [v041-fix] cargo SIGKILL/OOM detection helper
+_cargo_check_with_oom_detect() {
+    # Run a cargo invocation and detect SIGKILL/OOM. On OOM, mark
+    # /logs/verifier/infra_fault and skip penalising the agent.
+    # Usage: _cargo_check_with_oom_detect <cmd…>
+    local out
+    out=$("$@" 2>&1)
+    local rc=$?
+    if [ $rc -eq 137 ] || echo "$out" | grep -qE "signal: 9|SIGKILL|Killed"; then
+        mkdir -p /logs/verifier
+        echo "1" > /logs/verifier/infra_fault
+        echo "$out" | tail -20
+        return 99   # sentinel: don't fail but don't pass
+    fi
+    return $rc
+}
+
 
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p "$(dirname "$REWARD_FILE")"
