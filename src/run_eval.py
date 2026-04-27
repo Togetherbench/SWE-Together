@@ -160,11 +160,8 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
 
     if provider == "fireworks":
         fw_model = model_arg.split("/", 1)[1]
-        or_key = os.environ.get("OPENROUTER_API_KEY", "")
-        _FW_TO_OR = {
-            "accounts/fireworks/routers/kimi-k2p5-turbo": "moonshotai/kimi-k2.5",
-            "accounts/fireworks/models/glm-5": "z-ai/glm-5",
-        }
+        # Fireworks-only — NO OpenRouter fallback. We measure firepass-served
+        # kimi-k2.5-turbo specifically, not what OR happens to route us to.
         env.update({
             "ANTHROPIC_API_KEY": "sk-proxy-local",
             "ANTHROPIC_AUTH_TOKEN": "sk-proxy-local",
@@ -182,9 +179,8 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
             "LITELLM_PROXY_PORT": "4210",
             "PROXY_TARGET_URL": _FIREWORKS_BASE_URL,
             "PROXY_API_KEY": action_key,
-            "PROXY_FALLBACK_URL": _OPENROUTER_BASE_URL,
-            "PROXY_FALLBACK_KEY": or_key,
-            "PROXY_FALLBACK_MODEL": _FW_TO_OR.get(fw_model, ""),
+            # No fallback. If Fireworks 429s, the trial fails — we'd rather
+            # have a clean fireworks-only signal than mixed data with OR.
         })
         return env
 

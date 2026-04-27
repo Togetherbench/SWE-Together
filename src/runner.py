@@ -96,7 +96,7 @@ _CHUTES_BASE_URL = "https://claude.chutes.ai"
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 _FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference"
 _GLM_BASE_URL = "https://api.z.ai/api/anthropic"
-_MINIMAX_BASE_URL = "https://api.minimaxi.chat/anthropic"
+_MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 _ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding"
 _GLMD_BASE_URL = "https://api.z.ai/api/anthropic"
 
