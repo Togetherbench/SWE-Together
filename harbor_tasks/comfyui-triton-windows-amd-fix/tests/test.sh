@@ -3,13 +3,14 @@ set +e
 
 export PATH="/workspace/venv/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-REWARD_FILE="/logs/verifier/reward.txt"
-mkdir -p "$(dirname "$REWARD_FILE")"
+GATES_FILE=/logs/verifier/gates.json
+REWARD_FILE=/logs/verifier/reward.txt
+mkdir -p "$(dirname "$GATES_FILE")"
+: > "$GATES_FILE"
 
-REWARD=0.0
-
-add_reward() {
-    REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{r=a+b; if(r>1.0)r=1.0; printf "%.4f", r}')
+emit() {
+    local id="$1" passed="$2" detail="${3:-}"
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> "$GATES_FILE"
 }
 
 # Locate target files
@@ -35,19 +36,21 @@ echo "TARGET=$TARGET"
 echo "SPARSE=$SPARSE"
 
 if [ -z "$TARGET" ]; then
-    echo "FATAL: target not found"
-    echo "0.0000" > "$REWARD_FILE"
+    emit p2p_structure_intact false "target not found"
+    emit t1_f2p_target_remediated false "no target"
+    emit t1_f2p_sparse_remediated false "no target"
+    emit t1_f2p_no_buggy_pair false "no target"
+    emit t1_f2p_scale_factor_preserved false "no target"
+    printf "%.4f\n" 0 > "$REWARD_FILE"
     exit 0
 fi
 
 export TARGET SPARSE
 
 # ════════════════════════════════════════════════════════════
-# P2P GATE (no reward): file still parses & has expected funcs.
+# P2P_GATING: parse + structural sanity
 # ════════════════════════════════════════════════════════════
-echo ""
-echo "=== P2P GATE: parse & structure ==="
-GATE=$(python3 << 'PYEOF'
+P2P_RES=$(python3 << 'PYEOF'
 import os, ast, sys
 target = os.environ["TARGET"]
 sparse = os.environ.get("SPARSE","")
@@ -55,11 +58,32 @@ try:
     src = open(target).read()
     tree = ast.parse(src)
 except Exception as e:
-    print(f"FAIL:parse_target:{e}"); sys.exit(0)
-names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    print(f"FAIL:parse:{e}"); sys.exit(0)
+
+funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 need = {"_attn_fwd_inner", "_attn_fwd", "forward"}
-if not need.issubset(names):
-    print(f"FAIL:missing:{need-names}"); sys.exit(0)
+missing = need - set(funcs.keys())
+if missing:
+    print(f"FAIL:missing:{missing}"); sys.exit(0)
+
+# Reject empty stubs: each required function must have >2 statements
+# and _attn_fwd_inner must contain a tl.dot call and a qk assignment.
+for name in need:
+    fn = funcs[name]
+    if len(fn.body) < 2:
+        print(f"FAIL:stub:{name}"); sys.exit(0)
+
+inner = funcs["_attn_fwd_inner"]
+inner_src = ast.unparse(inner) if hasattr(ast, "unparse") else open(target).read()
+if "tl.dot" not in inner_src:
+    print("FAIL:no_tl_dot_in_inner"); sys.exit(0)
+has_qk = any(
+    isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "qk" for t in n.targets)
+    for n in ast.walk(inner)
+)
+if not has_qk:
+    print("FAIL:no_qk_assign"); sys.exit(0)
+
 if sparse and os.path.isfile(sparse):
     try:
         ast.parse(open(sparse).read())
@@ -68,462 +92,365 @@ if sparse and os.path.isfile(sparse):
 print("PASS")
 PYEOF
 )
-echo "  GATE=$GATE"
-if [ "$GATE" != "PASS" ]; then
-    echo "Regression: $GATE"
-    echo "0.0000" > "$REWARD_FILE"
+if [ "$P2P_RES" = "PASS" ]; then
+    emit p2p_structure_intact true ""
+else
+    emit p2p_structure_intact false "$P2P_RES"
+    # Hard zero
+    printf "%.4f\n" 0 > "$REWARD_FILE"
+# ---- v042 upstream CI gates (auto-injected) ----
+# v043 upstream gates: prelude(s) + per-gate execution.
+(
+    set +e
+    # prelude 0
+    echo 'c2V0ICtlOyBjb21tYW5kIC12IHB5dGhvbjMgPi9kZXYvbnVsbCAmJiBlY2hvIE9L' | base64 -d | bash 2>&1 | tail -2
+) 2>/dev/null
+
+run_v043_gate() {
+    local id="$1" label="$2"; shift 2
+    local cmd="$*"
+    local rc out tail
+    out=$(timeout 240 bash -c "$cmd" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        emit "$id" true ""
+    else
+        tail="${out: -180}"
+        tail="${tail//\"/\'}"
+        tail="${tail//$'\n'/ }"
+        emit "$id" false "rc=$rc; $tail"
+    fi
+}
+run_v043_gate p2p_upstream_518584f9 'py_compile_changed_generic' 'cd /workspace/ComfyUI && cd /workspace && python3 -m py_compile /workspace/ComfyUI/ultravico/sageattn/attn_qk_int8_per_block.py /workspace/ComfyUI/wanvideo/radial_attention/sparse_sage/sparse_int8_attn.py'
+
+# Recompute reward using v043 weights.
+python3 - <<"V043_PY"
+import json, os
+WEIGHTS = {"t1_f2p_no_buggy_pair": 0.25, "t1_f2p_scale_factor_preserved": 0.15, "t1_f2p_sparse_remediated": 0.25, "t1_f2p_target_remediated": 0.35}
+P2P_GATING = ["p2p_structure_intact"]
+P2P_REGRESSION = ["p2p_upstream_518584f9"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            try:
+                d = json.loads(line)
+                gid = d.get('id')
+                if gid: verdicts[gid] = bool(d.get('passed'))
+            except Exception: pass
+except FileNotFoundError: pass
+hard_zero = False
+for gid in P2P_GATING + P2P_REGRESSION:
+    if not verdicts.get(gid, False):
+        hard_zero = True; break
+if hard_zero: reward = 0.0
+else:
+    reward = 0.0
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid, False): reward += w
+    if reward > 1.0: reward = 1.0
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('V043_REWARD=%.4f' % reward)
+V043_PY
+# ---- v042 end upstream CI gates ----
+
     exit 0
 fi
 
 # ════════════════════════════════════════════════════════════
-# F2P 1 (0.20): Buggy chained scalar*tensor pattern eliminated
-# in TARGET. Specifically the line
-#   qk = tl.dot(q, k).to(tl.float32) * q_scale * k_scale
-# This is the line called out in the AMD MLIR error. Buggy on base.
+# Helper: for a given file, classify what remediation was applied.
+# Returns a string describing categories found:
+#   ARANGE_LOAD   -- scale load uses tl.arange or +offset indexing
+#   FLOAT_CAST    -- .to(tl.float32) added on a scale load
+#   SPLIT_CHAIN   -- chained `*q_scale*k_scale` replaced by split/parenthesized/helper form
+# A file is "remediated" if at least one category is detected AND
+# the buggy verbatim pair is no longer present.
 # ════════════════════════════════════════════════════════════
-echo ""
-echo "=== F2P 1 (0.20): buggy chained-mult eliminated in TARGET ==="
-F1=$(python3 << 'PYEOF'
-import os, ast, sys
+classify_file() {
+    local f="$1"
+    python3 - "$f" << 'PYEOF'
+import sys, ast, re
+path = sys.argv[1]
+src = open(path).read()
 
-def is_buggy_chain(val):
-    # BinOp(BinOp(X, *, Name('q_scale'|'k_scale')), *, Name('k_scale'|'q_scale'))
-    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)):
-        return False
-    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")):
-        return False
-    inner = val.left
-    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)):
-        return False
-    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")):
-        return False
-    if val.right.id == inner.right.id:
-        return False
-    return True
+# Detect categories using a mix of regex + AST.
+cats = []
 
-target = os.environ["TARGET"]
-src = open(target).read()
-tree = ast.parse(src)
+# (a) ARANGE_LOAD: tl.load on K_scale with arange/offset indexing
+#     e.g. tl.load(K_scale_ptr + tl.arange(0, 1)), or tl.load(K_scale_ptr + start_n//BLOCK_N), etc.
+if re.search(r"tl\.load\(\s*K_scale_ptr\s*\+", src):
+    cats.append("ARANGE_LOAD")
 
-qk_assigns = []
-for n in ast.walk(tree):
-    if isinstance(n, ast.Assign):
-        for t in n.targets:
-            if isinstance(t, ast.Name) and t.id == "qk":
-                qk_assigns.append(n)
+# (b) FLOAT_CAST: a scale load (or k_scale variable) explicitly cast to float32
+#     e.g. tl.load(K_scale_ptr).to(tl.float32) or k_scale.to(tl.float32) or tl.load(...).to(tl.float32)
+if re.search(r"tl\.load\(\s*K_scale_ptr[^)]*\)\s*\.to\(\s*tl\.float32", src):
+    cats.append("FLOAT_CAST")
+if re.search(r"\bk_scale\s*=\s*tl\.load\([^)]*\)\.to\(\s*tl\.float32", src):
+    cats.append("FLOAT_CAST")
+# Also: cast on the qk side that was added
+if re.search(r"k_scale\.to\(\s*tl\.float32", src):
+    cats.append("FLOAT_CAST")
 
-if not qk_assigns:
-    print("FAIL:no_qk"); sys.exit(0)
-
-for a in qk_assigns:
-    if is_buggy_chain(a.value):
-        print("FAIL:buggy_chain_present"); sys.exit(0)
-
-print("PASS")
-PYEOF
-)
-echo "  F1=$F1"
-[ "$F1" = "PASS" ] && add_reward 0.20
-
-# ════════════════════════════════════════════════════════════
-# F2P 2 (0.20): Same fix in SPARSE companion file (completeness).
-# Buggy base has same chained pattern there.
-# If file doesn't exist on this checkout: NO REWARD (penalize incomplete checkouts handled by no file).
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== F2P 2 (0.20): buggy chained-mult eliminated in SPARSE ==="
-F2=$(python3 << 'PYEOF'
-import os, ast, sys
-
-sparse = os.environ.get("SPARSE","")
-if not sparse or not os.path.isfile(sparse):
-    print("SKIP_NOFILE"); sys.exit(0)
-
-def is_buggy_chain(val):
-    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)):
-        return False
-    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")):
-        return False
-    inner = val.left
-    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)):
-        return False
-    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")):
-        return False
-    if val.right.id == inner.right.id:
-        return False
-    return True
-
-src = open(sparse).read()
-tree = ast.parse(src)
-qk_assigns = []
-for n in ast.walk(tree):
-    if isinstance(n, ast.Assign):
-        for t in n.targets:
-            if isinstance(t, ast.Name) and t.id == "qk":
-                qk_assigns.append(n)
-if not qk_assigns:
-    print("FAIL:no_qk"); sys.exit(0)
-for a in qk_assigns:
-    if is_buggy_chain(a.value):
-        print("FAIL:buggy_chain_present"); sys.exit(0)
-print("PASS")
-PYEOF
-)
-echo "  F2=$F2"
-[ "$F2" = "PASS" ] && add_reward 0.20
-
-# ════════════════════════════════════════════════════════════
-# F2P 3 (0.30): BEHAVIORAL — simulate the qk-scaling expression
-# from the qk-assign in _attn_fwd_inner using a recording proxy.
-#
-# We build a TensorProxy that records every __mul__/__rmul__ as
-# either tensor*scalar or scalar*tensor. Buggy chain
-#   T * q_scale * k_scale
-# yields TWO sequential tensor*scalar ops on the proxy.
-# A correct fix collapses to ONE tensor*scalar, where the scalar
-# operand is itself a (q_scale*k_scale) combination — i.e. only
-# one tensor-scaling op is applied.
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== F2P 3 (0.30): behavioral scale-multiplication trace ==="
-F3=$(python3 << 'PYEOF'
-import os, ast, sys
-
-target = os.environ["TARGET"]
-src = open(target).read()
-tree = ast.parse(src)
-
-inner = next((n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
-if inner is None:
-    print("FAIL:no_inner"); sys.exit(0)
-
-# Find the qk = ... assignment expression (any qk assign whose RHS
-# involves tl.dot or *_scale).
-qk_expr = None
-for n in ast.walk(inner):
-    if isinstance(n, ast.Assign):
-        for t in n.targets:
-            if isinstance(t, ast.Name) and t.id == "qk":
-                # Pick the one that contains tl.dot or references k/q_scale
-                src_seg = ast.unparse(n.value) if hasattr(ast, "unparse") else ""
-                if "dot" in src_seg or "scale" in src_seg:
-                    qk_expr = n.value
-                    break
-        if qk_expr is not None:
-            break
-
-if qk_expr is None:
-    print("FAIL:no_qk_expr"); sys.exit(0)
-
-# Also collect any preceding assignments in the loop that define
-# helper scale variables (e.g. `scale = q_scale * k_scale`).
-helper_assigns = []
-def walk_collect_helpers(node):
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.For):
-            for stmt in sub.body:
-                if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
-                   and isinstance(stmt.targets[0], ast.Name) \
-                   and stmt.targets[0].id != "qk":
-                    src_seg = ast.unparse(stmt.value) if hasattr(ast, "unparse") else ""
-                    if "scale" in src_seg or "q_scale" in src_seg or "k_scale" in src_seg:
-                        helper_assigns.append(stmt)
-walk_collect_helpers(inner)
-
-# Build proxy.
-class TensorProxy:
-    def __init__(self, name="T"):
-        self.name = name
-        self.scalar_mults = 0  # how many times a scalar was applied
-    def __mul__(self, other):
-        if isinstance(other, TensorProxy):
-            return TensorProxy(self.name + "*" + other.name)
-        # scalar * tensor
-        new = TensorProxy(self.name)
-        new.scalar_mults = self.scalar_mults + 1
-        return new
-    def __rmul__(self, other):
-        return self.__mul__(other)
-    def to(self, *a, **kw):
-        return self
-    def __add__(self, other):
-        return self
-    def __radd__(self, other):
-        return self
-    def __sub__(self, other):
-        return self
-    def __truediv__(self, other):
-        return self
-
-class FakeTL:
-    @staticmethod
-    def dot(a, b):
-        return TensorProxy("dot")
-    class language:
-        float32 = "float32"
-    float32 = "float32"
-    @staticmethod
-    def load(*a, **kw):
-        # Returns scalar-like float
-        return 1.5
-
-ns = {
-    "tl": FakeTL,
-    "q": TensorProxy("q"),
-    "k": TensorProxy("k"),
-    "q_scale": 1.7,
-    "k_scale": 2.3,
-}
-
-# Execute helper assigns first (in order)
-import copy
-try:
-    for h in helper_assigns:
-        mod = ast.Module(body=[h], type_ignores=[])
-        exec(compile(mod, "<helper>", "exec"), ns)
-except Exception as e:
-    # Helpers might depend on things we don't have; ignore failures.
-    pass
-
-# Now evaluate the qk RHS expression
-try:
-    expr = ast.Expression(body=qk_expr)
-    result = eval(compile(expr, "<qk>", "eval"), ns)
-except Exception as e:
-    print(f"FAIL:eval:{e}"); sys.exit(0)
-
-if not isinstance(result, TensorProxy):
-    print(f"FAIL:not_tensor:{type(result)}"); sys.exit(0)
-
-# A correct fix applies the scalar to the tensor exactly ONCE.
-# Buggy chain applies it TWICE.
-if result.scalar_mults == 1:
-    print(f"PASS:scalar_mults={result.scalar_mults}")
-elif result.scalar_mults == 0:
-    print(f"FAIL:no_scaling")
-else:
-    print(f"FAIL:chained_scalar_mults={result.scalar_mults}")
-PYEOF
-)
-echo "  F3=$F3"
-case "$F3" in
-    PASS*) add_reward 0.30 ;;
-esac
-
-# ════════════════════════════════════════════════════════════
-# F2P 4 (0.15): Same behavioral check on SPARSE file's qk expr.
-# This rewards completeness behaviorally (not just textually).
-# ════════════════════════════════════════════════════════════
-echo ""
-echo "=== F2P 4 (0.15): behavioral scale-mult trace in SPARSE ==="
-F4=$(python3 << 'PYEOF'
-import os, ast, sys
-
-sparse = os.environ.get("SPARSE","")
-if not sparse or not os.path.isfile(sparse):
-    print("SKIP_NOFILE"); sys.exit(0)
-
-src = open(sparse).read()
+# (c) SPLIT_CHAIN: detect via AST that no qk assignment uses the
+#     buggy chained `* q_scale * k_scale` form anymore.
 try:
     tree = ast.parse(src)
-except Exception as e:
-    print(f"FAIL:parse:{e}"); sys.exit(0)
+except Exception:
+    print("PARSE_FAIL"); sys.exit(0)
 
-# Find any function with a qk assign that uses *_scale
-candidate_funcs = []
+def is_chained(val):
+    # BinOp(BinOp(_, Mult, Name(q_scale|k_scale)), Mult, Name(k_scale|q_scale))
+    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)): return False
+    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")): return False
+    inner = val.left
+    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)): return False
+    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")): return False
+    if val.right.id == inner.right.id: return False
+    return True
+
+found_chained = False
+qk_count = 0
 for n in ast.walk(tree):
-    if isinstance(n, ast.FunctionDef):
-        for sub in ast.walk(n):
-            if isinstance(sub, ast.Assign):
-                for t in sub.targets:
-                    if isinstance(t, ast.Name) and t.id == "qk":
-                        seg = ast.unparse(sub.value) if hasattr(ast, "unparse") else ""
-                        if "scale" in seg:
-                            candidate_funcs.append((n, sub))
+    if isinstance(n, ast.Assign):
+        for t in n.targets:
+            if isinstance(t, ast.Name) and t.id == "qk":
+                qk_count += 1
+                if is_chained(n.value):
+                    found_chained = True
 
-if not candidate_funcs:
-    print("FAIL:no_qk_scale_assign"); sys.exit(0)
+if qk_count > 0 and not found_chained:
+    cats.append("SPLIT_CHAIN")
 
-# Use the first one
-fn, qk_assign = candidate_funcs[0]
-qk_expr = qk_assign.value
-
-# Collect helper scale assigns inside fn (preceding qk in source order, broadly)
-helper_assigns = []
-for sub in ast.walk(fn):
-    if isinstance(sub, ast.Assign) and len(sub.targets) == 1 \
-       and isinstance(sub.targets[0], ast.Name) \
-       and sub.targets[0].id not in ("qk",):
-        seg = ast.unparse(sub.value) if hasattr(ast, "unparse") else ""
-        if "q_scale" in seg and "k_scale" in seg:
-            helper_assigns.append(sub)
-
-class TensorProxy:
-    def __init__(self, name="T"):
-        self.name = name
-        self.scalar_mults = 0
-    def __mul__(self, other):
-        if isinstance(other, TensorProxy):
-            return TensorProxy(self.name + "*" + other.name)
-        new = TensorProxy(self.name)
-        new.scalar_mults = self.scalar_mults + 1
-        return new
-    def __rmul__(self, other):
-        return self.__mul__(other)
-    def to(self, *a, **kw):
-        return self
-
-class FakeTL:
-    @staticmethod
-    def dot(a, b):
-        return TensorProxy("dot")
-    float32 = "float32"
-    @staticmethod
-    def load(*a, **kw):
-        return 1.5
-
-ns = {
-    "tl": FakeTL,
-    "q": TensorProxy("q"),
-    "k": TensorProxy("k"),
-    "q_scale": 1.7,
-    "k_scale": 2.3,
+# Output cats
+print(",".join(sorted(set(cats))) if cats else "NONE")
+PYEOF
 }
 
+# ════════════════════════════════════════════════════════════
+# F2P 1 (0.35): TARGET remediated (any acceptable category present)
+# Buggy base: cats=NONE -> FAIL.
+# ════════════════════════════════════════════════════════════
+TARGET_CATS=$(classify_file "$TARGET")
+echo "TARGET_CATS=$TARGET_CATS"
+if [ -n "$TARGET_CATS" ] && [ "$TARGET_CATS" != "NONE" ] && [ "$TARGET_CATS" != "PARSE_FAIL" ]; then
+    emit t1_f2p_target_remediated true "$TARGET_CATS"
+    T1_PASS=1
+else
+    emit t1_f2p_target_remediated false "no remediation category detected"
+    T1_PASS=0
+fi
+
+# ════════════════════════════════════════════════════════════
+# F2P 2 (0.25): SPARSE remediated similarly
+# ════════════════════════════════════════════════════════════
+if [ -n "$SPARSE" ] && [ -f "$SPARSE" ]; then
+    SPARSE_CATS=$(classify_file "$SPARSE")
+    echo "SPARSE_CATS=$SPARSE_CATS"
+    if [ -n "$SPARSE_CATS" ] && [ "$SPARSE_CATS" != "NONE" ] && [ "$SPARSE_CATS" != "PARSE_FAIL" ]; then
+        emit t1_f2p_sparse_remediated true "$SPARSE_CATS"
+    else
+        emit t1_f2p_sparse_remediated false "no remediation in sparse"
+    fi
+else
+    emit t1_f2p_sparse_remediated false "sparse file absent"
+fi
+
+# ════════════════════════════════════════════════════════════
+# F2P 3 (0.25): The exact buggy pair is NOT BOTH present.
+#   Buggy pair = (a) bare scalar `tl.load(K_scale_ptr)` with no
+#   arange/offset/cast, AND (b) chained `* q_scale * k_scale`.
+# Buggy base satisfies BOTH -> gate FAILS on no-op.
+# ANY of the three remediation categories breaks the pair.
+# ════════════════════════════════════════════════════════════
+NO_BUGGY=$(python3 - "$TARGET" << 'PYEOF'
+import sys, ast, re
+path = sys.argv[1]
+src = open(path).read()
+
+# (a) Is the BARE scalar load still present?
+#     bare = tl.load(K_scale_ptr) without `+`, without `.to(tl.float32)` chain
+bare_pattern = re.compile(r"tl\.load\(\s*K_scale_ptr\s*\)(?!\s*\.to\(\s*tl\.float32)")
+has_bare = bool(bare_pattern.search(src))
+
+# (b) Is the chained qk multiplication still present (any qk assign)?
 try:
-    for h in helper_assigns:
-        mod = ast.Module(body=[h], type_ignores=[])
-        exec(compile(mod, "<helper>", "exec"), ns)
+    tree = ast.parse(src)
 except Exception:
-    pass
+    print("PARSE_FAIL"); sys.exit(0)
 
-try:
-    expr = ast.Expression(body=qk_expr)
-    result = eval(compile(expr, "<qk>", "eval"), ns)
-except Exception as e:
-    print(f"FAIL:eval:{e}"); sys.exit(0)
+def is_chained(val):
+    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)): return False
+    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")): return False
+    inner = val.left
+    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)): return False
+    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")): return False
+    if val.right.id == inner.right.id: return False
+    return True
 
-if not isinstance(result, TensorProxy):
-    print(f"FAIL:not_tensor"); sys.exit(0)
+has_chained = False
+for n in ast.walk(tree):
+    if isinstance(n, ast.Assign):
+        for t in n.targets:
+            if isinstance(t, ast.Name) and t.id == "qk":
+                if is_chained(n.value):
+                    has_chained = True
 
-if result.scalar_mults == 1:
-    print(f"PASS:scalar_mults={result.scalar_mults}")
-elif result.scalar_mults == 0:
-    print(f"FAIL:no_scaling")
+if has_bare and has_chained:
+    print(f"FAIL:both_present")
 else:
-    print(f"FAIL:chained_scalar_mults={result.scalar_mults}")
+    print(f"PASS:bare={has_bare},chained={has_chained}")
 PYEOF
 )
-echo "  F4=$F4"
-case "$F4" in
-    PASS*) add_reward 0.15 ;;
+echo "NO_BUGGY=$NO_BUGGY"
+case "$NO_BUGGY" in
+    PASS*) emit t1_f2p_no_buggy_pair true "${NO_BUGGY#PASS:}" ;;
+    *)     emit t1_f2p_no_buggy_pair false "$NO_BUGGY" ;;
 esac
 
 # ════════════════════════════════════════════════════════════
-# F2P 5 (0.15): Combined-scale evidence — the fix should produce
-# a single combined scalar applied to the tensor. We check via
-# AST that the tensor*scalar product, after symbolic simplification
-# of the qk RHS, multiplies the tensor by an expression that
-# REFERENCES BOTH q_scale and k_scale (either directly or through
-# a precomputed helper var).
-#
-# This rewards real fixes (parenthesized combine, helper var,
-# load-once-then-multiply) and rejects "did nothing real" patches
-# like fake decorators or unrelated edits.
+# F2P 4 (0.15): After fix, qk expression must STILL transitively
+# reference both q_scale and k_scale (rejects deletion-style edits)
+# AND the gate t1_f2p_no_buggy_pair must be passing — otherwise
+# the buggy state would also satisfy this trivially.
+# So we gate-on no-buggy-pair: if buggy pair still there, fail.
 # ════════════════════════════════════════════════════════════
-echo ""
-echo "=== F2P 5 (0.15): combined-scale references both q_scale and k_scale ==="
-F5=$(python3 << 'PYEOF'
-import os, ast, sys
+SCALE_OK=$(python3 - "$TARGET" << 'PYEOF'
+import sys, ast, re
+path = sys.argv[1]
+src = open(path).read()
 
-target = os.environ["TARGET"]
-src = open(target).read()
-tree = ast.parse(src)
+# Pre-check: must have already moved off the buggy pair, otherwise
+# the trivial buggy expression `dot*q_scale*k_scale` would pass.
+bare_pattern = re.compile(r"tl\.load\(\s*K_scale_ptr\s*\)(?!\s*\.to\(\s*tl\.float32)")
+has_bare = bool(bare_pattern.search(src))
 
-inner = next((n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
+try:
+    tree = ast.parse(src)
+except Exception:
+    print("FAIL:parse"); sys.exit(0)
+
+def is_chained(val):
+    if not (isinstance(val, ast.BinOp) and isinstance(val.op, ast.Mult)): return False
+    if not (isinstance(val.right, ast.Name) and val.right.id in ("k_scale","q_scale")): return False
+    inner = val.left
+    if not (isinstance(inner, ast.BinOp) and isinstance(inner.op, ast.Mult)): return False
+    if not (isinstance(inner.right, ast.Name) and inner.right.id in ("k_scale","q_scale")): return False
+    if val.right.id == inner.right.id: return False
+    return True
+
+# Find _attn_fwd_inner
+inner = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_attn_fwd_inner"), None)
 if inner is None:
     print("FAIL:no_inner"); sys.exit(0)
 
-# Find qk assign with scale references
-qk_assign = None
+# qk assigns within inner
+qk_assigns = []
 for n in ast.walk(inner):
     if isinstance(n, ast.Assign):
         for t in n.targets:
             if isinstance(t, ast.Name) and t.id == "qk":
-                seg = ast.unparse(n.value) if hasattr(ast, "unparse") else ""
-                if "scale" in seg or "dot" in seg:
-                    qk_assign = n
-                    break
-        if qk_assign is not None:
-            break
+                qk_assigns.append(n)
 
-if qk_assign is None:
+if not qk_assigns:
     print("FAIL:no_qk"); sys.exit(0)
 
-# Collect helper scale-defining assigns in inner (any assign whose value
-# references q_scale or k_scale, target is a Name)
-helper_defs = {}  # name -> (refs_q, refs_k)
-def refs(expr, target_name):
+has_chained = any(is_chained(a.value) for a in qk_assigns)
+
+# Hard pre-gate: if the buggy-pair is intact, this gate must FAIL
+# (no-op state forbidden).
+if has_bare and has_chained:
+    print("FAIL:buggy_pair_intact"); sys.exit(0)
+
+# Build helper map: any assign in inner whose target is a Name and
+# whose value references q_scale or k_scale (transitively).
+helper_refs = {}  # name -> set of base scales referenced
+def name_refs(expr):
+    s = set()
     for sub in ast.walk(expr):
-        if isinstance(sub, ast.Name) and sub.id == target_name:
-            return True
-    return False
+        if isinstance(sub, ast.Name):
+            s.add(sub.id)
+    return s
 
 for n in ast.walk(inner):
-    if isinstance(n, ast.Assign) and len(n.targets) == 1 \
-       and isinstance(n.targets[0], ast.Name):
+    if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
         nm = n.targets[0].id
-        if nm == "qk":
-            continue
-        rq = refs(n.value, "q_scale")
-        rk = refs(n.value, "k_scale")
-        if rq or rk:
-            helper_defs[nm] = (rq, rk)
+        if nm == "qk": continue
+        refs = name_refs(n.value)
+        helper_refs.setdefault(nm, set()).update(refs)
 
-# Now in the qk RHS, expand all referenced names: collect all Name ids.
-referenced = set()
-for sub in ast.walk(qk_assign.value):
-    if isinstance(sub, ast.Name):
-        referenced.add(sub.id)
+# Resolve transitive: for each name in qk RHS, walk helper map up to depth 5
+def resolve(name, depth=0, seen=None):
+    if seen is None: seen = set()
+    if name in seen or depth > 5: return set()
+    seen.add(name)
+    if name in ("q_scale", "k_scale"):
+        return {name}
+    out = set()
+    if name in helper_refs:
+        for sub in helper_refs[name]:
+            out |= resolve(sub, depth+1, seen)
+    return out
 
-# Determine if the qk RHS, transitively through helpers, references both.
-def transitive_refs(start_expr, helpers):
-    seen_names = set()
-    rq = rk = False
-    stack = []
-    for sub in ast.walk(start_expr):
-        if isinstance(sub, ast.Name):
-            stack.append(sub.id)
-    while stack:
-        nm = stack.pop()
-        if nm in seen_names: continue
-        seen_names.add(nm)
-        if nm == "q_scale": rq = True
-        elif nm == "k_scale": rk = True
-        elif nm in helpers:
-            hq, hk = helpers[nm]
-            if hq: rq = True
-            if hk: rk = True
-            # No further expansion of helper bodies needed — we already
-            # captured what helpers reference into helper_defs.
-    return rq, rk
+# Check ALL qk assigns: we need at least one whose transitive refs
+# cover BOTH q_scale and k_scale. (If multiple qk assigns exist
+# in a split-chain fix, kimi's pattern: qk = qk * q_scale; qk = qk * k_scale,
+# we need to check the union across chained reassignments.)
+# We do this by accumulating refs across all qk assigns in inner.
+total_refs = set()
+for a in qk_assigns:
+    for nm in name_refs(a.value):
+        total_refs |= resolve(nm)
 
-rq, rk = transitive_refs(qk_assign.value, helper_defs)
+has_q = "q_scale" in total_refs
+has_k = "k_scale" in total_refs
 
-if rq and rk:
-    print("PASS")
+if has_q and has_k:
+    print(f"PASS:q={has_q},k={has_k}")
 else:
-    print(f"FAIL:rq={rq},rk={rk}")
+    print(f"FAIL:q={has_q},k={has_k}")
 PYEOF
 )
-echo "  F5=$F5"
-[ "$F5" = "PASS" ] && add_reward 0.15
+echo "SCALE_OK=$SCALE_OK"
+case "$SCALE_OK" in
+    PASS*) emit t1_f2p_scale_factor_preserved true "${SCALE_OK#PASS:}" ;;
+    *)     emit t1_f2p_scale_factor_preserved false "$SCALE_OK" ;;
+esac
 
 # ════════════════════════════════════════════════════════════
-# Final
+# Compute reward from gates.json
+# F2P weights: target_remediated=0.35, sparse_remediated=0.25,
+#              no_buggy_pair=0.25, scale_factor_preserved=0.15
 # ════════════════════════════════════════════════════════════
-echo ""
-echo "=== FINAL REWARD: $REWARD ==="
-echo "$REWARD" > "$REWARD_FILE"
+REWARD=$(python3 << 'PYEOF'
+import json
+weights = {
+    "t1_f2p_target_remediated": 0.35,
+    "t1_f2p_sparse_remediated": 0.25,
+    "t1_f2p_no_buggy_pair": 0.25,
+    "t1_f2p_scale_factor_preserved": 0.15,
+}
+gating_failed = False
+passed = {}
+with open("/logs/verifier/gates.json") as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        gid = obj.get("id"); ok = obj.get("passed", False)
+        if gid == "p2p_structure_intact" and not ok:
+            gating_failed = True
+        if gid in weights and ok:
+            passed[gid] = weights[gid]
+total = 0.0 if gating_failed else sum(passed.values())
+print(f"{total:.4f}")
+PYEOF
+)
+echo "REWARD=$REWARD"
+printf "%.4f\n" "$REWARD" > "$REWARD_FILE"

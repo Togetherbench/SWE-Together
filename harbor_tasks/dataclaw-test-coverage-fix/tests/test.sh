@@ -5,43 +5,100 @@ export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
 WORKSPACE="/workspace/dataclaw"
 LOG_DIR="/logs/verifier"
 mkdir -p "$LOG_DIR"
-REWARD=0.0
+GATES_FILE="$LOG_DIR/gates.json"
+: > "$GATES_FILE"
 
-cd "$WORKSPACE" 2>/dev/null || { echo "0.0" > "$LOG_DIR/reward.txt"; exit 0; }
+emit() {
+    local id="$1" passed="$2" detail="${3:-}"
+    detail="${detail//\"/\\\"}"
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> "$GATES_FILE"
+}
+
+write_reward() {
+    printf "%.4f\n" "$1" > "$LOG_DIR/reward.txt"
+}
+
+if ! cd "$WORKSPACE" 2>/dev/null; then
+    emit t1_f2p_suite_runs_and_passes false "no workspace"
+    emit t1_f2p_module_breadth false "no workspace"
+    emit t1_f2p_config_behavior false "no workspace"
+    emit t1_f2p_parser_or_cli_behavior false "no workspace"
+    emit t2_f2p_secrets_redacted_constant false "no workspace"
+    emit t2_f2p_anonymizer_hash_format false "no workspace"
+    emit p2p_src_unmodified true "no workspace"
+    emit p2p_baseline_sane false "no workspace"
+    write_reward 0.0
+    exit 0
+fi
 
 python3 -m pip install --quiet pytest pytest-timeout >/dev/null 2>&1
 
-python3 << 'PYEOF' > "$LOG_DIR/run.log" 2>&1
-import os, re, subprocess, sys, json, shutil, tempfile
+# ---------- Source-immutability check ----------
+SRC_OK=1
+hash_file=/baseline/dataclaw_src_hash
+if [ -s "$hash_file" ]; then
+    expected=$(cat "$hash_file")
+    actual=$(cd "$WORKSPACE" && find . \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name __pycache__ \) -prune -o \
+            -type f \( -name '*.py' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.rs' -o -name '*.go' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.toml' -o -name '*.yaml' -o -name '*.yml' \) -print 2>/dev/null \
+            | grep -v '/tests/' | sort | xargs -I {} sha256sum {} 2>/dev/null | sort | sha256sum | awk '{print $1}')
+    if [ "$expected" = "$actual" ]; then
+        emit p2p_src_unmodified true ""
+    else
+        emit p2p_src_unmodified false "src tree changed"
+        SRC_OK=0
+    fi
+else
+    # Fallback: compute sha over dataclaw/*.py only and stash it for later runs is not possible;
+    # in absence of baseline, attempt a soft check via git if available.
+    if [ -d "$WORKSPACE/.git" ]; then
+        cd "$WORKSPACE"
+        # If any tracked .py file under dataclaw/ shows in diff, consider modified.
+        modified=$(git diff --name-only HEAD -- 'dataclaw/*.py' 2>/dev/null | head -n1)
+        if [ -n "$modified" ]; then
+            emit p2p_src_unmodified false "git diff shows dataclaw modified: $modified"
+            SRC_OK=0
+        else
+            emit p2p_src_unmodified true "git clean"
+        fi
+    else
+        emit p2p_src_unmodified true "no baseline"
+    fi
+fi
+
+# Run the heavy lifting in python and emit gate results.
+python3 - "$GATES_FILE" "$SRC_OK" << 'PYEOF'
+import os, re, sys, json, shutil, subprocess
 from pathlib import Path
+from collections import defaultdict
+
+GATES_FILE = sys.argv[1]
+SRC_OK = sys.argv[2] == "1"
 
 WORKSPACE = Path("/workspace/dataclaw")
 DC = WORKSPACE / "dataclaw"
 TESTS = WORKSPACE / "tests"
 os.chdir(WORKSPACE)
 
-REWARD = 0.0
-def add(amount, reason):
-    global REWARD
-    REWARD += amount
-    print(f"  +{amount:.4f} -> {REWARD:.4f}  ({reason})")
+def emit(gid, passed, detail=""):
+    detail = detail.replace('"', '\\"')
+    line = '{"id":"%s","passed":%s,"detail":"%s"}\n' % (gid, "true" if passed else "false", detail)
+    with open(GATES_FILE, "a") as f:
+        f.write(line)
 
-def write_reward():
-    Path("/logs/verifier/reward.txt").write_text(f"{REWARD:.4f}\n")
+# --- Discover tests ---
+test_files = []
+if TESTS.is_dir():
+    test_files = sorted(p for p in TESTS.glob("test_*.py"))
 
-# ----------------------------------------------------------------------
-# R1: no-op gate. Tests dir absent or empty -> 0.0
-# ----------------------------------------------------------------------
-if not TESTS.is_dir():
-    print("No tests/ — no-op, reward=0.0")
-    write_reward(); sys.exit(0)
-
-test_files = sorted(p for p in TESTS.glob("test_*.py"))
-if not test_files:
-    print("No test_*.py — no-op, reward=0.0")
-    write_reward(); sys.exit(0)
-
-print(f"Found test files: {[p.name for p in test_files]}")
+if not TESTS.is_dir() or not test_files:
+    emit("t1_f2p_suite_runs_and_passes", False, "no tests/ or no test_*.py")
+    emit("t1_f2p_module_breadth", False, "no tests")
+    emit("t1_f2p_config_behavior", False, "no tests")
+    emit("t1_f2p_parser_or_cli_behavior", False, "no tests")
+    emit("t2_f2p_secrets_redacted_constant", False, "no tests")
+    emit("t2_f2p_anonymizer_hash_format", False, "no tests")
+    emit("p2p_baseline_sane", False, "no tests")
+    sys.exit(0)
 
 def run_pytest(args, timeout=240, env_extra=None):
     env = os.environ.copy()
@@ -49,7 +106,7 @@ def run_pytest(args, timeout=240, env_extra=None):
     try:
         r = subprocess.run(
             [sys.executable, "-m", "pytest"] + args
-              + ["--tb=no", "--timeout=20", "-q", "--no-header",
+              + ["--tb=line", "--timeout=20", "-q", "--no-header",
                  "-p", "no:cacheprovider"],
             capture_output=True, text=True, timeout=timeout,
             cwd=str(WORKSPACE), env=env)
@@ -69,227 +126,311 @@ def parse_counts(out):
     e = grab(r'(\d+) error', out)
     return p, f, e
 
-# ----------------------------------------------------------------------
-# Baseline run (P2P-style gate): tests must mostly pass on clean source.
-# ----------------------------------------------------------------------
-print("\n=== BASELINE ===")
+def count_failed_lines(out):
+    # Lines starting with FAILED indicate assertion failures (vs collection errors)
+    return len(re.findall(r'^FAILED ', out, re.MULTILINE))
+
+# --- Baseline run ---
 out, rc = run_pytest(["tests/"], timeout=300)
-print(out[-3500:])
 n_pass, n_fail, n_err = parse_counts(out)
 total = n_pass + n_fail + n_err
-print(f"Baseline pass={n_pass} fail={n_fail} err={n_err} total={total}")
-
-# Need at least a real suite that runs
-if total == 0:
-    print("No tests collected — reward=0.0")
-    write_reward(); sys.exit(0)
-
-if n_pass < 8:
-    print(f"Baseline passing < 8 ({n_pass}) — trivial suite, reward=0.0")
-    write_reward(); sys.exit(0)
-
-if (n_pass / total) < 0.80:
-    print(f"Baseline pass ratio < 0.80 — unreliable, reward=0.0")
-    write_reward(); sys.exit(0)
-
 baseline_pass = n_pass
-print(f"Baseline established: {baseline_pass} passing")
+baseline_failed = count_failed_lines(out)
 
-# ----------------------------------------------------------------------
-# Compute per-module test discovery — used to weight gates fairly.
-# A real suite covers MULTIPLE modules; suites that only test one slice
-# get penalized.
-# ----------------------------------------------------------------------
-print("\n=== MODULE COVERAGE PROBE ===")
-# Look at test file contents to see which dataclaw modules are imported.
-modules_imported = {"secrets": False, "anonymizer": False,
-                    "parser": False, "cli": False, "config": False}
+print(f"Baseline pass={n_pass} fail={n_fail} err={n_err} total={total}")
+print(out[-2000:])
+
+baseline_sane = total > 0 and n_pass >= 1
+if not baseline_sane:
+    emit("p2p_baseline_sane", False, f"baseline collected={total} pass={n_pass}")
+else:
+    emit("p2p_baseline_sane", True, "")
+
+# --- t1_f2p_suite_runs_and_passes ---
+# Behavioral: run the agent's tests; require ≥20 passing across ≥4 test files,
+# ratio ≥0.80, and ≥3 'assert' statements per test file.
+suite_ok = (
+    len(test_files) >= 4
+    and n_pass >= 20
+    and total > 0
+    and (n_pass / total) >= 0.80
+)
+# Also require minimum assertion density per file (anti-trivial)
+assertion_density_ok = True
 for tf in test_files:
     try:
         src = tf.read_text(errors="ignore")
     except Exception:
-        continue
-    for mod in modules_imported:
-        if (f"dataclaw.{mod}" in src) or (f"from dataclaw import {mod}" in src):
-            modules_imported[mod] = True
-modules_covered = sum(modules_imported.values())
-print(f"Modules referenced in tests: {modules_imported} (count={modules_covered})")
+        assertion_density_ok = False
+        break
+    n_assert = len(re.findall(r'\bassert\b', src))
+    if n_assert < 3:
+        assertion_density_ok = False
+        break
 
-# ----------------------------------------------------------------------
-# MUTATION TESTING — the bulk of the reward.
-# Each mutation probes a DIFFERENT slice of behavior across DIFFERENT
-# modules (R2). A correctly-fixed patch (thorough tests) catches most;
-# an incomplete one catches few.
-# ----------------------------------------------------------------------
+suite_pass = suite_ok and assertion_density_ok
+emit("t1_f2p_suite_runs_and_passes", suite_pass,
+     f"files={len(test_files)} pass={n_pass} total={total} dense={assertion_density_ok}")
 
-# Each tuple: (file, old, new, desc, weight, slice_id)
-# slice_id groups mutations targeting the same module so single-module
-# suites cannot ace the test by hammering one file.
+# If baseline is broken or src modified, no point running mutations — fail rest.
+if not baseline_sane:
+    for g in ["t1_f2p_module_breadth", "t1_f2p_config_behavior",
+              "t1_f2p_parser_or_cli_behavior",
+              "t2_f2p_secrets_redacted_constant",
+              "t2_f2p_anonymizer_hash_format"]:
+        emit(g, False, "baseline not sane")
+    sys.exit(0)
+
+# ---------- Mutation testing ----------
+# Each mutation is a (file, old, new, slice, kind) where kind in {"value","rename"}.
+# Value mutations require behavioral assertions to catch.
 MUTATIONS = [
-    # ---- secrets.py ----
-    ("secrets.py",
-     'REDACTED = "[REDACTED]"',
-     'REDACTED = "[NOT_REDACTED_XYZ]"',
-     "secrets.REDACTED constant", "secrets"),
-    ("secrets.py",
-     'def _shannon_entropy(s: str) -> float:',
-     'def _shannon_entropy(s: str) -> float:\n    return 0.0\n    # mutated below',
-     "_shannon_entropy returns 0", "secrets"),
-    ("secrets.py",
-     'def redact_text(',
-     'def _orig_redact_text(',
-     "redact_text rename (breaks symbol)", "secrets"),
-    # ---- anonymizer.py ----
+    # ---- secrets ----
+    ("secrets.py", 'REDACTED = "[REDACTED]"', 'REDACTED = "[NOT_REDACTED_XYZ]"',
+     "secrets_redacted", "secrets", "value"),
+    # ---- anonymizer ----
     ("anonymizer.py",
      'hashlib.sha256(username.encode()).hexdigest()[:8]',
      'hashlib.sha256(username.encode()).hexdigest()[:4]',
-     "username hash truncation", "anonymizer"),
+     "anon_hash_len", "anonymizer", "value"),
     ("anonymizer.py",
      'return "user_" + hashlib.sha256',
      'return "USR_" + hashlib.sha256',
-     "username hash prefix", "anonymizer"),
-    # ---- config.py ----
-    ("config.py",
-     '"redact_strings": []',
-     '"redact_strings": ["BUG_INJECT"]',
-     "DEFAULT_CONFIG redact_strings", "config"),
-    ("config.py",
-     '"excluded_projects": []',
-     '"excluded_projects": ["BUG_PROJ"]',
-     "DEFAULT_CONFIG excluded_projects", "config"),
-    # ---- parser.py: try a few likely-stable patterns ----
-    # We probe before applying, so missing patterns are skipped silently.
-    ("parser.py",
-     'def parse_session',
-     'def _orig_parse_session',
-     "parse_session rename", "parser"),
-    # ---- cli.py: probe a likely helper if present ----
-    ("cli.py",
-     'def _format_size',
-     'def _orig_format_size',
-     "_format_size rename", "cli"),
-    ("cli.py",
-     'def _mask_secret',
-     'def _orig_mask_secret',
-     "_mask_secret rename", "cli"),
+     "anon_hash_prefix", "anonymizer", "value"),
+    # ---- config ----
+    ("config.py", '"redact_strings": []', '"redact_strings": ["BUG_INJECT"]',
+     "config_redact_strings", "config", "value"),
+    ("config.py", '"excluded_projects": []', '"excluded_projects": ["BUG_PROJ"]',
+     "config_excluded_projects", "config", "value"),
+    # ---- parser (value mutations) ----
+    ("parser.py", '/ 1000', '* 1000', "parser_ts_div", "parser", "value"),
+    ("parser.py", '.jsonl', '.JSONLBUG', "parser_ext", "parser", "value"),
+    ("parser.py", 'def parse_session', 'def _orig_parse_session',
+     "parser_rename", "parser", "rename"),
+    # ---- cli (value mutations) ----
+    ("cli.py", '1024.0', '2048.0', "cli_size_kb", "cli", "value"),
+    ("cli.py", "'***'", "'###'", "cli_mask_star", "cli", "value"),
+    ("cli.py", '"***"', '"###"', "cli_mask_star_dq", "cli", "value"),
+    ("cli.py", 'def _format_size', 'def _orig_format_size',
+     "cli_rename_fs", "cli", "rename"),
 ]
 
-# Filter to applicable mutations (pattern actually present in source).
+# Filter: pattern must actually occur in source
 applicable = []
-for fname, old, new, desc, slc in MUTATIONS:
+for fname, old, new, mid, slc, kind in MUTATIONS:
     p = DC / fname
     if not p.exists():
-        print(f"  skip ({desc}): file {fname} missing")
         continue
     src = p.read_text()
     if old in src:
-        applicable.append((fname, old, new, desc, slc))
-    else:
-        print(f"  skip ({desc}): pattern not found in {fname}")
+        applicable.append((fname, old, new, mid, slc, kind))
 
-print(f"\n=== MUTATIONS ({len(applicable)} applicable) ===")
-if not applicable:
-    print("No applicable mutations — cannot grade. reward=0.0")
-    write_reward(); sys.exit(0)
-
-# Group mutations by slice
-from collections import defaultdict
-slices = defaultdict(list)
-for m in applicable:
-    slices[m[4]].append(m)
-
-print(f"Slices: { {k: len(v) for k, v in slices.items()} }")
+print(f"Applicable mutations: {[m[3] for m in applicable]}")
 
 def run_suite(timeout=180):
     try:
         r = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=no",
-             "--timeout=15", "--no-header", "-p", "no:cacheprovider",
-             "-x" if False else "--ignore-glob=**/conftest_disabled*"],
+            [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=line",
+             "--timeout=15", "--no-header", "-p", "no:cacheprovider"],
             capture_output=True, text=True, timeout=timeout,
             cwd=str(WORKSPACE))
         o = r.stdout + r.stderr
         p, f, e = parse_counts(o)
-        return p, f + e, o
+        failed_lines = count_failed_lines(o)
+        return p, f, e, failed_lines, o
     except subprocess.TimeoutExpired:
-        return 0, 999, "TIMEOUT"
+        return 0, 0, 999, 0, "TIMEOUT"
     except Exception as ex:
-        return 0, 999, f"ERR {ex}"
+        return 0, 0, 999, 0, f"ERR {ex}"
 
-# Run each mutation: detected = (failures > 0) AND (passes < baseline)
-slice_results = defaultdict(list)  # slice_id -> list of (desc, caught_bool)
+slice_caught = defaultdict(list)   # slice -> list of (mid, caught_strict, caught_loose)
+mutation_caught = {}                # mid -> caught_strict (bool)
 
-for fname, old, new, desc, slc in applicable:
+for fname, old, new, mid, slc, kind in applicable:
+    if not SRC_OK:
+        # Don't run mutations if src already changed; mark all uncaught.
+        slice_caught[slc].append((mid, False, False))
+        mutation_caught[mid] = False
+        continue
     p = DC / fname
     orig = p.read_text()
     mutated = orig.replace(old, new, 1)
     if mutated == orig:
-        print(f"  {desc}: replace was a no-op, skipping")
         continue
     p.write_text(mutated)
-    # Clear pycache to ensure re-import
     for cache in DC.rglob("__pycache__"):
         try: shutil.rmtree(cache)
         except Exception: pass
     try:
-        n_p, n_fe, log = run_suite(timeout=180)
-        # Caught if any failure/error OR pass count dropped vs baseline
-        caught = (n_fe > 0) or (n_p < baseline_pass)
-        print(f"  [{slc}] {desc}: pass={n_p} fail+err={n_fe} caught={caught}")
-        slice_results[slc].append((desc, caught))
+        n_p, n_f, n_e, fl, log = run_suite(timeout=180)
+        # STRICT: at least one assertion-level FAILED line (not just ERROR)
+        # OR pass-count strictly dropped vs baseline (regression in passing tests)
+        caught_strict = (fl > 0) or (n_p < baseline_pass and (n_f > 0))
+        # LOOSE: any failure or error — used for rename mutations
+        caught_loose = (n_f > 0) or (n_e > 0) or (n_p < baseline_pass)
+        # For "value" kind mutations, require strict; for rename, loose is OK.
+        if kind == "value":
+            caught = caught_strict
+        else:
+            caught = caught_loose
+        print(f"  [{slc}] {mid} ({kind}): pass={n_p} fail={n_f} err={n_e} FAILED_lines={fl} caught={caught}")
+        slice_caught[slc].append((mid, caught_strict, caught_loose))
+        mutation_caught[mid] = caught
     finally:
         p.write_text(orig)
         for cache in DC.rglob("__pycache__"):
             try: shutil.rmtree(cache)
             except Exception: pass
 
-# ----------------------------------------------------------------------
-# Score: weight slices independently so the agent can't max-out by
-# only testing one module.
-# ----------------------------------------------------------------------
-# Reward budget:
-#   Mutation slices  : 0.80  (split across slices that have mutations)
-#   Module coverage  : 0.20  (proportional to # of dataclaw modules
-#                              actually imported by tests, capped at 5)
-#
-# Within each slice: caught_ratio = caught / total_in_slice.
-# Slice weight = 0.80 / num_slices_with_mutations.
-# This means a suite that catches every mutation in 1 slice but ignores
-# others lands ~0.80/N + coverage; a thorough suite lands near 1.0.
+# ---------- Gate evaluation ----------
 
-slices_active = [s for s, lst in slice_results.items() if lst]
-print(f"\nActive slices: {slices_active}")
-if not slices_active:
-    print("No mutation results recorded — reward=0.0")
-    write_reward(); sys.exit(0)
+# t1_f2p_module_breadth: count slices with ≥1 STRICT (value-mutation) catch.
+# A slice is "behaviorally covered" only if a value mutation was caught strictly.
+covered_slices = set()
+for slc in ["secrets", "anonymizer", "parser", "cli", "config"]:
+    results = slice_caught.get(slc, [])
+    # Only count strict catches against value mutations (kind tracked via mid set)
+    # Easier: a strict catch implies behavioral coverage.
+    if any(strict for (_mid, strict, _loose) in results):
+        covered_slices.add(slc)
+n_modules = len(covered_slices)
+emit("t1_f2p_module_breadth", n_modules >= 4,
+     f"covered={sorted(covered_slices)} ({n_modules}/5)")
 
-slice_weight = 0.80 / len(slices_active)
-print(f"Per-slice weight: {slice_weight:.4f}")
+# t1_f2p_config_behavior: at least one config value mutation caught strictly.
+config_caught = any(
+    mutation_caught.get(mid, False)
+    for mid in ["config_redact_strings", "config_excluded_projects"]
+)
+emit("t1_f2p_config_behavior", config_caught,
+     "config value-mutations not caught" if not config_caught else "")
 
-for slc in slices_active:
-    results = slice_results[slc]
-    caught = sum(1 for _, c in results if c)
-    ratio = caught / len(results)
-    contrib = slice_weight * ratio
-    add(contrib, f"slice {slc}: {caught}/{len(results)} caught")
+# t1_f2p_parser_or_cli_behavior: at least one VALUE mutation in parser or cli caught strictly.
+pc_value_mids = ["parser_ts_div", "parser_ext", "cli_size_kb",
+                 "cli_mask_star", "cli_mask_star_dq"]
+pc_caught = any(mutation_caught.get(mid, False) for mid in pc_value_mids)
+# If none of those patterns existed, fall back: require strict catch in parser or cli slice
+if not any(mid in mutation_caught for mid in pc_value_mids):
+    pc_caught = any(strict for slc in ("parser", "cli")
+                    for (_m, strict, _l) in slice_caught.get(slc, []))
+emit("t1_f2p_parser_or_cli_behavior", pc_caught,
+     "no behavioral parser/cli mutation caught" if not pc_caught else "")
 
-# Module coverage component (R5: completeness)
-# Reward proportional to fraction of dataclaw's 5 modules actually tested.
-cov_ratio = modules_covered / 5.0
-add(0.20 * cov_ratio, f"module coverage {modules_covered}/5")
+# t2_f2p_secrets_redacted_constant: secrets.REDACTED mutation caught strictly.
+secrets_caught = mutation_caught.get("secrets_redacted", False)
+emit("t2_f2p_secrets_redacted_constant", secrets_caught,
+     "REDACTED constant mutation not caught" if not secrets_caught else "")
 
-# Cap and floor
-if REWARD > 1.0: REWARD = 1.0
-if REWARD < 0.0: REWARD = 0.0
+# t2_f2p_anonymizer_hash_format: at least one anonymizer hash mutation caught strictly.
+anon_caught = (mutation_caught.get("anon_hash_len", False)
+               or mutation_caught.get("anon_hash_prefix", False))
+emit("t2_f2p_anonymizer_hash_format", anon_caught,
+     "anonymizer hash mutations not caught" if not anon_caught else "")
 
-print(f"\n=== FINAL REWARD: {REWARD:.4f} ===")
-write_reward()
 PYEOF
 
-# Ensure reward file exists even if python crashed
-if [ ! -f "$LOG_DIR/reward.txt" ]; then
-    echo "0.0" > "$LOG_DIR/reward.txt"
-fi
+# ---------- Compute reward from gates.json ----------
+python3 - "$GATES_FILE" "$LOG_DIR/reward.txt" << 'PYEOF'
+import json, sys
+gates_file = sys.argv[1]
+reward_file = sys.argv[2]
 
-REWARD=$(cat "$LOG_DIR/reward.txt" 2>/dev/null || echo "0.0")
-echo "$REWARD" > /logs/verifier/reward.txt
+# F2P weights from manifest
+weights = {
+    "t1_f2p_suite_runs_and_passes": 0.15,
+    "t1_f2p_module_breadth": 0.15,
+    "t1_f2p_config_behavior": 0.15,
+    "t1_f2p_parser_or_cli_behavior": 0.15,
+    "t2_f2p_secrets_redacted_constant": 0.20,
+    "t2_f2p_anonymizer_hash_format": 0.20,
+}
+gating = {"p2p_src_unmodified", "p2p_baseline_sane"}
+
+results = {}
+with open(gates_file) as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        results[obj["id"]] = obj["passed"]
+
+# Hard gating: src unmodified MUST pass; if it failed, reward=0
+src_ok = results.get("p2p_src_unmodified", True)
+if not src_ok:
+    with open(reward_file, "w") as f:
+        f.write("0.0000\n")
+    sys.exit(0)
+
+reward = 0.0
+for gid, w in weights.items():
+    if results.get(gid, False):
+        reward += w
+
+with open(reward_file, "w") as f:
+    f.write(f"{reward:.4f}\n")
+PYEOF
+# ---- v042 upstream CI gates (auto-injected) ----
+# v043 upstream gates: prelude(s) + per-gate execution.
+(
+    set +e
+    # prelude 0
+    echo 'c2V0ICtlOyBjb21tYW5kIC12IHB5dGhvbjMgPi9kZXYvbnVsbCAmJiBlY2hvIE9L' | base64 -d | bash 2>&1 | tail -2
+) 2>/dev/null
+
+run_v043_gate() {
+    local id="$1" label="$2"; shift 2
+    local cmd="$*"
+    local rc out tail
+    out=$(timeout 240 bash -c "$cmd" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        emit "$id" true ""
+    else
+        tail="${out: -180}"
+        tail="${tail//\"/\'}"
+        tail="${tail//$'\n'/ }"
+        emit "$id" false "rc=$rc; $tail"
+    fi
+}
+run_v043_gate f2p_upstream_8138ab05 'py_compile_changed_generic' 'cd /workspace/dataclaw && cd /workspace && python3 -m py_compile /workspace/dataclaw/tests/__init__.py /workspace/dataclaw/tests/conftest.py /workspace/dataclaw/tests/test_config.py /workspace/dataclaw/tests/test_secrets.py /workspace/dataclaw/tests/test_anonymizer.py /workspace/dataclaw/tests/test_parser.py /workspace/dataclaw/tests/test_cli.py'
+
+# Recompute reward using v043 weights.
+python3 - <<"V043_PY"
+import json, os
+WEIGHTS = {"f2p_upstream_8138ab05": 0.2, "t1_f2p_config_behavior": 0.12, "t1_f2p_module_breadth": 0.12, "t1_f2p_parser_or_cli_behavior": 0.12, "t1_f2p_suite_runs_and_passes": 0.12, "t2_f2p_anonymizer_hash_format": 0.16, "t2_f2p_secrets_redacted_constant": 0.16}
+P2P_GATING = ["p2p_src_unmodified", "p2p_baseline_sane"]
+P2P_REGRESSION = []
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            try:
+                d = json.loads(line)
+                gid = d.get('id')
+                if gid: verdicts[gid] = bool(d.get('passed'))
+            except Exception: pass
+except FileNotFoundError: pass
+hard_zero = False
+for gid in P2P_GATING + P2P_REGRESSION:
+    if not verdicts.get(gid, False):
+        hard_zero = True; break
+if hard_zero: reward = 0.0
+else:
+    reward = 0.0
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid, False): reward += w
+    if reward > 1.0: reward = 1.0
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('V043_REWARD=%.4f' % reward)
+V043_PY
+# ---- v042 end upstream CI gates ----
+
+
+exit 0

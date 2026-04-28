@@ -1,0 +1,80 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: reigh-timeline-mode-cleanup
+turns:
+- turn: 1
+  user_message: "Implement the following plan: # Eliminate TimelineModeContent \u2014 remove pure pass-through layer ..."
+  deliverable: Delete TimelineModeContent.tsx, render Timeline directly from ShotImagesEditor with correct prop remap, inline
+    unpositioned helper, scrub barrel.
+  skipped: false
+- turn: 2
+  user_message: is tehre stuff there that's unused or that should be unused?
+  deliverable: "Probe for dead code \u2014 should identify and (after T3) remove enhancedPrompts, EMPTY_ENHANCED_PROMPTS,\
+    \ propHookData."
+  skipped: false
+- turn: 3
+  user_message: yes plesae
+  deliverable: Approval to proceed (conversational).
+  skipped: true
+- turn: 4
+  user_message: push to github
+  deliverable: Commit and push (env-dependent, not testable).
+  skipped: true
+gates:
+- id: p2p_essential_files_present
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: Pre-existing files (ShotImagesEditor.tsx, Timeline.tsx, TimelineContainer) still exist.
+- id: t1_f2p_tmc_deleted
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: TimelineModeContent.tsx file is deleted from disk.
+- id: t1_f2p_timeline_rendered_directly
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: ShotImagesEditor renders <Timeline> directly (not <TimelineModeContent>) and imports Timeline.
+- id: t1_f2p_prop_remap_complete
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: ShotImagesEditor's Timeline JSX includes the remapped props (frameSpacing + several handler renames).
+- id: t1_f2p_unpositioned_helper_inlined
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: Unpositioned generations helper inlined in ShotImagesEditor with conditional render and onClick.
+- id: t1_f2p_barrel_cleaned
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: ShotImagesEditor/components/index.ts no longer exports TimelineModeContent.
+- id: t2_f2p_dead_constant_removed
+  turn: 2
+  kind: F2P
+  weight: 0.1
+  description: EMPTY_ENHANCED_PROMPTS dead module-level constant removed from Timeline.tsx.
+- id: t2_f2p_enhancedprompts_purged
+  turn: 2
+  kind: F2P
+  weight: 0.15
+  description: enhancedPrompts dead prop scrubbed from Timeline.tsx and TimelineContainer chain.
+- id: t2_f2p_propHookData_removed
+  turn: 2
+  kind: F2P
+  weight: 0.1
+  description: propHookData dead prop removed from Timeline.tsx.
+- id: p2p_upstream_523760b1
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): tsc_noemit @ 65e1265'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-timeline-mode-cleanup_p2p_bundle.yaml
+- id: p2p_upstream_cdf050a5
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_run_build @ 65e1265'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-timeline-mode-cleanup_p2p_bundle.yaml

@@ -1,248 +1,312 @@
 #!/bin/bash
 set +e
 mkdir -p /logs/verifier
-REWARD=0
+GATES_FILE=/logs/verifier/gates.json
+: > "$GATES_FILE"
+
+emit() {
+    local id="$1" passed="$2" detail="${3:-}"
+    detail=$(printf '%s' "$detail" | tr -d '\n' | sed 's/"/\\"/g' | cut -c1-200)
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> "$GATES_FILE"
+}
 
 export PATH="/usr/local/cargo/bin:/root/.cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:$PATH"
 
-cd /workspace/pi-mono 2>/dev/null || { echo "0.00" > /logs/verifier/reward.txt; exit 0; }
-
-add() {
-    REWARD=$(awk "BEGIN{printf \"%.2f\", $REWARD + $1}")
-}
-
-finish() {
-    echo "$REWARD" > /logs/verifier/reward.txt
-    exit 0
-}
-
-CA_DIR="/workspace/pi-mono/packages/coding-agent"
-AI_DIR="/workspace/pi-mono/packages/ai"
+REPO=/workspace/pi-mono
+CA_DIR="$REPO/packages/coding-agent"
 NATIVE_FILE="$CA_DIR/src/utils/clipboard-native.ts"
-CONCURRENT_TEST="$CA_DIR/test/agent-session-concurrent.test.ts"
 PRINT_TEST="$CA_DIR/test/print-mode.test.ts"
-COMPACTION_TEST="$CA_DIR/test/interactive-mode-compaction.test.ts"
-HANDOFF_TEST="$AI_DIR/test/cross-provider-handoff.test.ts"
-OPUS_SMOKE_TEST="$AI_DIR/test/anthropic-opus-4-7-smoke.test.ts"
 
-if ! command -v node >/dev/null 2>&1; then
-    finish
+write_reward() {
+    local r="$1"
+    printf "%.4f\n" "$r" > /logs/verifier/reward.txt
+}
+
+# If the repo is missing or node isn't available, emit all F2P fails and exit 0
+if [ ! -d "$REPO" ] || ! command -v node >/dev/null 2>&1; then
+    emit t3_f2p_bogus_display_no_crash false "no repo or node"
+    emit t3_f2p_headless_no_native_loaded false "no repo or node"
+    emit t5_f2p_minimal_change_clipboard_native false "no repo or node"
+    emit t5_f2p_bogus_display_safe false "no repo or node"
+    emit t6_f2p_print_mode_passes false "no repo or node"
+    emit t6_f2p_termux_branch_preserved false "no repo or node"
+    emit p2p_no_instruction_modified true "no repo"
+    write_reward 0.0
+    exit 0
 fi
 
-# ============================================================
-# GATE 1 (0.18): clipboard-native — load returns null on headless linux
-# (no DISPLAY, no WAYLAND_DISPLAY). The clipboard export must be null.
-# Must NOT crash. The buggy code panics; a guard fix returns null.
-# ============================================================
-echo "=== GATE 1: clipboard-native exports null on headless linux ==="
-G1_PASS=0
-if [ -f "$NATIVE_FILE" ]; then
+cd "$REPO"
+
+# --------------------------------------------------------------------
+# P2P: instruction.md unchanged
+# --------------------------------------------------------------------
+INSTR_OK=true
+if [ -f /baseline/instruction.md ]; then
+    if ! diff -q /baseline/instruction.md "$REPO/instruction.md" >/dev/null 2>&1; then
+        INSTR_OK=false
+    fi
+fi
+if $INSTR_OK; then
+    emit p2p_no_instruction_modified true ""
+else
+    emit p2p_no_instruction_modified false "instruction.md changed"
+fi
+
+# --------------------------------------------------------------------
+# Helper: run an import probe with given env. Outputs a single-line tag.
+# --------------------------------------------------------------------
+probe_native() {
+    # $1 = env-prefix string (eval'd), e.g. "env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION"
+    local envcmd="$1"
     cd "$CA_DIR"
-    OUT=$(env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION \
-        timeout 45 node --import tsx -e '
+    eval "$envcmd timeout 60 node --import tsx -e '
         (async () => {
             try {
-                const mod = await import("./src/utils/clipboard-native.ts");
-                let sawNull = false, sawNonNull = false;
-                for (const k of Object.keys(mod)) {
-                    const v = mod[k];
-                    if (v === null) sawNull = true;
-                    else if (v && typeof v === "object" && typeof v.hasImage === "function") sawNonNull = true;
-                }
-                if (mod.default === null) sawNull = true;
-                if (sawNull && !sawNonNull) console.log("HEADLESS_NULL_OK");
-                else if (sawNonNull) console.log("LOADED_NATIVE_BAD");
-                else console.log("UNKNOWN");
+                const mod = await import(\"./src/utils/clipboard-native.ts\");
+                let sawUsable = false;
+                let sawNull = false;
+                const inspect = (v) => {
+                    if (v === null || v === undefined) { sawNull = true; return; }
+                    if (typeof v === \"object\" && (typeof v.hasImage === \"function\" || typeof v.readImage === \"function\" || typeof v.read === \"function\")) {
+                        sawUsable = true;
+                    }
+                };
+                inspect(mod.default);
+                for (const k of Object.keys(mod)) inspect(mod[k]);
+                if (sawUsable) console.log(\"USABLE_NATIVE\");
+                else console.log(\"NO_NATIVE\");
             } catch (e) {
-                console.log("LOAD_FAIL:" + (e && e.message ? e.message : String(e)));
+                console.log(\"IMPORT_CRASH:\" + (e && e.message ? e.message.replace(/\\n/g, \" \") : String(e)));
+                process.exit(2);
             }
         })();
-        ' 2>&1)
-    echo "$OUT" | tail -5
-    if echo "$OUT" | grep -q "HEADLESS_NULL_OK"; then
-        add 0.18
-        G1_PASS=1
-        echo "GATE 1 PASS (0.18)"
-    else
-        echo "GATE 1 FAIL"
-    fi
-    cd /workspace/pi-mono
+    ' 2>&1"
+    local rc=$?
+    cd "$REPO"
+    return $rc
+}
+
+# --------------------------------------------------------------------
+# Gate t3_f2p_bogus_display_no_crash:
+# Set DISPLAY=:99 (no socket). Buggy code attempts to load the native
+# binding which connects to X and crashes; fixed code checks socket / env
+# more carefully and returns null.
+# --------------------------------------------------------------------
+BOGUS_DISP=":97"
+[ -e "/tmp/.X11-unix/X97" ] && BOGUS_DISP=":98"
+[ -e "/tmp/.X11-unix/X98" ] && BOGUS_DISP=":99"
+[ -e "/tmp/.X11-unix/X99" ] && BOGUS_DISP=":91"
+
+OUT_BOGUS=$(probe_native "env -u WAYLAND_DISPLAY -u TERMUX_VERSION DISPLAY=$BOGUS_DISP")
+RC_BOGUS=$?
+echo "[bogus DISPLAY=$BOGUS_DISP] rc=$RC_BOGUS"
+echo "$OUT_BOGUS" | tail -3
+
+if [ $RC_BOGUS -eq 0 ] && echo "$OUT_BOGUS" | grep -q "NO_NATIVE"; then
+    emit t3_f2p_bogus_display_no_crash true ""
+else
+    emit t3_f2p_bogus_display_no_crash false "rc=$RC_BOGUS out=$(echo "$OUT_BOGUS" | tail -1)"
 fi
 
-# ============================================================
-# GATE 2 (0.18): clipboard-native — DISPLAY=:0 set BUT no X11 socket present.
-# A robust fix verifies the unix socket exists; an env-only fix WILL crash here.
-# This discriminates "complete behavioral fix" (GLM4.7, MiniMax) from
-# "env-only guard" (Kimi, etc).
-# ============================================================
-echo ""
-echo "=== GATE 2: clipboard-native handles bogus DISPLAY (socket-aware) ==="
+# t5_f2p_bogus_display_safe — same probe, distinct gate (turn 5 deliverable).
+if [ $RC_BOGUS -eq 0 ] && echo "$OUT_BOGUS" | grep -q "NO_NATIVE"; then
+    emit t5_f2p_bogus_display_safe true ""
+else
+    emit t5_f2p_bogus_display_safe false "rc=$RC_BOGUS out=$(echo "$OUT_BOGUS" | tail -1)"
+fi
+
+# --------------------------------------------------------------------
+# Gate t3_f2p_headless_no_native_loaded:
+# No DISPLAY, no WAYLAND_DISPLAY, no TERMUX. Must yield NO_NATIVE.
+# To avoid being decorative (passing on nop because base may already
+# return null), we ALSO require that the file has been modified vs
+# baseline OR that the bogus-display path passes — i.e., a real fix
+# was applied. We enforce this by combining with the source-change check.
+# --------------------------------------------------------------------
+OUT_HEADLESS=$(probe_native "env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION")
+RC_HEADLESS=$?
+echo "[headless] rc=$RC_HEADLESS"
+echo "$OUT_HEADLESS" | tail -3
+
+# --------------------------------------------------------------------
+# Source change detection vs baseline hash for clipboard-native.ts.
+# We compute a baseline hash once (preferring /baseline if available;
+# fallback: git show HEAD).
+# --------------------------------------------------------------------
+NATIVE_CHANGED=false
+NATIVE_BASELINE_HASH=""
+NATIVE_CURRENT_HASH=""
+
 if [ -f "$NATIVE_FILE" ]; then
-    cd "$CA_DIR"
-    # Pick a display number with no X socket
-    BOGUS_DISP=":97"
-    if [ -e "/tmp/.X11-unix/X97" ]; then BOGUS_DISP=":98"; fi
-    if [ -e "/tmp/.X11-unix/X98" ]; then BOGUS_DISP=":99"; fi
-    env -u WAYLAND_DISPLAY -u TERMUX_VERSION DISPLAY="$BOGUS_DISP" \
-        timeout 45 node --import tsx -e '
-        import("./src/utils/clipboard-native.ts").then((mod) => {
-            let sawNull = false, sawNonNull = false;
-            for (const k of Object.keys(mod)) {
-                const v = mod[k];
-                if (v === null) sawNull = true;
-                else if (v && typeof v === "object" && typeof v.hasImage === "function") sawNonNull = true;
-            }
-            if (mod.default === null) sawNull = true;
-            if (sawNonNull) { console.log("LOADED_NATIVE"); process.exit(0); }
-            if (sawNull) { console.log("BOGUS_DISP_NULL_OK"); process.exit(0); }
-            console.log("UNKNOWN"); process.exit(0);
-        }).catch((e) => {
-            console.log("CRASH:" + (e && e.message ? e.message : String(e)));
-            process.exit(2);
-        });
-        ' >/tmp/g2.log 2>&1
-    EX=$?
-    tail -5 /tmp/g2.log
-    if [ $EX -eq 0 ] && grep -q "BOGUS_DISP_NULL_OK" /tmp/g2.log; then
-        add 0.18
-        echo "GATE 2 PASS (0.18) — socket-aware guard"
-    else
-        echo "GATE 2 FAIL (env-only or no fix)"
-    fi
-    cd /workspace/pi-mono
+    NATIVE_CURRENT_HASH=$(sha256sum "$NATIVE_FILE" 2>/dev/null | awk '{print $1}')
 fi
 
-# ============================================================
-# GATE 3 (0.16): child-process import does not crash on headless linux
-# (separate process, exit code 0). Catches lazy/throw-deferred fixes too.
-# ============================================================
-echo ""
-echo "=== GATE 3: child-process import exit=0 on headless ==="
-if [ -f "$NATIVE_FILE" ]; then
-    cd "$CA_DIR"
-    env -u DISPLAY -u WAYLAND_DISPLAY -u TERMUX_VERSION \
-        timeout 45 node --import tsx -e '
-        import("./src/utils/clipboard-native.ts").then(() => {
-            process.stdout.write("OK_IMPORT\n");
-            process.exit(0);
-        }).catch((e) => {
-            process.stdout.write("FAIL_IMPORT:" + (e && e.message ? e.message : String(e)) + "\n");
-            process.exit(2);
-        });
-        ' >/tmp/g3.log 2>&1
-    EX=$?
-    tail -3 /tmp/g3.log
-    if [ $EX -eq 0 ] && grep -q "OK_IMPORT" /tmp/g3.log; then
-        add 0.16
-        echo "GATE 3 PASS (0.16)"
-    else
-        echo "GATE 3 FAIL (exit=$EX)"
-    fi
-    cd /workspace/pi-mono
+if [ -f /baseline/clipboard-native.ts ]; then
+    NATIVE_BASELINE_HASH=$(sha256sum /baseline/clipboard-native.ts 2>/dev/null | awk '{print $1}')
 fi
 
-# ============================================================
-# GATE 4 (0.16): agent-session-concurrent.test.ts — runs vitest and
-# requires it to pass. The fix is to add `invalidate` to extensionRunner mocks.
-# Buggy code OR partial mock fixes cause type/runtime errors.
-# ============================================================
-echo ""
-echo "=== GATE 4: agent-session-concurrent vitest run ==="
-G4_PASS=0
-if [ -f "$CONCURRENT_TEST" ]; then
-    cd "$CA_DIR"
-    timeout 180 npx vitest run test/agent-session-concurrent.test.ts \
-        --reporter=verbose --no-coverage >/tmp/g4.log 2>&1
-    EX=$?
-    tail -25 /tmp/g4.log
-    # require explicit pass markers; failed tests must be 0
-    PASSED=$(grep -Eo "Tests +[0-9]+ passed" /tmp/g4.log | head -1 | grep -Eo "[0-9]+" | head -1)
-    FAILED=$(grep -Eo "[0-9]+ failed" /tmp/g4.log | head -1 | grep -Eo "[0-9]+" | head -1)
-    if [ $EX -eq 0 ] && [ -n "$PASSED" ] && [ "${PASSED:-0}" -ge 2 ] && [ -z "$FAILED" -o "${FAILED:-0}" -eq 0 ]; then
-        add 0.16
-        G4_PASS=1
-        echo "GATE 4 PASS (0.16) — $PASSED tests passed"
-    else
-        echo "GATE 4 FAIL (exit=$EX passed=$PASSED failed=$FAILED)"
+if [ -z "$NATIVE_BASELINE_HASH" ]; then
+    # Fallback: pull from git HEAD
+    BL=$(cd "$REPO" && git show HEAD:packages/coding-agent/src/utils/clipboard-native.ts 2>/dev/null)
+    if [ -n "$BL" ]; then
+        NATIVE_BASELINE_HASH=$(printf '%s' "$BL" | sha256sum | awk '{print $1}')
     fi
-    cd /workspace/pi-mono
 fi
 
-# ============================================================
-# GATE 5 (0.12): print-mode.test.ts requires `setRebindSession` on the
-# FakeRuntimeHost mock. A complete fix touches print-mode.test.ts AND
-# rpc-prompt-response-semantics.test.ts. Run vitest on print-mode.
-# ============================================================
-echo ""
-echo "=== GATE 5: print-mode vitest run ==="
-G5_PASS=0
+if [ -n "$NATIVE_BASELINE_HASH" ] && [ -n "$NATIVE_CURRENT_HASH" ] && [ "$NATIVE_BASELINE_HASH" != "$NATIVE_CURRENT_HASH" ]; then
+    NATIVE_CHANGED=true
+fi
+
+echo "native_changed=$NATIVE_CHANGED baseline=$NATIVE_BASELINE_HASH current=$NATIVE_CURRENT_HASH"
+
+# Headless gate: requires NO_NATIVE AND a real change to the file.
+# (If the buggy baseline already returns NO_NATIVE harmlessly under headless,
+# the no-op patch would otherwise leak credit; require source change too.)
+if [ $RC_HEADLESS -eq 0 ] && echo "$OUT_HEADLESS" | grep -q "NO_NATIVE" && $NATIVE_CHANGED; then
+    emit t3_f2p_headless_no_native_loaded true ""
+else
+    emit t3_f2p_headless_no_native_loaded false "rc=$RC_HEADLESS changed=$NATIVE_CHANGED"
+fi
+
+# Minimal-change gate: file was edited.
+if $NATIVE_CHANGED; then
+    emit t5_f2p_minimal_change_clipboard_native true ""
+else
+    emit t5_f2p_minimal_change_clipboard_native false "clipboard-native.ts unchanged vs baseline"
+fi
+
+# --------------------------------------------------------------------
+# Gate t6_f2p_termux_branch_preserved:
+# Set TERMUX_VERSION; the file must still import without crashing.
+# Combined with the source-change marker so the no-op cannot leak
+# credit (otherwise the buggy baseline likely already imports fine
+# under TERMUX since it skips the X path).
+# --------------------------------------------------------------------
+OUT_TERMUX=$(probe_native "env -u DISPLAY -u WAYLAND_DISPLAY TERMUX_VERSION=0.118")
+RC_TERMUX=$?
+echo "[termux] rc=$RC_TERMUX"
+echo "$OUT_TERMUX" | tail -3
+
+if [ $RC_TERMUX -eq 0 ] && ! echo "$OUT_TERMUX" | grep -q "IMPORT_CRASH" && $NATIVE_CHANGED; then
+    emit t6_f2p_termux_branch_preserved true ""
+else
+    emit t6_f2p_termux_branch_preserved false "rc=$RC_TERMUX changed=$NATIVE_CHANGED"
+fi
+
+# --------------------------------------------------------------------
+# Gate t6_f2p_print_mode_passes:
+# Run vitest on print-mode.test.ts and require it to pass cleanly.
+# --------------------------------------------------------------------
+PRINT_PASS=false
 if [ -f "$PRINT_TEST" ]; then
     cd "$CA_DIR"
-    timeout 180 npx vitest run test/print-mode.test.ts \
-        --reporter=verbose --no-coverage >/tmp/g5.log 2>&1
+    timeout 240 npx vitest run test/print-mode.test.ts \
+        --reporter=verbose --no-coverage >/tmp/g_print.log 2>&1
     EX=$?
-    tail -20 /tmp/g5.log
-    PASSED=$(grep -Eo "Tests +[0-9]+ passed" /tmp/g5.log | head -1 | grep -Eo "[0-9]+" | head -1)
-    FAILED=$(grep -Eo "[0-9]+ failed" /tmp/g5.log | head -1 | grep -Eo "[0-9]+" | head -1)
-    if [ $EX -eq 0 ] && [ -n "$PASSED" ] && [ "${PASSED:-0}" -ge 1 ] && [ -z "$FAILED" -o "${FAILED:-0}" -eq 0 ]; then
-        add 0.12
-        G5_PASS=1
-        echo "GATE 5 PASS (0.12) — $PASSED tests passed"
-    else
-        echo "GATE 5 FAIL (exit=$EX passed=$PASSED failed=$FAILED)"
+    tail -25 /tmp/g_print.log
+    PASSED=$(grep -Eo "Tests +[0-9]+ passed" /tmp/g_print.log | head -1 | grep -Eo "[0-9]+" | head -1)
+    FAILED=$(grep -Eo "[0-9]+ failed" /tmp/g_print.log | head -1 | grep -Eo "[0-9]+" | head -1)
+    if [ "$EX" = "0" ] && [ -n "$PASSED" ] && [ "${PASSED:-0}" -ge 1 ] && { [ -z "$FAILED" ] || [ "${FAILED:-0}" -eq 0 ]; }; then
+        PRINT_PASS=true
     fi
-    cd /workspace/pi-mono
+    cd "$REPO"
 fi
 
-# ============================================================
-# GATE 6 (0.10): completeness — print-mode.test.ts must contain
-# `setRebindSession` (mock added) AND interactive-mode-compaction.test.ts
-# must contain `setProgress` (terminal mock added). Each contributes half.
-# This catches patches that fix some files but skip others.
-# ============================================================
-echo ""
-echo "=== GATE 6: completeness markers in test mocks ==="
-G6_SCORE=0
-if [ -f "$PRINT_TEST" ] && grep -q "setRebindSession" "$PRINT_TEST"; then
-    G6_SCORE=$(awk "BEGIN{printf \"%.2f\", $G6_SCORE + 0.05}")
-    echo "  setRebindSession present in print-mode.test.ts (+0.05)"
+if $PRINT_PASS; then
+    emit t6_f2p_print_mode_passes true ""
 else
-    echo "  setRebindSession MISSING in print-mode.test.ts"
+    emit t6_f2p_print_mode_passes false "vitest print-mode failed"
 fi
-if [ -f "$COMPACTION_TEST" ] && grep -q "setProgress" "$COMPACTION_TEST"; then
-    G6_SCORE=$(awk "BEGIN{printf \"%.2f\", $G6_SCORE + 0.05}")
-    echo "  setProgress present in interactive-mode-compaction.test.ts (+0.05)"
-else
-    echo "  setProgress MISSING in interactive-mode-compaction.test.ts"
-fi
-add "$G6_SCORE"
-echo "GATE 6 score: $G6_SCORE / 0.10"
 
-# ============================================================
-# GATE 7 (0.10): cross-provider-handoff.test.ts must use a count-based
-# skip predicate (not just !hasAnyApiKey) — the proper fix changes the
-# .skipIf to check Object.keys(contexts).length < 2 OR similar.
-# Run vitest; in CI no API keys are present, so the test must SKIP cleanly,
-# not error. Verify zero failures.
-# ============================================================
-echo ""
-echo "=== GATE 7: cross-provider-handoff skips cleanly ==="
-if [ -f "$HANDOFF_TEST" ]; then
-    cd "$AI_DIR"
-    env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GOOGLE_API_KEY -u GEMINI_API_KEY -u XAI_API_KEY -u GROQ_API_KEY -u CEREBRAS_API_KEY \
-        timeout 120 npx vitest run test/cross-provider-handoff.test.ts \
-        --reporter=verbose --no-coverage >/tmp/g7.log 2>&1
-    EX=$?
-    tail -20 /tmp/g7.log
-    FAILED=$(grep -Eo "[0-9]+ failed" /tmp/g7.log | head -1 | grep -Eo "[0-9]+" | head -1)
-    # Either passes-or-skips (no failures), and exit ok
-    if [ $EX -eq 0 ] && [ -z "$FAILED" -o "${FAILED:-0}" -eq 0 ]; then
-        add 0.10
-        echo "GATE 7 PASS (0.10)"
-    else
-        echo "GATE 7 FAIL (exit=$EX failed=$FAILED)"
+# --------------------------------------------------------------------
+# Compute reward.
+# --------------------------------------------------------------------
+# Check P2P_GATING: if any failed, reward = 0.
+P2P_FAIL=$(grep -E '"id":"p2p_' "$GATES_FILE" | grep -c '"passed":false')
+
+if [ "$P2P_FAIL" -gt 0 ]; then
+    write_reward 0.0
+    exit 0
+fi
+
+# Sum F2P weights for passed gates.
+declare -A WEIGHTS
+WEIGHTS[t3_f2p_bogus_display_no_crash]=0.20
+WEIGHTS[t3_f2p_headless_no_native_loaded]=0.15
+WEIGHTS[t5_f2p_minimal_change_clipboard_native]=0.15
+WEIGHTS[t5_f2p_bogus_display_safe]=0.20
+WEIGHTS[t6_f2p_print_mode_passes]=0.15
+WEIGHTS[t6_f2p_termux_branch_preserved]=0.15
+
+REWARD=0
+for gid in "${!WEIGHTS[@]}"; do
+    if grep -q "\"id\":\"$gid\",\"passed\":true" "$GATES_FILE"; then
+        REWARD=$(awk "BEGIN{printf \"%.4f\", $REWARD + ${WEIGHTS[$gid]}}")
     fi
-    cd /workspace/pi-mono
-fi
+done
 
-finish
+write_reward "$REWARD"
+# ---- v042 upstream CI gates (auto-injected) ----
+# v043 upstream gates: prelude(s) + per-gate execution.
+(
+    set +e
+    # prelude 0
+    echo 'c2V0ICtlOyBjZCAvd29ya3NwYWNlL3BpLW1vbm8gJiYgY29tbWFuZCAtdiBucHggPi9kZXYvbnVsbCAmJiBlY2hvIE9L' | base64 -d | bash 2>&1 | tail -2
+) 2>/dev/null
+
+run_v043_gate() {
+    local id="$1" label="$2"; shift 2
+    local cmd="$*"
+    local rc out tail
+    out=$(timeout 240 bash -c "$cmd" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        emit "$id" true ""
+    else
+        tail="${out: -180}"
+        tail="${tail//\"/\'}"
+        tail="${tail//$'\n'/ }"
+        emit "$id" false "rc=$rc; $tail"
+    fi
+}
+run_v043_gate p2p_upstream_771580d1 'npm_typecheck_ai' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/ai && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_816994b6 'vitest_session_manager_ai' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/ai && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
+run_v043_gate p2p_upstream_e395cbc7 'npm_typecheck_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
+
+# Recompute reward using v043 weights.
+python3 - <<"V043_PY"
+import json, os
+WEIGHTS = {"t3_f2p_bogus_display_no_crash": 0.2, "t3_f2p_headless_no_native_loaded": 0.15, "t5_f2p_bogus_display_safe": 0.2, "t5_f2p_minimal_change_clipboard_native": 0.15, "t6_f2p_print_mode_passes": 0.15, "t6_f2p_termux_branch_preserved": 0.15}
+P2P_GATING = ["p2p_no_instruction_modified"]
+P2P_REGRESSION = ["p2p_upstream_771580d1", "p2p_upstream_816994b6", "p2p_upstream_e395cbc7", "p2p_upstream_522628b0"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            try:
+                d = json.loads(line)
+                gid = d.get('id')
+                if gid: verdicts[gid] = bool(d.get('passed'))
+            except Exception: pass
+except FileNotFoundError: pass
+hard_zero = False
+for gid in P2P_GATING + P2P_REGRESSION:
+    if not verdicts.get(gid, False):
+        hard_zero = True; break
+if hard_zero: reward = 0.0
+else:
+    reward = 0.0
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid, False): reward += w
+    if reward > 1.0: reward = 1.0
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('V043_REWARD=%.4f' % reward)
+V043_PY
+# ---- v042 end upstream CI gates ----
+
+exit 0

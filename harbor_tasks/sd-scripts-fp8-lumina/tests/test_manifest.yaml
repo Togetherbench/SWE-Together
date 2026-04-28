@@ -1,0 +1,80 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: sd-scripts-fp8-lumina
+turns:
+- turn: 1
+  user_message: '`fp8_scaled` is implemented for many models in musubi-tuner , and for HunyuanImage in /workspace/sd-scripts
+    . Now implement it for Lumina in /workspace/sd-scripts .'
+  deliverable: 'Implement fp8_scaled quantization path for Lumina mirroring HunyuanImage: target/exclude key lists, load_lumina_model
+    wiring, CLI flag, train_network plumbing.'
+  skipped: false
+- turn: 2
+  user_message: Do your added `FP8_OPTIMIZATION_TARGET_KEYS` and `FP8_OPTIMIZATION_EXCLUDE_KEYS` actually exist in the Lumina2
+    model?
+  deliverable: Verify target keys match real Lumina submodule names (e.g., 'layers') and exclude keys cover norm/modulation.
+  skipped: false
+- turn: 3
+  user_message: Let's go back to fp8_scaled . After your modifications, the training loss is much higher than before (5.0
+    vs 0.5). What could be the cause?
+  deliverable: Identify adaLN_modulation as the culprit and add a 'modulation' pattern to FP8_OPTIMIZATION_EXCLUDE_KEYS.
+  skipped: false
+gates:
+- id: t1_f2p_target_keys_behavioral
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: load_lumina_model(fp8_scaled=True) invokes optimize_state_dict_with_fp8 with target keys including 'layers'.
+- id: t1_f2p_apply_monkey_patch_wired
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: load_lumina_model(fp8_scaled=True) invokes apply_fp8_monkey_patch on the model.
+- id: t1_f2p_cli_flag_parses
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: lumina_train_network setup_parser accepts --fp8_scaled and stores it as True in args.
+- id: t1_f2p_train_network_wires_fp8
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: lumina_train_network.load_target_model body forwards args.fp8_scaled into load_lumina_model.
+- id: t2_f2p_target_keys_match_real_modules
+  turn: 2
+  kind: F2P
+  weight: 0.15
+  description: FP8_OPTIMIZATION_TARGET_KEYS prefixes match actual nn.Linear submodule paths in lumina model state dict (e.g.,
+    'layers').
+- id: t2_f2p_exclude_keys_norm
+  turn: 2
+  kind: F2P
+  weight: 0.1
+  description: FP8_OPTIMIZATION_EXCLUDE_KEYS contains a 'norm' pattern AND norm/LayerNorm weights are NOT quantized.
+- id: t3_f2p_modulation_excluded
+  turn: 3
+  kind: F2P
+  weight: 0.15
+  description: FP8_OPTIMIZATION_EXCLUDE_KEYS contains a 'modulation' pattern that excludes adaLN_modulation layers from fp8.
+- id: t3_f2p_modulation_not_quantized_behavior
+  turn: 3
+  kind: F2P
+  weight: 0.1
+  description: 'Behavioral: optimize_state_dict_with_fp8 on a model with adaLN_modulation submodule does NOT add a scale_weight
+    for that path.'
+- id: p2p_fp8_utils_importable
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: library.fp8_optimization_utils must remain importable (its API is the contract).
+- id: p2p_upstream_62650655
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): pytest_changed_tests @ a5a1620'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/sd-scripts-fp8-lumina_p2p_bundle.yaml
+- id: p2p_upstream_bad711cf
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): py_compile_changed @ a5a1620'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/sd-scripts-fp8-lumina_p2p_bundle.yaml

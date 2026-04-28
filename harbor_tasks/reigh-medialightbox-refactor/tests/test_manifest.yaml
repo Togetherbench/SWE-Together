@@ -1,0 +1,76 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: reigh-medialightbox-refactor
+turns:
+- turn: 1
+  user_message: CAn you look at @src/shared/components/MediaLightbox/ and try to understand why the main component is so large?
+    Can you think of any smart abstractions or ways to restructure it in such a way that it's less complicated and importantly
+    less large?
+  deliverable: Analyze MediaLightbox.tsx and propose/begin a restructuring that reduces its size via smart abstractions.
+  skipped: false
+- turn: 2
+  user_message: take your time to look thorugh the component and make a more holistic plan
+  deliverable: Conversational nudge for a holistic plan.
+  skipped: true
+- turn: 3
+  user_message: Can you please proceed with this. Run through every phase in sequential order, sense-checking each upon completion,
+    before continuing to the next
+  deliverable: 'Execute the multi-phase refactor: extract substantive modules, rewire main file, remove debug noise.'
+  skipped: false
+- turn: 8
+  user_message: sense check this from top to bottom and try to identify additional opporunities to reduce the  main file size?
+  deliverable: Continue reducing the main file size via further extractions.
+  skipped: false
+gates:
+- id: p2p_instruction_unmodified
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: instruction.md not modified
+- id: p2p_no_component_tsc_regression
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: No new TS errors inside MediaLightbox component dir
+- id: t1_f2p_main_file_shrunk_real
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: Main file's non-blank/non-comment LOC dropped >=15% AND removed code reappears in new modules
+- id: t1_f2p_dimension_util_behavior
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: resolutionToDimensions extracted to its own module and behaves correctly on direct execution
+- id: t3_f2p_substantive_modules_wired
+  turn: 3
+  kind: F2P
+  weight: 0.2
+  description: At least 2 substantive new modules are imported via real import statements in main or transitively
+- id: t3_f2p_debug_noise_removed
+  turn: 3
+  kind: F2P
+  weight: 0.15
+  description: Debug-only console.log noise was removed from main file
+- id: t3_f2p_main_render_smoke
+  turn: 3
+  kind: F2P
+  weight: 0.1
+  description: Main file still parses as a valid TS module and exports MediaLightbox identifier (behavioral parse via node)
+- id: t8_f2p_diverse_extraction
+  turn: 8
+  kind: F2P
+  weight: 0.15
+  description: Extractions span at least 2 categories (hooks/utils/components/contexts) AND each category file is wired
+- id: p2p_upstream_523760b1
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): tsc_noemit @ bcee1dc'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-medialightbox-refactor_p2p_bundle.yaml
+- id: p2p_upstream_cdf050a5
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_run_build @ bcee1dc'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-medialightbox-refactor_p2p_bundle.yaml

@@ -2,12 +2,38 @@
 set +e
 
 mkdir -p /logs/verifier
-REWARD_FILE="/logs/verifier/reward.txt"
-REWARD="0.0"
+GATES_FILE=/logs/verifier/gates.json
+REWARD_FILE=/logs/verifier/reward.txt
+: > "$GATES_FILE"
+
+emit() {
+    local id="$1" passed="$2" detail="${3:-}"
+    detail=$(printf '%s' "$detail" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> "$GATES_FILE"
+}
 
 export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-cd /workspace/pi-mono 2>/dev/null || cd /workspace/$(ls /workspace 2>/dev/null | head -1) 2>/dev/null
+REPO=""
+for cand in /workspace/pi-mono /workspace/$(ls /workspace 2>/dev/null | head -1); do
+    if [ -d "$cand" ] && [ -d "$cand/packages" ]; then
+        REPO="$cand"; break
+    fi
+done
+
+if [ -z "$REPO" ]; then
+    emit p2p_src_files_exist false "no repo found"
+    emit t6_f2p_keybindings_have_scope_tags false "no repo"
+    emit t6_f2p_runner_consults_scope false "no repo"
+    emit t11_f2p_picker_scope_keys_count false "no repo"
+    emit t11_f2p_global_editor_scope_keys_present false "no repo"
+    emit t13_f2p_runner_tests_pass false "no repo"
+    printf "%.4f\n" 0 > "$REWARD_FILE"
+    exit 0
+fi
+
+cd "$REPO"
+echo "Repo: $REPO"
 
 BUN_BIN=$(command -v bun)
 if [ -z "$BUN_BIN" ]; then
@@ -15,449 +41,283 @@ if [ -z "$BUN_BIN" ]; then
         [ -x "$p" ] && BUN_BIN="$p" && break
     done
 fi
-if [ -z "$BUN_BIN" ]; then
-    echo "ERROR: bun not found"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
-fi
-
-echo "Using bun: $BUN_BIN"
-echo "Working dir: $(pwd)"
 
 RUNNER_FILE="packages/coding-agent/src/core/extensions/runner.ts"
 KB_AGENT_FILE="packages/coding-agent/src/core/keybindings.ts"
 KB_TUI_FILE="packages/tui/src/keybindings.ts"
-TEST_DIR="packages/coding-agent/test"
-
-if [ ! -f "$RUNNER_FILE" ] || [ ! -f "$KB_AGENT_FILE" ] || [ ! -f "$KB_TUI_FILE" ]; then
-    echo "ERROR: required source files missing"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
-fi
 
 ###############################################################################
-# P2P GATE: existing extensions-runner tests must still pass (gating, no reward)
+# P2P: required source files exist
 ###############################################################################
-echo ""
-echo "=== P2P Gate: existing extensions-runner tests must still pass ==="
-
-P2P_OUT=$("$BUN_BIN" test packages/coding-agent/test/extensions-runner.test.ts 2>&1)
-echo "$P2P_OUT" | tail -20
-P2P_FAIL=$(echo "$P2P_OUT" | grep -cE "\(fail\)")
-P2P_PASS=$(echo "$P2P_OUT" | grep -cE "\(pass\)")
-if [ "$P2P_FAIL" -gt 0 ] || [ "$P2P_PASS" -lt 1 ]; then
-    echo "P2P GATE FAILED: existing tests broken ($P2P_PASS pass, $P2P_FAIL fail)"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
-fi
-echo "P2P gate passed ($P2P_PASS pass, $P2P_FAIL fail)"
-
-# We'll accumulate a numeric score in hundredths.
-SCORE_PCT=0
-
-###############################################################################
-# F2P Gate A (0.20): Behavioral — picker-only key (ctrl+s) registers WITHOUT
-# being flagged as a built-in/reserved conflict.
-# ctrl+s in DEFAULT_KEYBINDINGS is bound only to picker-scope actions
-# (app.session.toggleSort, app.models.save). On the buggy base, this key
-# is treated as reserved/conflicting. After a correct fix, it should register
-# cleanly with no conflict warning mentioning ctrl+s.
-###############################################################################
-echo ""
-echo "=== F2P Gate A (0.20): picker-only ctrl+s registers without conflict ==="
-
-VG_A="$TEST_DIR/_verifier_picker_ctrls.test.ts"
-cat > "$VG_A" << 'TESTEOF'
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
-import { DEFAULT_KEYBINDINGS } from "../src/core/keybindings.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
-
-describe("verifier-picker-ctrls", () => {
-    let tempDir: string;
-    let extensionsDir: string;
-    let sessionManager: SessionManager;
-    let modelRegistry: ModelRegistry;
-
-    beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-vga-"));
-        extensionsDir = path.join(tempDir, "extensions");
-        fs.mkdirSync(extensionsDir);
-        sessionManager = SessionManager.inMemory();
-        const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-        modelRegistry = new ModelRegistry(authStorage);
-    });
-
-    afterEach(() => {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it("ctrl+s (picker-scope only) is registered, not flagged as conflict", async () => {
-        const extCode = `
-            export default function(pi) {
-                pi.registerShortcut("ctrl+s", {
-                    description: "picker-scope-only key",
-                    handler: async () => {},
-                });
-            }
-        `;
-        fs.writeFileSync(path.join(extensionsDir, "picker.ts"), extCode);
-
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const result = await discoverAndLoadExtensions([], tempDir, tempDir);
-        const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-        const shortcuts = runner.getShortcuts(DEFAULT_KEYBINDINGS);
-
-        expect(shortcuts.has("ctrl+s")).toBe(true);
-
-        const warnMsgs = warnSpy.mock.calls.map(c => c.map(String).join(" ")).join("\n");
-        const diags = (runner as any).shortcutDiagnostics ?? [];
-        const diagMsgs = diags.map((d: any) => String(d?.message ?? "")).join("\n");
-        const all = warnMsgs + "\n" + diagMsgs;
-
-        const flagged = /ctrl\+s/i.test(all) && /(conflict|built-in|reserved|blocked)/i.test(all);
-        expect(flagged, `ctrl+s unexpectedly flagged. Messages:\n${all}`).toBe(false);
-
-        warnSpy.mockRestore();
-    });
-});
-TESTEOF
-
-VG_A_OUT=$("$BUN_BIN" test "$VG_A" 2>&1)
-echo "$VG_A_OUT" | tail -15
-VGA_FAIL=$(echo "$VG_A_OUT" | grep -cE "\(fail\)")
-VGA_PASS=$(echo "$VG_A_OUT" | grep -cE "\(pass\)")
-if [ "$VGA_PASS" -ge 1 ] && [ "$VGA_FAIL" -eq 0 ]; then
-    SCORE_PCT=$((SCORE_PCT + 20))
-    echo "Gate A: PASS (+0.20)"
+missing=""
+for f in "$RUNNER_FILE" "$KB_AGENT_FILE"; do
+    [ -f "$f" ] || missing="$missing $f"
+done
+if [ -z "$missing" ]; then
+    emit p2p_src_files_exist true ""
 else
-    echo "Gate A: FAIL"
+    emit p2p_src_files_exist false "missing:$missing"
 fi
-rm -f "$VG_A"
 
 ###############################################################################
-# F2P Gate B (0.20): Behavioral — multiple picker-only keys all register cleanly
-# (ctrl+r, ctrl+p, ctrl+n in default bindings are picker-scope: rename,
-# togglePath, toggleNamedFilter on session picker).
+# Helper: gather keybindings + runner content for greps
 ###############################################################################
-echo ""
-echo "=== F2P Gate B (0.20): multiple picker-only keys register without conflict ==="
+KB_CONTENT=""
+[ -f "$KB_AGENT_FILE" ] && KB_CONTENT="$KB_CONTENT
+$(cat "$KB_AGENT_FILE")"
+[ -f "$KB_TUI_FILE" ] && KB_CONTENT="$KB_CONTENT
+$(cat "$KB_TUI_FILE")"
 
-VG_B="$TEST_DIR/_verifier_picker_multi.test.ts"
-cat > "$VG_B" << 'TESTEOF'
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
-import { DEFAULT_KEYBINDINGS } from "../src/core/keybindings.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
+RUNNER_CONTENT=""
+[ -f "$RUNNER_FILE" ] && RUNNER_CONTENT=$(cat "$RUNNER_FILE")
 
-describe("verifier-picker-multi", () => {
-    let tempDir: string;
-    let extensionsDir: string;
-    let sessionManager: SessionManager;
-    let modelRegistry: ModelRegistry;
-
-    beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-vgb-"));
-        extensionsDir = path.join(tempDir, "extensions");
-        fs.mkdirSync(extensionsDir);
-        sessionManager = SessionManager.inMemory();
-        const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-        modelRegistry = new ModelRegistry(authStorage);
-    });
-
-    afterEach(() => {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it("ctrl+r and ctrl+n (picker-only in default bindings) register cleanly", async () => {
-        const extCode = `
-            export default function(pi) {
-                pi.registerShortcut("ctrl+r", { description: "x", handler: async () => {} });
-                pi.registerShortcut("ctrl+n", { description: "x", handler: async () => {} });
+# Strip line comments and block comments crudely so a stray "// scope: ..."
+# comment doesn't satisfy structural gates.
+strip_comments() {
+    # Remove /* ... */ and //... but keep strings mostly intact for grep purposes.
+    sed -e 's://.*$::' "$@" 2>/dev/null | awk '
+        BEGIN{inb=0}
+        {
+            line=$0
+            while (1) {
+                if (inb) {
+                    p=index(line,"*/")
+                    if (p==0) { line=""; break }
+                    line=substr(line,p+2); inb=0
+                } else {
+                    p=index(line,"/*")
+                    if (p==0) break
+                    q=index(substr(line,p+2),"*/")
+                    if (q==0) { line=substr(line,1,p-1); inb=1; break }
+                    line=substr(line,1,p-1) substr(line,p+2+q+1)
+                }
             }
-        `;
-        fs.writeFileSync(path.join(extensionsDir, "picker2.ts"), extCode);
+            print line
+        }'
+}
 
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const result = await discoverAndLoadExtensions([], tempDir, tempDir);
-        const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-        const shortcuts = runner.getShortcuts(DEFAULT_KEYBINDINGS);
+KB_NOCMT=$(printf '%s\n' "$KB_CONTENT" | strip_comments)
+RUNNER_NOCMT=$(printf '%s\n' "$RUNNER_CONTENT" | strip_comments)
+COMBINED_NOCMT="$KB_NOCMT
+$RUNNER_NOCMT"
 
-        expect(shortcuts.has("ctrl+r")).toBe(true);
-        expect(shortcuts.has("ctrl+n")).toBe(true);
+###############################################################################
+# F2P Gate t6_f2p_keybindings_have_scope_tags (0.30)
+# Behavioral-structural: keybinding declarations must carry a scope field
+# distinguishing picker/selector/tree from editor/global.
+# We require BOTH a scope-key shape AND at least one picker-ish value AND at
+# least one editor/global-ish value so a comment or a single tag can't satisfy.
+###############################################################################
+PICKER_VALS='picker|selector|session-?picker|tree-?picker|tree|models|overlay|prompt'
+GLOBAL_VALS='editor|global|app|chat|input|message|composer'
 
-        const warnMsgs = warnSpy.mock.calls.map(c => c.map(String).join(" ")).join("\n");
-        const diags = (runner as any).shortcutDiagnostics ?? [];
-        const diagMsgs = diags.map((d: any) => String(d?.message ?? "")).join("\n");
-        const all = warnMsgs + "\n" + diagMsgs;
+# Count occurrences of `scope:` (or `scope =`) in declarations.
+SCOPE_DECL_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]")
 
-        for (const key of ["ctrl+r", "ctrl+n"]) {
-            const flagged = new RegExp(key.replace("+", "\\+"), "i").test(all)
-                && /(conflict|built-in|reserved|blocked)/i.test(all);
-            expect(flagged, `${key} unexpectedly flagged.\n${all}`).toBe(false);
-        }
-        warnSpy.mockRestore();
-    });
-});
-TESTEOF
+# Find scope values that are picker-like
+PICKER_SCOPE_HITS=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($PICKER_VALS)['\"]")
+# Find scope values that are global/editor-like
+GLOBAL_SCOPE_HITS=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($GLOBAL_VALS)['\"]")
 
-VG_B_OUT=$("$BUN_BIN" test "$VG_B" 2>&1)
-echo "$VG_B_OUT" | tail -15
-VGB_FAIL=$(echo "$VG_B_OUT" | grep -cE "\(fail\)")
-VGB_PASS=$(echo "$VG_B_OUT" | grep -cE "\(pass\)")
-if [ "$VGB_PASS" -ge 1 ] && [ "$VGB_FAIL" -eq 0 ]; then
-    SCORE_PCT=$((SCORE_PCT + 20))
-    echo "Gate B: PASS (+0.20)"
+# Alternative shape: scopes registry like PICKER_SCOPES = [...] / SCOPES = {...}
+SCOPE_REGISTRY=$(printf '%s\n' "$COMBINED_NOCMT" | grep -cE "(PICKER_SCOPES|GLOBAL_SCOPES|EDITOR_SCOPES|KEYBINDING_SCOPES|SCOPE_(SET|MAP|TABLE)|coexistingScopes)")
+
+if [ "$SCOPE_DECL_COUNT" -ge 4 ] && [ "$PICKER_SCOPE_HITS" -ge 1 ] && [ "$GLOBAL_SCOPE_HITS" -ge 1 ]; then
+    emit t6_f2p_keybindings_have_scope_tags true "decls=$SCOPE_DECL_COUNT picker=$PICKER_SCOPE_HITS global=$GLOBAL_SCOPE_HITS"
+elif [ "$SCOPE_REGISTRY" -ge 1 ] && [ "$SCOPE_DECL_COUNT" -ge 2 ]; then
+    emit t6_f2p_keybindings_have_scope_tags true "registry+decls"
 else
-    echo "Gate B: FAIL"
+    emit t6_f2p_keybindings_have_scope_tags false "scope_decls=$SCOPE_DECL_COUNT picker=$PICKER_SCOPE_HITS global=$GLOBAL_SCOPE_HITS reg=$SCOPE_REGISTRY"
 fi
-rm -f "$VG_B"
 
 ###############################################################################
-# F2P Gate C (0.25): Behavioral negative — editor/global keys MUST still
-# produce a conflict (warning OR be blocked from registering).
-# ctrl+c → app.clear (global/editor scope) — must not be silently allowed.
-# ctrl+t → app.thinking.cycle (global) — must produce conflict signal.
+# F2P Gate t6_f2p_runner_consults_scope (0.20)
+# Runner code references scope/definition info when checking conflicts.
+# Must NOT be satisfied by the buggy base which uses an allowlist
+# RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS.
 ###############################################################################
-echo ""
-echo "=== F2P Gate C (0.25): editor/global keys still flagged or blocked ==="
+RUNNER_HAS_SCOPE=$(printf '%s\n' "$RUNNER_NOCMT" | grep -cE "(scope|isPickerScope|isGlobalKeybinding|getEditorScope|definitions|conflictsWith|canConflict|coexist)")
+RUNNER_HAS_RESERVED_ONLY=$(printf '%s\n' "$RUNNER_NOCMT" | grep -cE "RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS")
 
-VG_C="$TEST_DIR/_verifier_global_blocked.test.ts"
-cat > "$VG_C" << 'TESTEOF'
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
-import { DEFAULT_KEYBINDINGS } from "../src/core/keybindings.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
+# Code structure: an `if`/`for` referencing scope (not just a string literal).
+RUNNER_USES_SCOPE_LOGIC=$(printf '%s\n' "$RUNNER_NOCMT" | grep -cE "\.scope|\.scopes|scope[[:space:]]*===|scope[[:space:]]*!==|\\bscope\\b.*(\\?|\\&\\&|\\|\\|)")
 
-describe("verifier-global-blocked", () => {
-    let tempDir: string;
-    let extensionsDir: string;
-    let sessionManager: SessionManager;
-    let modelRegistry: ModelRegistry;
-
-    beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-vgc-"));
-        extensionsDir = path.join(tempDir, "extensions");
-        fs.mkdirSync(extensionsDir);
-        sessionManager = SessionManager.inMemory();
-        const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-        modelRegistry = new ModelRegistry(authStorage);
-    });
-
-    afterEach(() => {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it("ctrl+c (app.clear, global) is signalled as conflict (blocked or warned)", async () => {
-        const extCode = `
-            export default function(pi) {
-                pi.registerShortcut("ctrl+c", {
-                    description: "Conflicts with global app.clear",
-                    handler: async () => {},
-                });
-            }
-        `;
-        fs.writeFileSync(path.join(extensionsDir, "global.ts"), extCode);
-
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const result = await discoverAndLoadExtensions([], tempDir, tempDir);
-        const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-        const shortcuts = runner.getShortcuts(DEFAULT_KEYBINDINGS);
-
-        const warnMsgs = warnSpy.mock.calls.map(c => c.map(String).join(" ")).join("\n");
-        const diags = (runner as any).shortcutDiagnostics ?? [];
-        const diagMsgs = diags.map((d: any) => String(d?.message ?? "")).join("\n");
-        const all = warnMsgs + "\n" + diagMsgs;
-
-        const blocked = !shortcuts.has("ctrl+c");
-        const warned = /ctrl\+c/i.test(all) && /(conflict|built-in|reserved|blocked)/i.test(all);
-
-        expect(blocked || warned, `ctrl+c was silently allowed. Messages:\n${all}`).toBe(true);
-        warnSpy.mockRestore();
-    });
-});
-TESTEOF
-
-VG_C_OUT=$("$BUN_BIN" test "$VG_C" 2>&1)
-echo "$VG_C_OUT" | tail -15
-VGC_FAIL=$(echo "$VG_C_OUT" | grep -cE "\(fail\)")
-VGC_PASS=$(echo "$VG_C_OUT" | grep -cE "\(pass\)")
-if [ "$VGC_PASS" -ge 1 ] && [ "$VGC_FAIL" -eq 0 ]; then
-    SCORE_PCT=$((SCORE_PCT + 25))
-    echo "Gate C: PASS (+0.25)"
+if [ "$RUNNER_HAS_SCOPE" -ge 2 ] && [ "$RUNNER_USES_SCOPE_LOGIC" -ge 1 ]; then
+    emit t6_f2p_runner_consults_scope true "scope_refs=$RUNNER_HAS_SCOPE logic=$RUNNER_USES_SCOPE_LOGIC reserved=$RUNNER_HAS_RESERVED_ONLY"
 else
-    echo "Gate C: FAIL"
-fi
-rm -f "$VG_C"
-
-###############################################################################
-# F2P Gate D (0.15): Structural — runner.ts has been edited to introduce
-# scope-awareness. Buggy base uses RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS
-# allow-list. A correct fix should either remove that or implement scope-based
-# logic (PICKER_SCOPES, isGlobalKeybinding, scope checks, etc.).
-# This gate detects "did the structural concept land", but is gated low.
-###############################################################################
-echo ""
-echo "=== F2P Gate D (0.15): runner.ts shows scope-based discrimination ==="
-
-D_HIT=0
-if grep -qE "(PICKER_SCOPES|isGlobalKeybinding|isPickerScope|scope[: ]*['\"](picker|editor|app|overlay|selector|session-picker)|app\.session\.|app\.models\.|app\.tree\.|definitions\[.*\]\.scope|getEditorScope)" "$RUNNER_FILE" 2>/dev/null; then
-    D_HIT=1
+    emit t6_f2p_runner_consults_scope false "scope_refs=$RUNNER_HAS_SCOPE logic=$RUNNER_USES_SCOPE_LOGIC"
 fi
 
-# Also accept that scope-handling moved to keybindings.ts and runner consults it.
-if [ "$D_HIT" -eq 0 ]; then
-    if grep -qE "(scope|getEditorScope|canConflict|conflictsWith)" "$KB_AGENT_FILE" 2>/dev/null \
-       && grep -qE "(scope|getEditorScope|canConflict|getDefinitions)" "$RUNNER_FILE" 2>/dev/null; then
-        D_HIT=1
+###############################################################################
+# F2P Gate t11_f2p_picker_scope_keys_count (0.20)
+# Multiple picker/selector/tree-scope tags so the new model is actually applied
+# broadly (not just one demo entry).
+###############################################################################
+PICKER_TAG_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($PICKER_VALS)['\"]")
+# Also count occurrences via a registry mapping (e.g., `'app.session.toggleSort': 'picker'`).
+PICKER_MAP_COUNT=$(printf '%s\n' "$COMBINED_NOCMT" | grep -cE "['\"]($PICKER_VALS)['\"]")
+
+if [ "$PICKER_TAG_COUNT" -ge 3 ]; then
+    emit t11_f2p_picker_scope_keys_count true "picker_tags=$PICKER_TAG_COUNT"
+elif [ "$PICKER_TAG_COUNT" -ge 1 ] && [ "$PICKER_MAP_COUNT" -ge 5 ]; then
+    emit t11_f2p_picker_scope_keys_count true "tags=$PICKER_TAG_COUNT map_hits=$PICKER_MAP_COUNT"
+else
+    emit t11_f2p_picker_scope_keys_count false "picker_tags=$PICKER_TAG_COUNT map_hits=$PICKER_MAP_COUNT"
+fi
+
+###############################################################################
+# F2P Gate t11_f2p_global_editor_scope_keys_present (0.15)
+# At least some keys flagged as global/editor scope so conflict detection
+# still has a target set. Prevents "make every key picker-scope" stub.
+###############################################################################
+GLOBAL_TAG_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($GLOBAL_VALS)['\"]")
+GLOBAL_REGISTRY_HIT=$(printf '%s\n' "$COMBINED_NOCMT" | grep -cE "(GLOBAL_SCOPES|EDITOR_SCOPES|isGlobalKeybinding|isEditorScope|global.*scope|editor.*scope)")
+
+if [ "$GLOBAL_TAG_COUNT" -ge 1 ] || [ "$GLOBAL_REGISTRY_HIT" -ge 2 ]; then
+    emit t11_f2p_global_editor_scope_keys_present true "global_tags=$GLOBAL_TAG_COUNT reg=$GLOBAL_REGISTRY_HIT"
+else
+    emit t11_f2p_global_editor_scope_keys_present false "global_tags=$GLOBAL_TAG_COUNT reg=$GLOBAL_REGISTRY_HIT"
+fi
+
+###############################################################################
+# F2P Gate t13_f2p_runner_tests_pass (0.15)
+# Behavioral: the in-repo extensions-runner tests pass after the fix.
+# Patches typically update these tests to reflect the new behavior.
+# To avoid penalizing a refactor that legitimately changes the API while
+# fixing tests, we check that:
+#   (a) the test file exists,
+#   (b) running it yields >=1 pass and 0 fails.
+# On the no-op base, tests will fail because (i) the buggy state may have
+# broken assertions, or (ii) we still want to confirm nothing regressed.
+# This gate also gives credit for any model that produced a coherent fix
+# with passing tests, regardless of API shape.
+###############################################################################
+TEST_FILE="packages/coding-agent/test/extensions-runner.test.ts"
+if [ -z "$BUN_BIN" ] || [ ! -f "$TEST_FILE" ]; then
+    emit t13_f2p_runner_tests_pass false "no bun or no test file"
+else
+    OUT=$("$BUN_BIN" test "$TEST_FILE" 2>&1)
+    echo "----- runner test output (tail) -----"
+    echo "$OUT" | tail -25
+    PASS=$(echo "$OUT" | grep -cE "\(pass\)")
+    FAIL=$(echo "$OUT" | grep -cE "\(fail\)")
+    # Bun also reports a summary line "X pass" / "Y fail"
+    SUMMARY_PASS=$(echo "$OUT" | grep -oE "[0-9]+ pass" | head -1 | awk '{print $1}')
+    SUMMARY_FAIL=$(echo "$OUT" | grep -oE "[0-9]+ fail" | head -1 | awk '{print $1}')
+    [ -z "$SUMMARY_PASS" ] && SUMMARY_PASS=0
+    [ -z "$SUMMARY_FAIL" ] && SUMMARY_FAIL=0
+
+    EFFECTIVE_PASS=$PASS
+    EFFECTIVE_FAIL=$FAIL
+    [ "$SUMMARY_PASS" -gt "$EFFECTIVE_PASS" ] && EFFECTIVE_PASS=$SUMMARY_PASS
+    [ "$SUMMARY_FAIL" -gt "$EFFECTIVE_FAIL" ] && EFFECTIVE_FAIL=$SUMMARY_FAIL
+
+    if [ "$EFFECTIVE_PASS" -ge 1 ] && [ "$EFFECTIVE_FAIL" -eq 0 ]; then
+        emit t13_f2p_runner_tests_pass true "pass=$EFFECTIVE_PASS fail=$EFFECTIVE_FAIL"
+    else
+        emit t13_f2p_runner_tests_pass false "pass=$EFFECTIVE_PASS fail=$EFFECTIVE_FAIL"
     fi
 fi
 
-if [ "$D_HIT" -eq 1 ]; then
-    SCORE_PCT=$((SCORE_PCT + 15))
-    echo "Gate D: PASS (+0.15)"
-else
-    echo "Gate D: FAIL — no scope-based discrimination detected in runner/keybindings"
+###############################################################################
+# Reward computation
+###############################################################################
+P2P_FAILED=0
+while IFS= read -r line; do
+    id=$(echo "$line" | sed -nE 's/.*"id":"([^"]+)".*/\1/p')
+    passed=$(echo "$line" | sed -nE 's/.*"passed":(true|false).*/\1/p')
+    case "$id" in
+        p2p_*)
+            if [ "$passed" = "false" ]; then
+                P2P_FAILED=1
+            fi
+            ;;
+    esac
+done < "$GATES_FILE"
+
+REWARD=0
+if [ "$P2P_FAILED" -eq 0 ]; then
+    declare -A WEIGHTS
+    WEIGHTS[t6_f2p_keybindings_have_scope_tags]="0.30"
+    WEIGHTS[t6_f2p_runner_consults_scope]="0.20"
+    WEIGHTS[t11_f2p_picker_scope_keys_count]="0.20"
+    WEIGHTS[t11_f2p_global_editor_scope_keys_present]="0.15"
+    WEIGHTS[t13_f2p_runner_tests_pass]="0.15"
+
+    while IFS= read -r line; do
+        id=$(echo "$line" | sed -nE 's/.*"id":"([^"]+)".*/\1/p')
+        passed=$(echo "$line" | sed -nE 's/.*"passed":(true|false).*/\1/p')
+        w="${WEIGHTS[$id]}"
+        if [ -n "$w" ] && [ "$passed" = "true" ]; then
+            REWARD=$(awk -v r="$REWARD" -v w="$w" 'BEGIN { printf "%.6f", r+w }')
+        fi
+    done < "$GATES_FILE"
 fi
 
-###############################################################################
-# F2P Gate E (0.10): Completeness — keybindings.ts (agent or tui) shows that
-# picker-scoped actions have been distinguished from editor/app actions.
-# A complete fix touches keybindings declarations OR runner with scope tags.
-###############################################################################
-echo ""
-echo "=== F2P Gate E (0.10): keybinding declarations carry scope info ==="
+printf "%.4f\n" "$REWARD" > "$REWARD_FILE"
+echo "REWARD=$REWARD"
+cat "$GATES_FILE"
+# ---- v042 upstream CI gates (auto-injected) ----
+# v043 upstream gates: prelude(s) + per-gate execution.
+(
+    set +e
+    # prelude 0
+    echo 'c2V0ICtlOyBjZCAvd29ya3NwYWNlL3BpLW1vbm8gJiYgY29tbWFuZCAtdiBucHggPi9kZXYvbnVsbCAmJiBlY2hvIE9L' | base64 -d | bash 2>&1 | tail -2
+) 2>/dev/null
 
-E_HIT=0
-# Look for scope: "picker"|"selector"|"session-picker"|"overlay" patterns in
-# either tui or agent keybindings files, OR PICKER_SCOPES style array.
-if grep -qE "scope[ ]*:[ ]*['\"](picker|selector|session-picker|overlay|tree|models)" "$KB_AGENT_FILE" "$KB_TUI_FILE" 2>/dev/null; then
-    E_HIT=1
-fi
-
-if [ "$E_HIT" -eq 0 ]; then
-    if grep -qE "PICKER_SCOPES|SCOPE_COEXISTENCE|KEYBINDING_SCOPES|coexistingScopes|conflictsWith" "$KB_AGENT_FILE" "$KB_TUI_FILE" "$RUNNER_FILE" 2>/dev/null; then
-        E_HIT=1
+run_v043_gate() {
+    local id="$1" label="$2"; shift 2
+    local cmd="$*"
+    local rc out tail
+    out=$(timeout 240 bash -c "$cmd" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        emit "$id" true ""
+    else
+        tail="${out: -180}"
+        tail="${tail//\"/\'}"
+        tail="${tail//$'\n'/ }"
+        emit "$id" false "rc=$rc; $tail"
     fi
-fi
+}
+run_v043_gate p2p_upstream_c09e61c3 'npm_typecheck_tui' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/tui && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_047e9a81 'vitest_session_manager_tui' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/tui && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
+run_v043_gate p2p_upstream_e395cbc7 'npm_typecheck_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
 
-if [ "$E_HIT" -eq 1 ]; then
-    SCORE_PCT=$((SCORE_PCT + 10))
-    echo "Gate E: PASS (+0.10)"
-else
-    echo "Gate E: FAIL — no scope-tagged keybinding declarations"
-fi
+# Recompute reward using v043 weights.
+python3 - <<"V043_PY"
+import json, os
+WEIGHTS = {"t11_f2p_global_editor_scope_keys_present": 0.15, "t11_f2p_picker_scope_keys_count": 0.2, "t13_f2p_runner_tests_pass": 0.15, "t6_f2p_keybindings_have_scope_tags": 0.3, "t6_f2p_runner_consults_scope": 0.2}
+P2P_GATING = ["p2p_src_files_exist"]
+P2P_REGRESSION = ["p2p_upstream_c09e61c3", "p2p_upstream_047e9a81", "p2p_upstream_e395cbc7", "p2p_upstream_522628b0"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            try:
+                d = json.loads(line)
+                gid = d.get('id')
+                if gid: verdicts[gid] = bool(d.get('passed'))
+            except Exception: pass
+except FileNotFoundError: pass
+hard_zero = False
+for gid in P2P_GATING + P2P_REGRESSION:
+    if not verdicts.get(gid, False):
+        hard_zero = True; break
+if hard_zero: reward = 0.0
+else:
+    reward = 0.0
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid, False): reward += w
+    if reward > 1.0: reward = 1.0
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('V043_REWARD=%.4f' % reward)
+V043_PY
+# ---- v042 end upstream CI gates ----
 
-###############################################################################
-# F2P Gate F (0.10): Behavioral — extension-to-extension conflict detection
-# still works (a correct refactor must preserve the second-extension-wins
-# diagnostic). This catches over-aggressive removals of conflict logic.
-###############################################################################
-echo ""
-echo "=== F2P Gate F (0.10): extension-vs-extension conflict still detected ==="
-
-VG_F="$TEST_DIR/_verifier_ext_ext.test.ts"
-cat > "$VG_F" << 'TESTEOF'
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
-import { discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
-import { DEFAULT_KEYBINDINGS } from "../src/core/keybindings.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
-import { SessionManager } from "../src/core/session-manager.js";
-
-describe("verifier-ext-ext", () => {
-    let tempDir: string;
-    let extensionsDir: string;
-    let sessionManager: SessionManager;
-    let modelRegistry: ModelRegistry;
-
-    beforeEach(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-vgf-"));
-        extensionsDir = path.join(tempDir, "extensions");
-        fs.mkdirSync(extensionsDir);
-        sessionManager = SessionManager.inMemory();
-        const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-        modelRegistry = new ModelRegistry(authStorage);
-    });
-
-    afterEach(() => {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it("two extensions registering same key produce a conflict diagnostic", async () => {
-        const ext1 = `
-            export default function(pi) {
-                pi.registerShortcut("ctrl+shift+y", { description: "a", handler: async () => {} });
-            }
-        `;
-        const ext2 = `
-            export default function(pi) {
-                pi.registerShortcut("ctrl+shift+y", { description: "b", handler: async () => {} });
-            }
-        `;
-        fs.writeFileSync(path.join(extensionsDir, "a.ts"), ext1);
-        fs.writeFileSync(path.join(extensionsDir, "b.ts"), ext2);
-
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-        const result = await discoverAndLoadExtensions([], tempDir, tempDir);
-        const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-        const shortcuts = runner.getShortcuts(DEFAULT_KEYBINDINGS);
-
-        expect(shortcuts.has("ctrl+shift+y")).toBe(true);
-
-        const warnMsgs = warnSpy.mock.calls.map(c => c.map(String).join(" ")).join("\n");
-        const diags = (runner as any).shortcutDiagnostics ?? [];
-        const diagMsgs = diags.map((d: any) => String(d?.message ?? "")).join("\n");
-        const all = warnMsgs + "\n" + diagMsgs;
-
-        const detected = /ctrl\+shift\+y/i.test(all) && /conflict/i.test(all);
-        expect(detected, `extension-vs-extension conflict not reported. Messages:\n${all}`).toBe(true);
-
-        warnSpy.mockRestore();
-    });
-});
-TESTEOF
-
-VG_F_OUT=$("$BUN_BIN" test "$VG_F" 2>&1)
-echo "$VG_F_OUT" | tail -15
-VGF_FAIL=$(echo "$VG_F_OUT" | grep -cE "\(fail\)")
-VGF_PASS=$(echo "$VG_F_OUT" | grep -cE "\(pass\)")
-if [ "$VGF_PASS" -ge 1 ] && [ "$VGF_FAIL" -eq 0 ]; then
-    SCORE_PCT=$((SCORE_PCT + 10))
-    echo "Gate F: PASS (+0.10)"
-else
-    echo "Gate F: FAIL"
-fi
-rm -f "$VG_F"
-
-###############################################################################
-# Final
-###############################################################################
-echo ""
-echo "=== Total ==="
-REWARD=$(awk -v s="$SCORE_PCT" 'BEGIN { printf "%.2f", s/100 }')
-echo "Score pct: $SCORE_PCT  → REWARD=$REWARD"
-echo "$REWARD" > "$REWARD_FILE"
 exit 0

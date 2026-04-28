@@ -1,0 +1,81 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: sd-scripts-sdxl-multires-dedup
+turns:
+- turn: 1
+  user_message: I want to run sdxl_train_network. I've defined multiple resolutions, but each image is only cached at one
+    resolution. How to fix?
+  deliverable: Enable multi-resolution caching in strategy_sd.py
+  skipped: false
+- turn: 2
+  user_message: The dataset config file is at C:\data\img\data_config_ss\moco_mcom.toml
+  deliverable: Clarification only
+  skipped: true
+- turn: 3
+  user_message: Do other models in sd-scripts already support multi-resolution dataset?
+  deliverable: Conversational
+  skipped: true
+- turn: 4
+  user_message: Can we implement skip_duplicate_bucketed_images for bucket_no_upscale=true with multi-resolution?
+  deliverable: Add skip_duplicate_bucketed_images config field + dedup logic
+  skipped: false
+- turn: 5
+  user_message: 'KeyError: ''_orig_mod'' in extract_model_from_parallel via accelerator.unwrap_model. Fix it.'
+  deliverable: Add unwrap_model_for_sampling helper
+  skipped: false
+- turn: 7
+  user_message: 'TypeError: ResnetBlock2D.forward() missing 1 required positional argument: ''emb'' from sdxl_original_unet.py'
+  deliverable: Fix isinstance checks in sdxl_original_unet.py for compiled layers
+  skipped: false
+gates:
+- id: t1_f2p_strategy_sd_multires
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: strategy_sd source/behavior shows multi_resolution=True is forwarded for caching
+- id: t1_f2p_strategy_sd_load_size
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: strategy_sd load_latents_from_disk override forwards size=8 (latent factor)
+- id: t4_f2p_skip_dup_field
+  turn: 4
+  kind: F2P
+  weight: 0.15
+  description: skip_duplicate_bucketed_images is a recognized field (dataclass or schema)
+- id: t4_f2p_skip_dup_dedup_logic
+  turn: 4
+  kind: F2P
+  weight: 0.15
+  description: Actual dedup logic exists referencing skip_duplicate_bucketed_images and image_data
+- id: t5_f2p_unwrap_function_behavioral
+  turn: 5
+  kind: F2P
+  weight: 0.15
+  description: unwrap_model_for_sampling exists and handles _orig_mod KeyError
+- id: t5_f2p_unwrap_orig_mod_handling
+  turn: 5
+  kind: F2P
+  weight: 0.1
+  description: unwrap_model_for_sampling source references _orig_mod handling
+- id: t7_f2p_unet_orig_mod
+  turn: 7
+  kind: F2P
+  weight: 0.1
+  description: sdxl_original_unet.py references _orig_mod near isinstance checks
+- id: t7_f2p_unet_orig_mod_dispatch
+  turn: 7
+  kind: F2P
+  weight: 0.05
+  description: sdxl_original_unet has _orig_mod-aware dispatch in forward
+- id: p2p_base_imports
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'Informational: base imports status'
+- id: p2p_upstream_fb8ee95f
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): py_compile_changed @ 609d129'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/sd-scripts-sdxl-multires-dedup_p2p_bundle.yaml

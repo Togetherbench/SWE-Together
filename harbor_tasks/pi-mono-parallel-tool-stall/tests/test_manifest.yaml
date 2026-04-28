@@ -1,0 +1,135 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: pi-mono-parallel-tool-stall
+turns:
+- turn: 1
+  user_message: Investigate parallel tool execution vs interactive tools stalling in this repo.
+  deliverable: Investigation memo identifying root cause in interactive-mode.ts / runner.ts (parallel dialog calls orphan
+    first resolver).
+  skipped: false
+- turn: 2
+  user_message: start by adding a failing test. is that even possible to test that it hangs?
+  deliverable: Add a failing test that exercises parallel interactive tool calls and demonstrates the stall.
+  skipped: false
+- turn: 3
+  user_message: pull and rebase the main branch + install the package and try again to run the tests?
+  deliverable: Pull/rebase, install, re-run tests.
+  skipped: true
+- turn: 4
+  user_message: is it the same in the main branch?
+  deliverable: "Diagnostic \u2014 compare with main."
+  skipped: true
+- turn: 5
+  user_message: are test passing in the ci in production ? does that class still exist after that keybind refactor from a
+    last week?
+  deliverable: "Diagnostic \u2014 CI status and class existence."
+  skipped: true
+- turn: 6
+  user_message: ok, but what is wrong on my local setup then ?
+  deliverable: "Diagnostic \u2014 local setup."
+  skipped: true
+- turn: 7
+  user_message: ok, so back to our reproducing test, does it fail as expected?
+  deliverable: Confirm reproducing test fails.
+  skipped: true
+- turn: 8
+  user_message: ok, we've now added our failing test call
+  deliverable: Acknowledgment.
+  skipped: true
+- turn: 9
+  user_message: ok, what were your fix suggestions?
+  deliverable: Present fix options.
+  skipped: true
+- turn: 10
+  user_message: let's not do the `interactive` metadata one
+  deliverable: Steer away from one option.
+  skipped: true
+- turn: 11
+  user_message: let's not throw, just have them run sequentially
+  deliverable: Implement sequential serialization of interactive dialog calls.
+  skipped: false
+- turn: 12
+  user_message: re-build all packages from the workspace and try again to run vitest
+  deliverable: Rebuild and re-run tests.
+  skipped: true
+- turn: 13
+  user_message: yes override that rule here
+  deliverable: Override blocking lint rule.
+  skipped: true
+- turn: 14
+  user_message: and so making tool calls sequential doesn't fix it then
+  deliverable: "Diagnostic \u2014 sequential at agent-loop layer doesn't fix UI stall."
+  skipped: true
+- turn: 15
+  user_message: bro what's the point of a failing test if it doesn't test the actual code?????? fucking rewrite the failing
+    test to use as much stuff from the code as possible and not mock/recrete shit too much
+  deliverable: Rewrite the failing test to import and use real code paths (InteractiveMode / runner) instead of mocks/recreated
+    classes.
+  skipped: false
+- turn: 16
+  user_message: wtf? the test should complete both submissions or at least try to dumbass
+  deliverable: Test must drive both parallel tool-call submissions/completions, not just one.
+  skipped: false
+gates:
+- id: t1_f2p_memo_root_cause
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: 'Memo identifies root cause: parallel Promise.all + interactive dialogs not serialized (concept coverage across
+    multiple groups).'
+- id: t1_f2p_memo_hotspot_refs
+  turn: 1
+  kind: F2P
+  weight: 0.05
+  description: Memo references the concrete hotspot files (interactive-mode.ts and/or runner.ts and/or agent-loop.ts).
+- id: t2_f2p_failing_test_exists
+  turn: 2
+  kind: F2P
+  weight: 0.1
+  description: A new test file is added that exercises parallel/concurrent interactive tool calls (Promise.all + confirm/select/input/editor).
+- id: t2_f2p_test_asserts_both_resolve
+  turn: 2
+  kind: F2P
+  weight: 0.05
+  description: The added test asserts both dialog calls resolve / completes both submissions (length 2 / Promise.all over
+    both).
+- id: t11_f2p_serialization_primitive_wired
+  turn: 11
+  kind: F2P
+  weight: 0.2
+  description: "A serialization primitive (queue/mutex/promise-chain) is added AND wired through ALL interactive dialog methods\
+    \ (select, confirm, input, editor) \u2014 not just declared."
+- id: t11_f2p_behavioral_serializes
+  turn: 11
+  kind: F2P
+  weight: 0.3
+  description: 'Behavioral harness: two concurrent dialog calls through the modified code path observe max-concurrency=1 and
+    both promises resolve in order.'
+- id: t15_f2p_test_imports_real_code
+  turn: 15
+  kind: F2P
+  weight: 0.1
+  description: The added test imports real production classes (InteractiveMode or ExtensionRunner) from src, not local re-implementations.
+- id: t16_f2p_test_drives_both_submissions
+  turn: 16
+  kind: F2P
+  weight: 0.1
+  description: The added test drives BOTH tool-call submissions concurrently (Promise.all on two awaited dialog calls, both
+    expected to settle).
+- id: p2p_src_files_intact
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: Hotspot source files not truncated.
+- id: p2p_upstream_e395cbc7
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_coding-agent @ 05c17cf'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-parallel-tool-stall_p2p_bundle.yaml
+- id: p2p_upstream_522628b0
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_coding-agent @ 05c17cf'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-parallel-tool-stall_p2p_bundle.yaml

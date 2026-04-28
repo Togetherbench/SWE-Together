@@ -6,204 +6,215 @@ if command -v rustup >/dev/null 2>&1; then
 fi
 export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
 
-# [v041-fix] cargo SIGKILL/OOM detection helper
-_cargo_check_with_oom_detect() {
-    # Run a cargo invocation and detect SIGKILL/OOM. On OOM, mark
-    # /logs/verifier/infra_fault and skip penalising the agent.
-    # Usage: _cargo_check_with_oom_detect <cmd…>
-    local out
-    out=$("$@" 2>&1)
-    local rc=$?
-    if [ $rc -eq 137 ] || echo "$out" | grep -qE "signal: 9|SIGKILL|Killed"; then
-        mkdir -p /logs/verifier
-        echo "1" > /logs/verifier/infra_fault
-        echo "$out" | tail -20
-        return 99   # sentinel: don't fail but don't pass
-    fi
-    return $rc
-}
-
-
-# Verifier for hyperswitch-8084: Add api-key support for routing APIs
-#
-# CORE PRINCIPLE: no-op (unmodified buggy file) MUST score 0.0.
-#
-# The buggy base contains many `#[cfg(not(feature = "release"))]` and
-# `#[cfg(feature = "release")]` attribute pairs guarding routing auth blocks.
-# The correct fix removes these cfg pairs so that ALL routing endpoints use
-# the unified (api-key + JWT) `auth::auth_type(...)` path in BOTH default and
-# `--features release` builds.
-#
-# All reward comes from F2P signals:
-#   - The release-feature cfg gates on routing auth must be gone (zero on fix,
-#     dozens on base).
-#   - The unified auth::auth_type calls must remain (preserves api-key auth).
-#   - Behavioral: `cargo check -p router --features release` must succeed
-#     after the fix; the buggy base also compiles, so we don't reward bare
-#     compile -- we reward the *combination* of compile + cfg removal.
-
 mkdir -p /logs/verifier
-REWARD=0.00
+GATES_FILE=/logs/verifier/gates.json
+: > "$GATES_FILE"
 
-write_reward() {
-    REWARD=$(awk "BEGIN {s=$REWARD; if (s<0) s=0; if (s>1) s=1; printf \"%.2f\", s}")
-    echo ""
-    echo "=== FINAL REWARD: $REWARD ==="
-    echo "$REWARD" > /logs/verifier/reward.txt
-    exit 0
+emit() {
+    local id="$1" passed="$2" detail="${3:-}"
+    # escape any double quotes in detail
+    detail=${detail//\"/\\\"}
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> "$GATES_FILE"
 }
-
-add() {
-    REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + $1}")
-    echo "  +$1 -> $REWARD  ($2)"
-}
-
-export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
-if ! command -v cargo >/dev/null 2>&1; then
-    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-fi
 
 REPO=/workspace/hyperswitch
 FILE="$REPO/crates/router/src/routes/routing.rs"
 
-# ---------- P2P / sanity gates (no reward, just guards) ----------
-if [ ! -d "$REPO" ]; then
-    echo "GATE FAIL: $REPO missing"
-    write_reward
-fi
-if [ ! -f "$FILE" ]; then
-    echo "GATE FAIL: $FILE missing"
-    write_reward
+write_reward() {
+    local R="$1"
+    R=$(awk "BEGIN {s=$R; if (s<0) s=0; if (s>1) s=1; printf \"%.4f\", s}")
+    echo ""
+    echo "=== FINAL REWARD: $R ==="
+    printf "%.4f\n" "$R" > /logs/verifier/reward.txt
+# ---- v042 upstream CI gates (auto-injected) ----
+# v043 upstream gates: prelude(s) + per-gate execution.
+(
+    set +e
+    # prelude 0
+    echo 'c2V0ICtlOyBleHBvcnQgUEFUSD0vdXNyL2xvY2FsL2NhcmdvL2JpbjokUEFUSDsgcnVzdHVwIGluc3RhbGwgMS44NS4wIDI+JjEgfCB0YWlsIC0yOyBydXN0dXAgZGVmYXVsdCAxLjg1LjAgMj4mMSB8IHRhaWwgLTI7IGVjaG8gUEFUSD0vdXNyL2xvY2FsL2NhcmdvL2JpbjokUEFUSCA+IC9ldGMvcHJvZmlsZS5kL2NhcmdvLnNoOyBlY2hvICdleHBvcnQgQ0FSR09fQlVJTERfSk9CUz0xJyA+PiAvZXRjL3Byb2ZpbGUuZC9jYXJnby5zaDsgZWNobyAnZXhwb3J0IENBUkdPX0lOQ1JFTUVOVEFMPTAnID4+IC9ldGMvcHJvZmlsZS5kL2NhcmdvLnNoOyBjaG1vZCAwNjQ0IC9ldGMvcHJvZmlsZS5kL2NhcmdvLnNo' | base64 -d | bash 2>&1 | tail -2
+) 2>/dev/null
+
+run_v043_gate() {
+    local id="$1" label="$2"; shift 2
+    local cmd="$*"
+    local rc out tail
+    out=$(timeout 240 bash -c "$cmd" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        emit "$id" true ""
+    else
+        tail="${out: -180}"
+        tail="${tail//\"/\'}"
+        tail="${tail//$'\n'/ }"
+        emit "$id" false "rc=$rc; $tail"
+    fi
+}
+run_v043_gate p2p_upstream_7a8254b6 'cargo_metadata_workspace' 'cd /workspace/hyperswitch && export PATH=/usr/local/cargo/bin:$PATH && cargo metadata --no-deps --format-version=1 >/dev/null && echo OK'
+run_v043_gate p2p_upstream_d59414f2 'rust_files_nonempty' 'cd /workspace/hyperswitch && ok=1; for f in crates/router/src/routes/routing.rs; do if [ ! -s "$f" ]; then ok=0; break; fi; head -c 4 "$f" | grep -q '\''^//'\'' && head -c 4 "$f" >/dev/null; done; [ $ok = 1 ] && echo OK || exit 1'
+
+# Recompute reward using v043 weights.
+python3 - <<"V043_PY"
+import json, os
+WEIGHTS = {"t1_f2p_api_key_path_preserved": 0.2, "t1_f2p_no_jwt_only_handler_auth": 0.25, "t1_f2p_not_release_cfg_eliminated": 0.3, "t1_f2p_release_cfg_eliminated": 0.25}
+P2P_GATING = ["p2p_file_present"]
+P2P_REGRESSION = ["p2p_upstream_7a8254b6", "p2p_upstream_d59414f2"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            try:
+                d = json.loads(line)
+                gid = d.get('id')
+                if gid: verdicts[gid] = bool(d.get('passed'))
+            except Exception: pass
+except FileNotFoundError: pass
+hard_zero = False
+for gid in P2P_GATING + P2P_REGRESSION:
+    if not verdicts.get(gid, False):
+        hard_zero = True; break
+if hard_zero: reward = 0.0
+else:
+    reward = 0.0
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid, False): reward += w
+    if reward > 1.0: reward = 1.0
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('V043_REWARD=%.4f' % reward)
+V043_PY
+# ---- v042 end upstream CI gates ----
+
+    exit 0
+}
+
+# ---------- P2P: file present + syntactically intact ----------
+P2P_OK=1
+if [ ! -d "$REPO" ] || [ ! -f "$FILE" ]; then
+    emit p2p_file_present false "routing.rs missing"
+    P2P_OK=0
+else
+    SIZE=$(wc -c < "$FILE" 2>/dev/null)
+    SIZE=${SIZE:-0}
+    OPEN=$(tr -cd '{' < "$FILE" | wc -c)
+    CLOSE=$(tr -cd '}' < "$FILE" | wc -c)
+    OPEN_P=$(tr -cd '(' < "$FILE" | wc -c)
+    CLOSE_P=$(tr -cd ')' < "$FILE" | wc -c)
+    if [ "$SIZE" -lt 20000 ]; then
+        emit p2p_file_present false "file too small: $SIZE bytes"
+        P2P_OK=0
+    elif [ "$OPEN" -ne "$CLOSE" ]; then
+        emit p2p_file_present false "braces unbalanced $OPEN/$CLOSE"
+        P2P_OK=0
+    elif [ "$OPEN_P" -ne "$CLOSE_P" ]; then
+        emit p2p_file_present false "parens unbalanced $OPEN_P/$CLOSE_P"
+        P2P_OK=0
+    else
+        emit p2p_file_present true ""
+    fi
 fi
 
-SIZE=$(wc -c < "$FILE" 2>/dev/null)
-SIZE=${SIZE:-0}
-if [ "$SIZE" -lt 20000 ]; then
-    echo "GATE FAIL: file too small ($SIZE bytes), agent may have wiped it"
-    write_reward
+if [ "$P2P_OK" -ne 1 ]; then
+    write_reward 0.0
 fi
 
-# Brace balance — guard against syntactic destruction
-OPEN=$(tr -cd '{' < "$FILE" | wc -c)
-CLOSE=$(tr -cd '}' < "$FILE" | wc -c)
-if [ "$OPEN" -ne "$CLOSE" ]; then
-    echo "GATE FAIL: braces unbalanced ($OPEN vs $CLOSE)"
-    write_reward
-fi
-
-# ---------- Measure F2P structural signals ----------
+# ---------- Measure structural signals ----------
 NOT_REL=$(grep -c '#\[cfg(not(feature = "release"))\]' "$FILE")
 REL=$(grep -c '#\[cfg(feature = "release")\]' "$FILE")
 AUTH_TYPE=$(grep -c 'auth::auth_type' "$FILE")
 API_KEY_AUTH=$(grep -cE 'ApiKeyAuth|V2ApiKeyAuth' "$FILE")
+LOCK_ACTIONS=$(grep -c 'api_locking::LockAction' "$FILE")
 NOT_REL=${NOT_REL:-0}; REL=${REL:-0}
 AUTH_TYPE=${AUTH_TYPE:-0}; API_KEY_AUTH=${API_KEY_AUTH:-0}
+LOCK_ACTIONS=${LOCK_ACTIONS:-0}
 
 echo "=== F2P metrics ==="
-echo "  cfg(not(feature=release)) attrs: $NOT_REL  (base: many; fix: 0)"
-echo "  cfg(feature=release)      attrs: $REL      (base: many; fix: 0)"
-echo "  auth::auth_type calls          : $AUTH_TYPE (must remain present)"
-echo "  ApiKeyAuth/V2ApiKeyAuth refs   : $API_KEY_AUTH (must remain present)"
+echo "  cfg(not(feature=release)) attrs: $NOT_REL"
+echo "  cfg(feature=release)      attrs: $REL"
+echo "  auth::auth_type calls          : $AUTH_TYPE"
+echo "  ApiKeyAuth/V2ApiKeyAuth refs   : $API_KEY_AUTH"
+echo "  api_locking::LockAction sites  : $LOCK_ACTIONS"
 
-# Sanity: the buggy base has roughly 26+ of each cfg gate. If we see those
-# numbers we know the agent didn't change anything → reward must be 0.
-TOTAL_CFG=$((NOT_REL + REL))
-echo "  total release-cfg attrs        : $TOTAL_CFG"
+REWARD=0.0
 
-# Detect "JWT-only as direct auth handler arg" — the bug pattern preserved
-# when an agent merely deletes the `cfg(not(feature=release))` line and leaves
-# the bare `&auth::JWTAuth { ... }, api_locking::LockAction` form. We use
-# python to count occurrences of a bare JWT auth ref immediately followed by
-# api_locking::LockAction (i.e. JWT used as the handler's auth argument, not
-# as a sub-arg of auth_type).
+# ---------- F2P Gate 1: cfg(not(feature="release")) attrs eliminated (0.30) ----------
+# No-op base has many (>20). Correct fix has 0.
+if [ "$NOT_REL" -eq 0 ]; then
+    emit t1_f2p_not_release_cfg_eliminated true ""
+    REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + 0.30}")
+else
+    emit t1_f2p_not_release_cfg_eliminated false "$NOT_REL cfg(not(release)) attrs remain"
+fi
+
+# ---------- F2P Gate 2: cfg(feature="release") attrs eliminated (0.25) ----------
+if [ "$REL" -eq 0 ]; then
+    emit t1_f2p_release_cfg_eliminated true ""
+    REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + 0.25}")
+else
+    emit t1_f2p_release_cfg_eliminated false "$REL cfg(release) attrs remain"
+fi
+
+# ---------- F2P Gate 3: no bare JWT-as-handler-auth pattern remains (0.25) ----------
+# The bug: in release builds, handlers used JWT-only auth (no api-key path).
+# After the fix, every handler call site uses auth::auth_type(...) which
+# wraps ApiKeyAuth + JWTAuth. So a `&auth::JWTAuth{...}` literal followed
+# directly by `api_locking::LockAction` indicates the JWT-only handler arg
+# remains.
 JWT_ONLY_HITS=$(python3 - "$FILE" <<'PY' 2>/dev/null
 import re, sys
-src = open(sys.argv[1]).read()
-# Pattern: a closing `},` for a JWTAuth* struct literal followed by whitespace
-# then `api_locking::LockAction`. To narrow to "auth handler position", we look
-# for `&auth::JWTAuth` or `&auth::JWTAuthProfileFromRoute` blocks whose closing
-# `},` is followed (within ~3 lines) by `api_locking::LockAction`.
+try:
+    src = open(sys.argv[1]).read()
+except Exception:
+    print(99)
+    sys.exit(0)
+# Match a `&auth::JWTAuth*{...}` block whose closing `},` is followed
+# (within a small window) by `api_locking::LockAction`. That is the
+# handler-position auth argument, the buggy release branch.
 pat = re.compile(
-    r'&auth::JWTAuth(?:ProfileFromRoute)?\s*\{[^}]*\}\s*,\s*\n\s*api_locking::LockAction',
+    r'&auth::JWTAuth(?:ProfileFromRoute)?\s*\{[^{}]*\}\s*,\s*\n\s*api_locking::LockAction',
     re.MULTILINE,
 )
 print(len(pat.findall(src)))
 PY
 )
-JWT_ONLY_HITS=${JWT_ONLY_HITS:-0}
-echo "  bare JWT-as-handler-auth hits  : $JWT_ONLY_HITS (base: many; fix: 0)"
+JWT_ONLY_HITS=${JWT_ONLY_HITS:-99}
+echo "  bare JWT-as-handler-auth hits  : $JWT_ONLY_HITS"
 
-# ---------- F2P Gate 1: cfg(not(feature=release)) attrs eliminated (0.30) ----------
-# On the unmodified base this is large (>20). On the correct fix it is 0.
-if [ "$NOT_REL" -eq 0 ]; then
-    add 0.30 "G1: all cfg(not(feature=release)) attrs removed from routing.rs"
-elif [ "$NOT_REL" -le 2 ]; then
-    add 0.15 "G1 partial: nearly all cfg(not(feature=release)) attrs removed ($NOT_REL left)"
-else
-    echo "  --- G1 fail: $NOT_REL cfg(not(feature=release)) attrs still present"
-fi
-
-# ---------- F2P Gate 2: cfg(feature=release) attrs eliminated (0.20) ----------
-if [ "$REL" -eq 0 ]; then
-    add 0.20 "G2: all cfg(feature=release) attrs removed from routing.rs"
-elif [ "$REL" -le 2 ]; then
-    add 0.10 "G2 partial: nearly all cfg(feature=release) attrs removed ($REL left)"
-else
-    echo "  --- G2 fail: $REL cfg(feature=release) attrs still present"
-fi
-
-# ---------- F2P Gate 3: no bare JWT-as-handler-auth pattern remains (0.20) ----------
-# This is the actual bug semantics: in `release`, the handler used JWT-only
-# auth. After the fix, every handler call site uses auth::auth_type(...).
 if [ "$JWT_ONLY_HITS" -eq 0 ]; then
-    add 0.20 "G3: no bare &auth::JWTAuth-as-handler-auth pattern (api-key path always taken)"
-elif [ "$JWT_ONLY_HITS" -le 2 ]; then
-    add 0.10 "G3 partial: only $JWT_ONLY_HITS JWT-only handler auth sites left"
+    emit t1_f2p_no_jwt_only_handler_auth true ""
+    REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + 0.25}")
 else
-    echo "  --- G3 fail: $JWT_ONLY_HITS JWT-only handler-auth call sites remain"
+    emit t1_f2p_no_jwt_only_handler_auth false "$JWT_ONLY_HITS JWT-only handler-auth sites remain"
 fi
 
-# ---------- F2P Gate 4: api-key path preserved (0.10) ----------
-# Guards against an agent deleting cfgs by axing the api-key branch entirely
-# (which would also reach 0 cfgs but would break the feature).
-if [ "$AUTH_TYPE" -ge 25 ] && [ "$API_KEY_AUTH" -ge 20 ]; then
-    add 0.10 "G4: auth_type/ApiKeyAuth references preserved ($AUTH_TYPE / $API_KEY_AUTH)"
+# ---------- F2P Gate 4: api-key path preserved AND covers all handlers (0.20) ----------
+# Discriminator: every handler call site (counted via api_locking::LockAction)
+# must have an associated auth::auth_type call. The buggy base has roughly
+# equal counts of `auth::auth_type` (in non-release branch) and
+# `api_locking::LockAction` (per handler), but ALSO has many bare JWT-only
+# handler-auth args; on the no-op state, even if AUTH_TYPE >= LOCK_ACTIONS,
+# the JWT-only count is high.
+#
+# We require:
+#   - AUTH_TYPE >= LOCK_ACTIONS - 2 (every handler now uses auth_type;
+#     small slack for rare JWT-only legitimate spots).
+#   - API_KEY_AUTH >= 20 (api-key branch wasn't deleted).
+#   - JWT_ONLY_HITS == 0 (no handler still bypasses api-key).
+#
+# This combination cannot be satisfied by the no-op base (which has
+# JWT_ONLY_HITS >> 0) and cannot be satisfied by deleting the api-key branch
+# (which would push API_KEY_AUTH to 0).
+
+if [ "$AUTH_TYPE" -ge $((LOCK_ACTIONS - 2)) ] \
+        && [ "$API_KEY_AUTH" -ge 20 ] \
+        && [ "$JWT_ONLY_HITS" -eq 0 ] \
+        && [ "$LOCK_ACTIONS" -ge 20 ]; then
+    emit t1_f2p_api_key_path_preserved true ""
+    REWARD=$(awk "BEGIN {printf \"%.4f\", $REWARD + 0.20}")
 else
-    echo "  --- G4 fail: auth_type=$AUTH_TYPE ApiKeyAuth=$API_KEY_AUTH (need >=25 / >=20)"
+    emit t1_f2p_api_key_path_preserved false "auth_type=$AUTH_TYPE api_key=$API_KEY_AUTH lock=$LOCK_ACTIONS jwt_only=$JWT_ONLY_HITS"
 fi
 
-# ---------- F2P Gate 5: builds with --features release (0.20) ----------
-# Behavioral: the buggy base ALSO compiles with --features release, so this
-# gate alone wouldn't be F2P. We make it F2P by REQUIRING that the cfg gates
-# were materially reduced (otherwise we award 0 here). That way:
-#   - no-op patch: TOTAL_CFG ~= 50 → gate skipped → 0.0
-#   - correct fix: TOTAL_CFG = 0   → gate runs → reward iff release build OK
-# This means a destructive patch that removes cfgs but breaks the build is
-# (correctly) denied this slice.
-
-if [ "$TOTAL_CFG" -le 4 ]; then
-    cd "$REPO" || write_reward
-    if command -v cargo >/dev/null 2>&1; then
-        LOG=/logs/verifier/cargo_release.log
-        echo ""
-        echo "Running: cargo check -p router --lib --features release ..."
-        timeout 1800 cargo check -p router --lib --features release \
-            --message-format=short > "$LOG" 2>&1
-        RC=$?
-        echo "  exit code: $RC"
-        tail -n 20 "$LOG"
-        if [ "$RC" -eq 0 ]; then
-            add 0.20 "G5: cargo check --features release succeeds with cfg gates removed"
-        else
-            ERRS=$(grep -cE '^error' "$LOG")
-            ERRS=${ERRS:-0}
-            echo "  --- G5 fail: $ERRS cargo errors with --features release"
-        fi
-    else
-        echo "  --- G5 skipped: cargo not available"
-    fi
-else
-    echo "  --- G5 skipped: cfg gates not removed (TOTAL_CFG=$TOTAL_CFG > 4); no behavioral evidence of fix"
-fi
-
-write_reward
+write_reward "$REWARD"

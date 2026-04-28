@@ -1,0 +1,70 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: pi-mono-foreign-toolcall-fix
+turns:
+- turn: 1
+  user_message: in ~/Downloads/ec3732e6-aac8-487f-a741-e6d2b5d64888.jsonl there is a tool call or something that errors. locate
+    it, tell me why this happened
+  deliverable: Locate and analyze the failing tool call in the JSONL file
+  skipped: true
+  skip_reason: purely analytical first turn; no code change deliverable
+- turn: 2
+  user_message: fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi why would this happen? user started with
+    openai-codex/gpt then switched to github-copilot/gpt
+  deliverable: Identify the specific problematic ID
+  skipped: true
+  skip_reason: diagnostic turn
+- turn: 12
+  user_message: ok, fix it, ensure length of id is within bounds!
+  deliverable: Fix normalizeToolCallId / convertResponsesMessages to handle foreign pipe-ids and oversized fc_ ids correctly
+  skipped: false
+- turn: 13
+  user_message: test first with the string from copilot
+  deliverable: Verify behavior with the actual copilot pipe-id string
+  skipped: false
+gates:
+- id: p2p_tsc_clean
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: TypeScript still compiles after the fix
+- id: t12_f2p_pipe_id_extracts_clean_call_prefix
+  turn: 12
+  kind: F2P
+  weight: 0.3
+  description: Foreign pipe-id 'call_X|item_Y' onto target NOT in allowed-providers yields call_id == 'call_X' exactly (no
+    |, no item-id mangling)
+- id: t12_f2p_oversized_fc_id_hashed_under_limit
+  turn: 12
+  kind: F2P
+  weight: 0.25
+  description: Bare 64-char fc_ id onto codex target produces call_id <=40 chars AND differs from raw input (proving hashing/truncation
+    fired)
+- id: t12_f2p_oversized_call_portion_hashed
+  turn: 12
+  kind: F2P
+  weight: 0.2
+  description: Pipe-id where call portion alone exceeds 40 chars produces call_id <=40 chars starting with 'call_'
+- id: t13_f2p_copilot_real_string_clean_id
+  turn: 13
+  kind: F2P
+  weight: 0.15
+  description: Exact copilot string from bug report yields call_id == clean 'call_4VnzVawQXPB9MgYib7CiQFEY' and ids match
+    between fc and fco
+- id: t13_f2p_no_underscore_substituted_slash_in_output
+  turn: 13
+  kind: F2P
+  weight: 0.1
+  description: Output call_id from copilot pipe-id contains no substring '_cHXKTw3' (the buggy '/'->'_' substitution signature)
+- id: p2p_upstream_771580d1
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_ai @ 235b247'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-foreign-toolcall-fix_p2p_bundle.yaml
+- id: p2p_upstream_816994b6
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_ai @ 235b247'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-foreign-toolcall-fix_p2p_bundle.yaml
