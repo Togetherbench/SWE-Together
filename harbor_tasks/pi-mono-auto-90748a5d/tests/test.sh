@@ -333,9 +333,9 @@ awk_calc() {
     awk "BEGIN { printf \"%.4f\", $1 }"
 }
 
-W1=0.20
-W2=0.20
-W3=0.60
+W1=0.16
+W2=0.16
+W3=0.48
 
 R=$(awk "BEGIN { printf \"%.4f\", $F2P1*$W1 + $F2P2*$W2 + $F2P3*$W3 }")
 REWARD=$R
@@ -346,3 +346,91 @@ echo "F2P3 (behavioral BMP->PNG): $F2P3 (w=$W3)"
 echo "REWARD=$REWARD"
 
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+GATES_FILE="/logs/verifier/gates.json"
+touch "$GATES_FILE"
+
+# All upstream gates run from repo dir
+cd "$REPO_DIR" || true
+
+# F2P: BMP-to-PNG vitest with Photon mocked out
+printf 'export async function resolve(s,c,n){if(s.includes("photon-node")||s.includes("photon.js"))return{shortCircuit:true,url:"data:text/javascript,export function loadPhoton(){return null;}"};return n(s,c);}' > /tmp/_pi_mock_photon.mjs
+NODE_OPTIONS="--loader /tmp/_pi_mock_photon.mjs" node_modules/.bin/vitest run packages/coding-agent/test/clipboard-image-bmp-conversion.test.ts --reporter=verbose > /tmp/_gate_bmp.log 2>&1
+_gate_bmp_rc=$?
+tail -20 /tmp/_gate_bmp.log
+if [ "$_gate_bmp_rc" -eq 0 ]; then
+    echo '{"id":"f2p_upstream_bmp_vitest","passed":true,"detail":"BMP conversion test passed with Photon mocked"}' >> "$GATES_FILE"
+else
+    echo '{"id":"f2p_upstream_bmp_vitest","passed":false,"detail":"BMP conversion test failed with Photon mocked"}' >> "$GATES_FILE"
+fi
+
+# P2P: Biome lint/format check
+node_modules/.bin/biome check "$CLIP_FILE" > /tmp/_gate_biome.log 2>&1
+_gate_biome_rc=$?
+tail -5 /tmp/_gate_biome.log
+if [ "$_gate_biome_rc" -eq 0 ]; then
+    echo '{"id":"p2p_upstream_biome","passed":true,"detail":"biome check passed"}' >> "$GATES_FILE"
+else
+    echo '{"id":"p2p_upstream_biome","passed":false,"detail":"biome check failed"}' >> "$GATES_FILE"
+fi
+
+# P2P: tsgo type check
+node_modules/.bin/tsgo --noEmit > /tmp/_gate_tsgo.log 2>&1
+_gate_tsgo_rc=$?
+tail -5 /tmp/_gate_tsgo.log
+if [ "$_gate_tsgo_rc" -eq 0 ]; then
+    echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo --noEmit passed"}' >> "$GATES_FILE"
+else
+    echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo --noEmit failed"}' >> "$GATES_FILE"
+fi
+
+# P2P: vitest clipboard-image tests
+node_modules/.bin/vitest run packages/coding-agent/test/clipboard-image.test.ts --reporter=verbose > /tmp/_gate_vitest.log 2>&1
+_gate_vitest_rc=$?
+tail -10 /tmp/_gate_vitest.log
+if [ "$_gate_vitest_rc" -eq 0 ]; then
+    echo '{"id":"p2p_upstream_vitest_clipboard","passed":true,"detail":"clipboard-image vitest passed"}' >> "$GATES_FILE"
+else
+    echo '{"id":"p2p_upstream_vitest_clipboard","passed":false,"detail":"clipboard-image vitest failed"}' >> "$GATES_FILE"
+fi
+
+# Upstream reward tail: adjust reward based on upstream gate results
+python3 -c "
+import json, os, sys
+WEIGHTS = {'f2p_upstream_bmp_vitest': 0.20}
+P2P_REGRESSION = ['p2p_upstream_biome', 'p2p_upstream_tsgo', 'p2p_upstream_vitest_clipboard']
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM_REWARD=%.4f' % reward)
+"
+# ---- end ----

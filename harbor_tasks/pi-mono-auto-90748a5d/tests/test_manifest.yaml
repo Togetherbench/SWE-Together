@@ -1,0 +1,44 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # --- existing F2P gates from test.sh (weights scaled down) ---
+  - id: f2p_photon_removed
+    kind: F2P
+    turn: 1
+    weight: 0.16
+    description: "Photon import removed from clipboard-image.ts"
+  - id: f2p_native_png_primitives
+    kind: F2P
+    turn: 1
+    weight: 0.16
+    description: "Native PNG primitives present (zlib + signature + CRC poly)"
+  - id: f2p_behavioral_bmp_to_png
+    kind: F2P
+    turn: 1
+    weight: 0.48
+    description: "Behavioral BMP-to-PNG conversion via esbuild transpile+harness"
+  # --- upstream F2P gate ---
+  - id: f2p_upstream_bmp_vitest
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "Upstream BMP conversion vitest with Photon mocked out"
+  # --- upstream P2P gates ---
+  - id: p2p_upstream_biome
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Biome lint+format on clipboard-image.ts"
+  - id: p2p_upstream_tsgo
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Full project type check with tsgo --noEmit"
+  - id: p2p_upstream_vitest_clipboard
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Upstream clipboard-image unit tests"

@@ -131,8 +131,8 @@ assert 'alice' not in r and 'HASH' in r, r
 print('PASS')
 "
 
-# F2P-2 (0.10): underscore prefix.
-f2p 0.10 "underscore_prefix" "
+# F2P-2 (0.00): underscore prefix — actually P2P (passes on buggy base too).
+f2p 0.00 "underscore_prefix" "
 from dataclaw.anonymizer import _replace_username
 r = _replace_username('Found in _alice folder', 'alice', 'HASH')
 assert 'alice' not in r.lower() and 'HASH' in r, r
@@ -178,9 +178,8 @@ assert 'joe' not in r and 'HASH' in r, r
 print('PASS')
 "
 
-# F2P-7 (0.10): Anonymizer end-to-end with extras + underscore-adjacent.
-# Combines the word-boundary fix with extras handling.
-f2p 0.10 "anonymizer_extras_underscore" "
+# F2P-7 (0.00): Anonymizer end-to-end — actually P2P (buggy str.replace also replaces extras).
+f2p 0.00 "anonymizer_extras_underscore" "
 import dataclaw.anonymizer as mod
 from dataclaw.anonymizer import Anonymizer, _hash_username
 mod._detect_home_dir = lambda: ('/Users/owner', 'owner')
@@ -194,10 +193,8 @@ assert _hash_username('bob') in out
 print('PASS')
 "
 
-# F2P-8 (0.15): regex compilation is cached / not per-call.
-# Buggy base may call re.compile inside anonymize_text on every call.
-# Fix uses lru_cache or module-level compile. Spy on re.compile.
-f2p 0.15 "compile_caching" "
+# F2P-8 (0.00): regex caching — actually P2P (Python's internal re._cache masks the bug).
+f2p 0.00 "compile_caching" "
 import re
 import dataclaw.anonymizer as mod
 mod._detect_home_dir = lambda: ('/Users/alice', 'alice')
@@ -230,8 +227,54 @@ print('PASS')
 "
 
 # ---------------------------------------------------------------
-# Finalize. Total possible: 0.15+0.10+0.10+0.10+0.15+0.15+0.10+0.15 = 1.00
+# Finalize. Correct F2P: 0.15+0.00+0.10+0.10+0.15+0.15+0.00+0.00 = 0.65
+# Upstream F2P adds up to 0.40 via tail script, total capped at 1.0.
 # ---------------------------------------------------------------
 REWARD=$(awk -v s="$SCORE" 'BEGIN{ if (s>1.0) s=1.0; printf "%.4f", s }')
 log "Final reward: $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+log "--- Upstream gates ---"
+GATES_FILE="/logs/verifier/gates.json"
+> "$GATES_FILE" 2>/dev/null || true
+
+# F2P: case-insensitive long username matching
+if python3 -c "from dataclaw.anonymizer import anonymize_text; r = anonymize_text('Hello Alice!', 'alice', 'HASH'); assert 'Alice' not in r and 'HASH' in r" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_case_insensitive", "passed": true, "detail": "case-insensitive replacement works"}' >> "$GATES_FILE"
+    log "  upstream f2p_upstream_case_insensitive: PASS"
+else
+    echo '{"id": "f2p_upstream_case_insensitive", "passed": false, "detail": "case-insensitive replacement failed"}' >> "$GATES_FILE"
+    log "  upstream f2p_upstream_case_insensitive: FAIL"
+fi
+
+# F2P: substring safety in _replace_username
+if python3 -c "from dataclaw.anonymizer import _replace_username; r = _replace_username('alexis is here', 'alex', 'HASH'); assert r == 'alexis is here'" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_substring_safety", "passed": true, "detail": "substring safety preserved"}' >> "$GATES_FILE"
+    log "  upstream f2p_upstream_substring_safety: PASS"
+else
+    echo '{"id": "f2p_upstream_substring_safety", "passed": false, "detail": "substring replacement corrupted alexis"}' >> "$GATES_FILE"
+    log "  upstream f2p_upstream_substring_safety: FAIL"
+fi
+
+# P2P: basic anonymize_text and hash functionality
+if python3 -c "from dataclaw.anonymizer import anonymize_text, _hash_username; assert anonymize_text('hello alice', 'alice', 'HASH') == 'hello HASH'; assert _hash_username('test').startswith('user_')" 2>/dev/null; then
+    echo '{"id": "p2p_upstream_basic_functionality", "passed": true, "detail": "basic functionality intact"}' >> "$GATES_FILE"
+    log "  upstream p2p_upstream_basic_functionality: PASS"
+else
+    echo '{"id": "p2p_upstream_basic_functionality", "passed": false, "detail": "basic functionality broken"}' >> "$GATES_FILE"
+    log "  upstream p2p_upstream_basic_functionality: FAIL"
+fi
+
+# P2P: import all public symbols
+if python3 -c "from dataclaw.anonymizer import anonymize_text, anonymize_path, Anonymizer, _hash_username, _replace_username" 2>/dev/null; then
+    echo '{"id": "p2p_upstream_import", "passed": true, "detail": "all symbols importable"}' >> "$GATES_FILE"
+    log "  upstream p2p_upstream_import: PASS"
+else
+    echo '{"id": "p2p_upstream_import", "passed": false, "detail": "import failed"}' >> "$GATES_FILE"
+    log "  upstream p2p_upstream_import: FAIL"
+fi
+
+# Run upstream reward tail
+python3 /workspace/task/upstream_reward_tail.py 2>&1 | tee -a "$LOGFILE"
+# ---- end ----

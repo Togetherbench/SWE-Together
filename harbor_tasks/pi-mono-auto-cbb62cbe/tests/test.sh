@@ -112,7 +112,7 @@ if [ -n "$PRIMARY_EE" ] && [ "$best" -gt 1500 ]; then
 else
   echo "GATE 1 FAIL: no substantial easter-egg artifact"
 fi
-[ "$G1" = "1" ] && add_reward 0.15
+[ "$G1" = "1" ] && add_reward 0.09
 
 # ---------------------------------------------------------------------
 # GATE 2 (0.15): The "powered by daxnuts" brand string actually appears
@@ -140,7 +140,7 @@ for f in "${EE_FILES[@]}"; do
   fi
 done
 [ "$G2" = "0" ] && echo "GATE 2 FAIL: no rendered 'powered by daxnuts' string"
-[ "$G2" = "1" ] && add_reward 0.15
+[ "$G2" = "1" ] && add_reward 0.09
 
 # ---------------------------------------------------------------------
 # GATE 3 (0.20): The trigger predicate is correct: requires the
@@ -183,7 +183,7 @@ for f in "${TRIGGER_FILES[@]}"; do
   fi
 done
 [ "$G3" = "0" ] && echo "GATE 3 FAIL: no opencode+kimi-k2.5 conditional"
-[ "$G3" = "1" ] && add_reward 0.20
+[ "$G3" = "1" ] && add_reward 0.12
 
 # ---------------------------------------------------------------------
 # GATE 4 (0.15): Component-shape: the artifact implements a Component
@@ -210,7 +210,7 @@ for f in "${EE_FILES[@]}"; do
   fi
 done
 [ "$G4" = "0" ] && echo "GATE 4 FAIL: no component-shape"
-[ "$G4" = "1" ] && add_reward 0.15
+[ "$G4" = "1" ] && add_reward 0.09
 
 # ---------------------------------------------------------------------
 # GATE 5 (0.20): Wiring — the trigger actually causes the component
@@ -256,7 +256,7 @@ if [ "$G5" = "0" ]; then
   fi
 fi
 [ "$G5" = "0" ] && echo "GATE 5 FAIL: trigger not wired to UI"
-[ "$G5" = "1" ] && add_reward 0.20
+[ "$G5" = "1" ] && add_reward 0.12
 
 # ---------------------------------------------------------------------
 # GATE 6 (0.15): Behavioral simulation — synthesize the predicate
@@ -379,10 +379,118 @@ JSEOF
 else
   echo "GATE 6 FAIL: no predicate extractable"
 fi
-[ "$G6" = "1" ] && add_reward 0.15
+[ "$G6" = "1" ] && add_reward 0.09
 
 # ---- Final reward --------------------------------------------------
-# Cap at 1.0 (sum of weights = 0.15+0.15+0.20+0.15+0.20+0.15 = 1.00)
+# Cap at 1.0 (existing weights = 0.09+0.09+0.12+0.09+0.12+0.09 = 0.60, upstream F2P = 0.40)
 echo "GATES: G1=$G1 G2=$G2 G3=$G3 G4=$G4 G5=$G5 G6=$G6"
-echo "FINAL REWARD=$REWARD"
+echo "EXISTING REWARD=$REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+# Preludes: install missing deps and build workspace packages
+cd "$REPO" || true
+sudo npm install @sinclair/typebox > /dev/null 2>&1 || true
+npx tsgo -p packages/tui/tsconfig.build.json > /dev/null 2>&1 || true
+npx tsgo -p packages/agent/tsconfig.build.json > /dev/null 2>&1 || true
+
+mkdir -p /logs/verifier
+
+# F2P gate: vitest DaxnutsComponent import and interface validation
+F2P_VITEST_PASSED=false
+cat > packages/coding-agent/test/_daxnuts_upstream_gate.test.ts << 'TESTEOF'
+import { describe, expect, test } from "vitest";
+describe("DaxnutsComponent upstream gate", () => {
+  test("imports and validates DaxnutsComponent interface", async () => {
+    const mod = await import("../src/modes/interactive/components/daxnuts.js");
+    expect(mod.DaxnutsComponent).toBeDefined();
+    expect(typeof mod.DaxnutsComponent).toBe("function");
+    expect(typeof mod.DaxnutsComponent.prototype.render).toBe("function");
+    expect(typeof mod.DaxnutsComponent.prototype.handleInput).toBe("function");
+  });
+});
+TESTEOF
+if npx vitest --run packages/coding-agent/test/_daxnuts_upstream_gate.test.ts > /dev/null 2>&1; then
+  F2P_VITEST_PASSED=true
+  echo "UPSTREAM F2P vitest_daxnuts: PASS"
+else
+  echo "UPSTREAM F2P vitest_daxnuts: FAIL"
+fi
+rm -f packages/coding-agent/test/_daxnuts_upstream_gate.test.ts
+echo "{\"id\": \"f2p_upstream_vitest_daxnuts\", \"passed\": $F2P_VITEST_PASSED, \"detail\": \"vitest DaxnutsComponent import\"}" >> /logs/verifier/gates.json
+
+# F2P gate: bun DaxnutsComponent runtime import
+F2P_BUN_PASSED=false
+if bun -e "import { DaxnutsComponent } from './packages/coding-agent/src/modes/interactive/components/daxnuts.ts'; const p=DaxnutsComponent.prototype; if(typeof p.render!=='function')throw new Error('no render'); if(typeof p.handleInput!=='function')throw new Error('no handleInput'); console.log('PASS');" > /dev/null 2>&1; then
+  F2P_BUN_PASSED=true
+  echo "UPSTREAM F2P bun_daxnuts: PASS"
+else
+  echo "UPSTREAM F2P bun_daxnuts: FAIL"
+fi
+echo "{\"id\": \"f2p_upstream_bun_daxnuts\", \"passed\": $F2P_BUN_PASSED, \"detail\": \"bun runtime import DaxnutsComponent\"}" >> /logs/verifier/gates.json
+
+# P2P gate: vitest interactive-mode-status
+P2P_VITEST_PASSED=false
+if npx vitest --run packages/coding-agent/test/interactive-mode-status.test.ts > /dev/null 2>&1; then
+  P2P_VITEST_PASSED=true
+  echo "UPSTREAM P2P vitest_interactive: PASS"
+else
+  echo "UPSTREAM P2P vitest_interactive: FAIL"
+fi
+echo "{\"id\": \"p2p_upstream_vitest_interactive\", \"passed\": $P2P_VITEST_PASSED, \"detail\": \"vitest interactive-mode-status\"}" >> /logs/verifier/gates.json
+
+# P2P gate: tsgo workspace type check
+P2P_TSGO_PASSED=false
+if npx tsgo --noEmit > /dev/null 2>&1; then
+  P2P_TSGO_PASSED=true
+  echo "UPSTREAM P2P tsgo: PASS"
+else
+  echo "UPSTREAM P2P tsgo: FAIL"
+fi
+echo "{\"id\": \"p2p_upstream_tsgo\", \"passed\": $P2P_TSGO_PASSED, \"detail\": \"tsgo --noEmit\"}" >> /logs/verifier/gates.json
+
+# ---- end upstream gates ----
+
+# Upstream reward tail: read existing reward, apply upstream gate contributions
+python3 - << 'PYEOF'
+import json, os
+
+WEIGHTS = {"f2p_upstream_vitest_daxnuts": 0.20, "f2p_upstream_bun_daxnuts": 0.20}
+P2P_REGRESSION = ["p2p_upstream_vitest_interactive", "p2p_upstream_tsgo"]
+
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('REWARD=%.4f' % reward)
+PYEOF

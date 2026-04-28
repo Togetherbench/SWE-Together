@@ -222,7 +222,7 @@ OUT1=$(run_test /tmp/pitest/diff_model.ts)
 echo "$OUT1" | tail -5
 if echo "$OUT1" | grep -q "RESULT=PASS"; then
     echo "PASS F2P1"
-    add_reward 0.30
+    add_reward 0.21
 else
     echo "FAIL F2P1"
 fi
@@ -293,7 +293,7 @@ OUT2=$(run_test /tmp/pitest/no_orphan.ts)
 echo "$OUT2" | tail -5
 if echo "$OUT2" | grep -q "RESULT=PASS"; then
     echo "PASS F2P2"
-    add_reward 0.20
+    add_reward 0.14
 else
     echo "FAIL F2P2"
 fi
@@ -373,7 +373,7 @@ OUT3=$(run_test /tmp/pitest/lonely_reasoning.ts)
 echo "$OUT3" | tail -5
 if echo "$OUT3" | grep -q "RESULT=PASS"; then
     echo "PASS F2P3"
-    add_reward 0.20
+    add_reward 0.14
 else
     echo "FAIL F2P3"
 fi
@@ -433,7 +433,7 @@ OUT4=$(run_test /tmp/pitest/cross_provider.ts)
 echo "$OUT4" | tail -5
 if echo "$OUT4" | grep -q "RESULT=PASS"; then
     echo "PASS F2P4"
-    add_reward 0.15
+    add_reward 0.11
 else
     echo "FAIL F2P4"
 fi
@@ -468,11 +468,11 @@ if echo "$COMBINED" | grep -E "strictResponsesPairing" >/dev/null 2>&1; then
         echo "FAIL F2P5: strictResponsesPairing still gates behavior"
     else
         echo "PASS F2P5: strictResponsesPairing referenced but does not gate fix"
-        add_reward 0.10
+        # Weight zeroed: passes on buggy base too (not true F2P)
     fi
 else
     echo "PASS F2P5: no strictResponsesPairing gating in source"
-    add_reward 0.10
+    # Weight zeroed: passes on buggy base too (not true F2P)
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -500,7 +500,7 @@ if [ -n "$TEST_FILE" ]; then
         FAIL_COUNT=$(echo "$VITEST_OUT" | grep -oE "[0-9]+ failed" | head -1 | grep -oE "[0-9]+")
         if [ -z "$FAIL_COUNT" ] || [ "$FAIL_COUNT" = "0" ]; then
             echo "PASS F2P6"
-            add_reward 0.05
+            # Weight zeroed: passes on buggy base too (not true F2P)
         else
             echo "FAIL F2P6: $FAIL_COUNT failed"
         fi
@@ -512,5 +512,174 @@ else
 fi
 
 echo ""
-echo "FINAL REWARD: $REWARD"
+echo "HARNESS REWARD: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_JSON="/logs/verifier/gates.json"
+rm -f "$GATES_JSON"
+
+echo ""
+echo "--- UPSTREAM P2P: TypeScript compilation ---"
+if timeout 60 bash -c 'cd /workspace/pi-mono/packages/ai && npx tsc --noEmit -p tsconfig.build.json' >/dev/null 2>&1; then
+    echo '{"id": "p2p_upstream_tsc", "passed": true, "detail": "tsc passed"}' >> "$GATES_JSON"
+    echo "PASS p2p_upstream_tsc"
+else
+    echo '{"id": "p2p_upstream_tsc", "passed": false, "detail": "tsc failed"}' >> "$GATES_JSON"
+    echo "FAIL p2p_upstream_tsc"
+fi
+
+echo ""
+echo "--- UPSTREAM P2P: Vitest foreign toolcall ---"
+if timeout 60 bash -c 'cd /workspace/pi-mono && npx vitest run packages/ai/test/openai-responses-foreign-toolcall-id.test.ts' >/dev/null 2>&1; then
+    echo '{"id": "p2p_upstream_vitest_foreign_toolcall", "passed": true, "detail": "vitest passed"}' >> "$GATES_JSON"
+    echo "PASS p2p_upstream_vitest_foreign_toolcall"
+else
+    echo '{"id": "p2p_upstream_vitest_foreign_toolcall", "passed": false, "detail": "vitest failed"}' >> "$GATES_JSON"
+    echo "FAIL p2p_upstream_vitest_foreign_toolcall"
+fi
+
+echo ""
+echo "--- UPSTREAM F2P: Reasoning-only turn skips reasoning ---"
+(
+    cd /workspace/pi-mono || exit 1
+    SHARED="packages/ai/src/providers/openai-responses-shared.ts"
+    RESP="packages/ai/src/providers/openai-responses.ts"
+    if [ -f "$SHARED" ]; then SRC="$SHARED"; else SRC="$RESP"; fi
+    TSRC="${SRC%.ts}-testable-gate.ts"
+    cp "$SRC" "$TSRC"
+    sed -i 's/^function convertResponsesMessages/export function convertResponsesMessages/' "$TSRC"
+    sed -i 's/^function convertMessages/export function convertMessages/' "$TSRC"
+    cat > /tmp/_f2p_gate_reasoning.ts << 'GATEOF'
+const SRC_SHARED = process.cwd() + "/packages/ai/src/providers/openai-responses-shared-testable-gate.ts";
+const SRC_RESP = process.cwd() + "/packages/ai/src/providers/openai-responses-testable-gate.ts";
+let convert: any;
+for (const p of [SRC_SHARED, SRC_RESP]) {
+  try { const mod = await import(p); convert = mod.convertResponsesMessages || mod.convertMessages; if (convert) break; } catch(e) {}
+}
+if (!convert) { console.log("FAIL: could not load convert"); process.exit(1); }
+const model = { id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai", api: "openai-responses", input: ["text"], reasoning: true, baseUrl: "https://api.openai.com/v1", headers: {} } as any;
+const ctx = { systemPrompt: "test", messages: [
+  { role: "user", content: "Hi", timestamp: Date.now() },
+  { role: "assistant", content: [
+    { type: "thinking", thinking: "ponder", thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_lonely", summary: [{ type: "summary_text", text: "ponder" }] }) }
+  ], model: "gpt-5-codex", provider: "openai", api: "openai-responses", usage: { input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} }, stopReason: "stop", timestamp: Date.now() },
+  { role: "user", content: "hello?", timestamp: Date.now() }
+] };
+const ap = new Set(["openai","openai-codex","opencode"]);
+let result: any[];
+try { result = convert.length >= 3 ? convert(model, ctx, ap) : convert(model, ctx); } catch(e:any) { console.log("FAIL: "+e.message); process.exit(1); }
+const reasoning = result.filter((i:any) => i.type === "reasoning");
+if (reasoning.length > 0) { console.log("FAIL: reasoning emitted"); process.exit(1); }
+console.log("PASS"); process.exit(0);
+GATEOF
+    timeout 30 bun /tmp/_f2p_gate_reasoning.ts 2>&1
+    RC=$?
+    rm -f "$TSRC" /tmp/_f2p_gate_reasoning.ts
+    exit $RC
+)
+if [ $? -eq 0 ]; then
+    echo '{"id": "f2p_upstream_reasoning_only_turn", "passed": true, "detail": "reasoning-only turn correctly skipped"}' >> "$GATES_JSON"
+    echo "PASS f2p_upstream_reasoning_only_turn"
+else
+    echo '{"id": "f2p_upstream_reasoning_only_turn", "passed": false, "detail": "reasoning emitted for reasoning-only turn"}' >> "$GATES_JSON"
+    echo "FAIL f2p_upstream_reasoning_only_turn"
+fi
+
+echo ""
+echo "--- UPSTREAM F2P: Orphaned tool result handling ---"
+(
+    cd /workspace/pi-mono || exit 1
+    SHARED="packages/ai/src/providers/openai-responses-shared.ts"
+    RESP="packages/ai/src/providers/openai-responses.ts"
+    if [ -f "$SHARED" ]; then SRC="$SHARED"; else SRC="$RESP"; fi
+    TSRC="${SRC%.ts}-testable-gate.ts"
+    cp "$SRC" "$TSRC"
+    sed -i 's/^function convertResponsesMessages/export function convertResponsesMessages/' "$TSRC"
+    sed -i 's/^function convertMessages/export function convertMessages/' "$TSRC"
+    cat > /tmp/_f2p_gate_orphan.ts << 'GATEOF'
+const SRC_SHARED = process.cwd() + "/packages/ai/src/providers/openai-responses-shared-testable-gate.ts";
+const SRC_RESP = process.cwd() + "/packages/ai/src/providers/openai-responses-testable-gate.ts";
+let convert: any;
+for (const p of [SRC_SHARED, SRC_RESP]) {
+  try { const mod = await import(p); convert = mod.convertResponsesMessages || mod.convertMessages; if (convert) break; } catch(e) {}
+}
+if (!convert) { console.log("FAIL: could not load convert"); process.exit(1); }
+const model = { id: "gpt-5-codex", name: "gpt-5-codex", provider: "openai", api: "openai-responses", input: ["text"], reasoning: true, baseUrl: "https://api.openai.com/v1", headers: {} } as any;
+const ctx = { systemPrompt: "test", messages: [
+  { role: "user", content: "Hi", timestamp: Date.now() },
+  { role: "assistant", content: [
+    { type: "thinking", thinking: "ponder", thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_t", summary: [{ type: "summary_text", text: "ponder" }] }) }
+  ], model: "gpt-5-codex", provider: "openai", api: "openai-responses", usage: { input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} }, stopReason: "stop", timestamp: Date.now() },
+  { role: "toolResult", toolCallId: "call_orphan|fc_orphan", toolName: "search", content: [{ type: "text", text: "result-42" }], isError: false, timestamp: Date.now() },
+  { role: "user", content: "ok", timestamp: Date.now() }
+] };
+const ap = new Set(["openai","openai-codex","opencode"]);
+let result: any[];
+try { result = convert.length >= 3 ? convert(model, ctx, ap) : convert(model, ctx); } catch(e:any) { console.log("FAIL: "+e.message); process.exit(1); }
+const fcs = result.filter((i:any) => i.type === "function_call");
+const fcOuts = result.filter((i:any) => i.type === "function_call_output");
+const fcCallIds = new Set(fcs.map((f:any) => f.call_id));
+let hasOrphan = false;
+for (const fo of fcOuts) { if (!fcCallIds.has((fo as any).call_id)) hasOrphan = true; }
+if (hasOrphan) { console.log("FAIL: orphaned function_call_output"); process.exit(1); }
+console.log("PASS"); process.exit(0);
+GATEOF
+    timeout 30 bun /tmp/_f2p_gate_orphan.ts 2>&1
+    RC=$?
+    rm -f "$TSRC" /tmp/_f2p_gate_orphan.ts
+    exit $RC
+)
+if [ $? -eq 0 ]; then
+    echo '{"id": "f2p_upstream_orphan_toolresult", "passed": true, "detail": "no orphaned function_call_output"}' >> "$GATES_JSON"
+    echo "PASS f2p_upstream_orphan_toolresult"
+else
+    echo '{"id": "f2p_upstream_orphan_toolresult", "passed": false, "detail": "orphaned function_call_output found"}' >> "$GATES_JSON"
+    echo "FAIL f2p_upstream_orphan_toolresult"
+fi
+# ---- end upstream gates ----
+
+# ---- upstream reward tail ----
+cat > /tmp/_upstream_reward_tail.py << 'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_reasoning_only_turn": 0.20, "f2p_upstream_orphan_toolresult": 0.20}
+P2P_REGRESSION = ["p2p_upstream_tsc", "p2p_upstream_vitest_foreign_toolcall"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('REWARD=%.4f' % reward)
+PYEOF
+python3 /tmp/_upstream_reward_tail.py
+rm -f /tmp/_upstream_reward_tail.py
+
+echo ""
+echo "FINAL REWARD: $(cat /logs/verifier/reward.txt)"
