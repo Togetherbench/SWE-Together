@@ -251,3 +251,114 @@ fi
 REWARD=$(cat "$REWARD_FILE" 2>/dev/null || echo "0.0")
 echo "Final reward: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt
+# ---- v5: orchestrator-wrapped appended block ----
+_v5_run_upstream_appended() {
+  set +e  # never abort the host script from inside the wrapper
+
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+
+# F2P gate: IQ3_XXS runtime dequant correctness
+_gate_id="f2p_upstream_iq3xxs_dequant"
+if python3 -c "
+import numpy as np, torch, gguf, ctypes, sys
+sys.path.insert(0, '/workspace')
+from qwen3_moe_fused.quantize_gguf.dequant import dequantize
+class P(ctypes.Structure):
+    _fields_ = [('s', ctypes.c_size_t), ('b', ctypes.c_void_p), ('n', ctypes.c_bool)]
+lib = ctypes.CDLL('/usr/local/lib/libggml-base.so')
+lib.ggml_quantize_chunk.restype = ctypes.c_size_t
+lib.ggml_quantize_chunk.argtypes = (ctypes.c_int, ctypes.POINTER(ctypes.c_float), ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.POINTER(ctypes.c_float))
+lib.ggml_quantize_requires_imatrix.restype = ctypes.c_bool
+lib.ggml_quantize_requires_imatrix.argtypes = (ctypes.c_int,)
+if hasattr(lib, 'ggml_init'):
+    lib.ggml_init.argtypes = (P,)
+    lib.ggml_init(P(1048576, 0, False))
+fp = ctypes.POINTER(ctypes.c_float)
+qt = gguf.GGMLQuantizationType.IQ3_XXS
+bs, _ = gguf.GGML_QUANT_SIZES[qt]
+n = 16 * bs
+w = np.random.RandomState(42).uniform(-1, 1, n).astype(np.float32)
+q = np.zeros(gguf.quant_shape_to_byte_shape((n,), qt), dtype=np.uint8, order='C')
+lib.ggml_quantize_chunk(qt.value, w.ctypes.data_as(fp), q.ctypes.data_as(ctypes.c_void_p), 0, 1, n, ctypes.cast(0, fp))
+out = dequantize(torch.from_numpy(q), qt, (n,), torch.float32)
+ref = torch.from_numpy(gguf.quants.dequantize(q.copy(), qt))
+assert torch.allclose(out.float(), ref.float(), rtol=2e-3, atol=2e-3)
+print('PASS')
+" > /dev/null 2>&1; then
+    echo "{\"id\": \"${_gate_id}\", \"passed\": true, \"detail\": \"IQ3_XXS dequant passed\"}" >> /logs/verifier/gates.json
+else
+    echo "{\"id\": \"${_gate_id}\", \"passed\": false, \"detail\": \"IQ3_XXS dequant failed\"}" >> /logs/verifier/gates.json
+fi
+
+# F2P gate: All new IQ types registered
+_gate_id="f2p_upstream_iq_types_registered"
+if python3 -c "
+import sys; sys.path.insert(0, '/workspace')
+from qwen3_moe_fused.quantize_gguf.dequant import dequantize_functions
+import gguf
+for name in ['IQ2_XXS','IQ2_S','IQ3_S','IQ1_S','IQ1_M']:
+    qt = getattr(gguf.GGMLQuantizationType, name)
+    assert qt in dequantize_functions, name + ' not registered'
+print('PASS')
+" > /dev/null 2>&1; then
+    echo "{\"id\": \"${_gate_id}\", \"passed\": true, \"detail\": \"All IQ types registered\"}" >> /logs/verifier/gates.json
+else
+    echo "{\"id\": \"${_gate_id}\", \"passed\": false, \"detail\": \"Missing IQ type registrations\"}" >> /logs/verifier/gates.json
+fi
+
+# P2P gate: py_compile
+_gate_id="p2p_upstream_pycompile"
+if python3 -m py_compile /workspace/qwen3_moe_fused/quantize_gguf/dequant.py > /dev/null 2>&1; then
+    echo "{\"id\": \"${_gate_id}\", \"passed\": true, \"detail\": \"py_compile passed\"}" >> /logs/verifier/gates.json
+else
+    echo "{\"id\": \"${_gate_id}\", \"passed\": false, \"detail\": \"py_compile failed\"}" >> /logs/verifier/gates.json
+fi
+
+# ---- upstream reward tail ----
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_iq3xxs_dequant": 0.20, "f2p_upstream_iq_types_registered": 0.20}
+P2P_REGRESSION = ["p2p_upstream_pycompile"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('REWARD=%.4f' % reward)
+PYEOF
+# ---- end ----
+}
+# Run via subshell so even unhandled `exit N` in the wrapper
+# only kills the subshell, not the host. Exit codes ignored.
+( _v5_run_upstream_appended ) || true
+# ---- end v5 wrapper ----

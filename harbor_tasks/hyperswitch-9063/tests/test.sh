@@ -67,7 +67,7 @@ add() {
 # On fix: getLanguage('zh_hant') returns 'zh-hant' (or at minimum, dictionary
 # keys are hyphenated and underscores are normalized).
 ###############################################################################
-echo "=== F2P 1: locale.js behavioral (0.45) ==="
+echo "=== F2P 1: locale.js behavioral (0.27) ==="
 F2P1=0
 if [ -n "$NODE_BIN" ]; then
     TMPJS=$(mktemp /tmp/locale_run_XXXXXX.js)
@@ -80,7 +80,8 @@ const wrapper = `
 ${src}
 ;module.exports = {
   getLanguage: typeof getLanguage === 'function' ? getLanguage : null,
-  dict: (typeof translations !== 'undefined') ? translations
+  dict: (typeof locales !== 'undefined') ? locales
+       : (typeof translations !== 'undefined') ? translations
        : (typeof locale !== 'undefined') ? locale
        : (typeof localeStrings !== 'undefined') ? localeStrings
        : (typeof localeStr !== 'undefined') ? localeStr
@@ -183,8 +184,8 @@ EOF
             fi
         done
         echo "  Behavioral passes: $PASSED/8"
-        # 8 checks * 0.05625 = 0.45
-        F2P1=$(awk -v p="$PASSED" 'BEGIN { printf "%.4f", p * 0.05625 }')
+        # 8 checks * 0.03375 = 0.27 (scaled 0.6x for upstream gates)
+        F2P1=$(awk -v p="$PASSED" 'BEGIN { printf "%.4f", p * 0.03375 }')
     fi
 fi
 echo "  F2P 1 partial: $F2P1"
@@ -198,7 +199,7 @@ add "$F2P1"
 # We require the normalization in at least 2 different files OR in a key place.
 ###############################################################################
 echo ""
-echo "=== F2P 2: Rust locale normalization (0.30) ==="
+echo "=== F2P 2: Rust locale normalization (0.18) ==="
 F2P2=0
 NORM_FILES=0
 
@@ -269,9 +270,9 @@ done
 
 echo "  Normalization sites found: $NORM_FILES"
 if [ "$NORM_FILES" -ge 2 ]; then
-    F2P2=0.30
-elif [ "$NORM_FILES" -eq 1 ]; then
     F2P2=0.18
+elif [ "$NORM_FILES" -eq 1 ]; then
+    F2P2=0.108
 fi
 echo "  F2P 2 partial: $F2P2"
 add "$F2P2"
@@ -281,7 +282,7 @@ add "$F2P2"
 # Direct grep-based check (structural but tied to the bug — base FAILS this).
 ###############################################################################
 echo ""
-echo "=== F2P 3: locale.js dict key migration (0.15) ==="
+echo "=== F2P 3: locale.js dict key migration (0.09) ==="
 F2P3=0
 HAS_HYPHEN_KEYS=0
 HAS_UNDERSCORE_KEYS=0
@@ -302,9 +303,9 @@ fi
 
 echo "  hyphen_keys=$HAS_HYPHEN_KEYS underscore_keys=$HAS_UNDERSCORE_KEYS"
 if [ "$HAS_HYPHEN_KEYS" = "1" ] && [ "$HAS_UNDERSCORE_KEYS" = "0" ]; then
-    F2P3=0.15
+    F2P3=0.09
 elif [ "$HAS_HYPHEN_KEYS" = "1" ]; then
-    F2P3=0.07
+    F2P3=0.042
 fi
 echo "  F2P 3 partial: $F2P3"
 add "$F2P3"
@@ -315,7 +316,7 @@ add "$F2P3"
 # On fix: hyphen-based key construction OR cases that return hyphenated keys.
 ###############################################################################
 echo ""
-echo "=== F2P 4: getLanguage hyphen-based (0.10) ==="
+echo "=== F2P 4: getLanguage hyphen-based (0.06) ==="
 F2P4=0
 # Extract the getLanguage function body (rough)
 GETLANG_BODY=$(awk '/function getLanguage/,/^}/' "$LOCALE_JS")
@@ -323,9 +324,9 @@ if echo "$GETLANG_BODY" | grep -qE "['\"]zh-hant['\"]|['\"]en-gb['\"]|['\"]fr-be
    || echo "$GETLANG_BODY" | grep -qE 'replace\(.*_.*-.*\)'; then
     # And NOT returning underscore variants
     if ! echo "$GETLANG_BODY" | grep -qE "return ['\"]en_gb['\"]|return ['\"]fr_be['\"]|return ['\"]zh_hant['\"]"; then
-        F2P4=0.10
+        F2P4=0.06
     else
-        F2P4=0.05
+        F2P4=0.03
     fi
 fi
 echo "  F2P 4 partial: $F2P4"
@@ -347,3 +348,139 @@ REWARD=$(awk -v r="$REWARD" 'BEGIN {
 }')
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+# Prelude: ensure node is available
+if ! command -v node >/dev/null 2>&1; then
+    sudo apt-get install -y nodejs 2>/dev/null || true
+fi
+
+GATES_FILE="/logs/verifier/gates.json"
+> "$GATES_FILE" 2>/dev/null || true
+
+# F2P upstream gate 1: getLanguage behavioral test
+echo ""
+echo "=== Upstream F2P 1: locale.js getLanguage behavioral (0.20) ==="
+F2P_U1_PASSED=false
+if command -v node >/dev/null 2>&1 && [ -f "$LOCALE_JS" ]; then
+    TMPJS=$(mktemp /tmp/gate_u1_XXXXXX.js)
+    cat > "$TMPJS" <<'GATEJS1'
+const fs=require('fs');
+const src=fs.readFileSync(process.argv[2],'utf8');
+const w=src+';module.exports={getLanguage,locales};';
+const M=require('module');
+const m=new M('l');
+m._compile(w,'l.js');
+const e=m.exports;
+const tests=[['zh-hant','zh-hant'],['en-gb','en-gb'],['fr-be','fr-be'],['ZH-HANT','zh-hant']];
+let ok=true;
+for(const[i,x]of tests){if(e.getLanguage(i)!==x){ok=false;console.log('FAIL:',i,'->',e.getLanguage(i),'expected',x);}}
+const k=Object.keys(e.locales);
+if(!k.includes('zh-hant')||!k.includes('en-gb')||!k.includes('fr-be')){ok=false;console.log('FAIL: missing hyphenated dict keys');}
+if(k.includes('zh_hant')||k.includes('en_gb')||k.includes('fr_be')){ok=false;console.log('FAIL: underscore dict keys still present');}
+if(ok)console.log('PASS: all getLanguage and dict key checks passed');
+process.exit(ok?0:1);
+GATEJS1
+    node "$TMPJS" "$LOCALE_JS" 2>&1 | sed 's/^/  /'
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then F2P_U1_PASSED=true; fi
+    rm -f "$TMPJS"
+fi
+echo "  upstream_f2p_1=$F2P_U1_PASSED"
+echo "{\"id\":\"f2p_upstream_locale_js_getlang\",\"passed\":$F2P_U1_PASSED,\"detail\":\"getLanguage returns hyphenated keys and dict uses hyphens\"}" >> "$GATES_FILE"
+
+# F2P upstream gate 2: getTranslations roundtrip
+echo ""
+echo "=== Upstream F2P 2: locale.js getTranslations roundtrip (0.20) ==="
+F2P_U2_PASSED=false
+if command -v node >/dev/null 2>&1 && [ -f "$LOCALE_JS" ]; then
+    TMPJS=$(mktemp /tmp/gate_u2_XXXXXX.js)
+    cat > "$TMPJS" <<'GATEJS2'
+const fs=require('fs');
+const src=fs.readFileSync(process.argv[2],'utf8');
+const w=src+';module.exports={getTranslations,locales};';
+const M=require('module');
+const m=new M('l');
+m._compile(w,'l.js');
+const e=m.exports;
+const t=e.getTranslations('zh-hant');
+const isTraditional=t&&t.expiresOn&&t.expiresOn.includes('\u9023\u7d50');
+const t2=e.getTranslations('en-gb');
+const isBritish=t2&&t2.expiresOn&&t2.expiresOn.startsWith('Link');
+const ok=isTraditional&&isBritish;
+if(!ok){console.log('FAIL:','zh-hant expiresOn:',t?t.expiresOn:'null','en-gb expiresOn:',t2?t2.expiresOn:'null');}
+else{console.log('PASS: zh-hant gets Traditional Chinese, en-gb gets British English');}
+process.exit(ok?0:1);
+GATEJS2
+    node "$TMPJS" "$LOCALE_JS" 2>&1 | sed 's/^/  /'
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then F2P_U2_PASSED=true; fi
+    rm -f "$TMPJS"
+fi
+echo "  upstream_f2p_2=$F2P_U2_PASSED"
+echo "{\"id\":\"f2p_upstream_locale_js_roundtrip\",\"passed\":$F2P_U2_PASSED,\"detail\":\"getTranslations zh-hant returns Traditional Chinese\"}" >> "$GATES_FILE"
+
+# P2P upstream gate 1: node --check locale.js
+echo ""
+echo "=== Upstream P2P 1: node --check locale.js ==="
+P2P_U1_PASSED=false
+if command -v node >/dev/null 2>&1 && [ -f "$LOCALE_JS" ]; then
+    if node --check "$LOCALE_JS" 2>&1; then
+        P2P_U1_PASSED=true
+    fi
+fi
+echo "  upstream_p2p_1=$P2P_U1_PASSED"
+echo "{\"id\":\"p2p_upstream_node_check_locale\",\"passed\":$P2P_U1_PASSED,\"detail\":\"locale.js passes node syntax check\"}" >> "$GATES_FILE"
+
+# P2P upstream gate 2: changed files exist
+echo ""
+echo "=== Upstream P2P 2: changed files exist ==="
+P2P_U2_PASSED=true
+for f in "$LOCALE_JS" "$CONTEXT_RS" "$TRANSFORMERS"; do
+    if [ ! -f "$f" ]; then P2P_U2_PASSED=false; echo "  MISSING: $f"; fi
+done
+echo "  upstream_p2p_2=$P2P_U2_PASSED"
+echo "{\"id\":\"p2p_upstream_files_exist\",\"passed\":$P2P_U2_PASSED,\"detail\":\"all 3 changed files exist\"}" >> "$GATES_FILE"
+
+# Upstream reward tail
+python3 - <<'PYEOF'
+import json, os
+
+WEIGHTS = {"f2p_upstream_locale_js_getlang": 0.20, "f2p_upstream_locale_js_roundtrip": 0.20}
+P2P_REGRESSION = ["p2p_upstream_node_check_locale", "p2p_upstream_files_exist"]
+
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
+PYEOF
+# ---- end ----

@@ -389,3 +389,165 @@ echo "G1=$S1 G2=$S2 G3=$S3 G4=$S4 G5=$S5 G6=$S6 G7=$S7"
 echo "REWARD=$REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt
+# ---- v5: orchestrator-wrapped appended block ----
+_v5_run_upstream_appended() {
+  set +e  # never abort the host script from inside the wrapper
+
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+: > "$GATES_FILE"
+
+BUN_CMD=$(command -v bun 2>/dev/null)
+if [ -z "$BUN_CMD" ]; then
+  for cand in /root/.bun/bin/bun /usr/local/bin/bun /workspace/pi-mono/node_modules/.bin/bun; do
+    [ -x "$cand" ] && BUN_CMD="$cand" && break
+  done
+fi
+[ -z "$BUN_CMD" ] && BUN_CMD="bun"
+
+# F2P gate 1: function_call.id is properly hashed fc_<hash>
+echo "=== Upstream F2P gate: f2p_upstream_item_id_hashed ==="
+cat > /tmp/_f2p_item_id.ts << 'TSEOF'
+import { convertResponsesMessages } from "/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.js";
+import { getModel } from "/workspace/pi-mono/packages/ai/src/models.js";
+import type { AssistantMessage, Context, ToolResultMessage, Usage } from "/workspace/pi-mono/packages/ai/src/types.js";
+const RAW_ID = "call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vifiIM4g3A8XXyOj8q4Bt6SLUG7gqY1E3ELkrkVQNHglRfUmWj84lqxJY+Puieb3VKyX0FB+83TUzn91cDMF/4gzt990IzqVrc+nIb9RRscRD070Du16q1glydVjWR0SBJsE6TbY/esOjFpqplogQqrajm1eI++f3eLi73R6q7hVusY0QbeFySVxABCjhN0lXB04caBe1rzHjYzul6MAXj7uq+0r17VLq+yrtyYhN12wkmFqHeqTyEei6EFPbMy24Nc+IbJlkP0OCg02W+gOnyBFcbi2ctvJFSOhSjt1CqBdqCnnhwUqXjbWiT0wh3DmLScRgTHmGkaI+oAcQQjfic65nxj+TnEkReA==";
+const u: Usage = { input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} };
+let model: any = null;
+for (const [p,m] of [["openai-codex","gpt-5.1"],["openai-codex","gpt-5.1-codex"],["openai-codex","gpt-5.3-codex"],["openai-codex","gpt-5"],["openai-codex","gpt-5-codex"],["openai-codex","gpt-5.2-codex"]]) { try { model = getModel(p as any, m as any); break; } catch {} }
+if (!model) { process.exit(1); }
+const now = Date.now();
+const a: AssistantMessage = { role:"assistant", content:[{type:"toolCall",id:RAW_ID,name:"edit",arguments:{path:"x"}}], api:"openai-responses" as any, provider:"github-copilot" as any, model:"gpt-5.1-codex", usage:u, stopReason:"toolUse", timestamp:now-2000 };
+const tr: ToolResultMessage = { role:"toolResult", toolCallId:RAW_ID, toolName:"edit", content:[{type:"text",text:"ok"}], isError:false, timestamp:now-1000 };
+const ctx: Context = { systemPrompt:"t", messages:[{role:"user",content:"x",timestamp:now-3000},a,tr] };
+const items = convertResponsesMessages(model, ctx, new Set());
+const fc = items.find((i:any) => i.type === "function_call") as any;
+if (!fc || !fc.id || typeof fc.id !== "string" || !/^fc_[A-Za-z0-9]+$/.test(fc.id) || fc.id.length > 64) process.exit(1);
+process.exit(0);
+TSEOF
+if "$BUN_CMD" run /tmp/_f2p_item_id.ts 2>&1; then
+  echo '{"id":"f2p_upstream_item_id_hashed","passed":true,"detail":"function_call.id is fc_<hash>"}' >> "$GATES_FILE"
+  echo "f2p_upstream_item_id_hashed: PASS"
+else
+  echo '{"id":"f2p_upstream_item_id_hashed","passed":false,"detail":"function_call.id not properly hashed"}' >> "$GATES_FILE"
+  echo "f2p_upstream_item_id_hashed: FAIL"
+fi
+
+# F2P gate 2: function_call.call_id is clean prefix
+echo "=== Upstream F2P gate: f2p_upstream_call_id_clean ==="
+cat > /tmp/_f2p_call_id.ts << 'TSEOF'
+import { convertResponsesMessages } from "/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.js";
+import { getModel } from "/workspace/pi-mono/packages/ai/src/models.js";
+import type { AssistantMessage, Context, ToolResultMessage, Usage } from "/workspace/pi-mono/packages/ai/src/types.js";
+const RAW_ID = "call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vifiIM4g3A8XXyOj8q4Bt6SLUG7gqY1E3ELkrkVQNHglRfUmWj84lqxJY+Puieb3VKyX0FB+83TUzn91cDMF/4gzt990IzqVrc+nIb9RRscRD070Du16q1glydVjWR0SBJsE6TbY/esOjFpqplogQqrajm1eI++f3eLi73R6q7hVusY0QbeFySVxABCjhN0lXB04caBe1rzHjYzul6MAXj7uq+0r17VLq+yrtyYhN12wkmFqHeqTyEei6EFPbMy24Nc+IbJlkP0OCg02W+gOnyBFcbi2ctvJFSOhSjt1CqBdqCnnhwUqXjbWiT0wh3DmLScRgTHmGkaI+oAcQQjfic65nxj+TnEkReA==";
+const u: Usage = { input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} };
+let model: any = null;
+for (const [p,m] of [["openai-codex","gpt-5.1"],["openai-codex","gpt-5.1-codex"],["openai-codex","gpt-5.3-codex"],["openai-codex","gpt-5"],["openai-codex","gpt-5-codex"],["openai-codex","gpt-5.2-codex"]]) { try { model = getModel(p as any, m as any); break; } catch {} }
+if (!model) { process.exit(1); }
+const now = Date.now();
+const a: AssistantMessage = { role:"assistant", content:[{type:"toolCall",id:RAW_ID,name:"edit",arguments:{path:"x"}}], api:"openai-responses" as any, provider:"github-copilot" as any, model:"gpt-5.1-codex", usage:u, stopReason:"toolUse", timestamp:now-2000 };
+const tr: ToolResultMessage = { role:"toolResult", toolCallId:RAW_ID, toolName:"edit", content:[{type:"text",text:"ok"}], isError:false, timestamp:now-1000 };
+const ctx: Context = { systemPrompt:"t", messages:[{role:"user",content:"x",timestamp:now-3000},a,tr] };
+const items = convertResponsesMessages(model, ctx, new Set());
+const fc = items.find((i:any) => i.type === "function_call") as any;
+if (!fc || !fc.call_id || typeof fc.call_id !== "string" || !/^call_[A-Za-z0-9]+$/.test(fc.call_id)) process.exit(1);
+process.exit(0);
+TSEOF
+if "$BUN_CMD" run /tmp/_f2p_call_id.ts 2>&1; then
+  echo '{"id":"f2p_upstream_call_id_clean","passed":true,"detail":"function_call.call_id is clean prefix"}' >> "$GATES_FILE"
+  echo "f2p_upstream_call_id_clean: PASS"
+else
+  echo '{"id":"f2p_upstream_call_id_clean","passed":false,"detail":"function_call.call_id is mangled compound"}' >> "$GATES_FILE"
+  echo "f2p_upstream_call_id_clean: FAIL"
+fi
+
+# P2P gate 1: vitest on foreign-toolcall-id test
+echo "=== Upstream P2P gate: p2p_upstream_vitest_foreign_id ==="
+VITEST_BIN=""
+for cand in /workspace/pi-mono/node_modules/.bin/vitest /workspace/pi-mono/packages/ai/node_modules/.bin/vitest; do
+  [ -x "$cand" ] && VITEST_BIN="$cand" && break
+done
+TEST_FILE="/workspace/pi-mono/packages/ai/test/openai-responses-foreign-toolcall-id.test.ts"
+if [ -n "$VITEST_BIN" ] && [ -f "$TEST_FILE" ]; then
+  cd /workspace/pi-mono/packages/ai
+  if "$VITEST_BIN" run "$TEST_FILE" --reporter=verbose 2>&1 | tail -10; then
+    echo '{"id":"p2p_upstream_vitest_foreign_id","passed":true,"detail":"vitest passed"}' >> "$GATES_FILE"
+    echo "p2p_upstream_vitest_foreign_id: PASS"
+  else
+    echo '{"id":"p2p_upstream_vitest_foreign_id","passed":false,"detail":"vitest failed"}' >> "$GATES_FILE"
+    echo "p2p_upstream_vitest_foreign_id: FAIL"
+  fi
+  cd /workspace/pi-mono
+else
+  echo '{"id":"p2p_upstream_vitest_foreign_id","passed":true,"detail":"vitest or test file not found, skip"}' >> "$GATES_FILE"
+  echo "p2p_upstream_vitest_foreign_id: SKIP (no vitest or test file)"
+fi
+
+# P2P gate 2: tsgo type check
+echo "=== Upstream P2P gate: p2p_upstream_tsgo ==="
+cd /workspace/pi-mono
+if npx tsgo --noEmit 2>&1; then
+  echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo passed"}' >> "$GATES_FILE"
+  echo "p2p_upstream_tsgo: PASS"
+else
+  echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo failed"}' >> "$GATES_FILE"
+  echo "p2p_upstream_tsgo: FAIL"
+fi
+
+# ---- upstream reward tail ----
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_item_id_hashed": 0.20, "f2p_upstream_call_id_clean": 0.20}
+P2P_REGRESSION = ["p2p_upstream_vitest_foreign_id", "p2p_upstream_tsgo"]
+TOTAL_F2P_WEIGHT = sum(WEIGHTS.values())  # 0.40
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+# P2P regression: any failure zeros everything
+hard_zero = any(not verdicts.get(gid, True) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    # F2P gates are behavioral tests for the actual bug.
+    # If none passed, the bug isn't fixed -> zero reward.
+    f2p_earned = 0.0
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            f2p_earned += w
+    f2p_any_passed = f2p_earned > 0
+    if WEIGHTS and not f2p_any_passed:
+        reward = 0.0
+    else:
+        # Scale existing reward to make room for F2P weight
+        scaled_existing = existing * (1.0 - TOTAL_F2P_WEIGHT)
+        reward = scaled_existing + f2p_earned
+        reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM_REWARD=%.4f (existing=%.4f)' % (reward, existing))
+PYEOF
+# ---- end ----
+}
+# Run via subshell so even unhandled `exit N` in the wrapper
+# only kills the subshell, not the host. Exit codes ignored.
+( _v5_run_upstream_appended ) || true
+# ---- end v5 wrapper ----

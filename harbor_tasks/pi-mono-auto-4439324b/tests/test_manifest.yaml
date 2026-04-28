@@ -1,0 +1,108 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  - id: f2p_upstream_item_id_hashed
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "Foreign tool call item ID is properly hashed (not mangled)"
+    command: >-
+      cd /workspace/pi-mono && cat > /tmp/_f2p_item_id.ts << 'TSEOF'
+
+      import { convertResponsesMessages } from "/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.js";
+
+      import { getModel } from "/workspace/pi-mono/packages/ai/src/models.js";
+
+      import type { AssistantMessage, Context, ToolResultMessage, Usage } from "/workspace/pi-mono/packages/ai/src/types.js";
+
+      const RAW_ID = "call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vifiIM4g3A8XXyOj8q4Bt6SLUG7gqY1E3ELkrkVQNHglRfUmWj84lqxJY+Puieb3VKyX0FB+83TUzn91cDMF/4gzt990IzqVrc+nIb9RRscRD070Du16q1glydVjWR0SBJsE6TbY/esOjFpqplogQqrajm1eI++f3eLi73R6q7hVusY0QbeFySVxABCjhN0lXB04caBe1rzHjYzul6MAXj7uq+0r17VLq+yrtyYhN12wkmFqHeqTyEei6EFPbMy24Nc+IbJlkP0OCg02W+gOnyBFcbi2ctvJFSOhSjt1CqBdqCnnhwUqXjbWiT0wh3DmLScRgTHmGkaI+oAcQQjfic65nxj+TnEkReA==";
+
+      const u: Usage = { input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} };
+
+      let model: any = null;
+
+      for (const [p,m] of [["openai-codex","gpt-5.1"],["openai-codex","gpt-5.1-codex"],["openai-codex","gpt-5.3-codex"],["openai-codex","gpt-5"],["openai-codex","gpt-5-codex"],["openai-codex","gpt-5.2-codex"]]) { try { model = getModel(p as any, m as any); break; } catch {} }
+
+      if (!model) { process.exit(1); }
+
+      const now = Date.now();
+
+      const a: AssistantMessage = { role:"assistant", content:[{type:"toolCall",id:RAW_ID,name:"edit",arguments:{path:"x"}}], api:"openai-responses" as any, provider:"github-copilot" as any, model:"gpt-5.1-codex", usage:u, stopReason:"toolUse", timestamp:now-2000 };
+
+      const tr: ToolResultMessage = { role:"toolResult", toolCallId:RAW_ID, toolName:"edit", content:[{type:"text",text:"ok"}], isError:false, timestamp:now-1000 };
+
+      const ctx: Context = { systemPrompt:"t", messages:[{role:"user",content:"x",timestamp:now-3000},a,tr] };
+
+      const items = convertResponsesMessages(model, ctx, new Set());
+
+      const fc = items.find((i:any) => i.type === "function_call") as any;
+
+      if (!fc || !fc.id || typeof fc.id !== "string" || !/^fc_[A-Za-z0-9]+$/.test(fc.id) || fc.id.length > 64) process.exit(1);
+
+      process.exit(0);
+
+      TSEOF
+
+      bun run /tmp/_f2p_item_id.ts
+    description: "function_call.id is fc_<hash> when provider not in allowed set"
+  - id: f2p_upstream_call_id_clean
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "Foreign tool call call_id is clean prefix (not mangled compound)"
+    command: >-
+      cd /workspace/pi-mono && cat > /tmp/_f2p_call_id.ts << 'TSEOF'
+
+      import { convertResponsesMessages } from "/workspace/pi-mono/packages/ai/src/providers/openai-responses-shared.js";
+
+      import { getModel } from "/workspace/pi-mono/packages/ai/src/models.js";
+
+      import type { AssistantMessage, Context, ToolResultMessage, Usage } from "/workspace/pi-mono/packages/ai/src/types.js";
+
+      const RAW_ID = "call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vifiIM4g3A8XXyOj8q4Bt6SLUG7gqY1E3ELkrkVQNHglRfUmWj84lqxJY+Puieb3VKyX0FB+83TUzn91cDMF/4gzt990IzqVrc+nIb9RRscRD070Du16q1glydVjWR0SBJsE6TbY/esOjFpqplogQqrajm1eI++f3eLi73R6q7hVusY0QbeFySVxABCjhN0lXB04caBe1rzHjYzul6MAXj7uq+0r17VLq+yrtyYhN12wkmFqHeqTyEei6EFPbMy24Nc+IbJlkP0OCg02W+gOnyBFcbi2ctvJFSOhSjt1CqBdqCnnhwUqXjbWiT0wh3DmLScRgTHmGkaI+oAcQQjfic65nxj+TnEkReA==";
+
+      const u: Usage = { input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0} };
+
+      let model: any = null;
+
+      for (const [p,m] of [["openai-codex","gpt-5.1"],["openai-codex","gpt-5.1-codex"],["openai-codex","gpt-5.3-codex"],["openai-codex","gpt-5"],["openai-codex","gpt-5-codex"],["openai-codex","gpt-5.2-codex"]]) { try { model = getModel(p as any, m as any); break; } catch {} }
+
+      if (!model) { process.exit(1); }
+
+      const now = Date.now();
+
+      const a: AssistantMessage = { role:"assistant", content:[{type:"toolCall",id:RAW_ID,name:"edit",arguments:{path:"x"}}], api:"openai-responses" as any, provider:"github-copilot" as any, model:"gpt-5.1-codex", usage:u, stopReason:"toolUse", timestamp:now-2000 };
+
+      const tr: ToolResultMessage = { role:"toolResult", toolCallId:RAW_ID, toolName:"edit", content:[{type:"text",text:"ok"}], isError:false, timestamp:now-1000 };
+
+      const ctx: Context = { systemPrompt:"t", messages:[{role:"user",content:"x",timestamp:now-3000},a,tr] };
+
+      const items = convertResponsesMessages(model, ctx, new Set());
+
+      const fc = items.find((i:any) => i.type === "function_call") as any;
+
+      if (!fc || !fc.call_id || typeof fc.call_id !== "string" || !/^call_[A-Za-z0-9]+$/.test(fc.call_id)) process.exit(1);
+
+      process.exit(0);
+
+      TSEOF
+
+      bun run /tmp/_f2p_call_id.ts
+    description: "function_call.call_id is clean call_<alnum> prefix, not mangled compound"
+  - id: p2p_upstream_vitest_foreign_id
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "vitest foreign-toolcall-id test passes"
+    command: "cd /workspace/pi-mono/packages/ai && npx vitest run test/openai-responses-foreign-toolcall-id.test.ts --reporter=verbose 2>&1 | tail -5; test \"${PIPESTATUS[0]}\" -eq 0"
+    description: "vitest on openai-responses-foreign-toolcall-id.test.ts passes"
+  - id: p2p_upstream_tsgo
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "tsgo type check passes"
+    command: "cd /workspace/pi-mono && npx tsgo --noEmit"
+    description: "TypeScript type check via tsgo --noEmit passes"

@@ -272,12 +272,13 @@ EOF
     HAS_NM=$(echo "$NAMES_LINE" | grep -c '"node-modules-skill"')
 
     # Score each skip independently (graded). real-skill must be present (gating).
+    # Note: node_modules skip already works on buggy base (hardcoded check), so
+    # only award credit for venv, __pycache__, site-packages (the new skips).
     if [ "$HAS_REAL" -ge 1 ]; then
-      # 0.60 split: 0.20 venv, 0.15 __pycache__, 0.15 site-packages, 0.10 node_modules
-      [ "$HAS_VENV" -eq 0 ] && BEHAV=$(awk -v a=$BEHAV 'BEGIN{printf "%.3f", a+0.20}')
-      [ "$HAS_PYC"  -eq 0 ] && BEHAV=$(awk -v a=$BEHAV 'BEGIN{printf "%.3f", a+0.15}')
+      # 0.60 split: 0.25 venv, 0.20 __pycache__, 0.15 site-packages (node_modules excluded - P2P)
+      [ "$HAS_VENV" -eq 0 ] && BEHAV=$(awk -v a=$BEHAV 'BEGIN{printf "%.3f", a+0.25}')
+      [ "$HAS_PYC"  -eq 0 ] && BEHAV=$(awk -v a=$BEHAV 'BEGIN{printf "%.3f", a+0.20}')
       [ "$HAS_SP"   -eq 0 ] && BEHAV=$(awk -v a=$BEHAV 'BEGIN{printf "%.3f", a+0.15}')
-      [ "$HAS_NM"   -eq 0 ] && BEHAV=$(awk -v a=$BEHAV 'BEGIN{printf "%.3f", a+0.10}')
       echo "SCORE [$BEHAV/0.60]: F2P-5 - Behavioral (graded via tsx loader)"
     else
       echo "FAIL: real-skill not discovered — loader broken or fixture path wrong"
@@ -297,6 +298,125 @@ rm -f "$TESTFILE"
 
 add_reward "$BEHAV"
 
-# Final
-echo "=== FINAL REWARD: $REWARD ==="
+# Final (before upstream gates)
+echo "=== EXISTING REWARD: $REWARD ==="
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_JSON="/logs/verifier/gates.json"
+: > "$GATES_JSON"
+
+emit_gate() {
+  local gid="$1" passed="$2" detail="$3"
+  printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$gid" "$passed" "$detail" >> "$GATES_JSON"
+}
+
+# --- F2P: f2p_upstream_skill_loader_skip_dirs ---
+(
+  set +e
+  cd /workspace/pi-mono || { emit_gate "f2p_upstream_skill_loader_skip_dirs" "false" "cd failed"; exit 0; }
+  rm -rf /tmp/_f2p_fix
+  mkdir -p /tmp/_f2p_fix/real-skill /tmp/_f2p_fix/venv/lib /tmp/_f2p_fix/__pycache__ /tmp/_f2p_fix/site-packages/pkg
+  printf -- '---\nname: real-skill\ndescription: A real skill.\n---\n' > /tmp/_f2p_fix/real-skill/SKILL.md
+  printf -- '---\nname: venv-skill\ndescription: X.\n---\n' > /tmp/_f2p_fix/venv/lib/SKILL.md
+  printf -- '---\nname: pycache-skill\ndescription: X.\n---\n' > /tmp/_f2p_fix/__pycache__/SKILL.md
+  printf -- '---\nname: sp-skill\ndescription: X.\n---\n' > /tmp/_f2p_fix/site-packages/pkg/SKILL.md
+  cat > /tmp/_f2p_runner.mts <<'TSEOF'
+import { loadSkillsFromDir } from "/workspace/pi-mono/packages/coding-agent/src/core/skills.ts";
+const { skills } = loadSkillsFromDir({ dir: "/tmp/_f2p_fix", source: "test" });
+const names = skills.map((s: any) => s.name);
+const bad = names.filter((n: string) => ["venv-skill","pycache-skill","sp-skill"].includes(n));
+if (bad.length > 0) { console.error("FAIL: skills not skipped:", bad); process.exit(1); }
+if (!names.includes("real-skill")) { console.error("FAIL: real-skill missing"); process.exit(1); }
+console.log("PASS: skill loader correctly skips venv/__pycache__/site-packages");
+TSEOF
+  timeout 30 /workspace/pi-mono/node_modules/.bin/tsx /tmp/_f2p_runner.mts 2>&1
+  rc=$?
+  rm -rf /tmp/_f2p_fix /tmp/_f2p_runner.mts
+  exit $rc
+)
+if [ $? -eq 0 ]; then
+  echo "PASS: f2p_upstream_skill_loader_skip_dirs"
+  emit_gate "f2p_upstream_skill_loader_skip_dirs" "true" "skill loader skips venv dirs"
+else
+  echo "FAIL: f2p_upstream_skill_loader_skip_dirs"
+  emit_gate "f2p_upstream_skill_loader_skip_dirs" "false" "skill loader does not skip venv dirs"
+fi
+
+# --- P2P: p2p_upstream_vitest_skills ---
+(
+  set +e
+  cd /workspace/pi-mono || exit 1
+  timeout 120 node_modules/.bin/vitest run packages/coding-agent/test/skills.test.ts 2>&1
+  exit $?
+)
+if [ $? -eq 0 ]; then
+  echo "PASS: p2p_upstream_vitest_skills"
+  emit_gate "p2p_upstream_vitest_skills" "true" "vitest skills tests pass"
+else
+  echo "FAIL: p2p_upstream_vitest_skills"
+  emit_gate "p2p_upstream_vitest_skills" "false" "vitest skills tests failed"
+fi
+
+# --- P2P: p2p_upstream_tsgo_typecheck ---
+(
+  set +e
+  cd /workspace/pi-mono || exit 1
+  timeout 120 node_modules/.bin/tsgo --noEmit 2>&1
+  exit $?
+)
+if [ $? -eq 0 ]; then
+  echo "PASS: p2p_upstream_tsgo_typecheck"
+  emit_gate "p2p_upstream_tsgo_typecheck" "true" "tsgo typecheck passes"
+else
+  echo "FAIL: p2p_upstream_tsgo_typecheck"
+  emit_gate "p2p_upstream_tsgo_typecheck" "false" "tsgo typecheck failed"
+fi
+
+# --- Upstream reward tail ---
+python3 - <<'PYEOF'
+import json, os, sys
+
+WEIGHTS = {"f2p_upstream_skill_loader_skip_dirs": 0.20}
+P2P_REGRESSION = ["p2p_upstream_vitest_skills", "p2p_upstream_tsgo_typecheck"]
+
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
+PYEOF
+
+echo "=== FINAL REWARD (after upstream gates): $(cat /logs/verifier/reward.txt) ==="
+# ---- end ----

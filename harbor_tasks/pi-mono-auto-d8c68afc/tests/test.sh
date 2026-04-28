@@ -73,7 +73,7 @@ if (mockSelf.shutdownRequested !== true) {
 console.log('PASS');
 process.exit(0);
 "
-if [ $? -eq 0 ]; then add_score 0.15; fi
+if [ $? -eq 0 ]; then add_score 0.12; fi
 
 # ============================================================
 # F2P Gate 2: There is a path from shutdownRequested -> actual shutdown
@@ -107,7 +107,7 @@ if (directPath || loopPath) {
 console.log('FAIL: no shutdownRequested -> shutdown drain path');
 process.exit(1);
 "
-if [ $? -eq 0 ]; then add_score 0.30; fi
+if [ $? -eq 0 ]; then add_score 0.24; fi
 
 # ============================================================
 # F2P Gate 3: handler does NOT call shutdown synchronously while streaming
@@ -160,7 +160,7 @@ if (mockSelf.shutdownRequested !== true) {
 console.log('PASS: shutdown deferred when streaming');
 process.exit(0);
 "
-if [ $? -eq 0 ]; then add_score 0.20; fi
+if [ $? -eq 0 ]; then add_score 0.16; fi
 
 # ============================================================
 # F2P Gate 4: when idle, handler triggers actual shutdown (sync or via setImmediate)
@@ -222,7 +222,7 @@ setTimeout(() => {
 }, 60);
 " 
 RES=$?
-if [ $RES -eq 0 ]; then add_score 0.15; fi
+if [ $RES -eq 0 ]; then add_score 0.12; fi
 
 # ============================================================
 # F2P Gate 5: example extension renamed/exists with /shutdown (or other) command
@@ -276,9 +276,122 @@ if (builtins.has(registeredName) && !extPriority) {
 console.log('PASS: example registers reachable /' + registeredName + ' (extPriority=' + extPriority + ')');
 process.exit(0);
 "
-if [ $? -eq 0 ]; then add_score 0.20; fi
+if [ $? -eq 0 ]; then add_score 0.16; fi
 
 echo ""
 echo "=== Final reward: $REWARD ==="
 write_reward
+
+# ---- inner-claude upstream gates ----
+echo ""
+echo "=== Upstream Gates ==="
+mkdir -p /logs/verifier
+
+# F2P: Example extension registers non-conflicting command
+echo "--- f2p_upstream_example_cmd ---"
+cd /workspace/pi-mono
+EXAMPLE_FILE="packages/coding-agent/examples/extensions/shutdown-command.ts"
+if [ -f "$EXAMPLE_FILE" ]; then
+    npx tsx -e "
+import ext from './packages/coding-agent/examples/extensions/shutdown-command.ts';
+let cmdName = '';
+const api = { registerCommand: (name) => { cmdName = name; }, registerTool: () => {} };
+ext(api);
+if (cmdName === 'quit') { console.log('FAIL: registers built-in /quit'); process.exit(1); }
+console.log('PASS: registers /' + cmdName);
+" > /tmp/f2p_example_cmd.log 2>&1
+    F2P_EXAMPLE_RC=$?
+else
+    echo "FAIL: example file not found"
+    F2P_EXAMPLE_RC=1
+fi
+if [ $F2P_EXAMPLE_RC -eq 0 ]; then
+    echo '{"id": "f2p_upstream_example_cmd", "passed": true, "detail": "registers non-conflicting command"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_example_cmd", "passed": false, "detail": "registers conflicting built-in command or missing"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# P2P: tsgo typecheck
+echo "--- p2p_upstream_tsgo ---"
+cd /workspace/pi-mono
+npx tsgo --noEmit > /tmp/p2p_tsgo.log 2>&1
+P2P_TSGO_RC=$?
+if [ $P2P_TSGO_RC -eq 0 ]; then
+    echo '{"id": "p2p_upstream_tsgo", "passed": true, "detail": "typecheck passed"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_tsgo", "passed": false, "detail": "typecheck failed"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# P2P: biome check on changed files
+echo "--- p2p_upstream_biome ---"
+cd /workspace/pi-mono
+npx biome check --error-on-warnings packages/coding-agent/src/modes/interactive/interactive-mode.ts packages/coding-agent/src/modes/print-mode.ts packages/coding-agent/examples/extensions/shutdown-command.ts packages/coding-agent/src/core/extensions/types.ts > /tmp/p2p_biome.log 2>&1
+P2P_BIOME_RC=$?
+if [ $P2P_BIOME_RC -eq 0 ]; then
+    echo '{"id": "p2p_upstream_biome", "passed": true, "detail": "biome check passed"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_biome", "passed": false, "detail": "biome check failed"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# P2P: vitest example extension tests
+echo "--- p2p_upstream_vitest_examples ---"
+cd /workspace/pi-mono
+npx vitest run packages/coding-agent/test/trigger-compact-extension.test.ts packages/coding-agent/test/compaction-extensions-example.test.ts > /tmp/p2p_vitest.log 2>&1
+P2P_VITEST_RC=$?
+if [ $P2P_VITEST_RC -eq 0 ]; then
+    echo '{"id": "p2p_upstream_vitest_examples", "passed": true, "detail": "vitest example tests passed"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_vitest_examples", "passed": false, "detail": "vitest example tests failed"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# ---- upstream reward tail ----
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_example_cmd": 0.20}
+P2P_REGRESSION = ["p2p_upstream_tsgo", "p2p_upstream_biome", "p2p_upstream_vitest_examples"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('REWARD=%.4f' % reward)
+PYEOF
+# ---- end ----
+
 exit 0

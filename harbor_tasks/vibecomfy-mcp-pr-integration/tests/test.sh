@@ -738,4 +738,127 @@ echo "  Score: $SC/4 → +$WT"
 echo ""
 echo "=== FINAL REWARD: $REWARD ==="
 echo "$REWARD" > "$LOG_DIR/reward.txt"
+
+# ---- inner-claude upstream gates ----
+echo ""
+echo "=== Upstream gates ==="
+mkdir -p "$LOG_DIR"
+: > "$LOG_DIR/gates.json"
+
+emit_gate() {
+    local gid="$1" passed="$2" detail="$3"
+    python3 - "$gid" "$passed" "$detail" <<'EMITPY' >> "$LOG_DIR/gates.json"
+import json, sys
+print(json.dumps({"id": sys.argv[1], "passed": sys.argv[2] == "true", "detail": sys.argv[3][:200]}))
+EMITPY
+}
+
+# F2P upstream #1: pytest tests/
+echo "-- F2P upstream: pytest tests/ --"
+if python3 -m pytest tests/ -q --tb=no --no-header --disable-warnings -p no:cacheprovider > /tmp/upstream_pytest.log 2>&1; then
+    emit_gate "f2p_upstream_pytest" "true" "pytest tests/ passed"
+    echo "  PASS"
+else
+    rc=$?
+    detail="pytest rc=$rc"
+    if [ -s /tmp/upstream_pytest.log ]; then
+        detail="$detail; $(tail -1 /tmp/upstream_pytest.log 2>/dev/null)"
+    fi
+    emit_gate "f2p_upstream_pytest" "false" "$detail"
+    echo "  FAIL ($detail)"
+fi
+
+# F2P upstream #2: shared task_aliases module behavioral check
+echo "-- F2P upstream: shared aliases module behavioral --"
+if python3 - <<'PYGATE' > /tmp/upstream_aliases.log 2>&1
+import importlib, sys
+sys.path.insert(0, '.')
+mod = None
+for name in ['cli_tools.task_aliases', 'cli_tools.aliases', 'cli_tools.search',
+             'cli_tools.shared', 'cli_tools.common',
+             'cli_tools.registry.task_aliases', 'cli_tools.registry.aliases',
+             'cli_tools.registry.search']:
+    try:
+        m = importlib.import_module(name)
+        if hasattr(m, 'TASK_ALIASES') and isinstance(m.TASK_ALIASES, dict) and len(m.TASK_ALIASES) >= 25:
+            mod = m
+            break
+    except Exception:
+        pass
+assert mod is not None, "no shared task_aliases module found"
+expand_fn = None
+for fn_name in ['expand_query', 'expand_aliases', 'resolve_query', 'expand_terms',
+                'resolve_aliases', 'expand_search', 'expand', 'get_search_terms']:
+    f = getattr(mod, fn_name, None)
+    if callable(f):
+        expand_fn = f
+        break
+assert expand_fn, "no expand function in shared module"
+r = expand_fn('upscale')
+rs = r if isinstance(r, set) else set(r) if r else set()
+assert any(t in rs for t in ['esrgan', 'realesrgan', 'super resolution', '4x']), \
+    f"upscale didn't expand to upscaler aliases: {rs}"
+print("OK")
+PYGATE
+then
+    emit_gate "f2p_upstream_aliases" "true" "shared task_aliases module + expand_query work"
+    echo "  PASS"
+else
+    detail="$(tail -1 /tmp/upstream_aliases.log 2>/dev/null | tr -d '\n')"
+    emit_gate "f2p_upstream_aliases" "false" "${detail:-shared aliases gate failed}"
+    echo "  FAIL ($detail)"
+fi
+
+# P2P upstream: core imports stable
+echo "-- P2P upstream: core imports --"
+if python3 -c "import sys; sys.path.insert(0, '.'); from cli_tools import analysis; from cli_tools.registry import knowledge, mcp_server" > /tmp/upstream_imports.log 2>&1; then
+    emit_gate "p2p_upstream_imports" "true" "core imports OK"
+    echo "  PASS"
+else
+    detail="$(tail -1 /tmp/upstream_imports.log 2>/dev/null | tr -d '\n')"
+    emit_gate "p2p_upstream_imports" "false" "${detail:-import failure}"
+    echo "  FAIL ($detail)"
+fi
+
+# Reward calc tail: hard-zero on P2P fail OR no F2P pass; otherwise add F2P weights.
+python3 - <<'REWARDPY'
+import json, os
+WEIGHTS = {"f2p_upstream_pytest": 0.20, "f2p_upstream_aliases": 0.20}
+P2P_REGRESSION = ["p2p_upstream_imports"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM_REWARD=%.4f (existing=%.4f, p2p_failed=%s, f2p_any_pass=%s)' % (reward, existing, p2p_failed, f2p_any_pass))
+REWARDPY
+# ---- end inner-claude upstream gates ----
+
 exit 0

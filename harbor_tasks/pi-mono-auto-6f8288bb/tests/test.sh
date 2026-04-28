@@ -239,3 +239,141 @@ echo "QWEN_SCORE=$QWEN_SCORE GPTOSS_SCORE=$GPTOSS_SCORE SRC_F2P=$SRC_F2P DOC_F2P
 echo "FINAL REWARD=$REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt
+# ---- v5: orchestrator-wrapped appended block ----
+_v5_run_upstream_appended() {
+  set +e  # never abort the host script from inside the wrapper
+
+
+# ---- inner-claude upstream gates ----
+echo "=== UPSTREAM GATES ==="
+
+# F2P: qwen-qwq-32b reasoning effort mapping (fails on base, passes on fix)
+echo "=== UPSTREAM F2P: qwen-qwq-32b reasoning mapping ==="
+F2P_QWQ_PASSED=false
+cat > packages/ai/test/_f2p_qwq_gate.test.ts << 'GATE_TESTEOF'
+import { describe, expect, it, vi } from "vitest";
+import { getModel } from "../src/models.js";
+import { streamSimple } from "../src/stream.js";
+
+const mockState = vi.hoisted(() => ({ lastParams: undefined as any }));
+
+vi.mock("openai", () => {
+  class FakeOpenAI {
+    chat = {
+      completions: {
+        create: (params: any) => {
+          mockState.lastParams = params;
+          const stream = {
+            async *[Symbol.asyncIterator]() {
+              yield {
+                choices: [{ delta: {}, finish_reason: "stop" }],
+                usage: {
+                  prompt_tokens: 1,
+                  completion_tokens: 1,
+                  prompt_tokens_details: { cached_tokens: 0 },
+                  completion_tokens_details: { reasoning_tokens: 0 },
+                },
+              };
+            },
+          };
+          const promise = Promise.resolve(stream) as any;
+          promise.withResponse = async () => ({
+            data: stream,
+            response: { status: 200, headers: new Headers() },
+          });
+          return promise;
+        },
+      },
+    };
+  }
+  return { default: FakeOpenAI };
+});
+
+describe("issue1745 qwen-qwq reasoning mapping", () => {
+  it("maps groq qwen-qwq-32b medium reasoning to default", async () => {
+    const model = getModel("groq", "qwen-qwq-32b")!;
+    let payload: unknown;
+    await streamSimple(
+      model,
+      { messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
+      {
+        apiKey: "test",
+        reasoning: "medium",
+        onPayload: (params: unknown) => { payload = params; },
+      },
+    ).result();
+    const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
+    expect(params.reasoning_effort).toBe("default");
+  });
+});
+GATE_TESTEOF
+
+cd packages/ai
+npx vitest --run test/_f2p_qwq_gate.test.ts --reporter=verbose > /tmp/f2p_qwq.out 2>&1
+F2P_QWQ_RC=$?
+tail -20 /tmp/f2p_qwq.out
+if [ "$F2P_QWQ_RC" -eq 0 ]; then
+    F2P_QWQ_PASSED=true
+fi
+rm -f test/_f2p_qwq_gate.test.ts
+cd /workspace/pi-mono
+
+echo '{"id": "f2p_upstream_qwq_reasoning_map", "passed": '"$F2P_QWQ_PASSED"', "detail": "qwen-qwq-32b reasoning effort mapping"}' >> /logs/verifier/gates.json
+
+# P2P: TypeScript compilation (already checked above, re-emit as gate)
+echo '{"id": "p2p_upstream_tsgo", "passed": true, "detail": "TypeScript compilation (checked above)"}' >> /logs/verifier/gates.json
+
+# P2P: Existing tests (already checked above, re-emit as gate)
+echo '{"id": "p2p_upstream_existing_tests", "passed": true, "detail": "Existing tests (checked above)"}' >> /logs/verifier/gates.json
+
+# Python tail: adjust reward based on upstream gate verdicts
+python3 - <<'PYEOF'
+import json, os
+
+WEIGHTS = {"f2p_upstream_qwq_reasoning_map": 0.20}
+P2P_REGRESSION = ["p2p_upstream_tsgo", "p2p_upstream_existing_tests"]
+
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+# If no F2P gate passed, fix is not present — zero the reward
+any_f2p_passed = any(verdicts.get(gid, False) for gid in WEIGHTS.keys())
+if hard_zero or (WEIGHTS and not any_f2p_passed):
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM_REWARD=%.4f' % reward)
+PYEOF
+# ---- end ----
+}
+# Run via subshell so even unhandled `exit N` in the wrapper
+# only kills the subshell, not the host. Exit codes ignored.
+( _v5_run_upstream_appended ) || true
+# ---- end v5 wrapper ----

@@ -108,7 +108,7 @@ for inputs, expected in groups:
         except Exception:
             pass
 g1_frac = g1_pass / g1_total if g1_total else 0
-total += 0.18 * g1_frac
+total += 0.108 * g1_frac
 
 
 # ─────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ for path, user, h, home, must_have, must_not in cases:
     except Exception:
         pass
 g2_frac = g2_pass / g2_total if g2_total else 0
-total += 0.18 * g2_frac
+total += 0.108 * g2_frac
 
 
 # ─────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ for path, user, h, home, has, has2, hasnt in cases:
     except Exception:
         pass
 g3_frac = g3_pass / g3_total if g3_total else 0
-total += 0.16 * g3_frac
+total += 0.096 * g3_frac
 
 
 # ─────────────────────────────────────────────────────────────
@@ -199,7 +199,7 @@ for text, user, h, must_not, must_in in cases:
     except Exception:
         pass
 g4_frac = g4_pass / g4_total if g4_total else 0
-total += 0.18 * g4_frac
+total += 0.108 * g4_frac
 
 
 # ─────────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ for path, user, h, home, must_have, must_not in cases2:
         pass
 
 g5_frac = g5_pass / g5_total if g5_total else 0
-total += 0.16 * g5_frac
+total += 0.096 * g5_frac
 
 
 # ─────────────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ try:
         g6_frac = 0.0
 except Exception:
     g6_frac = 0.0
-total += 0.14 * g6_frac
+total += 0.084 * g6_frac
 
 
 # Clamp
@@ -306,3 +306,121 @@ else
 fi
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+pip install pytest -q 2>/dev/null || true
+
+# F2P gate 1: anonymize_path Windows backslash paths
+python3 -c "
+import json, sys
+sys.path.insert(0, '.')
+passed = False
+detail = 'unknown'
+try:
+    from dataclaw.anonymizer import anonymize_path
+    r = anonymize_path('C:\\\\Users\\\\alice\\\\Documents\\\\myproject\\\\file.py', 'alice', 'user_abc12345', 'C:\\\\Users\\\\alice')
+    passed = ('alice' not in r and 'myproject' in r)
+    detail = repr(r)
+except Exception as e:
+    detail = str(e)
+with open('/logs/verifier/gates.json', 'a') as f:
+    json.dump({'id': 'f2p_upstream_anonymize_path_win', 'passed': passed, 'detail': detail}, f)
+    f.write('\n')
+" 2>/dev/null || true
+
+# F2P gate 2: _build_project_name Windows drive prefix
+python3 -c "
+import json, sys
+sys.path.insert(0, '.')
+passed = False
+detail = 'unknown'
+try:
+    from dataclaw.parser import _build_project_name
+    r = _build_project_name('-C:-Users-alice-Documents-myproject')
+    passed = (r == 'myproject')
+    detail = repr(r)
+except Exception as e:
+    detail = str(e)
+with open('/logs/verifier/gates.json', 'a') as f:
+    json.dump({'id': 'f2p_upstream_parser_win_drive', 'passed': passed, 'detail': detail}, f)
+    f.write('\n')
+" 2>/dev/null || true
+
+# P2P gate 1: py_compile changed source files
+python3 -c "
+import json, sys, py_compile
+files = ['dataclaw/anonymizer.py', 'dataclaw/parser.py', 'dataclaw/cli.py']
+passed = True
+detail = 'ok'
+for fname in files:
+    try:
+        py_compile.compile(fname, doraise=True)
+    except Exception as e:
+        passed = False
+        detail = str(e)
+        break
+with open('/logs/verifier/gates.json', 'a') as f:
+    json.dump({'id': 'p2p_upstream_py_compile', 'passed': passed, 'detail': detail}, f)
+    f.write('\n')
+" 2>/dev/null || true
+
+# P2P gate 2: import check
+python3 -c "
+import json, sys
+sys.path.insert(0, '.')
+passed = True
+detail = 'ok'
+try:
+    from dataclaw.anonymizer import anonymize_path, anonymize_text
+    from dataclaw.parser import _build_project_name
+except Exception as e:
+    passed = False
+    detail = str(e)
+with open('/logs/verifier/gates.json', 'a') as f:
+    json.dump({'id': 'p2p_upstream_import', 'passed': passed, 'detail': detail}, f)
+    f.write('\n')
+" 2>/dev/null || true
+
+# Upstream reward tail
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_anonymize_path_win": 0.20, "f2p_upstream_parser_win_drive": 0.20}
+P2P_REGRESSION = ["p2p_upstream_py_compile", "p2p_upstream_import"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid) for gid in WEIGHTS)
+if hard_zero:
+    reward = 0.0
+elif not f2p_any_pass:
+    # No upstream F2P gate passed → fundamental Windows fix is missing → zero
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('REWARD=%.4f' % reward)
+PYEOF
+# ---- end ----

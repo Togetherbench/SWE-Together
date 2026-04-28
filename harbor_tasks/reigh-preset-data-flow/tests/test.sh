@@ -386,3 +386,172 @@ fi
 
 echo "=== FINAL REWARD: $REWARD ==="
 echo "$REWARD" > /logs/verifier/reward.txt
+# ---- v5: orchestrator-wrapped appended block ----
+_v5_run_upstream_appended() {
+  set +e  # never abort the host script from inside the wrapper
+
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE=/logs/verifier/gates.json
+: > "$GATES_FILE"
+
+# --- F2P upstream gate: phase_config evaluates to non-undefined in basic+preset mode ---
+echo "=== Upstream F2P: phase_config_basic_eval ==="
+F2P1_OUT=$(node -e '
+const fs = require("fs");
+let utilFile = "";
+for (const p of ["src/shared/components/segmentSettingsUtils.ts","src/shared/components/SegmentSettingsForm/segmentSettingsUtils.ts"]) {
+  try { fs.statSync(p); utilFile = p; break; } catch(e) {}
+}
+if (!utilFile) { console.log("FAIL:no-file"); process.exit(1); }
+const src = fs.readFileSync(utilFile, "utf8");
+const fnIdx = src.indexOf("function buildTaskParams");
+if (fnIdx === -1) { const fnIdx2 = src.indexOf("buildTaskParams"); if (fnIdx2 === -1) { console.log("FAIL:no-fn"); process.exit(1); } }
+const fnStart = src.indexOf("buildTaskParams");
+const after = src.substring(fnStart);
+const pcIdx = after.indexOf("phase_config:");
+if (pcIdx === -1) { console.log("FAIL:no-phase_config"); process.exit(1); }
+const tail = after.substring(pcIdx);
+const colonIdx = tail.indexOf(":");
+let i = colonIdx + 1, depth = 0, expr = "";
+while (i < tail.length) {
+  const ch = tail[i];
+  if (depth === 0 && ch === ",") break;
+  if (ch === "(" || ch === "{" || ch === "[") depth++;
+  else if (ch === ")" || ch === "}" || ch === "]") { if (depth === 0) break; depth--; }
+  expr += ch; i++;
+}
+expr = expr.trim();
+const PHASE_CFG = { phases: [{ strength: 0.5, duration: 1.0 }] };
+try {
+  const f = new Function("settings","BUILTIN_I2V_PRESET_ID","BUILTIN_VACE_PRESET_ID","BUILTIN_I2V_PRESET","BUILTIN_VACE_PRESET","return (" + expr + ");");
+  const result = f({ motionMode: "basic", selectedPhasePresetId: "user-preset-xyz", phaseConfig: PHASE_CFG }, "__builtin_default_i2v__", "__builtin_default_vace__", { id: "__builtin_default_i2v__" }, { id: "__builtin_default_vace__" });
+  if (result && typeof result === "object" && result.phases) {
+    console.log("PASS");
+    process.exit(0);
+  } else {
+    console.log("FAIL:result=" + JSON.stringify(result));
+    process.exit(1);
+  }
+} catch(e) { console.log("FAIL:eval:" + e.message); process.exit(1); }
+' 2>&1)
+F2P1_RC=$?
+echo "f2p_upstream_phase_config_eval: $F2P1_OUT (rc=$F2P1_RC)"
+if [ "$F2P1_RC" -eq 0 ]; then
+  echo '{"id":"f2p_upstream_phase_config_eval","passed":true,"detail":"phase_config returns value in basic+preset mode"}' >> "$GATES_FILE"
+else
+  echo '{"id":"f2p_upstream_phase_config_eval","passed":false,"detail":"'"$F2P1_OUT"'"}' >> "$GATES_FILE"
+fi
+
+# --- F2P upstream gate: selected_phase_preset_id propagated in ITS ---
+echo "=== Upstream F2P: preset_id_propagation ==="
+F2P2_OUT=$(node -e '
+const fs = require("fs");
+let itsFile = "";
+for (const p of ["src/shared/lib/tasks/individualTravelSegment.ts","src/shared/modules/individualTravelSegment.ts"]) {
+  try { fs.statSync(p); itsFile = p; break; } catch(e) {}
+}
+if (!itsFile) { console.log("FAIL:no-file"); process.exit(1); }
+const src = fs.readFileSync(itsFile, "utf8");
+const lines = src.split("\n");
+let writes = 0;
+for (let i = 0; i < lines.length; i++) {
+  const ln = lines[i];
+  if (!ln.includes("selected_phase_preset_id")) continue;
+  if (/^\s*selected_phase_preset_id\??\s*:\s*(string|number|boolean|null)/.test(ln)) continue;
+  if (/interface\s|type\s/.test(ln)) continue;
+  if (/\.\.\.\s*\(.*selected_phase_preset_id/.test(ln)) { writes++; continue; }
+  if (/\.selected_phase_preset_id\s*=/.test(ln)) { writes++; continue; }
+  if (/selected_phase_preset_id\s*:\s*(params|presetId|selected)/.test(ln)) { writes++; continue; }
+}
+if (writes >= 1) {
+  console.log("PASS:writes=" + writes);
+  process.exit(0);
+} else {
+  console.log("FAIL:no-writes");
+  process.exit(1);
+}
+' 2>&1)
+F2P2_RC=$?
+echo "f2p_upstream_preset_id_propagation: $F2P2_OUT (rc=$F2P2_RC)"
+if [ "$F2P2_RC" -eq 0 ]; then
+  echo '{"id":"f2p_upstream_preset_id_propagation","passed":true,"detail":"selected_phase_preset_id propagated to output objects"}' >> "$GATES_FILE"
+else
+  echo '{"id":"f2p_upstream_preset_id_propagation","passed":false,"detail":"'"$F2P2_OUT"'"}' >> "$GATES_FILE"
+fi
+
+# --- P2P upstream gate: eslint on changed files ---
+echo "=== Upstream P2P: eslint_changed_files ==="
+P2P1_PASS=false
+if command -v npx >/dev/null 2>&1; then
+  LINT_FILES=""
+  for lf in src/shared/components/segmentSettingsUtils.ts src/shared/lib/tasks/individualTravelSegment.ts; do
+    [ -f "$lf" ] && LINT_FILES="$LINT_FILES $lf"
+  done
+  if [ -n "$LINT_FILES" ]; then
+    LINT_OUT=$(timeout 60 npx --no-install eslint $LINT_FILES --max-warnings 0 2>&1)
+    LINT_RC=$?
+    if [ "$LINT_RC" -eq 0 ]; then
+      P2P1_PASS=true
+    fi
+    echo "eslint rc=$LINT_RC"
+  else
+    P2P1_PASS=true
+    echo "no lint files found, skip"
+  fi
+else
+  P2P1_PASS=true
+  echo "npx not found, skip"
+fi
+if [ "$P2P1_PASS" = "true" ]; then
+  echo '{"id":"p2p_upstream_eslint","passed":true,"detail":"eslint clean on changed files"}' >> "$GATES_FILE"
+else
+  echo '{"id":"p2p_upstream_eslint","passed":false,"detail":"eslint errors in changed files"}' >> "$GATES_FILE"
+fi
+
+# --- Upstream reward tail ---
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_phase_config_eval": 0.20, "f2p_upstream_preset_id_propagation": 0.20}
+P2P_REGRESSION = ["p2p_upstream_eslint"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM_REWARD=%.4f (existing=%.4f, f2p_any_pass=%s, p2p_failed=%s)' % (reward, existing, f2p_any_pass, p2p_failed))
+PYEOF
+# ---- end upstream gates ----
+}
+# Run via subshell so even unhandled `exit N` in the wrapper
+# only kills the subshell, not the host. Exit codes ignored.
+( _v5_run_upstream_appended ) || true
+# ---- end v5 wrapper ----
