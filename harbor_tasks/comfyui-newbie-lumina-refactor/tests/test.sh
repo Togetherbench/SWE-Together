@@ -189,7 +189,7 @@ if diff_z < 1e-5:
 print("OK")
 PYEOF
 tail -20 /tmp/f2p1.txt
-grep -q "^OK$" /tmp/f2p1.txt && add 0.20
+grep -q "^OK$" /tmp/f2p1.txt && add 0.12
 
 # ------------------------------------------------------------------
 # F2P-2 (0.15): the standalone vendored newbie module has been removed
@@ -249,7 +249,7 @@ if "nn.init." in src:
 print("OK")
 PYEOF
 tail -20 /tmp/f2p2.txt
-grep -q "^OK" /tmp/f2p2.txt && add 0.15
+grep -q "^OK" /tmp/f2p2.txt && add 0.09
 
 # ------------------------------------------------------------------
 # F2P-3 (0.15): comfy/ldm/lumina/model.py itself is clean — no
@@ -289,7 +289,7 @@ for n in ast.walk(tree):
 print("OK")
 PYEOF
 tail -10 /tmp/f2p3.txt
-grep -q "^OK$" /tmp/f2p3.txt && add 0.15
+grep -q "^OK$" /tmp/f2p3.txt && add 0.09
 
 # ------------------------------------------------------------------
 # F2P-4 (0.15): model_base.NewBie / Lumina path uses kwargs.get for
@@ -326,7 +326,7 @@ if "CONDRegular" not in window:
 print("OK")
 PYEOF
 tail -10 /tmp/f2p4.txt
-grep -q "^OK$" /tmp/f2p4.txt && add 0.15
+grep -q "^OK$" /tmp/f2p4.txt && add 0.09
 
 # ------------------------------------------------------------------
 # F2P-5 (0.15): No custom apply_model override on the NewBie model class
@@ -359,7 +359,7 @@ for p in candidates:
 print("OK")
 PYEOF
 tail -10 /tmp/f2p5.txt
-grep -q "^OK$" /tmp/f2p5.txt && add 0.15
+grep -q "^OK$" /tmp/f2p5.txt && add 0.09
 
 # ------------------------------------------------------------------
 # F2P-6 (0.20): supported_models / model_detection wires up NewBie via
@@ -426,11 +426,58 @@ if ctd is None or int(ctd) != 768:
 print("OK")
 PYEOF
 tail -20 /tmp/f2p6.txt
-grep -q "^OK$" /tmp/f2p6.txt && add 0.20
+grep -q "^OK$" /tmp/f2p6.txt && add 0.12
 
 # ------------------------------------------------------------------
-# Done.
+# Done with per-turn gates. Write intermediate reward.
 # ------------------------------------------------------------------
-echo "=== Final reward: $REWARD ==="
+echo "=== Intermediate reward: $REWARD ==="
 write_reward
-echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+GATES_FILE="/logs/verifier/gates.json"
+mkdir -p "$(dirname "$GATES_FILE")"
+> "$GATES_FILE"
+
+run_gate() {
+    local gate_id="$1"
+    local gate_cmd="$2"
+    local gate_desc="$3"
+    echo "--- UPSTREAM GATE: $gate_id ---"
+    eval "$gate_cmd" > /tmp/gate_${gate_id}.txt 2>&1
+    local rc=$?
+    if [ $rc -eq 0 ]; then
+        echo "{\"id\": \"${gate_id}\", \"passed\": true, \"detail\": \"${gate_desc}\"}" >> "$GATES_FILE"
+        echo "  PASSED"
+    else
+        echo "{\"id\": \"${gate_id}\", \"passed\": false, \"detail\": \"${gate_desc} - RC=${rc}\"}" >> "$GATES_FILE"
+        echo "  FAILED (rc=$rc)"
+        tail -5 /tmp/gate_${gate_id}.txt
+    fi
+}
+
+# F2P upstream gates
+run_gate "f2p_upstream_newbie_py_exists" \
+    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/newbie.py').read(), 'newbie.py', 'exec')\"" \
+    "newbie.py text encoder file exists and compiles"
+
+run_gate "f2p_upstream_jina_clip2_py_exists" \
+    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/jina_clip_2.py').read(), 'jina_clip_2.py', 'exec')\"" \
+    "jina_clip_2.py text encoder file exists and compiles"
+
+# P2P upstream regression gates
+run_gate "p2p_upstream_lumina_model_compiles" \
+    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'model.py', 'exec')\"" \
+    "lumina/model.py remains syntactically valid"
+
+run_gate "p2p_upstream_model_base_compiles" \
+    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'model_base.py', 'exec')\"" \
+    "model_base.py remains syntactically valid"
+
+run_gate "p2p_upstream_model_detection_compiles" \
+    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_detection.py').read(), 'model_detection.py', 'exec')\"" \
+    "model_detection.py remains syntactically valid"
+
+# Upstream reward adjustment
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----

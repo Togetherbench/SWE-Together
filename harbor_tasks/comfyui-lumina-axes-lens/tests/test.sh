@@ -328,23 +328,102 @@ get_flag() {
     $PY -c "import json; r=json.load(open('/tmp/_probe_results.json')); print('1' if r.get('$1', False) else '0')"
 }
 
-# Weights (sum = 1.00)
-# not_embednd:               0.10
-# accepts_axes_lens:         0.15
-# forward_runs_finite:       0.10
-# match_sequential:          0.20
-# match_random_inrange:      0.15
-# axes_lens_respected:       0.15
-# deterministic_no_mutation: 0.05
-# batched_correct:           0.10
+# Weights (sum = 0.60, scaled to leave 0.40 for upstream F2P gates)
+# not_embednd:               0.06
+# accepts_axes_lens:         0.09
+# forward_runs_finite:       0.06
+# match_sequential:          0.12
+# match_random_inrange:      0.09
+# axes_lens_respected:       0.09
+# deterministic_no_mutation: 0.03
+# batched_correct:           0.06
 
-[ "$(get_flag not_embednd)" = "1" ]                && add_reward 0.10
-[ "$(get_flag accepts_axes_lens)" = "1" ]          && add_reward 0.15
-[ "$(get_flag forward_runs_finite)" = "1" ]        && add_reward 0.10
-[ "$(get_flag match_sequential)" = "1" ]           && add_reward 0.20
-[ "$(get_flag match_random_inrange)" = "1" ]       && add_reward 0.15
-[ "$(get_flag axes_lens_respected)" = "1" ]        && add_reward 0.15
-[ "$(get_flag deterministic_no_mutation)" = "1" ]  && add_reward 0.05
-[ "$(get_flag batched_correct)" = "1" ]            && add_reward 0.10
+[ "$(get_flag not_embednd)" = "1" ]                && add_reward 0.06
+[ "$(get_flag accepts_axes_lens)" = "1" ]          && add_reward 0.09
+[ "$(get_flag forward_runs_finite)" = "1" ]        && add_reward 0.06
+[ "$(get_flag match_sequential)" = "1" ]           && add_reward 0.12
+[ "$(get_flag match_random_inrange)" = "1" ]       && add_reward 0.09
+[ "$(get_flag axes_lens_respected)" = "1" ]        && add_reward 0.09
+[ "$(get_flag deterministic_no_mutation)" = "1" ]  && add_reward 0.03
+[ "$(get_flag batched_correct)" = "1" ]            && add_reward 0.06
 
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_JSON="/logs/verifier/gates.json"
+
+# F2P gate: LuminaRopeEmbedder class defined in model.py
+if grep -q "class LuminaRopeEmbedder" /workspace/ComfyUI/comfy/ldm/lumina/model.py 2>/dev/null; then
+    echo '{"id": "f2p_upstream_lumina_class", "passed": true, "detail": "LuminaRopeEmbedder class found in model.py"}' >> "$GATES_JSON"
+else
+    echo '{"id": "f2p_upstream_lumina_class", "passed": false, "detail": "LuminaRopeEmbedder class NOT found in model.py"}' >> "$GATES_JSON"
+fi
+
+# F2P gate: LuminaRopeEmbedder used as rope_embedder
+if /workspace/venv/bin/python3 -c "
+import sys
+content = open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read()
+if 'class LuminaRopeEmbedder' not in content:
+    sys.exit(1)
+if 'rope_embedder = LuminaRopeEmbedder' not in content:
+    sys.exit(1)
+" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_lumina_usage", "passed": true, "detail": "LuminaRopeEmbedder defined and used as rope_embedder"}' >> "$GATES_JSON"
+else
+    echo '{"id": "f2p_upstream_lumina_usage", "passed": false, "detail": "LuminaRopeEmbedder NOT defined or not used as rope_embedder"}' >> "$GATES_JSON"
+fi
+
+# P2P gate: model.py is valid Python (AST parse)
+if /workspace/venv/bin/python3 -c "import ast; ast.parse(open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read())" 2>/dev/null; then
+    echo '{"id": "p2p_upstream_ast_parse", "passed": true, "detail": "model.py parses as valid Python"}' >> "$GATES_JSON"
+else
+    echo '{"id": "p2p_upstream_ast_parse", "passed": false, "detail": "model.py fails AST parse"}' >> "$GATES_JSON"
+fi
+
+# P2P gate: NextDiT class exists
+if grep -q "class NextDiT" /workspace/ComfyUI/comfy/ldm/lumina/model.py 2>/dev/null; then
+    echo '{"id": "p2p_upstream_nextdit", "passed": true, "detail": "NextDiT class found in model.py"}' >> "$GATES_JSON"
+else
+    echo '{"id": "p2p_upstream_nextdit", "passed": false, "detail": "NextDiT class NOT found in model.py"}' >> "$GATES_JSON"
+fi
+
+# Upstream reward tail
+/workspace/venv/bin/python3 - << 'UPSTREAM_REWARD_EOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_lumina_class": 0.20, "f2p_upstream_lumina_usage": 0.20}
+P2P_REGRESSION = ["p2p_upstream_ast_parse", "p2p_upstream_nextdit"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM_REWARD=%.4f' % reward)
+UPSTREAM_REWARD_EOF
+# ---- end ----

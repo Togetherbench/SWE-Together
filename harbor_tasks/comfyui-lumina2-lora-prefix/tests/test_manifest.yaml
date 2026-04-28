@@ -1,0 +1,65 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Legacy F2P gates from test.sh (scaled from 0.25 to 0.15 each)
+  - id: f2p_turn1_base_model_keys
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    description: "base_model.model.* keys present in Lumina2 key map"
+  - id: f2p_turn1_coverage_parity
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    description: "base_model.model.* count >= 90% of transformer.* count"
+  - id: f2p_turn1_layers0_keys
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    description: "base_model.model.layers.0.* keys present"
+  - id: f2p_turn1_target_match
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    description: "base_model.model.<x> maps to same target as transformer.<x>"
+  # Upstream F2P gates
+  - id: f2p_upstream_lumina2_bm_keys
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "Behavioral: Lumina2 lora key map contains base_model.model.* entries via repo API"
+  - id: f2p_upstream_grep_bm_to
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "Structural: lora.py has key_map base_model.model assignment to variable to"
+  # Legacy P2P gates from test.sh
+  - id: p2p_turn1_syntax
+    kind: P2P_REGRESSION
+    turn: 1
+    weight: 0
+    description: "lora.py is syntactically valid Python"
+  - id: p2p_turn1_imports
+    kind: P2P_REGRESSION
+    turn: 1
+    weight: 0
+    description: "comfy imports cleanly"
+  - id: p2p_turn1_transformer_keys
+    kind: P2P_REGRESSION
+    turn: 1
+    weight: 0
+    description: "transformer.* keys still produced (regression guard)"
+  # Upstream P2P gates
+  - id: p2p_upstream_ast_parse
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Verifies comfy/lora.py is syntactically valid Python"
+  - id: p2p_upstream_ruff
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Runs ruff linter on comfy/lora.py per project pyproject.toml rules"

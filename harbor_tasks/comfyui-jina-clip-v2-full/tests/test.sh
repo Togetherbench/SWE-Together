@@ -178,7 +178,7 @@ PYEOF
 # ============================================================================
 # F2P GATE 1 (0.10): module imports cleanly + has wrapper + tokenizer classes
 # ============================================================================
-echo "=== F2P-1 (weight 0.10): import + class structure ==="
+echo "=== F2P-1 (weight 0.06): import + class structure ==="
 R1=$("$PYTHON" << 'PYEOF' 2>&1
 import sys; sys.path.insert(0, "/tmp"); sys.path.insert(0, "/workspace/ComfyUI")
 from _jina_probe import load_module, find_wrapper_cls, find_tokenizer_top, find_inner_cls, find_tokenizer_inner
@@ -199,15 +199,15 @@ PYEOF
 )
 echo "$R1"
 if echo "$R1" | grep -q "^PASS"; then
-    add_reward 0.10
-    echo "  +0.10"
+    add_reward 0.06
+    echo "  +0.06"
 fi
 
 # ============================================================================
 # F2P GATE 2 (0.15): instantiation + forward pass with random weights
 # Tests that the wrapper actually constructs an nn.Module and can run.
 # ============================================================================
-echo "=== F2P-2 (weight 0.15): wrapper instantiates + runs forward ==="
+echo "=== F2P-2 (weight 0.09): wrapper instantiates + runs forward ==="
 R2=$("$PYTHON" << 'PYEOF' 2>&1
 import sys, os
 sys.path.insert(0, "/tmp"); sys.path.insert(0, "/workspace/ComfyUI")
@@ -262,8 +262,8 @@ PYEOF
 )
 echo "$R2"
 if echo "$R2" | grep -q "^PASS"; then
-    add_reward 0.15
-    echo "  +0.15"
+    add_reward 0.09
+    echo "  +0.09"
 fi
 
 # ============================================================================
@@ -271,7 +271,7 @@ fi
 # vocab=250002, hidden=1024, layers=24, heads=16, intermediate=4096
 # Plus the json file must exist alongside
 # ============================================================================
-echo "=== F2P-3 (weight 0.20): config dimensions correct ==="
+echo "=== F2P-3 (weight 0.12): config dimensions correct ==="
 R3=$("$PYTHON" << 'PYEOF' 2>&1
 import os, json, glob
 d = "/workspace/ComfyUI/comfy/text_encoders"
@@ -313,18 +313,18 @@ PYEOF
 )
 echo "$R3"
 if echo "$R3" | grep -q "^PASS"; then
-    add_reward 0.20
-    echo "  +0.20"
+    add_reward 0.12
+    echo "  +0.12"
 elif echo "$R3" | grep -q "^PARTIAL"; then
-    add_reward 0.10
-    echo "  +0.10 (partial)"
+    add_reward 0.06
+    echo "  +0.06 (partial)"
 fi
 
 # ============================================================================
 # F2P GATE 4 (0.15): tokenizer special tokens correct (XLM-R: BOS=0, PAD=1, EOS=2)
 # Probe via instantiated inner tokenizer / state
 # ============================================================================
-echo "=== F2P-4 (weight 0.15): special tokens BOS=0, PAD=1, EOS=2 ==="
+echo "=== F2P-4 (weight 0.09): special tokens BOS=0, PAD=1, EOS=2 ==="
 R4=$("$PYTHON" << 'PYEOF' 2>&1
 import sys, os, re
 sys.path.insert(0, "/tmp"); sys.path.insert(0, "/workspace/ComfyUI")
@@ -368,8 +368,8 @@ PYEOF
 )
 echo "$R4"
 if echo "$R4" | grep -q "^PASS"; then
-    add_reward 0.15
-    echo "  +0.15"
+    add_reward 0.09
+    echo "  +0.09"
 fi
 
 # ============================================================================
@@ -377,7 +377,7 @@ fi
 # This is the key architectural difference that distinguishes a careful
 # implementation from a copy-paste of plain XLM-RoBERTa.
 # ============================================================================
-echo "=== F2P-5 (weight 0.15): uses RoPE (no absolute position embeddings) ==="
+echo "=== F2P-5 (weight 0.09): uses RoPE (no absolute position embeddings) ==="
 R5=$("$PYTHON" << 'PYEOF' 2>&1
 import re
 src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read().lower()
@@ -406,18 +406,18 @@ PYEOF
 )
 echo "$R5"
 if echo "$R5" | grep -q "^PASS"; then
-    add_reward 0.15
-    echo "  +0.15"
+    add_reward 0.09
+    echo "  +0.09"
 elif echo "$R5" | grep -q "^PARTIAL"; then
-    add_reward 0.07
-    echo "  +0.07 (partial)"
+    add_reward 0.04
+    echo "  +0.04 (partial)"
 fi
 
 # ============================================================================
 # F2P GATE 6 (0.15): mean pooling over non-pad tokens (NOT CLS pooling)
 # Probe behaviorally: outputs with different attention masks must differ.
 # ============================================================================
-echo "=== F2P-6 (weight 0.15): mean-pooling over masked tokens ==="
+echo "=== F2P-6 (weight 0.09): mean-pooling over masked tokens ==="
 R6=$("$PYTHON" << 'PYEOF' 2>&1
 import sys, os, re
 sys.path.insert(0, "/tmp"); sys.path.insert(0, "/workspace/ComfyUI")
@@ -475,18 +475,18 @@ PYEOF
 )
 echo "$R6"
 if echo "$R6" | grep -q "^PASS"; then
-    add_reward 0.15
-    echo "  +0.15"
+    add_reward 0.09
+    echo "  +0.09"
 elif echo "$R6" | grep -q "^PARTIAL"; then
-    add_reward 0.07
-    echo "  +0.07 (partial)"
+    add_reward 0.04
+    echo "  +0.04 (partial)"
 fi
 
 # ============================================================================
 # F2P GATE 7 (0.10): ComfyUI integration in sd.py (TEModel + detect + dispatch)
 # Tests the completeness of integration into the main loader path.
 # ============================================================================
-echo "=== F2P-7 (weight 0.10): sd.py integration ==="
+echo "=== F2P-7 (weight 0.06): sd.py integration ==="
 R7=$("$PYTHON" << 'PYEOF' 2>&1
 import re
 src = open("/workspace/ComfyUI/comfy/sd.py").read()
@@ -511,17 +511,94 @@ PYEOF
 )
 echo "$R7"
 if echo "$R7" | grep -q "^PASS$"; then
-    add_reward 0.10
-    echo "  +0.10"
+    add_reward 0.06
+    echo "  +0.06"
 elif echo "$R7" | grep -q "^PARTIAL$"; then
-    add_reward 0.05
-    echo "  +0.05 (partial)"
+    add_reward 0.03
+    echo "  +0.03 (partial)"
 fi
 
 # ============================================================================
-# Summary
+# Summary (existing gates)
 # ============================================================================
 echo ""
-echo "=== TOTAL REWARD: $REWARD ==="
+echo "=== EXISTING GATES REWARD: $REWARD ==="
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+> "$GATES_FILE"
+
+echo "=== Upstream F2P gate: jina_clip_2.py syntax + config JSON ==="
+if python3 -c "import ast, json; ast.parse(open('/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py').read()); d=json.load(open('/workspace/ComfyUI/comfy/text_encoders/jina_clip_2_config.json')); assert d.get('hidden_size')==1024 and d.get('vocab_size')==250002 and d.get('num_hidden_layers')==24" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_pyfile_and_config", "passed": true, "detail": "jina_clip_2.py is valid Python and config JSON has correct dimensions"}' >> "$GATES_FILE"
+    echo "  PASSED"
+else
+    echo '{"id": "f2p_upstream_pyfile_and_config", "passed": false, "detail": "jina_clip_2.py missing or invalid, or config JSON missing or has wrong dimensions"}' >> "$GATES_FILE"
+    echo "  FAILED"
+fi
+
+echo "=== Upstream F2P gate: sd.py JINA_CLIP_2 integration ==="
+if python3 -c "import re,sys; src=open('/workspace/ComfyUI/comfy/sd.py').read(); ok=('comfy.text_encoders.jina_clip_2' in src) and bool(re.search(r'JINA_CLIP_2\s*=\s*\d+',src)) and ('TEModel.JINA_CLIP_2' in src); sys.exit(0 if ok else 1)" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_sdpy_integration", "passed": true, "detail": "sd.py has import, enum, and detect for JINA_CLIP_2"}' >> "$GATES_FILE"
+    echo "  PASSED"
+else
+    echo '{"id": "f2p_upstream_sdpy_integration", "passed": false, "detail": "sd.py missing import, enum, or detect for JINA_CLIP_2"}' >> "$GATES_FILE"
+    echo "  FAILED"
+fi
+
+echo "=== Upstream P2P gate: sd.py valid Python syntax ==="
+if python3 -c "import ast; ast.parse(open('/workspace/ComfyUI/comfy/sd.py').read())" 2>/dev/null; then
+    echo '{"id": "p2p_upstream_sdpy_syntax", "passed": true, "detail": "sd.py is valid Python"}' >> "$GATES_FILE"
+    echo "  PASSED"
+else
+    echo '{"id": "p2p_upstream_sdpy_syntax", "passed": false, "detail": "sd.py has syntax errors"}' >> "$GATES_FILE"
+    echo "  FAILED"
+fi
+
+# Upstream reward adjustment
+python3 << 'UPSTREAM_REWARD_EOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_pyfile_and_config": 0.20, "f2p_upstream_sdpy_integration": 0.20}
+P2P_REGRESSION = ["p2p_upstream_sdpy_syntax"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
+UPSTREAM_REWARD_EOF
+
+# ---- end inner-claude upstream gates ----
+
+echo ""
+FINAL_REWARD=$(cat /logs/verifier/reward.txt 2>/dev/null || echo "0.0")
+echo "=== FINAL REWARD: $FINAL_REWARD ==="

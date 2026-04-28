@@ -266,3 +266,38 @@ echo "  raw score (x1000):        $SCORE"
 echo "  REWARD:                   $REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+
+# F2P: --add-new-processes in --help
+F2P_HELP_PASSED=false
+if cd /workspace && python3 arr-monitor.py --help 2>&1 | grep -q -- '--add-new-processes'; then
+  F2P_HELP_PASSED=true
+fi
+echo "{\"id\": \"f2p_upstream_help_flag\", \"passed\": $F2P_HELP_PASSED, \"detail\": \"--add-new-processes in help\"}" >> /logs/verifier/gates.json
+
+# F2P: .exe/.msi in IGNORE_EXTENSIONS
+F2P_EXT_PASSED=false
+if cd /workspace && python3 -c "import ast; src=open('arr-monitor.py').read(); tree=ast.parse(src); found=[ast.literal_eval(n.value) for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name) and t.id=='IGNORE_EXTENSIONS']; exts=set(found[0]) if found else set(); exit(0 if '.exe' in exts and '.msi' in exts else 1)"; then
+  F2P_EXT_PASSED=true
+fi
+echo "{\"id\": \"f2p_upstream_exe_msi_ext\", \"passed\": $F2P_EXT_PASSED, \"detail\": \".exe/.msi in IGNORE_EXTENSIONS\"}" >> /logs/verifier/gates.json
+
+# P2P: py_compile
+P2P_COMPILE_PASSED=false
+if cd /workspace && python3 -m py_compile arr-monitor.py 2>/dev/null; then
+  P2P_COMPILE_PASSED=true
+fi
+echo "{\"id\": \"p2p_upstream_py_compile\", \"passed\": $P2P_COMPILE_PASSED, \"detail\": \"py_compile check\"}" >> /logs/verifier/gates.json
+
+# P2P: --help exits clean
+P2P_HELP_PASSED=false
+if cd /workspace && python3 arr-monitor.py --help > /dev/null 2>&1; then
+  P2P_HELP_PASSED=true
+fi
+echo "{\"id\": \"p2p_upstream_help_exits_clean\", \"passed\": $P2P_HELP_PASSED, \"detail\": \"--help exits 0\"}" >> /logs/verifier/gates.json
+
+# Upstream reward adjustment
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----

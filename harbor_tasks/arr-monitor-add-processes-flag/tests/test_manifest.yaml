@@ -1,0 +1,30 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  - id: f2p_upstream_help_flag
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "--add-new-processes in --help"
+    command: "cd /workspace && python3 arr-monitor.py --help 2>&1 | grep -q -- '--add-new-processes'"
+  - id: f2p_upstream_exe_msi_ext
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: ".exe/.msi in IGNORE_EXTENSIONS"
+    command: "cd /workspace && python3 -c \"import ast; src=open('arr-monitor.py').read(); tree=ast.parse(src); found=[ast.literal_eval(n.value) for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name) and t.id=='IGNORE_EXTENSIONS']; exts=set(found[0]) if found else set(); exit(0 if '.exe' in exts and '.msi' in exts else 1)\""
+  - id: p2p_upstream_py_compile
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "py_compile arr-monitor.py"
+    command: "cd /workspace && python3 -m py_compile arr-monitor.py"
+  - id: p2p_upstream_help_exits_clean
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "--help exits 0"
+    command: "cd /workspace && python3 arr-monitor.py --help > /dev/null 2>&1"

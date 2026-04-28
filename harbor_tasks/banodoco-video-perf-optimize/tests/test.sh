@@ -353,5 +353,42 @@ add "$T_LAZY" "F2P6 TopGenerations lazy loading"
 
 ###############################################################################
 echo ""
-echo "=== FINAL REWARD: $REWARD ==="
-finish
+echo "=== FINAL REWARD (pre-upstream): $REWARD ==="
+finish_original() {
+  echo "$REWARD" > "$REWARD_FILE"
+}
+finish_original
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+
+echo ""
+echo "=== Upstream Gate: IntersectionObserver in TopGenerations.tsx ==="
+cd /workspace/banodoco-wrapped
+if grep -q 'IntersectionObserver' components/TopGenerations.tsx; then
+  echo '{"id": "f2p_upstream_intersection_observer", "passed": true, "detail": "IntersectionObserver found in TopGenerations.tsx"}' >> "$GATES_FILE"
+  echo "  PASSED"
+else
+  echo '{"id": "f2p_upstream_intersection_observer", "passed": false, "detail": "IntersectionObserver not found in TopGenerations.tsx"}' >> "$GATES_FILE"
+  echo "  FAILED"
+fi
+
+echo ""
+echo "=== Upstream Gate: YAxis domain [0, 100] in ModelTrends.tsx ==="
+if grep -qF 'domain={[0, 100]}' components/ModelTrends.tsx; then
+  echo '{"id": "f2p_upstream_yaxis_domain", "passed": true, "detail": "YAxis domain fixed to [0, 100]"}' >> "$GATES_FILE"
+  echo "  PASSED"
+else
+  echo '{"id": "f2p_upstream_yaxis_domain", "passed": false, "detail": "YAxis domain not fixed to [0, 100]"}' >> "$GATES_FILE"
+  echo "  FAILED"
+fi
+
+echo ""
+echo "=== Upstream Reward Adjustment ==="
+python3 /workspace/task/upstream_reward_tail.py
+REWARD=$(cat "$REWARD_FILE" 2>/dev/null || echo "0")
+echo "=== FINAL REWARD (post-upstream): $REWARD ==="
+# ---- end ----
+
+exit 0

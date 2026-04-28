@@ -147,11 +147,11 @@ echo ""
 echo "=== F2P behavioral checks (all reward sourced here) ==="
 
 # ─────────────────────────────────────────────────────────────────────
-# F2P 1 (0.25): base_model.model.* keys exist in returned key_map
+# F2P 1 (0.15): base_model.model.* keys exist in returned key_map
 #   On buggy base: 0 such keys → FAIL.
 #   On fix: many such keys → PASS.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- F2P 1: base_model.model.* keys present (0.25) ---"
+echo "--- F2P 1: base_model.model.* keys present (0.15) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -168,14 +168,14 @@ except Exception as e:
 PYEOF
 )
 echo "  $T"
-case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
+case "$T" in PASS*) add_reward 0.15 ;; *) fail_check "$T" ;; esac
 
 # ─────────────────────────────────────────────────────────────────────
-# F2P 2 (0.25): base_model.model.* coverage is at parity with transformer.*
+# F2P 2 (0.15): base_model.model.* coverage is at parity with transformer.*
 #   On buggy base: ratio = 0 → FAIL.
 #   On fix that adds the prefix in the same loop: ratio ~ 1.0 → PASS.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- F2P 2: base_model.model.* count >= 90% of transformer.* count (0.25) ---"
+echo "--- F2P 2: base_model.model.* count >= 90% of transformer.* count (0.15) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -197,14 +197,14 @@ except Exception as e:
 PYEOF
 )
 echo "  $T"
-case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
+case "$T" in PASS*) add_reward 0.15 ;; *) fail_check "$T" ;; esac
 
 # ─────────────────────────────────────────────────────────────────────
-# F2P 3 (0.25): base_model.model.layers.0.* keys exist
+# F2P 3 (0.15): base_model.model.layers.0.* keys exist
 #   Validates that the prefix maps real PEFT-style keys (the example in
 #   the user instruction). Fails on base, passes on fix.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- F2P 3: base_model.model.layers.0.* keys present (0.25) ---"
+echo "--- F2P 3: base_model.model.layers.0.* keys present (0.15) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -221,16 +221,16 @@ except Exception as e:
 PYEOF
 )
 echo "  $T"
-case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
+case "$T" in PASS*) add_reward 0.15 ;; *) fail_check "$T" ;; esac
 
 # ─────────────────────────────────────────────────────────────────────
-# F2P 4 (0.25): base_model.model.* keys map to the SAME targets as
+# F2P 4 (0.15): base_model.model.* keys map to the SAME targets as
 # transformer.* keys (i.e. stripping the prefix yields a valid model
 # parameter target). This is the strongest behavioral check: confirms
 # the prefix is not just present but functionally equivalent to the
 # existing transformer.* prefix mapping.
 # ─────────────────────────────────────────────────────────────────────
-echo "--- F2P 4: base_model.model.<x> -> same target as transformer.<x> (0.25) ---"
+echo "--- F2P 4: base_model.model.<x> -> same target as transformer.<x> (0.15) ---"
 T=$($VENV_PY - << 'PYEOF'
 import sys
 sys.path.insert(0, "/tmp")
@@ -266,8 +266,130 @@ except Exception as e:
 PYEOF
 )
 echo "  $T"
-case "$T" in PASS*) add_reward 0.25 ;; *) fail_check "$T" ;; esac
+case "$T" in PASS*) add_reward 0.15 ;; *) fail_check "$T" ;; esac
 
 echo ""
-echo "=== Final reward: $REWARD ==="
+echo "=== Legacy checks reward: $REWARD ==="
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+pip3 install --user --break-system-packages ruff 2>/dev/null || true
+
+GATES_FILE="/logs/verifier/gates.json"
+mkdir -p "$(dirname "$GATES_FILE")"
+> "$GATES_FILE"
+
+# F2P upstream gate 1: behavioral check for Lumina2 base_model.model keys
+echo "=== Upstream F2P: Lumina2 base_model.model keys behavioral check ==="
+GATE_RESULT=$( cd /workspace/ComfyUI && /workspace/venv/bin/python3 -c "
+import sys; sys.path.insert(0, '.')
+import comfy.cli_args; comfy.cli_args.args.cpu = True
+import comfy.model_base, comfy.lora, comfy.utils
+import torch
+class MockConfig:
+    unet_config = {'n_layers': 2, 'dim': 64, 'n_heads': 4, 'n_refiner_layers': 1, 'head_dim': 16}
+class MockLumina2(comfy.model_base.Lumina2):
+    def __init__(self): pass
+    def state_dict(self):
+        mapping = comfy.utils.z_image_to_diffusers(self.model_config.unet_config, output_prefix='diffusion_model.')
+        return {(v[0] if isinstance(v, tuple) else v): torch.zeros(1) for _, v in mapping.items()}
+mock = MockLumina2()
+mock.model_config = MockConfig()
+km = comfy.lora.model_lora_keys_unet(mock, key_map={})
+bm_keys = [k for k in km if k.startswith('base_model.model.')]
+assert len(bm_keys) >= 5, f'Expected base_model.model keys, got {len(bm_keys)}'
+print(f'PASS: {len(bm_keys)} base_model.model keys')
+" 2>&1 )
+GATE_RC=$?
+echo "  $GATE_RESULT (rc=$GATE_RC)"
+if [ $GATE_RC -eq 0 ]; then
+    echo "{\"id\": \"f2p_upstream_lumina2_bm_keys\", \"passed\": true, \"detail\": \"$GATE_RESULT\"}" >> "$GATES_FILE"
+else
+    echo "{\"id\": \"f2p_upstream_lumina2_bm_keys\", \"passed\": false, \"detail\": \"$GATE_RESULT\"}" >> "$GATES_FILE"
+fi
+
+# F2P upstream gate 2: grep structural check
+echo "=== Upstream F2P: grep base_model.model key_map assignment ==="
+grep -q 'key_map.*base_model\.model.*= to' /workspace/ComfyUI/comfy/lora.py
+GATE_RC=$?
+if [ $GATE_RC -eq 0 ]; then
+    echo "  PASS (rc=$GATE_RC)"
+    echo '{"id": "f2p_upstream_grep_bm_to", "passed": true, "detail": "grep matched"}' >> "$GATES_FILE"
+else
+    echo "  FAIL (rc=$GATE_RC)"
+    echo '{"id": "f2p_upstream_grep_bm_to", "passed": false, "detail": "grep no match"}' >> "$GATES_FILE"
+fi
+
+# P2P upstream gate 1: AST parse
+echo "=== Upstream P2P: lora.py AST parse ==="
+AST_RESULT=$( /workspace/venv/bin/python3 -c "import ast; ast.parse(open('/workspace/ComfyUI/comfy/lora.py').read()); print('OK')" 2>&1 )
+GATE_RC=$?
+echo "  $AST_RESULT (rc=$GATE_RC)"
+if [ $GATE_RC -eq 0 ]; then
+    echo '{"id": "p2p_upstream_ast_parse", "passed": true, "detail": "AST parse OK"}' >> "$GATES_FILE"
+else
+    echo "{\"id\": \"p2p_upstream_ast_parse\", \"passed\": false, \"detail\": \"$AST_RESULT\"}" >> "$GATES_FILE"
+fi
+
+# P2P upstream gate 2: ruff lint
+echo "=== Upstream P2P: ruff lint check ==="
+RUFF_BIN="$HOME/.local/bin/ruff"
+if [ ! -x "$RUFF_BIN" ]; then
+    RUFF_BIN="ruff"
+fi
+RUFF_RESULT=$( $RUFF_BIN check --no-cache /workspace/ComfyUI/comfy/lora.py 2>&1 )
+GATE_RC=$?
+echo "  $RUFF_RESULT (rc=$GATE_RC)"
+if [ $GATE_RC -eq 0 ]; then
+    echo '{"id": "p2p_upstream_ruff", "passed": true, "detail": "ruff passed"}' >> "$GATES_FILE"
+else
+    echo "{\"id\": \"p2p_upstream_ruff\", \"passed\": false, \"detail\": \"ruff failed\"}" >> "$GATES_FILE"
+fi
+# ---- end upstream gates ----
+
+# ---- upstream reward tail ----
+/workspace/venv/bin/python3 - << 'PYTAIL'
+import json, os
+
+WEIGHTS = {"f2p_upstream_lumina2_bm_keys": 0.20, "f2p_upstream_grep_bm_to": 0.20}
+P2P_REGRESSION = ["p2p_upstream_ast_parse", "p2p_upstream_ruff"]
+
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
+PYTAIL
+
+echo ""
+echo "=== Final reward (after upstream gates): $(cat /logs/verifier/reward.txt) ==="

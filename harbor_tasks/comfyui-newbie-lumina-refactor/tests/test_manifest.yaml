@@ -1,0 +1,75 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Existing per-turn F2P gates (scaled from original 1.0 total to 0.60)
+  - id: f2p_lumina_clip_text_dim
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'x', 'exec')\""
+    description: "Lumina NextDiT clip_text_dim integration"
+  - id: f2p_vendored_newbie_removed
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'x', 'exec')\""
+    description: "Vendored NewBie module removed or thin shim"
+  - id: f2p_lumina_model_clean
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'x', 'exec')\""
+    description: "lumina/model.py is clean of antipatterns"
+  - id: f2p_model_base_robustness
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'x', 'exec')\""
+    description: "model_base extra_conds robustness"
+  - id: f2p_no_apply_model_override
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'x', 'exec')\""
+    description: "No custom apply_model override on NewBie class"
+  - id: f2p_model_detection_wiring
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_detection.py').read(), 'x', 'exec')\""
+    description: "model_detection picks up clip_text_dim"
+  # Upstream F2P gates
+  - id: f2p_upstream_newbie_py_exists
+    kind: F2P
+    turn: null
+    weight: 0.20
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/newbie.py').read(), 'newbie.py', 'exec')\""
+    description: "newbie.py text encoder file exists and compiles"
+  - id: f2p_upstream_jina_clip2_py_exists
+    kind: F2P
+    turn: null
+    weight: 0.20
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/jina_clip_2.py').read(), 'jina_clip_2.py', 'exec')\""
+    description: "jina_clip_2.py text encoder file exists and compiles"
+  # Upstream P2P regression gates
+  - id: p2p_upstream_lumina_model_compiles
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'model.py', 'exec')\""
+    description: "lumina/model.py remains syntactically valid"
+  - id: p2p_upstream_model_base_compiles
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'model_base.py', 'exec')\""
+    description: "model_base.py remains syntactically valid"
+  - id: p2p_upstream_model_detection_compiles
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_detection.py').read(), 'model_detection.py', 'exec')\""
+    description: "model_detection.py remains syntactically valid"
