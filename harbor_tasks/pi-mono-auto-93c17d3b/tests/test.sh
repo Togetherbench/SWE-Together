@@ -17,6 +17,51 @@ finalize() {
     exit 0
 }
 
+# ---- inner-claude upstream gates (runs on every exit path via trap) ----
+run_upstream_gates() {
+    mkdir -p /logs/verifier
+
+    # F2P: Extension file exists and is non-empty
+    if test -s /workspace/pi-mono/.pi/extensions/message-signal.ts; then
+        echo '{"id": "f2p_upstream_file_exists", "passed": true, "detail": "message-signal.ts exists and is non-empty"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM f2p_upstream_file_exists PASS"
+    else
+        echo '{"id": "f2p_upstream_file_exists", "passed": false, "detail": "message-signal.ts missing or empty"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM f2p_upstream_file_exists FAIL"
+    fi
+
+    # F2P: Extension loads via bun and exports a function
+    if cd /workspace/pi-mono && bun -e "try { const m = await import('/workspace/pi-mono/.pi/extensions/message-signal.ts'); if (typeof m.default !== 'function') process.exit(1); } catch { process.exit(1); }" 2>/dev/null; then
+        echo '{"id": "f2p_upstream_ext_loadable", "passed": true, "detail": "Extension imports and exports default function"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM f2p_upstream_ext_loadable PASS"
+    else
+        echo '{"id": "f2p_upstream_ext_loadable", "passed": false, "detail": "Extension failed to import or no default function export"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM f2p_upstream_ext_loadable FAIL"
+    fi
+
+    # P2P: Extensions directory exists
+    if test -d /workspace/pi-mono/.pi/extensions; then
+        echo '{"id": "p2p_upstream_extensions_dir", "passed": true, "detail": ".pi/extensions directory exists"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM p2p_upstream_extensions_dir PASS"
+    else
+        echo '{"id": "p2p_upstream_extensions_dir", "passed": false, "detail": ".pi/extensions directory missing"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM p2p_upstream_extensions_dir FAIL"
+    fi
+
+    # P2P: Existing extension tps.ts compiles
+    if cd /workspace/pi-mono && bun build --no-bundle .pi/extensions/tps.ts > /dev/null 2>&1; then
+        echo '{"id": "p2p_upstream_existing_ext_compiles", "passed": true, "detail": "tps.ts compiles with bun"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM p2p_upstream_existing_ext_compiles PASS"
+    else
+        echo '{"id": "p2p_upstream_existing_ext_compiles", "passed": false, "detail": "tps.ts failed to compile"}' >> /logs/verifier/gates.json
+        echo "UPSTREAM p2p_upstream_existing_ext_compiles FAIL"
+    fi
+
+    # Adjust reward based on upstream gates
+    python3 /workspace/task/upstream_reward_tail.py
+}
+trap run_upstream_gates EXIT
+
 cd /workspace/pi-mono 2>/dev/null || finalize
 
 BASELINE_EXTENSIONS="diff.ts files.ts prompt-url-widget.ts redraws.ts tps.ts go-to-bed.ts"

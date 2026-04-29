@@ -334,4 +334,52 @@ fi
 
 echo "FINAL REWARD: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+touch /logs/verifier/gates.json
+
+# F2P gate: quantize_residual runtime check
+/workspace/venv/bin/python3 -c "
+import sys; sys.path.insert(0, '/workspace')
+import torch
+from quantize import quantize_residual
+torch.manual_seed(0)
+r = torch.randn(128, 128, dtype=torch.float32)
+qw, ws = quantize_residual(r)
+assert qw.dtype == torch.int8
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo '{"id": "f2p_upstream_quantize_residual", "passed": true, "detail": "quantize_residual runs OK"}' >> /logs/verifier/gates.json
+else
+    echo '{"id": "f2p_upstream_quantize_residual", "passed": false, "detail": "quantize_residual crashed"}' >> /logs/verifier/gates.json
+fi
+
+# F2P gate: quantize_awq_layer runtime check
+/workspace/venv/bin/python3 -c "
+import sys; sys.path.insert(0, '/workspace')
+import torch
+from quantize import quantize_awq_layer
+torch.manual_seed(0)
+w = torch.randn(4, 64, dtype=torch.bfloat16)
+qw, ws, wz = quantize_awq_layer(w)
+" 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo '{"id": "f2p_upstream_quantize_awq", "passed": true, "detail": "quantize_awq_layer runs OK"}' >> /logs/verifier/gates.json
+else
+    echo '{"id": "f2p_upstream_quantize_awq", "passed": false, "detail": "quantize_awq_layer crashed"}' >> /logs/verifier/gates.json
+fi
+
+# P2P gate: py_compile
+/workspace/venv/bin/python3 -m py_compile /workspace/quantize.py 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo '{"id": "p2p_upstream_py_compile", "passed": true, "detail": "py_compile OK"}' >> /logs/verifier/gates.json
+else
+    echo '{"id": "p2p_upstream_py_compile", "passed": false, "detail": "py_compile failed"}' >> /logs/verifier/gates.json
+fi
+
+# Upstream reward adjustment
+/workspace/venv/bin/python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----
+
 exit 0

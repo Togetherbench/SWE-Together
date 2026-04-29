@@ -280,16 +280,106 @@ echo "$F2P_OUTPUT" | grep -qE "✓.*F2P_INSTALL_LOCAL_COMPLETES" && g3=1
 echo "$F2P_OUTPUT" | grep -qE "✓.*F2P_REMOVE_LOCAL_COMPLETES" && g4=1
 
 # Weights — all four are F2P (fail on buggy base which throws "Unsupported install/remove source")
-# 0.25 + 0.25 + 0.25 + 0.25 = 1.0
-[ $g1 -eq 1 ] && { echo "PASS (0.25): install local no-Unsupported"; add_score 0.25; } || echo "FAIL (0.25): install local no-Unsupported"
-[ $g2 -eq 1 ] && { echo "PASS (0.25): remove local no-Unsupported"; add_score 0.25; } || echo "FAIL (0.25): remove local no-Unsupported"
-[ $g3 -eq 1 ] && { echo "PASS (0.25): install local completes"; add_score 0.25; } || echo "FAIL (0.25): install local completes"
-[ $g4 -eq 1 ] && { echo "PASS (0.25): remove local completes"; add_score 0.25; } || echo "FAIL (0.25): remove local completes"
+# 0.15 * 4 = 0.60 (remaining 0.40 goes to upstream F2P gates)
+[ $g1 -eq 1 ] && { echo "PASS (0.15): install local no-Unsupported"; add_score 0.15; } || echo "FAIL (0.15): install local no-Unsupported"
+[ $g2 -eq 1 ] && { echo "PASS (0.15): remove local no-Unsupported"; add_score 0.15; } || echo "FAIL (0.15): remove local no-Unsupported"
+[ $g3 -eq 1 ] && { echo "PASS (0.15): install local completes"; add_score 0.15; } || echo "FAIL (0.15): install local completes"
+[ $g4 -eq 1 ] && { echo "PASS (0.15): remove local completes"; add_score 0.15; } || echo "FAIL (0.15): remove local completes"
 
 # Cleanup
 rm -f "$TEST_FILE"
 
 REWARD="$SCORE_AWK"
 echo ""
-echo "Final reward: $REWARD"
+echo "Existing gates reward: $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+GATES_FILE="/logs/verifier/gates.json"
+mkdir -p "$(dirname "$GATES_FILE")"
+
+emit_gate() {
+    local gid="$1"
+    local passed="$2"
+    local detail="$3"
+    echo "{\"id\": \"$gid\", \"passed\": $passed, \"detail\": \"$detail\"}" >> "$GATES_FILE"
+}
+
+# F2P upstream gate 1: vitest local install/remove tests exist and pass
+echo ""
+echo "=== Upstream F2P: vitest local install/remove tests exist and pass ==="
+F2P_U1_OUTPUT=$(cd "$PKG_DIR" && timeout 120 npx vitest --run test/package-manager.test.ts -t "local.*install|install.*local" 2>&1)
+echo "$F2P_U1_OUTPUT" | tail -10
+if echo "$F2P_U1_OUTPUT" | grep -qE "Tests +[0-9]+ passed"; then
+    echo "PASS: upstream F2P vitest local install tests"
+    emit_gate "f2p_upstream_vitest_local_install_tests" "true" "local install/remove tests found and passed"
+else
+    echo "FAIL: upstream F2P vitest local install tests"
+    emit_gate "f2p_upstream_vitest_local_install_tests" "false" "no local install/remove tests found or they failed"
+fi
+
+# F2P upstream gate 2: test count > 91
+echo ""
+echo "=== Upstream F2P: package-manager test count > 91 ==="
+F2P_U2_OUTPUT=$(cd "$PKG_DIR" && timeout 120 npx vitest --run test/package-manager.test.ts 2>&1)
+echo "$F2P_U2_OUTPUT" | tail -10
+if echo "$F2P_U2_OUTPUT" | grep -qE "Tests +(9[2-9]|[1-9][0-9]{2,}) passed"; then
+    echo "PASS: upstream F2P test count > 91"
+    emit_gate "f2p_upstream_vitest_test_count_gt91" "true" "test count exceeds 91"
+else
+    echo "FAIL: upstream F2P test count <= 91"
+    emit_gate "f2p_upstream_vitest_test_count_gt91" "false" "test count is 91 or fewer"
+fi
+
+# P2P upstream gate 1: full package-manager tests pass
+echo ""
+echo "=== Upstream P2P: existing package-manager tests pass ==="
+# Reuse F2P_U2_OUTPUT from test count gate (same command)
+if echo "$F2P_U2_OUTPUT" | grep -qE "Tests +[0-9]+ passed"; then
+    if echo "$F2P_U2_OUTPUT" | grep -qE "Tests.*[0-9]+ failed"; then
+        echo "FAIL: upstream P2P existing tests have failures"
+        emit_gate "p2p_upstream_vitest_pm_pass" "false" "some tests failed"
+    else
+        echo "PASS: upstream P2P existing tests pass"
+        emit_gate "p2p_upstream_vitest_pm_pass" "true" "all tests passed"
+    fi
+else
+    echo "FAIL: upstream P2P no tests passed"
+    emit_gate "p2p_upstream_vitest_pm_pass" "false" "no tests passed"
+fi
+
+# P2P upstream gate 2: tsgo type checking
+echo ""
+echo "=== Upstream P2P: tsgo --noEmit ==="
+TSGO_OUTPUT=$(cd "$REPO_DIR" && timeout 60 npx tsgo --noEmit 2>&1)
+TSGO_RC=$?
+echo "$TSGO_OUTPUT" | tail -10
+if [ $TSGO_RC -eq 0 ]; then
+    echo "PASS: upstream P2P tsgo type check"
+    emit_gate "p2p_upstream_tsgo_noEmit" "true" "type checking passed"
+else
+    echo "FAIL: upstream P2P tsgo type check"
+    emit_gate "p2p_upstream_tsgo_noEmit" "false" "type checking failed"
+fi
+
+# P2P upstream gate 3: biome check on package-manager.ts
+echo ""
+echo "=== Upstream P2P: biome check package-manager.ts ==="
+BIOME_OUTPUT=$(cd "$REPO_DIR" && timeout 60 npx biome check packages/coding-agent/src/core/package-manager.ts 2>&1)
+BIOME_RC=$?
+echo "$BIOME_OUTPUT" | tail -10
+if [ $BIOME_RC -eq 0 ]; then
+    echo "PASS: upstream P2P biome lint"
+    emit_gate "p2p_upstream_biome_pm" "true" "biome lint passed"
+else
+    echo "FAIL: upstream P2P biome lint"
+    emit_gate "p2p_upstream_biome_pm" "false" "biome lint failed"
+fi
+
+# ---- end upstream gates ----
+
+# Apply upstream reward tail
+python3 /workspace/task/upstream_reward_tail.py
+echo ""
+echo "Final reward (after upstream gates):"
+cat "$REWARD_FILE"

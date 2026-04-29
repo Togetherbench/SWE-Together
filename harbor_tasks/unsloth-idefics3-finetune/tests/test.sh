@@ -103,10 +103,10 @@ echo "Idefics module: ${IDEFICS_PY:-NOT FOUND}"
 # ════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────
-# F2P 1 [0.15] — idefics3 registered in VLLM_SUPPORTED_VLM
+# F2P 1 [0.09] — idefics3 registered in VLLM_SUPPORTED_VLM
 # Fails on base (entry doesn't exist).
 # ─────────────────────────────────────────────
-echo "--- F2P 1 [0.15] idefics3 in VLLM_SUPPORTED_VLM ---"
+echo "--- F2P 1 [0.09] idefics3 in VLLM_SUPPORTED_VLM ---"
 VLM_REG=$(python3 << 'PYEOF'
 import ast
 src = open('unsloth/models/vision.py').read()
@@ -124,17 +124,17 @@ print("OK" if found else "MISS")
 PYEOF
 )
 if echo "$VLM_REG" | grep -q "^OK"; then
-    add_reward 0.15
+    add_reward 0.09
     echo "  PASS"
 else
     echo "  FAIL"
 fi
 
 # ─────────────────────────────────────────────
-# F2P 2 [0.15] — FastIdefics3Model imported in __init__.py from a sibling module
+# F2P 2 [0.09] — FastIdefics3Model imported in __init__.py from a sibling module
 # Fails on base.
 # ─────────────────────────────────────────────
-echo "--- F2P 2 [0.15] FastIdefics3Model imported in __init__.py ---"
+echo "--- F2P 2 [0.09] FastIdefics3Model imported in __init__.py ---"
 EXPORT_FOUND=$(python3 << 'PYEOF'
 import re
 src = open('unsloth/models/__init__.py').read()
@@ -146,17 +146,17 @@ else:
 PYEOF
 )
 if echo "$EXPORT_FOUND" | grep -q "^OK"; then
-    add_reward 0.15
+    add_reward 0.09
     echo "  PASS"
 else
     echo "  FAIL"
 fi
 
 # ─────────────────────────────────────────────
-# F2P 3 [0.15] — A new idefics module file exists with a FastIdefics3Model class
+# F2P 3 [0.09] — A new idefics module file exists with a FastIdefics3Model class
 # defined (substantive: has at least one method body). Fails on base (no module).
 # ─────────────────────────────────────────────
-echo "--- F2P 3 [0.15] FastIdefics3Model class defined ---"
+echo "--- F2P 3 [0.09] FastIdefics3Model class defined ---"
 CLASS_DEFINED="MISS"
 if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
     CLASS_DEFINED=$(python3 - "$IDEFICS_PY" << 'PYEOF'
@@ -183,18 +183,18 @@ PYEOF
 )
 fi
 if echo "$CLASS_DEFINED" | grep -q "^OK"; then
-    add_reward 0.15
+    add_reward 0.09
     echo "  PASS"
 else
     echo "  FAIL"
 fi
 
 # ─────────────────────────────────────────────
-# F2P 4 [0.15] — from_pretrained delegates to a real Idefics3 HF class
+# F2P 4 [0.09] — from_pretrained delegates to a real Idefics3 HF class
 # (i.e. references Idefics3ForConditionalGeneration or AutoModelForVision2Seq).
 # Fails on base (no such reference in any models/ file outside vision.py).
 # ─────────────────────────────────────────────
-echo "--- F2P 4 [0.15] from_pretrained references Idefics3 HF class ---"
+echo "--- F2P 4 [0.09] from_pretrained references Idefics3 HF class ---"
 FP_OK="MISS"
 if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
     FP_OK=$(python3 - "$IDEFICS_PY" << 'PYEOF'
@@ -223,7 +223,7 @@ PYEOF
 )
 fi
 if echo "$FP_OK" | grep -q "^OK"; then
-    add_reward 0.15
+    add_reward 0.09
     echo "  PASS"
 else
     # Partial: has the class hierarchy even without explicit from_pretrained body
@@ -235,7 +235,7 @@ print("OK" if re.search(r'class\s+\w*Idefics3\w*\s*\(\s*Fast(VisionModel|BaseMod
 PYEOF
 )
         if echo "$INHERITS" | grep -q "^OK"; then
-            add_reward 0.075
+            add_reward 0.045
             echo "  PARTIAL (inherits Fast* base)"
         else
             echo "  FAIL"
@@ -246,14 +246,14 @@ PYEOF
 fi
 
 # ─────────────────────────────────────────────
-# F2P 5 [0.15] — Hook compatibility fix is present.
+# F2P 5 [0.09] — Hook compatibility fix is present.
 # Either:
 #   (a) idefics module patches/wraps requires_grad_pre_hook (or peft_utils), OR
 #   (b) idefics module overrides/patches get_input_embeddings to return a
 #       proper text embedding layer
 # Fails on base (no such code).
 # ─────────────────────────────────────────────
-echo "--- F2P 5 [0.15] Hook compatibility fix present ---"
+echo "--- F2P 5 [0.09] Hook compatibility fix present ---"
 HOOK_OK="MISS"
 if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
     HOOK_OK=$(python3 - "$IDEFICS_PY" << 'PYEOF'
@@ -295,11 +295,19 @@ for c in candidates:
     except Exception:
         continue
     # The base file uses register_forward_pre_hook for the still_need_patching branch.
-    # A fix would either change to forward_hook (post-hook) or guard empty input tuples.
-    if re.search(r'register_forward_hook\s*\(\s*requires_grad_post_hook\s*\)[^#]*\n[^#]*still_need_patching', src, re.S) or \
-       re.search(r'still_need_patching[\s\S]{0,400}register_forward_hook\(', src) or \
-       re.search(r'def\s+requires_grad_pre_hook[\s\S]{0,400}len\s*\(\s*input\s*\)\s*==\s*0', src) or \
-       re.search(r'def\s+requires_grad_pre_hook[\s\S]{0,400}if\s+not\s+input', src):
+    # A fix would either change to forward_hook (post-hook) in the fallback branch,
+    # add last_hidden_state handling in the post-hook, or guard empty inputs gracefully.
+    # Extract the still_need_patching fallback block specifically:
+    fallback = re.search(r'if still_need_patching:\s*\n(.*?)(?:pass\n|$)', src, re.S)
+    fallback_txt = fallback.group(1) if fallback else ''
+    # Check if fallback uses post-hook instead of pre-hook
+    fallback_uses_post = bool(re.search(r'register_forward_hook\s*\(', fallback_txt)) and \
+                         not bool(re.search(r'register_forward_pre_hook\s*\(', fallback_txt))
+    # Check if last_hidden_state handling was added (canonical fix marker)
+    has_last_hidden = 'last_hidden_state' in src
+    # Check if pre_hook guards empty input with return (not raise)
+    guards_empty = bool(re.search(r'def\s+requires_grad_pre_hook[\s\S]{0,400}len\s*\(\s*input[s]?\s*\)\s*==\s*0[\s\S]{0,50}return', src))
+    if fallback_uses_post or has_last_hidden or guards_empty:
         print("OK"); break
 else:
     print("MISS")
@@ -310,17 +318,17 @@ PYEOF
     fi
 fi
 if echo "$HOOK_OK" | grep -q "^OK"; then
-    add_reward 0.15
+    add_reward 0.09
     echo "  PASS"
 else
     echo "  FAIL"
 fi
 
 # ─────────────────────────────────────────────
-# F2P 6 [0.10] — LoRA target_modules / projection layer configuration present
+# F2P 6 [0.06] — LoRA target_modules / projection layer configuration present
 # in the new idefics module. Fails on base (no module).
 # ─────────────────────────────────────────────
-echo "--- F2P 6 [0.10] LoRA target_modules configuration ---"
+echo "--- F2P 6 [0.06] LoRA target_modules configuration ---"
 LORA_OK="MISS"
 if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
     LORA_OK=$(python3 - "$IDEFICS_PY" << 'PYEOF'
@@ -337,14 +345,14 @@ PYEOF
 )
 fi
 if echo "$LORA_OK" | grep -q "^OK"; then
-    add_reward 0.10
+    add_reward 0.06
     echo "  PASS"
 else
     echo "  FAIL"
 fi
 
 # ─────────────────────────────────────────────
-# F2P 7 [0.15] — Behavioral: import the new module via AST-driven exec test.
+# F2P 7 [0.09] — Behavioral: import the new module via AST-driven exec test.
 # We synthesize a minimal scenario: the agent's idefics module must be importable
 # in the sense that its source compiles AND defines FastIdefics3Model symbol at
 # module-top-level (verified via AST, not by actually executing — execution would
@@ -353,7 +361,7 @@ fi
 # would resolve to the agent's new module name.
 # Fails on base: there is no idefics module / no FastIdefics3Model symbol.
 # ─────────────────────────────────────────────
-echo "--- F2P 7 [0.15] FastIdefics3Model symbol resolvable from new module ---"
+echo "--- F2P 7 [0.09] FastIdefics3Model symbol resolvable from new module ---"
 SYMBOL_OK="MISS"
 if [ -n "$IDEFICS_PY" ] && [ -f "$IDEFICS_PY" ]; then
     SYMBOL_OK=$(python3 - "$IDEFICS_PY" << 'PYEOF'
@@ -392,13 +400,154 @@ PYEOF
 )
 fi
 if echo "$SYMBOL_OK" | grep -q "^OK"; then
-    add_reward 0.15
+    add_reward 0.09
     echo "  PASS"
 else
     echo "  FAIL"
 fi
 
 echo ""
-echo "Final reward: $REWARD"
+echo "Final reward (before upstream gates): $REWARD"
 echo "$REWARD" > "$LOG_DIR/reward.txt"
+
+# ---- inner-claude upstream gates ----
+GATES_FILE="$LOG_DIR/gates.json"
+: > "$GATES_FILE"
+
+# F2P upstream gate: idefics.py exists and compiles
+echo "--- Upstream F2P: idefics.py py_compile ---"
+if python3 -m py_compile unsloth/models/idefics.py 2>/dev/null; then
+    echo '{"id": "f2p_upstream_idefics_py_compile", "passed": true, "detail": "idefics.py compiles"}' >> "$GATES_FILE"
+    echo "  PASS"
+else
+    echo '{"id": "f2p_upstream_idefics_py_compile", "passed": false, "detail": "idefics.py missing or syntax error"}' >> "$GATES_FILE"
+    echo "  FAIL"
+fi
+
+# F2P upstream gate: idefics3 registered and FastIdefics3Model exported
+echo "--- Upstream F2P: idefics3 registration + export ---"
+REG_RESULT=$(python3 << 'REGEOF'
+import ast, re, sys
+try:
+    src = open('unsloth/models/vision.py').read()
+    tree = ast.parse(src)
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == 'VLLM_SUPPORTED_VLM':
+                    if isinstance(node.value, ast.List):
+                        vals = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+                        if 'idefics3' in vals: found = True
+    assert found, 'idefics3 not in VLLM_SUPPORTED_VLM'
+    init_src = open('unsloth/models/__init__.py').read()
+    assert re.search(r'from\s+\.\w+\s+import\s+[^\n#]*FastIdefics3Model', init_src), 'not imported'
+    print("OK")
+except Exception as e:
+    print(f"FAIL: {e}")
+    sys.exit(1)
+REGEOF
+)
+if echo "$REG_RESULT" | grep -q "^OK"; then
+    echo '{"id": "f2p_upstream_idefics3_registration", "passed": true, "detail": "idefics3 registered and exported"}' >> "$GATES_FILE"
+    echo "  PASS"
+else
+    echo '{"id": "f2p_upstream_idefics3_registration", "passed": false, "detail": "'"$REG_RESULT"'"}' >> "$GATES_FILE"
+    echo "  FAIL"
+fi
+
+# P2P upstream gate: source files parse
+echo "--- Upstream P2P: source files parse ---"
+PARSE_RESULT=$(python3 -c "import ast; [ast.parse(open(f).read()) for f in ['unsloth/models/vision.py', 'unsloth/models/__init__.py']]; print('OK')" 2>&1)
+if echo "$PARSE_RESULT" | grep -q "^OK"; then
+    echo '{"id": "p2p_upstream_source_parse", "passed": true, "detail": "files parse OK"}' >> "$GATES_FILE"
+    echo "  PASS"
+else
+    echo '{"id": "p2p_upstream_source_parse", "passed": false, "detail": "parse error"}' >> "$GATES_FILE"
+    echo "  FAIL"
+fi
+
+# P2P upstream gate: existing VLM entries preserved
+echo "--- Upstream P2P: VLM entries preserved ---"
+VLM_RESULT=$(python3 << 'VLMEOF'
+import ast
+src = open('unsloth/models/vision.py').read()
+tree = ast.parse(src)
+for node in ast.walk(tree):
+    if isinstance(node, ast.Assign):
+        for t in node.targets:
+            if isinstance(t, ast.Name) and t.id == 'VLLM_SUPPORTED_VLM':
+                if isinstance(node.value, ast.List):
+                    vals = set(e.value for e in node.value.elts if isinstance(e, ast.Constant))
+                    needed = {'qwen2_5_vl','gemma3','mistral3','qwen3_vl'}
+                    if needed.issubset(vals):
+                        print('OK'); exit(0)
+                    else:
+                        print('FAIL'); exit(1)
+print('FAIL')
+exit(1)
+VLMEOF
+)
+if echo "$VLM_RESULT" | grep -q "^OK"; then
+    echo '{"id": "p2p_upstream_vlm_entries", "passed": true, "detail": "VLM entries preserved"}' >> "$GATES_FILE"
+    echo "  PASS"
+else
+    echo '{"id": "p2p_upstream_vlm_entries", "passed": false, "detail": "VLM entries missing"}' >> "$GATES_FILE"
+    echo "  FAIL"
+fi
+
+# P2P upstream gate: existing exports preserved
+echo "--- Upstream P2P: exports preserved ---"
+EXP_RESULT=$(python3 -c "src = open('unsloth/models/__init__.py').read(); assert all(n in src for n in ['FastLlamaModel', 'FastModel', 'FastVisionModel', 'FastLanguageModel']); print('OK')" 2>&1)
+if echo "$EXP_RESULT" | grep -q "^OK"; then
+    echo '{"id": "p2p_upstream_exports", "passed": true, "detail": "exports preserved"}' >> "$GATES_FILE"
+    echo "  PASS"
+else
+    echo '{"id": "p2p_upstream_exports", "passed": false, "detail": "exports missing"}' >> "$GATES_FILE"
+    echo "  FAIL"
+fi
+
+# ---- upstream reward adjustment ----
+python3 << 'REWARDEOF'
+import json, os
+
+WEIGHTS = {"f2p_upstream_idefics_py_compile": 0.20, "f2p_upstream_idefics3_registration": 0.20}
+P2P_REGRESSION = ["p2p_upstream_source_parse", "p2p_upstream_vlm_entries", "p2p_upstream_exports"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f' % reward)
+REWARDEOF
+
+echo "Final reward (after upstream gates):"
+cat "$LOG_DIR/reward.txt"
+# ---- end ----
 exit 0

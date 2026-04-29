@@ -308,4 +308,41 @@ fi
 } > /logs/verifier/diagnostics.txt 2>&1
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+touch /logs/verifier/gates.json
+
+# P2P gate: syntax check
+P2P_SYNTAX_PASSED=false
+if python3 -c "import ast; ast.parse(open('/workspace/reconstruct_weight.py').read())" 2>/dev/null; then
+    P2P_SYNTAX_PASSED=true
+fi
+echo "{\"id\": \"p2p_upstream_syntax\", \"passed\": $P2P_SYNTAX_PASSED, \"detail\": \"Python syntax check\"}" >> /logs/verifier/gates.json
+
+# P2P gate: torch import and data exists
+P2P_TORCH_PASSED=false
+if python3 -c "import torch; assert __import__('os').path.isfile('/workspace/pt/attn.to_out.0.weight.pt')" 2>/dev/null; then
+    P2P_TORCH_PASSED=true
+fi
+echo "{\"id\": \"p2p_upstream_torch_import\", \"passed\": $P2P_TORCH_PASSED, \"detail\": \"Torch import and data check\"}" >> /logs/verifier/gates.json
+
+# F2P gate: full reconstruction passes all 6 params
+F2P_FULL_PASSED=false
+if cd /workspace && python3 reconstruct_weight.py 2>&1 | grep -q 'All passed!'; then
+    F2P_FULL_PASSED=true
+fi
+echo "{\"id\": \"f2p_upstream_full_recon\", \"passed\": $F2P_FULL_PASSED, \"detail\": \"All 6 params reconstruct with max_diff<0.1\"}" >> /logs/verifier/gates.json
+
+# F2P gate: single param attn.to_out.0 reconstructs correctly
+F2P_SINGLE_PASSED=false
+if cd /workspace && python3 -c "import sys; sys.path.insert(0,'.'); from reconstruct_weight import reconstruct_weight; max_d,_=reconstruct_weight('attn.to_out.0'); sys.exit(0 if max_d<0.1 else 1)" 2>/dev/null; then
+    F2P_SINGLE_PASSED=true
+fi
+echo "{\"id\": \"f2p_upstream_single_param\", \"passed\": $F2P_SINGLE_PASSED, \"detail\": \"attn.to_out.0 reconstructs with max_diff<0.1\"}" >> /logs/verifier/gates.json
+
+# Run upstream reward tail to adjust reward
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----
+
 exit 0

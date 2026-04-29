@@ -58,7 +58,7 @@ echo "=== P2P Gate: Transpilation ==="
 if command -v bun >/dev/null 2>&1; then
   rc_total=0
   for f in "$TOOL_EXEC" "$INTERACTIVE" "$BASH_TOOL"; do
-    bun build "$f" --no-bundle --outdir /tmp/tsc-check >/tmp/build_$$.log 2>&1
+    bun build "$f" --no-bundle >/tmp/build_$$.log 2>&1
     rc=$?
     if [ $rc -ne 0 ]; then
       echo "GATE FAIL: $f did not transpile"
@@ -132,7 +132,7 @@ echo "Baseline facts: bash.ts has timing=$BASE_BASH_HAS_TIMING, te.ts has timing
 # F2P signal: tool-execution.ts now contains both "Elapsed" and "Took"
 # string literals (and base did NOT).
 # ============================================================
-echo "=== F2P 1 (0.20): tool-execution.ts renders timing labels ==="
+echo "=== F2P 1 (0.16): tool-execution.ts renders timing labels ==="
 node -e "
 const fs = require('fs');
 const cur = fs.readFileSync('$TOOL_EXEC','utf8');
@@ -142,8 +142,8 @@ process.exit((has(cur) && !has(base)) ? 0 : 1);
 " 2>/dev/null
 F2P1=$?
 if [ $F2P1 -eq 0 ]; then
-  add_reward 0.20
-  echo "PASS (+0.20) [F2P1]: tool-execution.ts now owns timing labels"
+  add_reward 0.16
+  echo "PASS (+0.16) [F2P1]: tool-execution.ts now owns timing labels"
 else
   echo "FAIL [F2P1]: tool-execution.ts does not introduce Elapsed/Took"
 fi
@@ -156,7 +156,7 @@ fi
 # Equivalently: bash.ts should no longer carry "Elapsed"/"Took"
 # string literals — timing rendering moved out.
 # ============================================================
-echo "=== F2P 2 (0.15): bash.ts no longer renders timing in result ==="
+echo "=== F2P 2 (0.12): bash.ts no longer renders timing in result ==="
 node -e "
 const fs = require('fs');
 const cur = fs.readFileSync('$BASH_TOOL','utf8');
@@ -167,8 +167,8 @@ process.exit((hasTiming(base) && !hasTiming(cur)) ? 0 : 1);
 " 2>/dev/null
 F2P2=$?
 if [ $F2P2 -eq 0 ]; then
-  add_reward 0.15
-  echo "PASS (+0.15) [F2P2]: bash.ts timing rendering removed"
+  add_reward 0.12
+  echo "PASS (+0.12) [F2P2]: bash.ts timing rendering removed"
 else
   echo "FAIL [F2P2]: bash.ts still renders Elapsed/Took (header still mutates)"
 fi
@@ -180,7 +180,7 @@ fi
 # (e.g. setExecutionStartTime / setExecutionStartTimestamp /
 # setBashStartTime) with Date.now().
 # ============================================================
-echo "=== F2P 3 (0.15): interactive-mode wires bash start timestamp ==="
+echo "=== F2P 3 (0.12): interactive-mode wires bash start timestamp ==="
 node -e "
 const fs = require('fs');
 const cur = fs.readFileSync('$INTERACTIVE','utf8');
@@ -193,8 +193,8 @@ process.exit((curHas && !baseHas) ? 0 : 1);
 " 2>/dev/null
 F2P3=$?
 if [ $F2P3 -eq 0 ]; then
-  add_reward 0.15
-  echo "PASS (+0.15) [F2P3]: bash start timestamp wired in interactive-mode"
+  add_reward 0.12
+  echo "PASS (+0.12) [F2P3]: bash start timestamp wired in interactive-mode"
 else
   echo "FAIL [F2P3]: no bash-specific setExecutionStart*(Date.now()) call added"
 fi
@@ -205,7 +205,7 @@ fi
 # Behavioral signal: the "elapsed time should update live (once
 # per second) while the command is running" requirement.
 # ============================================================
-echo "=== F2P 4 (0.15): live-update interval present in tool-execution.ts ==="
+echo "=== F2P 4 (0.12): live-update interval present in tool-execution.ts ==="
 node -e "
 const fs = require('fs');
 const cur = fs.readFileSync('$TOOL_EXEC','utf8');
@@ -218,8 +218,8 @@ process.exit((hasSet && hasClear && !baseHadSet) ? 0 : 1);
 " 2>/dev/null
 F2P4=$?
 if [ $F2P4 -eq 0 ]; then
-  add_reward 0.15
-  echo "PASS (+0.15) [F2P4]: live update interval added (with cleanup)"
+  add_reward 0.12
+  echo "PASS (+0.12) [F2P4]: live update interval added (with cleanup)"
 else
   echo "FAIL [F2P4]: no 1000ms setInterval + clearInterval pair in tool-execution.ts"
 fi
@@ -233,7 +233,7 @@ fi
 # rendering branch in renderBashContent / updateDisplay. We also
 # verify the format uses .toFixed(1) and labels Elapsed/Took.
 # ============================================================
-echo "=== F2P 5 (0.20): timing rendered AT BOTTOM with .toFixed(1) format ==="
+echo "=== F2P 5 (0.16): timing rendered AT BOTTOM with .toFixed(1) format ==="
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$TOOL_EXEC','utf8');
@@ -279,8 +279,8 @@ process.exit(ok ? 0 : 1);
 " 2>/dev/null
 F2P5=$?
 if [ $F2P5 -eq 0 ]; then
-  add_reward 0.20
-  echo "PASS (+0.20) [F2P5]: timing has .toFixed(1) format and is rendered after result"
+  add_reward 0.16
+  echo "PASS (+0.16) [F2P5]: timing has .toFixed(1) format and is rendered after result"
 else
   echo "FAIL [F2P5]: format/placement check failed"
 fi
@@ -296,7 +296,7 @@ fi
 # We accept this gate if BOTH outputs match the regex
 # /^Elapsed \d+\.\dS?$/i style, i.e., the spec format.
 # ============================================================
-echo "=== F2P 6 (0.15): behavioral format check ==="
+echo "=== F2P 6 (0.12): behavioral format check ==="
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$TOOL_EXEC','utf8');
@@ -315,8 +315,8 @@ process.exit((a || b) ? 0 : 1);
 " 2>/dev/null
 F2P6=$?
 if [ $F2P6 -eq 0 ]; then
-  add_reward 0.15
-  echo "PASS (+0.15) [F2P6]: timing string format matches spec"
+  add_reward 0.12
+  echo "PASS (+0.12) [F2P6]: timing string format matches spec"
 else
   echo "FAIL [F2P6]: spec-format template not found"
 fi
@@ -341,7 +341,66 @@ if [ -n "$TEST_FILES" ] && command -v bun >/dev/null 2>&1; then
   done
 fi
 
-echo "=== Final reward: $REWARD ==="
-finalize
+echo "=== Existing checks reward: $REWARD ==="
+# Write existing reward (don't exit yet — upstream gates follow)
+awk -v r="$REWARD" 'BEGIN{ if(r<0)r=0; if(r>1)r=1; printf "%.4f\n", r }' > /logs/verifier/reward.txt
 
-echo "$REWARD" > /logs/verifier/reward.txt
+# ---- inner-claude upstream gates ----
+# Prelude: build tui for vitest tests
+(cd "$REPO/packages/tui" && npx tsgo -p tsconfig.build.json >/dev/null 2>&1) || true
+cd "$REPO"
+
+# F2P gate: behavioral vitest — bash timing method + render
+echo "=== F2P Upstream Gate: bash timing behavioral test ==="
+cat > packages/coding-agent/test/_f2p_upstream_bash_timing.test.ts << 'VITESTEOF'
+import { beforeAll, test, expect } from "vitest";
+import stripAnsi from "strip-ansi";
+import type { TUI } from "@mariozechner/pi-tui";
+import { createBashToolDefinition } from "../src/core/tools/bash.js";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
+import { initTheme } from "../src/modes/interactive/theme/theme.js";
+function createFakeTui(): TUI { return { requestRender: () => {} } as unknown as TUI; }
+beforeAll(() => { initTheme("dark"); });
+test("bash tool component exposes setExecutionStartTimestamp and renders timing at bottom", () => {
+  const bashDef = createBashToolDefinition(process.cwd());
+  const component = new ToolExecutionComponent("bash", "bash-timing-1", { command: "echo hello" }, {}, bashDef, createFakeTui(), process.cwd());
+  expect(typeof component.setExecutionStartTimestamp).toBe("function");
+  component.markExecutionStarted();
+  component.setExecutionStartTimestamp(Date.now() - 12345);
+  component.updateResult({ content: [{ type: "text", text: "some output" }], isError: false }, true);
+  const rendered = stripAnsi(component.render(120).join("\n"));
+  expect(rendered).toMatch(/Elapsed \d+\.\ds/);
+});
+VITESTEOF
+node_modules/.bin/vitest run packages/coding-agent/test/_f2p_upstream_bash_timing.test.ts >/tmp/f2p_gate_$$.log 2>&1
+F2P_TIMING_RC=$?
+rm -f packages/coding-agent/test/_f2p_upstream_bash_timing.test.ts
+echo "{\"id\": \"f2p_upstream_bash_timing\", \"passed\": $([ $F2P_TIMING_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$F2P_TIMING_RC\"}" >> /logs/verifier/gates.json
+echo "F2P upstream bash_timing: rc=$F2P_TIMING_RC"
+
+# P2P gate: tsgo type check
+echo "=== P2P Upstream Gate: tsgo --noEmit ==="
+timeout 60 npx tsgo --noEmit >/tmp/p2p_tsgo_$$.log 2>&1
+P2P_TSGO_RC=$?
+echo "{\"id\": \"p2p_upstream_tsgo_typecheck\", \"passed\": $([ $P2P_TSGO_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$P2P_TSGO_RC\"}" >> /logs/verifier/gates.json
+echo "P2P upstream tsgo: rc=$P2P_TSGO_RC"
+
+# P2P gate: biome lint
+echo "=== P2P Upstream Gate: biome check ==="
+npx biome check --error-on-warnings . >/tmp/p2p_biome_$$.log 2>&1
+P2P_BIOME_RC=$?
+echo "{\"id\": \"p2p_upstream_biome_lint\", \"passed\": $([ $P2P_BIOME_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$P2P_BIOME_RC\"}" >> /logs/verifier/gates.json
+echo "P2P upstream biome: rc=$P2P_BIOME_RC"
+
+# P2P gate: vitest tool-execution-component tests
+echo "=== P2P Upstream Gate: vitest tool-execution-component ==="
+node_modules/.bin/vitest run packages/coding-agent/test/tool-execution-component.test.ts >/tmp/p2p_vitest_$$.log 2>&1
+P2P_VITEST_RC=$?
+echo "{\"id\": \"p2p_upstream_vitest_tool_exec\", \"passed\": $([ $P2P_VITEST_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$P2P_VITEST_RC\"}" >> /logs/verifier/gates.json
+echo "P2P upstream vitest: rc=$P2P_VITEST_RC"
+
+# Upstream reward tail
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----
+
+exit 0

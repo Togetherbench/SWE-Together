@@ -98,7 +98,7 @@ REWARD_AWK="0.00"
 
 # ===========================================================================
 # F2P Gate 1 — New response type with payment_attempts: Vec<...> in api_models
-# Weight: 0.10
+# Weight: 0.06 (scaled from 0.10 to accommodate upstream gates)
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 1: New response type in api_models ==="
@@ -124,15 +124,15 @@ TYPE_NAME=$(awk '
   }
 ' "$API_FILE")
 if [ -n "$TYPE_NAME" ]; then
-    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.2f", r+0.10}')
-    echo "PASS: detected response type '$TYPE_NAME' (+0.10)"
+    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.06}')
+    echo "PASS: detected response type '$TYPE_NAME' (+0.06)"
 else
     echo "FAIL: no response type with payment_attempts: Vec<..> found"
 fi
 
 # ===========================================================================
 # F2P Gate 2 — Handler function exists and is wired to a list-attempts core fn
-# Weight: 0.15
+# Weight: 0.09 (scaled from 0.15 to accommodate upstream gates)
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 2: Handler function and wiring ==="
@@ -151,8 +151,8 @@ if [ -n "$HANDLER_NAME" ]; then
     ' "$HANDLER_FILE" > /tmp/handler_body.txt
     if grep -qE "list_payment_attempts|payments_list_attempts" /tmp/handler_body.txt && \
        grep -qE "GlobalPaymentId|payment_id" /tmp/handler_body.txt; then
-        REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.2f", r+0.15}')
-        echo "PASS: handler '$HANDLER_NAME' wired to core list-attempts (+0.15)"
+        REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.09}')
+        echo "PASS: handler '$HANDLER_NAME' wired to core list-attempts (+0.09)"
     else
         echo "FAIL: handler exists but does not call list_payment_attempts core fn with payment id"
     fi
@@ -163,7 +163,7 @@ fi
 
 # ===========================================================================
 # F2P Gate 3 — Core fn queries attempts by intent and returns the new type
-# Weight: 0.15
+# Weight: 0.09 (scaled from 0.15 to accommodate upstream gates)
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 3: Core list_payment_attempts function ==="
@@ -195,15 +195,15 @@ if [ -n "$CORE_FN" ]; then
     rm -f /tmp/core_body.txt
 fi
 if [ $CORE_OK -eq 1 ]; then
-    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.2f", r+0.15}')
-    echo "PASS: core fn queries attempts and returns list response (+0.15)"
+    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.09}')
+    echo "PASS: core fn queries attempts and returns list response (+0.09)"
 else
     echo "FAIL: core fn missing or doesn't query/return correctly"
 fi
 
 # ===========================================================================
 # F2P Gate 4 — Route registered with GET method on /payments/{id}/(list_)attempts
-# Weight: 0.10
+# Weight: 0.06 (scaled from 0.10 to accommodate upstream gates)
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 4: Route registration ==="
@@ -219,15 +219,15 @@ else
     ' "$APP_FILE" | grep -q MATCH && ROUTE_OK=1
 fi
 if [ $ROUTE_OK -eq 1 ]; then
-    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.2f", r+0.10}')
-    echo "PASS: GET route /list_attempts or /attempts registered (+0.10)"
+    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.06}')
+    echo "PASS: GET route /list_attempts or /attempts registered (+0.06)"
 else
     echo "FAIL: route not properly registered"
 fi
 
 # ===========================================================================
 # F2P Gate 5 — Auxiliary plumbing (Flow variant, lock_utils, ApiEventMetric)
-# Weight: 0.10  (3 sub-checks, partial credit)
+# Weight: 0.06  (3 sub-checks, partial credit; scaled from 0.10)
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 5: Auxiliary plumbing (Flow + lock_utils + ApiEventMetric) ==="
@@ -252,13 +252,13 @@ if grep -qE "impl ApiEventMetric for (api_models::payments::|payments::)?(Paymen
 else
     echo "  - ApiEventMetric impl missing"
 fi
-AUX_REWARD=$(awk -v s=$AUX_SCORE 'BEGIN{printf "%.4f", (s/3.0)*0.10}')
+AUX_REWARD=$(awk -v s=$AUX_SCORE 'BEGIN{printf "%.4f", (s/3.0)*0.06}')
 REWARD_AWK=$(awk -v r="$REWARD_AWK" -v a="$AUX_REWARD" 'BEGIN{printf "%.4f", r+a}')
 echo "Aux subscore: $AUX_SCORE/3 → +$AUX_REWARD"
 
 # ===========================================================================
 # F2P Gate 6 — Behavioral / dominant: full router crate compiles with v2
-# Weight: 0.40
+# Weight: 0.24 (scaled from 0.40 to accommodate upstream gates)
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 6: cargo check -p router with v2 features ==="
@@ -270,17 +270,62 @@ if [ $G_RC -ne 0 ]; then
     G_RC=${PIPESTATUS[0]}
 fi
 if [ $G_RC -eq 0 ]; then
-    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.40}')
-    echo "PASS: router crate compiles with v2 features (+0.40)"
+    REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.24}')
+    echo "PASS: router crate compiles with v2 features (+0.24)"
 else
     echo "FAIL: router crate does not compile with v2 features"
 fi
 
-REWARD=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.2f", r}')
+REWARD=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r}')
 
 echo ""
 echo "============================================"
-echo "FINAL REWARD: $REWARD"
+echo "PER-TURN REWARD: $REWARD"
 echo "============================================"
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH="/usr/local/cargo/bin:$PATH"
+rustup default stable >/dev/null 2>&1 || true
+
+mkdir -p /logs/verifier
+
+echo ""
+echo "=== Upstream Gate: f2p_upstream_openapi_route ==="
+if cd /workspace/hyperswitch && grep -q 'list_payment_attempts' crates/openapi/src/routes/payments.rs; then
+    echo '{"id": "f2p_upstream_openapi_route", "passed": true, "detail": "list_payment_attempts found in openapi routes"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_openapi_route", "passed": false, "detail": "list_payment_attempts not found in openapi routes"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+echo ""
+echo "=== Upstream Gate: f2p_upstream_openapi_v2_schema ==="
+if cd /workspace/hyperswitch && grep -q 'PaymentListAttemptsResponse' crates/openapi/src/openapi_v2.rs; then
+    echo '{"id": "f2p_upstream_openapi_v2_schema", "passed": true, "detail": "PaymentListAttemptsResponse found in openapi_v2.rs"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_openapi_v2_schema", "passed": false, "detail": "PaymentListAttemptsResponse not found in openapi_v2.rs"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+echo ""
+echo "=== Upstream Gate: p2p_upstream_cargo_metadata ==="
+if cd /workspace/hyperswitch && cargo metadata --format-version 1 --no-deps > /dev/null 2>&1; then
+    echo '{"id": "p2p_upstream_cargo_metadata", "passed": true, "detail": "cargo metadata succeeded"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_cargo_metadata", "passed": false, "detail": "cargo metadata failed"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+# ---- end upstream gates ----
+
+# ---- upstream reward adjustment ----
+python3 /workspace/task/upstream_reward_tail.py
+echo ""
+echo "============================================"
+FINAL_REWARD=$(cat /logs/verifier/reward.txt 2>/dev/null || echo "0.0000")
+echo "FINAL REWARD (after upstream gates): $FINAL_REWARD"
+echo "============================================"

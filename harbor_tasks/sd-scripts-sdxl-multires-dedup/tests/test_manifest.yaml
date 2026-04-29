@@ -31,42 +31,42 @@ gates:
 - id: t1_f2p_strategy_sd_multires
   turn: 1
   kind: F2P
-  weight: 0.2
+  weight: 0.12
   description: strategy_sd source/behavior shows multi_resolution=True is forwarded for caching
 - id: t1_f2p_strategy_sd_load_size
   turn: 1
   kind: F2P
-  weight: 0.1
+  weight: 0.06
   description: strategy_sd load_latents_from_disk override forwards size=8 (latent factor)
 - id: t4_f2p_skip_dup_field
   turn: 4
   kind: F2P
-  weight: 0.15
+  weight: 0.09
   description: skip_duplicate_bucketed_images is a recognized field (dataclass or schema)
 - id: t4_f2p_skip_dup_dedup_logic
   turn: 4
   kind: F2P
-  weight: 0.15
+  weight: 0.09
   description: Actual dedup logic exists referencing skip_duplicate_bucketed_images and image_data
 - id: t5_f2p_unwrap_function_behavioral
   turn: 5
   kind: F2P
-  weight: 0.15
+  weight: 0.09
   description: unwrap_model_for_sampling exists and handles _orig_mod KeyError
 - id: t5_f2p_unwrap_orig_mod_handling
   turn: 5
   kind: F2P
-  weight: 0.1
+  weight: 0.06
   description: unwrap_model_for_sampling source references _orig_mod handling
 - id: t7_f2p_unet_orig_mod
   turn: 7
   kind: F2P
-  weight: 0.1
+  weight: 0.06
   description: sdxl_original_unet.py references _orig_mod near isinstance checks
 - id: t7_f2p_unet_orig_mod_dispatch
   turn: 7
   kind: F2P
-  weight: 0.05
+  weight: 0.03
   description: sdxl_original_unet has _orig_mod-aware dispatch in forward
 - id: p2p_base_imports
   turn: null
@@ -79,3 +79,18 @@ gates:
   weight: 0.0
   description: 'upstream(reg): py_compile_changed @ 609d129'
   notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/sd-scripts-sdxl-multires-dedup_p2p_bundle.yaml
+- id: f2p_upstream_unwrap_multires
+  turn: null
+  kind: F2P
+  weight: 0.20
+  description: 'upstream(f2p): unwrap_model_for_sampling import + load_latents_from_disk override'
+- id: f2p_upstream_skipdup_origmod
+  turn: null
+  kind: F2P
+  weight: 0.20
+  description: 'upstream(f2p): skip_duplicate_bucketed_images field + _orig_mod in unet'
+- id: p2p_upstream_py_compile_all
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): py_compile all 4 changed library files'

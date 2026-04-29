@@ -249,3 +249,76 @@ echo "F2P-5 (wrapper.ts clean):          $S5 * 0.15"
 echo "TOTAL REWARD: $REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+# Preludes: build dependency packages (tui, ai, agent) needed for coding-agent
+echo ""
+echo "=== UPSTREAM PRELUDES: Building dependency packages ==="
+cd /workspace/pi-mono/packages/tui && npx tsgo -p tsconfig.build.json 2>&1 | tail -3
+cd /workspace/pi-mono/packages/ai && npx tsgo -p tsconfig.build.json 2>&1 | tail -3
+cd /workspace/pi-mono/packages/agent && npx tsgo -p tsconfig.build.json 2>&1 | tail -3
+cd /workspace/pi-mono
+
+mkdir -p /logs/verifier 2>/dev/null || true
+GATES_FILE="/logs/verifier/gates.json"
+> "$GATES_FILE"
+
+# F2P gate: emitSessionBefore method exists in runner.ts
+echo ""
+echo "=== UPSTREAM F2P: emitSessionBefore method exists in runner.ts ==="
+if grep -q 'async emitSessionBefore' packages/coding-agent/src/core/extensions/runner.ts 2>/dev/null; then
+    echo '{"id": "f2p_upstream_emitSessionBefore_method", "passed": true, "detail": "emitSessionBefore method found in runner.ts"}' >> "$GATES_FILE"
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_emitSessionBefore_method", "passed": false, "detail": "emitSessionBefore method NOT found in runner.ts"}' >> "$GATES_FILE"
+    echo "FAIL"
+fi
+
+# F2P gate: Callers use emitSessionBefore in agent-session-runtime.ts
+echo ""
+echo "=== UPSTREAM F2P: Callers use emitSessionBefore ==="
+if grep -q 'emitSessionBefore' packages/coding-agent/src/core/agent-session-runtime.ts 2>/dev/null; then
+    echo '{"id": "f2p_upstream_callers_use_emitSessionBefore", "passed": true, "detail": "agent-session-runtime.ts calls emitSessionBefore"}' >> "$GATES_FILE"
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_callers_use_emitSessionBefore", "passed": false, "detail": "agent-session-runtime.ts does NOT call emitSessionBefore"}' >> "$GATES_FILE"
+    echo "FAIL"
+fi
+
+# P2P gate: tsgo compilation succeeds
+echo ""
+echo "=== UPSTREAM P2P: tsgo compilation ==="
+cd /workspace/pi-mono/packages/coding-agent
+TSGO_OUT=$(npx tsgo -p tsconfig.build.json 2>&1)
+TSGO_RC=$?
+cd /workspace/pi-mono
+if [ "$TSGO_RC" -eq 0 ]; then
+    echo '{"id": "p2p_upstream_tsgo_build", "passed": true, "detail": "tsgo compilation succeeded"}' >> "$GATES_FILE"
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_tsgo_build", "passed": false, "detail": "tsgo compilation failed"}' >> "$GATES_FILE"
+    echo "FAIL"
+    echo "$TSGO_OUT" | tail -10
+fi
+
+# P2P gate: vitest extensions-runner tests pass
+echo ""
+echo "=== UPSTREAM P2P: vitest extensions-runner tests ==="
+cd /workspace/pi-mono/packages/coding-agent
+VITEST_OUT=$(npx vitest --run test/extensions-runner.test.ts 2>&1)
+VITEST_RC=$?
+cd /workspace/pi-mono
+if [ "$VITEST_RC" -eq 0 ]; then
+    echo '{"id": "p2p_upstream_vitest_runner", "passed": true, "detail": "vitest runner tests passed"}' >> "$GATES_FILE"
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_vitest_runner", "passed": false, "detail": "vitest runner tests failed"}' >> "$GATES_FILE"
+    echo "FAIL"
+    echo "$VITEST_OUT" | tail -10
+fi
+
+# Compute final reward from upstream gates (overrides existing broken reward)
+echo ""
+echo "=== UPSTREAM REWARD COMPUTATION ==="
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----

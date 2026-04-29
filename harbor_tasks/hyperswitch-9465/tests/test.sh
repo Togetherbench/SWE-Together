@@ -432,3 +432,51 @@ echo "Gate 7 (router):  $G7_OK"
 echo "Final reward:     $REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+export PATH=/usr/local/cargo/bin:/root/.cargo/bin:$PATH
+rustup default stable > /dev/null 2>&1 || true
+
+mkdir -p /logs/verifier
+
+# F2P upstream gate: Domain + Kafka field propagation
+echo ""
+echo "=== Upstream F2P: Domain + Kafka field propagation ==="
+if grep -q 'active_attempts_group_id' crates/hyperswitch_domain_models/src/payments.rs 2>/dev/null && \
+   grep -q 'active_attempt_id_type' crates/hyperswitch_domain_models/src/payments.rs 2>/dev/null && \
+   grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent.rs 2>/dev/null && \
+   grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent_event.rs 2>/dev/null; then
+    echo '{"id": "f2p_upstream_domain_kafka_propagation", "passed": true, "detail": "All split payment fields found in domain models and kafka events"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_domain_kafka_propagation", "passed": false, "detail": "Missing split payment fields in domain models or kafka events"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# F2P upstream gate: Migration file completeness
+echo ""
+echo "=== Upstream F2P: Migration file completeness ==="
+if grep -rq 'active_attempts_group_id' migrations/ 2>/dev/null && \
+   grep -rq 'active_attempt_id_type' migrations/ 2>/dev/null && \
+   grep -rq 'attempts_group_id' migrations/ 2>/dev/null; then
+    echo '{"id": "f2p_upstream_migration_completeness", "passed": true, "detail": "All 3 new columns found in migration files"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "f2p_upstream_migration_completeness", "passed": false, "detail": "Missing column definitions in migration files"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# P2P upstream gate: Cargo metadata workspace integrity
+echo ""
+echo "=== Upstream P2P: Cargo metadata workspace integrity ==="
+if timeout 60 cargo metadata --format-version 1 --no-deps > /dev/null 2>&1; then
+    echo '{"id": "p2p_upstream_cargo_metadata", "passed": true, "detail": "Cargo workspace metadata loads successfully"}' >> /logs/verifier/gates.json
+    echo "PASS"
+else
+    echo '{"id": "p2p_upstream_cargo_metadata", "passed": false, "detail": "Cargo workspace metadata failed to load"}' >> /logs/verifier/gates.json
+    echo "FAIL"
+fi
+
+# Upstream reward tail: adjust reward based on upstream gate results
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----

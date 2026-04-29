@@ -89,7 +89,7 @@ if [ -f "$AUTH_METRICS" ]; then
         fi
     fi
 fi
-award 0.18 $G1 "AuthEventMetric trait load_metrics uses AuthInfo (not merchant_id)"
+award 0.108 $G1 "AuthEventMetric trait load_metrics uses AuthInfo (not merchant_id)"
 
 # ----------------------------------------------------------------------------
 # F2P Gate 2 (weight 0.18): At least 4 metric impl files migrated from
@@ -113,7 +113,7 @@ if [ -d "$AUTH_METRICS_DIR" ]; then
 fi
 echo "Metric impl files migrated to AuthInfo: $MIG_COUNT"
 if [ "$MIG_COUNT" -ge 4 ]; then G2=0; fi
-award 0.18 $G2 "≥4 metric impls migrated from merchant_id to AuthInfo"
+award 0.108 $G2 "≥4 metric impls migrated from merchant_id to AuthInfo"
 
 # ----------------------------------------------------------------------------
 # F2P Gate 3 (weight 0.10): filters.rs get_auth_events_filter_for_dimension
@@ -133,7 +133,7 @@ if [ -f "$AUTH_FILTERS" ]; then
         fi
     fi
 fi
-award 0.10 $G3 "filters.rs get_auth_events_filter_for_dimension uses AuthInfo"
+award 0.060 $G3 "filters.rs get_auth_events_filter_for_dimension uses AuthInfo"
 
 # ----------------------------------------------------------------------------
 # F2P Gate 4 (weight 0.12): analytics/src/lib.rs get_auth_event_metrics
@@ -153,7 +153,7 @@ if [ -f "$ANALYTICS_LIB" ]; then
         fi
     fi
 fi
-award 0.12 $G4 "analytics lib get_auth_event_metrics uses AuthInfo"
+award 0.072 $G4 "analytics lib get_auth_event_metrics uses AuthInfo"
 
 # ----------------------------------------------------------------------------
 # F2P Gate 5 (weight 0.14): Org-scope auth_events endpoint registered.
@@ -172,7 +172,7 @@ if [ -f "$ROUTER_ANALYTICS" ]; then
         G5=0
     fi
 fi
-award 0.14 $G5 "Org-scope auth_events endpoint registered"
+award 0.084 $G5 "Org-scope auth_events endpoint registered"
 
 # ----------------------------------------------------------------------------
 # F2P Gate 6 (weight 0.14): Profile-scope auth_events endpoint registered.
@@ -202,7 +202,7 @@ if [ -f "$ROUTER_ANALYTICS" ]; then
         G6=0
     fi
 fi
-award 0.14 $G6 "Profile-scope auth_events endpoint/handler registered"
+award 0.084 $G6 "Profile-scope auth_events endpoint/handler registered"
 
 # ----------------------------------------------------------------------------
 # F2P Gate 7 (weight 0.14): At least 3 distinct metrics/auth_events route
@@ -223,11 +223,12 @@ if [ -f "$ROUTER_ANALYTICS" ]; then
         G7=0
     fi
 fi
-award 0.14 $G7 "≥3 auth_events route registrations (merchant+org+profile)"
+award 0.084 $G7 "≥3 auth_events route registrations (merchant+org+profile)"
 
 # ============================================================================
 # Final reward = sum of earned F2P weights, rounded to 0.01.
-# Total possible: 0.18 + 0.18 + 0.10 + 0.12 + 0.14 + 0.14 + 0.14 = 1.00
+# Total possible from existing gates: 0.108 + 0.108 + 0.060 + 0.072 + 0.084 + 0.084 + 0.084 = 0.60
+# Upstream gates contribute up to 0.40 via python tail block, total = 1.00
 # ============================================================================
 echo ""
 echo "Total weight allocated: $TOTAL_W"
@@ -240,5 +241,83 @@ REWARD=$(awk "BEGIN {printf \"%.2f\", $EARNED_W}")
 # unmodified base.
 
 echo "$REWARD" > "$REWARD_FILE"
-echo "Final reward: $REWARD"
+echo "Final reward (before upstream gates): $REWARD"
+
+# ---- inner-claude upstream gates ----
+export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
+rustup default 1.82.0 >/dev/null 2>&1 || true
+
+GATES_FILE="/logs/verifier/gates.json"
+mkdir -p /logs/verifier
+> "$GATES_FILE"
+
+# F2P upstream gate: auth_metrics_migration
+# At least 6 metric impl files use auth.set_filter_clause
+UG1_PASS=false
+UG1_COUNT=$(grep -rl 'auth\.set_filter_clause' "$REPO_DIR/crates/analytics/src/auth_events/metrics/" 2>/dev/null | wc -l)
+if [ "$UG1_COUNT" -ge 6 ]; then UG1_PASS=true; fi
+echo "{\"id\": \"f2p_upstream_auth_metrics_migration\", \"passed\": $UG1_PASS, \"detail\": \"$UG1_COUNT metric files migrated\"}" >> "$GATES_FILE"
+echo "Upstream F2P auth_metrics_migration: passed=$UG1_PASS (count=$UG1_COUNT)"
+
+# F2P upstream gate: org_profile_endpoints
+# Both org-level and profile-level auth event handlers exist
+UG2_PASS=false
+if grep -q 'get_org_auth_event_metrics\|get_org_auth_event_sankey' "$ROUTER_ANALYTICS" 2>/dev/null && \
+   grep -q 'get_profile_auth_event_metrics\|get_profile_auth_event_sankey' "$ROUTER_ANALYTICS" 2>/dev/null; then
+    UG2_PASS=true
+fi
+echo "{\"id\": \"f2p_upstream_org_profile_endpoints\", \"passed\": $UG2_PASS, \"detail\": \"org and profile endpoints\"}" >> "$GATES_FILE"
+echo "Upstream F2P org_profile_endpoints: passed=$UG2_PASS"
+
+# P2P upstream gate: key_files_exist
+UG3_PASS=false
+if [ -f "$AUTH_METRICS" ] && [ -f "$AUTH_CORE" ] && [ -f "$AUTH_FILTERS" ] && [ -f "$ROUTER_ANALYTICS" ]; then
+    UG3_PASS=true
+fi
+echo "{\"id\": \"p2p_upstream_key_files_exist\", \"passed\": $UG3_PASS, \"detail\": \"key source files\"}" >> "$GATES_FILE"
+echo "Upstream P2P key_files_exist: passed=$UG3_PASS"
+# ---- end upstream gates ----
+
+# ---- upstream reward tail ----
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_auth_metrics_migration": 0.20, "f2p_upstream_org_profile_endpoints": 0.20}
+P2P_REGRESSION = ["p2p_upstream_key_files_exist"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
+PYEOF
+# ---- end upstream reward tail ----
+
+echo "Final reward (after upstream gates):"
+cat /logs/verifier/reward.txt
 exit 0

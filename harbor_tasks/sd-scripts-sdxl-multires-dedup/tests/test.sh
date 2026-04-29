@@ -381,3 +381,73 @@ echo "$T9" | tail -1 | grep -q "^PASS$" && add_reward 0.12
 echo ""
 echo "=== Final reward: $REWARD ==="
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+: > "$GATES_FILE"
+
+VENV_PYTHON=/workspace/venv/bin/python3
+if [ ! -x "$VENV_PYTHON" ]; then VENV_PYTHON=$(which python3); fi
+
+echo ""
+echo "=== Upstream F2P: unwrap_model_for_sampling + load_latents_from_disk override ==="
+cd /workspace/sd-scripts && $VENV_PYTHON -c "
+import sys; sys.path.insert(0, '.')
+from library.train_util import unwrap_model_for_sampling
+from library.strategy_sd import SdSdxlLatentsCachingStrategy
+assert 'load_latents_from_disk' in SdSdxlLatentsCachingStrategy.__dict__, 'no override'
+print('OK')
+" 2>&1
+F2P1_RC=$?
+if [ "$F2P1_RC" -eq 0 ]; then
+    echo '{"id": "f2p_upstream_unwrap_multires", "passed": true, "detail": "unwrap_model_for_sampling importable and load_latents_from_disk overridden"}' >> "$GATES_FILE"
+else
+    echo '{"id": "f2p_upstream_unwrap_multires", "passed": false, "detail": "import or assertion failed"}' >> "$GATES_FILE"
+fi
+echo "  f2p_upstream_unwrap_multires: RC=$F2P1_RC"
+
+echo ""
+echo "=== Upstream F2P: skip_duplicate_bucketed_images + _orig_mod in unet ==="
+cd /workspace/sd-scripts && $VENV_PYTHON -c "
+import sys, inspect, dataclasses; sys.path.insert(0, '.')
+from library.config_util import DreamBoothDatasetParams
+fields = {f.name for f in dataclasses.fields(DreamBoothDatasetParams)}
+assert 'skip_duplicate_bucketed_images' in fields, 'missing field'
+from library import sdxl_original_unet
+src = inspect.getsource(sdxl_original_unet)
+assert '_orig_mod' in src, 'no _orig_mod'
+print('OK')
+" 2>&1
+F2P2_RC=$?
+if [ "$F2P2_RC" -eq 0 ]; then
+    echo '{"id": "f2p_upstream_skipdup_origmod", "passed": true, "detail": "skip_duplicate_bucketed_images field present and _orig_mod in unet"}' >> "$GATES_FILE"
+else
+    echo '{"id": "f2p_upstream_skipdup_origmod", "passed": false, "detail": "field or _orig_mod assertion failed"}' >> "$GATES_FILE"
+fi
+echo "  f2p_upstream_skipdup_origmod: RC=$F2P2_RC"
+
+echo ""
+echo "=== Upstream P2P: py_compile all changed files ==="
+cd /workspace/sd-scripts && $VENV_PYTHON -c "
+import py_compile, tempfile, os
+files = ['library/strategy_sd.py', 'library/config_util.py', 'library/train_util.py', 'library/sdxl_original_unet.py']
+for f in files:
+    t = tempfile.mktemp(suffix='.pyc')
+    py_compile.compile(f, cfile=t, doraise=True)
+    if os.path.exists(t): os.unlink(t)
+print('OK')
+" 2>&1
+P2P1_RC=$?
+if [ "$P2P1_RC" -eq 0 ]; then
+    echo '{"id": "p2p_upstream_py_compile_all", "passed": true, "detail": "all 4 changed files compile"}' >> "$GATES_FILE"
+else
+    echo '{"id": "p2p_upstream_py_compile_all", "passed": false, "detail": "py_compile failed"}' >> "$GATES_FILE"
+fi
+echo "  p2p_upstream_py_compile_all: RC=$P2P1_RC"
+
+# ---- upstream reward adjustment ----
+echo ""
+echo "=== Upstream reward adjustment ==="
+$VENV_PYTHON /workspace/task/upstream_reward_tail.py 2>&1 || python3 /workspace/task/upstream_reward_tail.py 2>&1
+# ---- end ----

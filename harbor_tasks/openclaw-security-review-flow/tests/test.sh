@@ -590,4 +590,51 @@ TSEOF
 fi
 
 write_reward
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+: > "$GATES_FILE"
+
+echo ""
+echo "=== Upstream Gate: f2p_upstream_risk_tiers_import ==="
+cd /workspace/openclaw && node --import tsx -e "import { classifyToolRisk } from './src/security/risk-tiers.ts'; if (classifyToolRisk('bash') !== 'high') process.exit(1);" > /dev/null 2>&1
+G1_RC=$?
+if [ "$G1_RC" -eq 0 ]; then
+    echo '{"id": "f2p_upstream_risk_tiers_import", "passed": true, "detail": "classifyToolRisk(bash)=high"}' >> "$GATES_FILE"
+    echo "  PASSED"
+else
+    echo '{"id": "f2p_upstream_risk_tiers_import", "passed": false, "detail": "import or assertion failed, rc='"$G1_RC"'"}' >> "$GATES_FILE"
+    echo "  FAILED (rc=$G1_RC)"
+fi
+
+echo ""
+echo "=== Upstream Gate: f2p_upstream_decision_flow_import ==="
+cd /workspace/openclaw && node --import tsx -e "import { createSecurityDecisionFlow } from './src/security/decision-flow.ts'; const f = createSecurityDecisionFlow({}); if (typeof f.evaluate !== 'function') process.exit(1);" > /dev/null 2>&1
+G2_RC=$?
+if [ "$G2_RC" -eq 0 ]; then
+    echo '{"id": "f2p_upstream_decision_flow_import", "passed": true, "detail": "createSecurityDecisionFlow returns object with evaluate"}' >> "$GATES_FILE"
+    echo "  PASSED"
+else
+    echo '{"id": "f2p_upstream_decision_flow_import", "passed": false, "detail": "import or assertion failed, rc='"$G2_RC"'"}' >> "$GATES_FILE"
+    echo "  FAILED (rc=$G2_RC)"
+fi
+
+echo ""
+echo "=== Upstream Gate: p2p_upstream_external_content ==="
+cd /workspace/openclaw && node --import tsx -e "import { detectSuspiciousPatterns } from './src/security/external-content.ts'; if (typeof detectSuspiciousPatterns !== 'function') process.exit(1);" > /dev/null 2>&1
+G3_RC=$?
+if [ "$G3_RC" -eq 0 ]; then
+    echo '{"id": "p2p_upstream_external_content", "passed": true, "detail": "external-content.ts still exports detectSuspiciousPatterns"}' >> "$GATES_FILE"
+    echo "  PASSED"
+else
+    echo '{"id": "p2p_upstream_external_content", "passed": false, "detail": "import or assertion failed, rc='"$G3_RC"'"}' >> "$GATES_FILE"
+    echo "  FAILED (rc=$G3_RC)"
+fi
+
+echo ""
+echo "=== Upstream reward adjustment ==="
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----
+
 exit 0

@@ -67,7 +67,7 @@ echo "PASS: tsc clean"
 # bindExtensions, or after re-applying bindings).
 # =============================================================================
 echo ""
-echo "=== F2P Gate 1: reload() no longer gated on UI-binding presence (weight 0.50) ==="
+echo "=== F2P Gate 1: reload() no longer gated on UI-binding presence (weight 0.30) ==="
 
 GATE1_RESULT=$(node -e '
 const fs = require("fs");
@@ -104,7 +104,14 @@ const bindingFields = [
 function isBuggyGuard(condText) {
     let count = 0;
     for (const f of bindingFields) if (condText.includes(f)) count++;
-    return count >= 2;
+    if (count >= 2) return true;
+    // Also detect indirect guard via variable (e.g. const hasBindings = field1 || field2; if (hasBindings) ...)
+    if (/\bhasBindings\b/.test(condText)) {
+        let varCount = 0;
+        for (const f of bindingFields) if (reloadText.includes(f)) varCount++;
+        if (varCount >= 2) return true;
+    }
+    return false;
 }
 
 let foundUnguardedEmit = false;
@@ -141,7 +148,7 @@ console.log("UNKNOWN");
 echo "Gate1 result: $GATE1_RESULT"
 if [ "$GATE1_RESULT" = "PASS" ]; then
     echo "PASS: reload() emit is no longer guarded by UI-binding presence check"
-    add_reward 0.50
+    add_reward 0.30
     GATE1_OK=1
 else
     echo "FAIL: reload() still gated on UI-binding presence (or emit missing)"
@@ -166,7 +173,7 @@ fi
 # them happen.
 # =============================================================================
 echo ""
-echo "=== F2P Gate 2: behavioral simulation of reload() with no prior bindings (weight 0.50) ==="
+echo "=== F2P Gate 2: behavioral simulation of reload() with no prior bindings (weight 0.30) ==="
 
 if [ "$GATE1_OK" != "1" ]; then
     # Even if Gate 1 says it's still buggy-shaped, run the sim anyway as a
@@ -290,7 +297,7 @@ try {
 echo "Gate2 result: $GATE2_RESULT"
 if echo "$GATE2_RESULT" | grep -q "^PASS"; then
     echo "PASS: behavioral sim — reload() emits session_start and extends resources without prior bindings"
-    add_reward 0.50
+    add_reward 0.30
     GATE2_OK=1
 else
     echo "FAIL: behavioral sim shows reload() still skips emit/extend on no-binding state"
@@ -298,6 +305,57 @@ else
 fi
 
 echo ""
-echo "=== Final reward: $REWARD ==="
+echo "=== Final reward (pre-upstream): $REWARD ==="
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_JSON="/logs/verifier/gates.json"
+> "$GATES_JSON"
+
+# F2P upstream gate: reload_structure
+echo ""
+echo "=== Upstream F2P: reload() structure check ==="
+cd /workspace/pi-mono && node -e "const fs=require('fs');const src=fs.readFileSync('packages/coding-agent/src/core/agent-session.ts','utf8');const lines=src.split('\n');let inReload=false,braceCount=0,reloadBody='';for(const line of lines){if(/async\s+reload\s*\(\)/.test(line)){inReload=true;braceCount=0;}if(inReload){for(const ch of line){if(ch==='{')braceCount++;if(ch==='}')braceCount--;}reloadBody+=line+'\n';if(braceCount===0&&reloadBody.includes('{')){inReload=false;break;}}}if(!reloadBody)process.exit(1);if(reloadBody.includes('const hasBindings'))process.exit(1);if(!reloadBody.includes('_applyExtensionBindings'))process.exit(1);process.exit(0);"
+F2P_RELOAD_RC=$?
+if [ $F2P_RELOAD_RC -eq 0 ]; then
+    echo '{"id":"f2p_upstream_reload_structure","passed":true,"detail":"reload() has _applyExtensionBindings and no hasBindings guard"}' >> "$GATES_JSON"
+    echo "PASS: upstream reload structure check"
+else
+    echo '{"id":"f2p_upstream_reload_structure","passed":false,"detail":"reload() still has hasBindings guard or missing _applyExtensionBindings"}' >> "$GATES_JSON"
+    echo "FAIL: upstream reload structure check"
+fi
+
+# F2P upstream gate: changelog_entry
+echo ""
+echo "=== Upstream F2P: CHANGELOG entry check ==="
+cd /workspace/pi-mono && grep -q 'reload.*re-applies bindings' packages/coding-agent/CHANGELOG.md
+F2P_CHANGELOG_RC=$?
+if [ $F2P_CHANGELOG_RC -eq 0 ]; then
+    echo '{"id":"f2p_upstream_changelog_entry","passed":true,"detail":"CHANGELOG documents reload fix"}' >> "$GATES_JSON"
+    echo "PASS: upstream changelog entry"
+else
+    echo '{"id":"f2p_upstream_changelog_entry","passed":false,"detail":"CHANGELOG missing reload fix entry"}' >> "$GATES_JSON"
+    echo "FAIL: upstream changelog entry"
+fi
+
+# P2P upstream gate: tsgo typecheck
+echo ""
+echo "=== Upstream P2P: tsgo --noEmit ==="
+cd /workspace/pi-mono && npx tsgo --noEmit 2>&1 | tail -20
+P2P_TSGO_RC=$?
+if [ $P2P_TSGO_RC -eq 0 ]; then
+    echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo --noEmit clean"}' >> "$GATES_JSON"
+    echo "PASS: upstream tsgo typecheck"
+else
+    echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo --noEmit failed"}' >> "$GATES_JSON"
+    echo "FAIL: upstream tsgo typecheck"
+fi
+
+# Run upstream reward tail
+python3 /workspace/task/upstream_reward_tail.py
+
+echo ""
+echo "=== Final reward (post-upstream): $(cat /logs/verifier/reward.txt) ==="
+# ---- end ----
 exit 0

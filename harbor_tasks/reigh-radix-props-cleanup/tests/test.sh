@@ -315,10 +315,98 @@ else
 fi
 
 # ============================================================
-# Final
+# Final (existing gates)
 # ============================================================
 echo ""
 echo "============================================================"
-echo "FINAL REWARD: $REWARD"
+echo "EXISTING GATES REWARD: $REWARD"
 echo "============================================================"
 echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+
+echo ""
+echo "============================================================"
+echo "Upstream F2P Gate: useModal props field removed"
+echo "============================================================"
+if ! grep -qE 'props:\s*(Record|mobileProps)' src/shared/hooks/useModal.ts 2>/dev/null; then
+    echo "PASS: useModal no longer returns props field"
+    echo '{"id": "f2p_upstream_usemodal_props_removed", "passed": true, "detail": "useModal.ts does not contain props field"}' >> /logs/verifier/gates.json
+else
+    echo "FAIL: useModal still has props field"
+    echo '{"id": "f2p_upstream_usemodal_props_removed", "passed": false, "detail": "useModal.ts still contains props field"}' >> /logs/verifier/gates.json
+fi
+
+echo ""
+echo "============================================================"
+echo "Upstream F2P Gate: modal.props spread removed from components"
+echo "============================================================"
+if ! grep -rlqE 'modal\.props' src/shared/components/ src/tools/ --include='*.tsx' 2>/dev/null; then
+    echo "PASS: No component spreads modal.props"
+    echo '{"id": "f2p_upstream_modal_props_spread_removed", "passed": true, "detail": "No component files reference modal.props"}' >> /logs/verifier/gates.json
+else
+    echo "FAIL: Components still spread modal.props"
+    echo '{"id": "f2p_upstream_modal_props_spread_removed", "passed": false, "detail": "Some component files still reference modal.props"}' >> /logs/verifier/gates.json
+fi
+
+echo ""
+echo "============================================================"
+echo "Upstream P2P Gate: TypeScript compilation"
+echo "============================================================"
+TSC_GATE_OUT=$(timeout 240 npx --no-install tsc --noEmit 2>&1)
+TSC_GATE_EXIT=$?
+if [ $TSC_GATE_EXIT -eq 0 ]; then
+    echo "PASS: TSC compile succeeds"
+    echo '{"id": "p2p_upstream_tsc_compile", "passed": true, "detail": "tsc --noEmit passed"}' >> /logs/verifier/gates.json
+else
+    echo "FAIL: TSC compile failed"
+    echo "$TSC_GATE_OUT" | tail -10
+    echo '{"id": "p2p_upstream_tsc_compile", "passed": false, "detail": "tsc --noEmit failed"}' >> /logs/verifier/gates.json
+fi
+
+# ---- upstream reward adjustment ----
+python3 - << 'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_usemodal_props_removed": 0.20, "f2p_upstream_modal_props_spread_removed": 0.20}
+P2P_REGRESSION = ["p2p_upstream_tsc_compile"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
+PYEOF
+# ---- end ----
+
+echo ""
+echo "============================================================"
+FINAL_REWARD=$(cat /logs/verifier/reward.txt 2>/dev/null || echo "0.0000")
+echo "FINAL REWARD (with upstream gates): $FINAL_REWARD"
+echo "============================================================"

@@ -99,9 +99,9 @@ emit() {
     fi
 }
 
-# ---------- F2P #1 (0.15): isImageLine export REMOVED from terminal-image.ts ----------
+# ---------- F2P #1 (0.09): isImageLine export REMOVED from terminal-image.ts ----------
 echo ""
-echo "=== F2P 1 (0.15): isImageLine export removed ==="
+echo "=== F2P 1 (0.09): isImageLine export removed ==="
 RES1=$(node --import tsx -e "
 import('./$TI_FILE').then((m) => {
     console.log(JSON.stringify({has: typeof m.isImageLine === 'function'}));
@@ -110,29 +110,29 @@ import('./$TI_FILE').then((m) => {
 echo "  $RES1"
 P1=0
 echo "$RES1" | grep -q '"has":false' && P1=1
-emit $P1 0.15 "isImageLine no longer exported from terminal-image.ts"
+emit $P1 0.09 "isImageLine no longer exported from terminal-image.ts"
 
-# ---------- F2P #2 (0.10): tui.ts no longer imports isImageLine ----------
+# ---------- F2P #2 (0.06): tui.ts no longer imports isImageLine ----------
 echo ""
-echo "=== F2P 2 (0.10): tui.ts does not import isImageLine ==="
+echo "=== F2P 2 (0.06): tui.ts does not import isImageLine ==="
 P2=1
 grep -qE 'import\s*\{[^}]*\bisImageLine\b[^}]*\}\s*from\s*["'\''][^"'\'']*terminal-image' "$TUI_FILE" && P2=0
-emit $P2 0.10 "tui.ts does not import isImageLine"
+emit $P2 0.06 "tui.ts does not import isImageLine"
 
-# ---------- F2P #3 (0.10): markdown.ts no longer imports isImageLine ----------
+# ---------- F2P #3 (0.06): markdown.ts no longer imports isImageLine ----------
 echo ""
-echo "=== F2P 3 (0.10): markdown.ts does not import isImageLine ==="
+echo "=== F2P 3 (0.06): markdown.ts does not import isImageLine ==="
 P3=1
 grep -qE 'import\s*\{[^}]*\bisImageLine\b[^}]*\}\s*from\s*["'\''][^"'\'']*terminal-image' "$MD_FILE" && P3=0
-emit $P3 0.10 "markdown.ts does not import isImageLine"
+emit $P3 0.06 "markdown.ts does not import isImageLine"
 
-# ---------- F2P #4 (0.25): tui.ts has containsImage method that BEHAVIORALLY
+# ---------- F2P #4 (0.15): tui.ts has containsImage method that BEHAVIORALLY
 # detects both kitty and iterm2 sequences via includes(), independent of
 # any capability/getCapabilities call. Build a tiny harness that calls
 # the method on real strings.
 # ----------
 echo ""
-echo "=== F2P 4 (0.25): containsImage behavior on synthetic inputs ==="
+echo "=== F2P 4 (0.15): containsImage behavior on synthetic inputs ==="
 P4=0
 HARNESS=$(cat <<'EOF'
 import { TUI } from './packages/tui/src/tui.ts';
@@ -176,9 +176,9 @@ if echo "$RES4" | grep -q '"kitty":true' \
    && echo "$RES4" | grep -q '"fake":false'; then
     P4=1
 fi
-emit $P4 0.25 "containsImage detects single-row, multi-row, indented; rejects plain/fake"
+emit $P4 0.15 "containsImage detects single-row, multi-row, indented; rejects plain/fake"
 
-# ---------- F2P #5 (0.15): Detection is NOT capability-gated.
+# ---------- F2P #5 (0.09): Detection is NOT capability-gated.
 # The buggy isImageLine in terminal-image.ts called getImageEscapePrefix()
 # which depended on getCapabilities(). The fix puts the detection back in
 # tui.ts as a pure string check. Verify by reading the tui.ts source and
@@ -187,7 +187,7 @@ emit $P4 0.25 "containsImage detects single-row, multi-row, indented; rejects pl
 # escape sequences.
 # ----------
 echo ""
-echo "=== F2P 5 (0.15): containsImage is pure string check (not capability-gated) ==="
+echo "=== F2P 5 (0.09): containsImage is pure string check (not capability-gated) ==="
 P5=0
 PURITY=$(node -e "
 const fs = require('fs');
@@ -211,15 +211,15 @@ if echo "$PURITY" | grep -q '"found":true' \
    && echo "$PURITY" | grep -q '"hasIterm":true'; then
     P5=1
 fi
-emit $P5 0.15 "containsImage body is pure string check using includes(), no capability gating"
+emit $P5 0.09 "containsImage body is pure string check using includes(), no capability gating"
 
-# ---------- F2P #6 (0.15): Box cache reverted to explicit fields
+# ---------- F2P #6 (0.09): Box cache reverted to explicit fields
 # (cachedWidth / cachedChildLines / cachedBgSample / cachedLines) AND
 # does NOT use a single RenderCache object. This catches "didn't revert
 # the box.ts changes from #1084".
 # ----------
 echo ""
-echo "=== F2P 6 (0.15): Box cache reverted to explicit fields ==="
+echo "=== F2P 6 (0.09): Box cache reverted to explicit fields ==="
 P6=0
 BOXCHECK=$(node -e "
 const fs = require('fs');
@@ -242,24 +242,100 @@ if echo "$BOXCHECK" | grep -q '"hasCachedWidth":true' \
    && echo "$BOXCHECK" | grep -q '"hasSingleCacheField":false'; then
     P6=1
 fi
-emit $P6 0.15 "Box uses explicit cached* fields, no RenderCache type"
+emit $P6 0.09 "Box uses explicit cached* fields, no RenderCache type"
 
-# ---------- F2P #7 (0.10): markdown.ts no longer special-cases isImageLine
+# ---------- F2P #7 (0.06): markdown.ts no longer special-cases isImageLine
 # in its wrap loop. The reverted code wraps unconditionally; the buggy
 # code branched on isImageLine. ----------
 echo ""
-echo "=== F2P 7 (0.10): markdown.ts wraps lines unconditionally ==="
+echo "=== F2P 7 (0.06): markdown.ts wraps lines unconditionally ==="
 P7=1
 # If markdown.ts still has any reference to isImageLine, fail.
 grep -qE '\bisImageLine\b' "$MD_FILE" && P7=0
-emit $P7 0.10 "markdown.ts has no remaining references to isImageLine"
+emit $P7 0.06 "markdown.ts has no remaining references to isImageLine"
 
 # ============================================================
-# Final reward
+# Final reward (existing gates)
 # ============================================================
 echo ""
 echo "EARNED=$EARNED / TOTAL=$TOTAL"
 REWARD=$(awk -v e="$EARNED" -v t="$TOTAL" 'BEGIN{ if (t<=0) {print "0.0000"} else {r=e/t; if (r<0) r=0; if (r>1) r=1; printf "%.4f", r}}')
 echo "REWARD=$REWARD"
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+> "$GATES_FILE"
+
+emit_gate() {
+    local id=$1 passed=$2 detail=$3
+    echo "{\"id\": \"$id\", \"passed\": $passed, \"detail\": \"$detail\"}" >> "$GATES_FILE"
+}
+
+# F2P upstream gate 1: isImageLine export removed from terminal-image
+echo ""
+echo "=== Upstream F2P: isImageLine removed from terminal-image module ==="
+UPSTREAM_F2P1_OUT=$(cd /workspace/pi-mono && node --import tsx -e "import('./packages/tui/src/terminal-image.js').then(m => { if (typeof m.isImageLine === 'function') { console.error('FAIL: isImageLine still exported'); process.exit(1); } console.log('PASS'); })" 2>&1)
+UPSTREAM_F2P1_RC=$?
+echo "  RC=$UPSTREAM_F2P1_RC $UPSTREAM_F2P1_OUT"
+if [ "$UPSTREAM_F2P1_RC" -eq 0 ]; then
+    emit_gate "f2p_upstream_isImageLine_removed" "true" "isImageLine no longer exported"
+else
+    emit_gate "f2p_upstream_isImageLine_removed" "false" "isImageLine still exported"
+fi
+
+# F2P upstream gate 2: containsImage method exists in TUI class
+echo ""
+echo "=== Upstream F2P: containsImage exists in TUI prototype ==="
+UPSTREAM_F2P2_OUT=$(cd /workspace/pi-mono && node --import tsx -e "import('./packages/tui/src/tui.js').then(m => { const proto = m.TUI.prototype; if (typeof proto.containsImage !== 'function') { console.error('FAIL: containsImage missing from TUI'); process.exit(1); } console.log('PASS'); })" 2>&1)
+UPSTREAM_F2P2_RC=$?
+echo "  RC=$UPSTREAM_F2P2_RC $UPSTREAM_F2P2_OUT"
+if [ "$UPSTREAM_F2P2_RC" -eq 0 ]; then
+    emit_gate "f2p_upstream_containsImage_exists" "true" "containsImage found in TUI"
+else
+    emit_gate "f2p_upstream_containsImage_exists" "false" "containsImage missing from TUI"
+fi
+
+# P2P upstream gate 1: TUI package builds
+echo ""
+echo "=== Upstream P2P: TUI package build ==="
+UPSTREAM_P2P1_OUT=$(cd /workspace/pi-mono/packages/tui && npm run build 2>&1)
+UPSTREAM_P2P1_RC=$?
+echo "  RC=$UPSTREAM_P2P1_RC"
+if [ "$UPSTREAM_P2P1_RC" -eq 0 ]; then
+    emit_gate "p2p_upstream_tui_build" "true" "TUI build succeeded"
+else
+    emit_gate "p2p_upstream_tui_build" "false" "TUI build failed"
+fi
+
+# P2P upstream gate 2: terminal-image tests pass
+echo ""
+echo "=== Upstream P2P: terminal-image tests ==="
+UPSTREAM_P2P2_OUT=$(cd /workspace/pi-mono && node --test --import tsx packages/tui/test/terminal-image.test.ts 2>&1)
+UPSTREAM_P2P2_RC=$?
+echo "  RC=$UPSTREAM_P2P2_RC"
+if [ "$UPSTREAM_P2P2_RC" -eq 0 ]; then
+    emit_gate "p2p_upstream_terminal_image_tests" "true" "terminal-image tests passed"
+else
+    emit_gate "p2p_upstream_terminal_image_tests" "false" "terminal-image tests failed"
+fi
+
+# P2P upstream gate 3: markdown tests pass
+echo ""
+echo "=== Upstream P2P: markdown tests ==="
+UPSTREAM_P2P3_OUT=$(cd /workspace/pi-mono && node --test --import tsx packages/tui/test/markdown.test.ts 2>&1)
+UPSTREAM_P2P3_RC=$?
+echo "  RC=$UPSTREAM_P2P3_RC"
+if [ "$UPSTREAM_P2P3_RC" -eq 0 ]; then
+    emit_gate "p2p_upstream_markdown_tests" "true" "markdown tests passed"
+else
+    emit_gate "p2p_upstream_markdown_tests" "false" "markdown tests failed"
+fi
+
+# ---- end upstream gates ----
+
+# ---- upstream reward tail ----
+python3 /workspace/task/upstream_reward_tail.py
+# ---- end ----
 exit 0

@@ -1,0 +1,34 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Existing F2P gates from test.sh (scaled down from 0.50 to 0.30 each)
+  - id: f2p_gate1_reload_no_guard
+    kind: F2P
+    turn: 1
+    weight: 0.30
+    description: "AST check: reload() no longer gated on UI-binding presence"
+  - id: f2p_gate2_behavioral_sim
+    kind: F2P
+    turn: 1
+    weight: 0.30
+    description: "Behavioral simulation: reload() emits session_start without prior bindings"
+  # Upstream F2P gates
+  - id: f2p_upstream_reload_structure
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "Structural check: reload() has _applyExtensionBindings and no hasBindings guard"
+  - id: f2p_upstream_changelog_entry
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "CHANGELOG documents the reload extension bindings fix"
+  # Upstream P2P gates
+  - id: p2p_upstream_tsgo
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "TypeScript type-checking passes with tsgo --noEmit"

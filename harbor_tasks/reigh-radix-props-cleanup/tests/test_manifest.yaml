@@ -1,0 +1,43 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Existing F2P gates from test.sh (weighted down to redistribute)
+  # Original total was 1.0 across gates 1-7; now scale down to 0.60 total
+  # Gate 1: 0.18 -> 0.108
+  # Gate 2: 0.18 -> 0.108
+  # Gate 3: 0.14 -> 0.084
+  # Gate 4: 0.14 -> 0.084
+  # Gate 5: 0.18 -> 0.108
+  # Gate 6: 0.10 -> 0.060
+  # Gate 7: 0.08 -> 0.048
+  # Subtotal existing: 0.60
+  # New upstream F2P: 0.40
+  # Total F2P: 1.00
+
+  # --- upstream gates ---
+  - id: f2p_upstream_usemodal_props_removed
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "useModal hook no longer returns props field"
+    command: "cd /workspace/repo && ! grep -qE 'props:\\s*(Record|mobileProps)' src/shared/hooks/useModal.ts"
+    description: "Asserts useModal.ts no longer has props field in return type or value"
+
+  - id: f2p_upstream_modal_props_spread_removed
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "No component spreads modal.props"
+    command: "cd /workspace/repo && ! grep -rlqE 'modal\\.props' src/shared/components/ src/tools/ --include='*.tsx'"
+    description: "Asserts no component file spreads {...modal.props}"
+
+  - id: p2p_upstream_tsc_compile
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "TypeScript compilation passes"
+    command: "cd /workspace/repo && npx --no-install tsc --noEmit"
+    description: "TypeScript compile must pass on both base and fix"

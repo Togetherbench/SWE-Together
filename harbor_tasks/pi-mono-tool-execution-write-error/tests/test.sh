@@ -23,6 +23,77 @@ finish() {
     exit 0
 }
 
+# ---- inner-claude upstream gates (runs on EXIT via trap) ----
+run_upstream_gates() {
+    # Prelude: build tui package (needed for vitest tests)
+    (cd "$REPO_DIR" && npx tsgo -p packages/tui/tsconfig.build.json) >/dev/null 2>&1 || true
+
+    mkdir -p /logs/verifier
+
+    # Gate: f2p_upstream_write_error_test
+    local G1=false
+    if (cd "$REPO_DIR" && npx vitest --run --config packages/coding-agent/vitest.config.ts packages/coding-agent/test/write-tool-error.test.ts) >/dev/null 2>&1; then
+        G1=true
+    fi
+    echo "{\"id\": \"f2p_upstream_write_error_test\", \"passed\": $G1, \"detail\": \"vitest write-tool-error.test.ts\"}" >> /logs/verifier/gates.json
+
+    # Gate: f2p_upstream_error_test_in_component
+    local G2=false
+    if grep -q 'isError: true' "$REPO_DIR/packages/coding-agent/test/tool-execution-component.test.ts" 2>/dev/null; then
+        G2=true
+    fi
+    echo "{\"id\": \"f2p_upstream_error_test_in_component\", \"passed\": $G2, \"detail\": \"grep isError:true in tool-execution-component.test.ts\"}" >> /logs/verifier/gates.json
+
+    # Gate: p2p_upstream_component_tests
+    local G3=false
+    if (cd "$REPO_DIR" && npx vitest --run --config packages/coding-agent/vitest.config.ts packages/coding-agent/test/tool-execution-component.test.ts) >/dev/null 2>&1; then
+        G3=true
+    fi
+    echo "{\"id\": \"p2p_upstream_component_tests\", \"passed\": $G3, \"detail\": \"vitest tool-execution-component.test.ts\"}" >> /logs/verifier/gates.json
+
+    # Recalculate reward incorporating upstream gates
+    python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {"f2p_upstream_write_error_test": 0.20, "f2p_upstream_error_test_in_component": 0.20}
+P2P_REGRESSION = ["p2p_upstream_component_tests"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+if hard_zero:
+    reward = 0.0
+else:
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += w
+    reward = min(reward, 1.0)
+os.makedirs('/logs/verifier', exist_ok=True)
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write('%.4f\n' % reward)
+print('REWARD=%.4f' % reward)
+PYEOF
+    echo "Final reward (after upstream gates): $(cat /logs/verifier/reward.txt 2>/dev/null)"
+}
+trap run_upstream_gates EXIT
+# ---- end upstream gates setup ----
+
 # ---- GATE: target file must exist ----
 if [ ! -f "$TARGET_FILE" ]; then
     echo "GATE FAIL: target file missing"
@@ -187,11 +258,11 @@ add_w() {
     fi
 }
 
-add_w "$TA" 0.35
-add_w "$TB" 0.30
-add_w "$TC" 0.20
-add_w "$TD" 0.15
+add_w "$TA" 0.21
+add_w "$TB" 0.18
+add_w "$TC" 0.12
+add_w "$TD" 0.09
 
-echo "Final reward: $REWARD"
+echo "Final reward (before upstream gates): $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
 exit 0

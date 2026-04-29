@@ -1,0 +1,41 @@
+version: 1.0
+
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+
+gates:
+  # --- F2P upstream gates (sum of weights = 1.0) ---
+  - id: f2p_upstream_emitSessionBefore_method
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "emitSessionBefore method exists in runner.ts"
+    command: "cd /workspace/pi-mono && grep -q 'async emitSessionBefore' packages/coding-agent/src/core/extensions/runner.ts"
+    description: "Verifies that the new emitSessionBefore method is defined in the ExtensionRunner class"
+
+  - id: f2p_upstream_callers_use_emitSessionBefore
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "Callers use emitSessionBefore instead of emit"
+    command: "cd /workspace/pi-mono && grep -q 'emitSessionBefore' packages/coding-agent/src/core/agent-session-runtime.ts"
+    description: "Verifies that agent-session-runtime.ts calls emitSessionBefore for session-before events"
+
+  # --- P2P regression gates ---
+  - id: p2p_upstream_tsgo_build
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "tsgo compilation succeeds"
+    command: "cd /workspace/pi-mono/packages/coding-agent && npx tsgo -p tsconfig.build.json 2>&1; exit $?"
+    description: "TypeScript compilation of coding-agent package must succeed on both base and fix"
+
+  - id: p2p_upstream_vitest_runner
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "vitest extensions-runner tests pass"
+    command: "cd /workspace/pi-mono/packages/coding-agent && npx vitest --run test/extensions-runner.test.ts 2>&1; exit $?"
+    description: "Extension runner test suite (27 tests) must pass on both base and fix"

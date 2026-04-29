@@ -213,4 +213,47 @@ TOTAL=$((G1 + G2))
 REWARD=$(awk -v t=$TOTAL 'BEGIN { printf "%.4f", t/100 }')
 echo "Total: $TOTAL/100 → reward=$REWARD"
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- inner-claude upstream gates ----
+GATES_FILE="/logs/verifier/gates.json"
+mkdir -p /logs/verifier
+> "$GATES_FILE"
+
+# F2P gate: editor-component.ts uses paddingX?: number property syntax
+echo "=== Upstream F2P: interface property check ==="
+if grep -q 'paddingX?: number' packages/tui/src/editor-component.ts 2>/dev/null; then
+  echo '{"id": "f2p_upstream_interface_property", "passed": true, "detail": "paddingX?: number found in editor-component.ts"}' >> "$GATES_FILE"
+  echo "PASS"
+else
+  echo '{"id": "f2p_upstream_interface_property", "passed": false, "detail": "paddingX?: number NOT found in editor-component.ts"}' >> "$GATES_FILE"
+  echo "FAIL"
+fi
+
+# F2P gate: showSelector done() closure calls requestRender
+echo "=== Upstream F2P: requestRender in done closure ==="
+if awk '/private showSelector\(/,/const \{ component/' packages/coding-agent/src/modes/interactive/interactive-mode.ts | grep -q 'requestRender'; then
+  echo '{"id": "f2p_upstream_requestrender_done", "passed": true, "detail": "requestRender found in showSelector done closure"}' >> "$GATES_FILE"
+  echo "PASS"
+else
+  echo '{"id": "f2p_upstream_requestrender_done", "passed": false, "detail": "requestRender NOT found in showSelector done closure"}' >> "$GATES_FILE"
+  echo "FAIL"
+fi
+
+# P2P gate: TUI editor test suite
+echo "=== Upstream P2P: editor test suite ==="
+EDITOR_TEST_OUT=$(cd "$REPO" && node --test --import tsx packages/tui/test/editor.test.ts 2>&1)
+EDITOR_TEST_RC=$?
+if [ $EDITOR_TEST_RC -eq 0 ]; then
+  echo '{"id": "p2p_upstream_editor_tests", "passed": true, "detail": "editor test suite passed"}' >> "$GATES_FILE"
+  echo "PASS"
+else
+  echo '{"id": "p2p_upstream_editor_tests", "passed": false, "detail": "editor test suite failed with RC='"$EDITOR_TEST_RC"'"}' >> "$GATES_FILE"
+  echo "FAIL: $EDITOR_TEST_OUT" | tail -20
+fi
+
+# ---- end ----
+
+# Upstream reward adjustment
+python3 /workspace/task/upstream_reward_tail.py
+
 exit 0

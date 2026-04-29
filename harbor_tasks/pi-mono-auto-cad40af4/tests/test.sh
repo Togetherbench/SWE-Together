@@ -251,59 +251,59 @@ process.exit(r['$1'] && r['$1'].ok ? 0 : 1);
 # behaviors. Any patch that breaks them loses weight.
 # ---------------------------------------------------------------
 
-# Weight allocation (sum = 1.00):
-#   0.20  Discriminating bug case A: slash on line 0, content directly below
-#   0.20  Discriminating bug case B: slash on line 0, content several lines below
-#   0.10  Empty editor still triggers (regression guard for over-restriction)
-#   0.10  '/' first line + only blank lines below still triggers
-#   0.10  Mid-content '/' does NOT trigger (no over-trigger)
-#   0.10  '/' on later line with empty prior should not trigger when prior has text
-#   0.10  Changelog entry under [Unreleased] ### Fixed referencing #904
-#   0.10  isSlashMenuAllowed body actually changed beyond cursorLine===0
+# Weight allocation (sum = 0.60, remaining 0.40 from upstream gates):
+#   0.12  Discriminating bug case A: slash on line 0, content directly below
+#   0.12  Discriminating bug case B: slash on line 0, content several lines below
+#   0.06  Empty editor still triggers (regression guard for over-restriction)
+#   0.06  '/' first line + only blank lines below still triggers
+#   0.06  Mid-content '/' does NOT trigger (no over-trigger)
+#   0.06  '/' on later line with empty prior should not trigger when prior has text
+#   0.06  Changelog entry under [Unreleased] ### Fixed referencing #904
+#   0.06  isSlashMenuAllowed body actually changed beyond cursorLine===0
 
-# F2P 1 (0.20): primary bug — content on line below
+# F2P 1 (0.12): primary bug — content on line below
 if case_ok "slash_first_line_content_below"; then
-    add_reward 0.20 "behavioral: slash on line 0 with content below does not trigger"
+    add_reward 0.12 "behavioral: slash on line 0 with content below does not trigger"
 else
-    fail_reward 0.20 "behavioral: slash on line 0 with content below does not trigger"
+    fail_reward 0.12 "behavioral: slash on line 0 with content below does not trigger"
 fi
 
-# F2P 2 (0.20): bug — content several lines below
+# F2P 2 (0.12): bug — content several lines below
 if case_ok "slash_first_line_blank_continuation"; then
-    add_reward 0.20 "behavioral: slash on line 0 with later non-empty line does not trigger"
+    add_reward 0.12 "behavioral: slash on line 0 with later non-empty line does not trigger"
 else
-    fail_reward 0.20 "behavioral: slash on line 0 with later non-empty line does not trigger"
+    fail_reward 0.12 "behavioral: slash on line 0 with later non-empty line does not trigger"
 fi
 
-# F2P 3 (0.10): regression — empty editor still triggers
+# F2P 3 (0.06): regression — empty editor still triggers
 if case_ok "empty_then_slash"; then
-    add_reward 0.10 "regression: '/' on empty editor still triggers menu"
+    add_reward 0.06 "regression: '/' on empty editor still triggers menu"
 else
-    fail_reward 0.10 "regression: '/' on empty editor still triggers menu"
+    fail_reward 0.06 "regression: '/' on empty editor still triggers menu"
 fi
 
-# F2P 4 (0.10): regression — only blank lines below still triggers
+# F2P 4 (0.06): regression — only blank lines below still triggers
 if case_ok "slash_first_other_blank"; then
-    add_reward 0.10 "regression: '/' with only-blank lines below still triggers"
+    add_reward 0.06 "regression: '/' with only-blank lines below still triggers"
 else
-    fail_reward 0.10 "regression: '/' with only-blank lines below still triggers"
+    fail_reward 0.06 "regression: '/' with only-blank lines below still triggers"
 fi
 
-# F2P 5 (0.10): regression — mid-content slash doesn't trigger
+# F2P 5 (0.06): regression — mid-content slash doesn't trigger
 if case_ok "slash_mid_content"; then
-    add_reward 0.10 "regression: mid-line '/' does not trigger menu"
+    add_reward 0.06 "regression: mid-line '/' does not trigger menu"
 else
-    fail_reward 0.10 "regression: mid-line '/' does not trigger menu"
+    fail_reward 0.06 "regression: mid-line '/' does not trigger menu"
 fi
 
-# F2P 6 (0.10): regression — '/' on later line w/ prior text doesn't trigger
+# F2P 6 (0.06): regression — '/' on later line w/ prior text doesn't trigger
 if case_ok "slash_on_newline_with_prior" && case_ok "slash_third_line_prior_text"; then
-    add_reward 0.10 "regression: '/' on later line with prior text does not trigger"
+    add_reward 0.06 "regression: '/' on later line with prior text does not trigger"
 else
-    fail_reward 0.10 "regression: '/' on later line with prior text does not trigger"
+    fail_reward 0.06 "regression: '/' on later line with prior text does not trigger"
 fi
 
-# F2P 7 (0.10): changelog entry properly added
+# F2P 7 (0.06): changelog entry properly added
 CHLOG_OK=0
 if [ -f "$CHANGELOG_FILE" ]; then
     # Need: under [Unreleased] there's a ### Fixed section referencing #904
@@ -320,12 +320,12 @@ process.exit(0);
     if [ $? -eq 0 ]; then CHLOG_OK=1; fi
 fi
 if [ "$CHLOG_OK" = "1" ]; then
-    add_reward 0.10 "changelog: [Unreleased] ### Fixed entry referencing #904"
+    add_reward 0.06 "changelog: [Unreleased] ### Fixed entry referencing #904"
 else
-    fail_reward 0.10 "changelog: [Unreleased] ### Fixed entry referencing #904"
+    fail_reward 0.06 "changelog: [Unreleased] ### Fixed entry referencing #904"
 fi
 
-# F2P 8 (0.10): isSlashMenuAllowed (or one of the gating fns) changed
+# F2P 8 (0.06): isSlashMenuAllowed (or one of the gating fns) changed
 # beyond the trivial buggy body. Detect that the editor source no longer
 # contains ONLY `return this.state.cursorLine === 0;` as the body of
 # isSlashMenuAllowed AND that at least one of the gating methods now
@@ -351,12 +351,67 @@ process.exit(0);
 ' "$EDITOR_FILE"
 if [ $? -eq 0 ]; then GATING_OK=1; fi
 if [ "$GATING_OK" = "1" ]; then
-    add_reward 0.10 "structure: gating logic checks editor emptiness (not just cursorLine)"
+    add_reward 0.06 "structure: gating logic checks editor emptiness (not just cursorLine)"
 else
-    fail_reward 0.10 "structure: gating logic checks editor emptiness (not just cursorLine)"
+    fail_reward 0.06 "structure: gating logic checks editor emptiness (not just cursorLine)"
 fi
 
-echo "=== FINAL REWARD ==="
-awk -v r="$REWARD" 'BEGIN { printf "%.2f\n", r }' > "$REWARD_FILE"
+echo "=== FINAL REWARD (pre-upstream) ==="
+awk -v r="$REWARD" 'BEGIN { printf "%.4f\n", r }' > "$REWARD_FILE"
 cat "$REWARD_FILE"
-echo "$REWARD" > /logs/verifier/reward.txt
+
+# ---- inner-claude upstream gates ----
+mkdir -p /logs/verifier
+GATES_FILE="/logs/verifier/gates.json"
+: > "$GATES_FILE"
+
+# F2P upstream gate 1: CHANGELOG [Unreleased] has ### Fixed entry for #904
+echo "--- upstream gate: f2p_upstream_changelog_904 ---"
+cd /workspace/pi-mono
+node -e "const fs=require('fs'); const s=fs.readFileSync('packages/tui/CHANGELOG.md','utf8'); const m=s.match(/## \\[Unreleased\\]([\\s\\S]*?)(?=\\n## )/); if(!m) process.exit(1); if(!/### Fixed/.test(m[1])) process.exit(1); if(!/#904/.test(m[1])) process.exit(1);" 2>&1
+if [ $? -eq 0 ]; then
+    echo '{"id": "f2p_upstream_changelog_904", "passed": true, "detail": "CHANGELOG [Unreleased] has ### Fixed with #904"}' >> "$GATES_FILE"
+    echo "PASS: f2p_upstream_changelog_904"
+else
+    echo '{"id": "f2p_upstream_changelog_904", "passed": false, "detail": "CHANGELOG [Unreleased] missing ### Fixed entry for #904"}' >> "$GATES_FILE"
+    echo "FAIL: f2p_upstream_changelog_904"
+fi
+
+# F2P upstream gate 2: isAtStartOfMessage checks editor emptiness
+echo "--- upstream gate: f2p_upstream_structural_emptiness ---"
+node -e "const fs=require('fs'); const s=fs.readFileSync('packages/tui/src/components/editor.ts','utf8'); const m=s.match(/private isAtStartOfMessage\\(\\)[^{]*\\{[\\s\\S]*?\\n\\t\\}/); if(!m) process.exit(2); if(!(/lines\\.slice|otherLinesEmpty|\\.every\\(|lines\\.some|\\.getText\\(\\)\\.trim/.test(m[0]))) process.exit(1);" 2>&1
+if [ $? -eq 0 ]; then
+    echo '{"id": "f2p_upstream_structural_emptiness", "passed": true, "detail": "isAtStartOfMessage has editor emptiness check"}' >> "$GATES_FILE"
+    echo "PASS: f2p_upstream_structural_emptiness"
+else
+    echo '{"id": "f2p_upstream_structural_emptiness", "passed": false, "detail": "isAtStartOfMessage missing editor emptiness check"}' >> "$GATES_FILE"
+    echo "FAIL: f2p_upstream_structural_emptiness"
+fi
+
+# P2P upstream gate 1: tsgo compilation
+echo "--- upstream gate: p2p_upstream_tsgo_tui ---"
+npx tsgo -p packages/tui/tsconfig.build.json --noEmit > /tmp/verifier/tsgo_upstream.log 2>&1
+if [ $? -eq 0 ]; then
+    echo '{"id": "p2p_upstream_tsgo_tui", "passed": true, "detail": "tsgo compilation succeeded"}' >> "$GATES_FILE"
+    echo "PASS: p2p_upstream_tsgo_tui"
+else
+    echo '{"id": "p2p_upstream_tsgo_tui", "passed": false, "detail": "tsgo compilation failed"}' >> "$GATES_FILE"
+    echo "FAIL: p2p_upstream_tsgo_tui"
+fi
+
+# P2P upstream gate 2: editor tests
+echo "--- upstream gate: p2p_upstream_editor_tests ---"
+node --test --import tsx packages/tui/test/editor.test.ts > /tmp/verifier/editor_tests.log 2>&1
+if [ $? -eq 0 ]; then
+    echo '{"id": "p2p_upstream_editor_tests", "passed": true, "detail": "editor tests passed"}' >> "$GATES_FILE"
+    echo "PASS: p2p_upstream_editor_tests"
+else
+    echo '{"id": "p2p_upstream_editor_tests", "passed": false, "detail": "editor tests failed"}' >> "$GATES_FILE"
+    echo "FAIL: p2p_upstream_editor_tests"
+fi
+# ---- end ----
+
+# ---- upstream reward adjustment ----
+python3 /workspace/task/upstream_reward_tail.py
+echo "=== FINAL REWARD (post-upstream) ==="
+cat /logs/verifier/reward.txt
