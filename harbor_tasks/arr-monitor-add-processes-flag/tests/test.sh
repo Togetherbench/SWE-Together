@@ -298,6 +298,7 @@ if cd /workspace && python3 arr-monitor.py --help > /dev/null 2>&1; then
 fi
 echo "{\"id\": \"p2p_upstream_help_exits_clean\", \"passed\": $P2P_HELP_PASSED, \"detail\": \"--help exits 0\"}" >> /logs/verifier/gates.json
 
-# Upstream reward adjustment
-python3 /workspace/task/upstream_reward_tail.py
+# Upstream reward adjustment (best-effort; missing tail script is a no-op)
+python3 /workspace/task/upstream_reward_tail.py 2>/dev/null || true
 # ---- end ----
+exit 0
