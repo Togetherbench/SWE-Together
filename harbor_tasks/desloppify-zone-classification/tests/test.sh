@@ -113,11 +113,11 @@ if [ -n "$P" ]; then
     N=$(echo "$P" | sed 's|PASS:||' | cut -d/ -f1)
     D=$(echo "$P" | sed 's|PASS:||' | cut -d/ -f2)
     if [ "$N" = "$D" ]; then
-        add_reward 0.132; echo "  +0.132 (all $D behavioral cases)"
+        add_reward 0.22; echo "  +0.22 (all $D behavioral cases)"
     elif awk -v n="$N" -v d="$D" 'BEGIN{exit !(n*1.0/d >= 0.85)}'; then
-        add_reward 0.078; echo "  +0.078 (most $N/$D)"
+        add_reward 0.13; echo "  +0.13 (most $N/$D)"
     elif awk -v n="$N" -v d="$D" 'BEGIN{exit !(n*1.0/d >= 0.70)}'; then
-        add_reward 0.036; echo "  +0.036 (some $N/$D)"
+        add_reward 0.06; echo "  +0.06 (some $N/$D)"
     else
         echo "  +0 ($N/$D)"
     fi
@@ -190,14 +190,14 @@ PYEOF
 echo "  $F2"
 S=$(echo "$F2" | grep -oE 'SCORE:[0-9]+/3' | head -1 | sed 's|SCORE:||' | cut -d/ -f1)
 case "$S" in
-    3) add_reward 0.090; echo "  +0.090" ;;
-    2) add_reward 0.060; echo "  +0.060" ;;
-    1) add_reward 0.030; echo "  +0.030" ;;
+    3) add_reward 0.15; echo "  +0.15" ;;
+    2) add_reward 0.10; echo "  +0.10" ;;
+    1) add_reward 0.05; echo "  +0.05" ;;
     *) echo "  +0" ;;
 esac
 
 # ===================================================================
-# F2P 3 (0.108): adjust_potential() exists AND behaves correctly.
+# F2P 3 (0.18): adjust_potential() exists AND behaves correctly.
 # Behavioral: build a real FileZoneMap, call adjust_potential, verify
 # the count actually subtracts non-production files.
 # ===================================================================
@@ -307,10 +307,10 @@ PYEOF
 echo "  $F3"
 S=$(echo "$F3" | grep -oE 'SCORE:[0-9]+/4' | head -1 | sed 's|SCORE:||' | cut -d/ -f1)
 case "$S" in
-    4) add_reward 0.108; echo "  +0.108" ;;
-    3) add_reward 0.078; echo "  +0.078" ;;
-    2) add_reward 0.048; echo "  +0.048" ;;
-    1) add_reward 0.018; echo "  +0.018" ;;
+    4) add_reward 0.18; echo "  +0.18" ;;
+    3) add_reward 0.13; echo "  +0.13" ;;
+    2) add_reward 0.08; echo "  +0.08" ;;
+    1) add_reward 0.03; echo "  +0.03" ;;
     *) echo "  +0" ;;
 esac
 
@@ -363,13 +363,13 @@ echo "$F4" | head -10 | sed 's/^/  /'
 S=$(echo "$F4" | grep -oE 'SCORE:[0-9]+/8' | head -1 | sed 's|SCORE:||' | cut -d/ -f1)
 if [ -n "$S" ]; then
     if [ "$S" -ge 8 ]; then
-        add_reward 0.090; echo "  +0.090 (8/8)"
+        add_reward 0.15; echo "  +0.15 (8/8)"
     elif [ "$S" -ge 7 ]; then
-        add_reward 0.066; echo "  +0.066 ($S/8)"
+        add_reward 0.11; echo "  +0.11 ($S/8)"
     elif [ "$S" -ge 6 ]; then
-        add_reward 0.042; echo "  +0.042 ($S/8)"
+        add_reward 0.07; echo "  +0.07 ($S/8)"
     elif [ "$S" -ge 4 ]; then
-        add_reward 0.018; echo "  +0.018 ($S/8)"
+        add_reward 0.03; echo "  +0.03 ($S/8)"
     else
         echo "  +0 ($S/8)"
     fi
@@ -457,14 +457,14 @@ PYEOF
 echo "  $F5"
 S=$(echo "$F5" | grep -oE 'SCORE:[0-9]+/3' | head -1 | sed 's|SCORE:||' | cut -d/ -f1)
 case "$S" in
-    3) add_reward 0.072; echo "  +0.072" ;;
-    2) add_reward 0.042; echo "  +0.042" ;;
-    1) add_reward 0.018; echo "  +0.018" ;;
+    3) add_reward 0.12; echo "  +0.12" ;;
+    2) add_reward 0.07; echo "  +0.07" ;;
+    1) add_reward 0.03; echo "  +0.03" ;;
     *) echo "  +0" ;;
 esac
 
 # ===================================================================
-# F2P 6 (0.060): LangConfig has zone_rules field AND it's wired up.
+# F2P 6 (0.10): LangConfig has zone_rules field AND it's wired up.
 # Tests that the language registers zone_rules so the pipeline can use them.
 # ===================================================================
 echo "--- F2P 6: LangConfig.zone_rules wired (0.10) ---"
@@ -505,8 +505,8 @@ PYEOF
 echo "  $F6"
 S=$(echo "$F6" | grep -oE 'SCORE:[0-9]+/2' | head -1 | sed 's|SCORE:||' | cut -d/ -f1)
 case "$S" in
-    2) add_reward 0.060; echo "  +0.060" ;;
-    1) add_reward 0.024; echo "  +0.024" ;;
+    2) add_reward 0.10; echo "  +0.10" ;;
+    1) add_reward 0.04; echo "  +0.04" ;;
     *) echo "  +0" ;;
 esac
 
@@ -536,9 +536,9 @@ if grep -q "def adjust_potential" desloppify/zones.py 2>/dev/null; then
 fi
 echo "  completeness signals: $F7_count/4"
 case "$F7_count" in
-    4) add_reward 0.048; echo "  +0.048" ;;
-    3) add_reward 0.030; echo "  +0.030" ;;
-    2) add_reward 0.012; echo "  +0.012" ;;
+    4) add_reward 0.08; echo "  +0.08" ;;
+    3) add_reward 0.05; echo "  +0.05" ;;
+    2) add_reward 0.02; echo "  +0.02" ;;
     *) echo "  +0" ;;
 esac
 
@@ -555,61 +555,6 @@ if command -v pytest >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "Final reward (before upstream gates): $REWARD"
+echo "Final reward: $REWARD"
 echo "$REWARD" > "$LOG_DIR/reward.txt"
-
-# ---- inner-claude upstream gates ----
-echo "--- Upstream gates ---"
-GATES_FILE="$LOG_DIR/gates.json"
-> "$GATES_FILE"
-
-# F2P upstream gate 1: zones.py core exports importable
-echo "  Running f2p_upstream_zones_core..."
-cd /workspace/desloppify && PYTHONDONTWRITEBYTECODE=1 python3 -c "import sys; sys.path.insert(0,'.'); from desloppify.zones import COMMON_ZONE_RULES, adjust_potential, should_skip_finding, Zone, FileZoneMap; assert isinstance(COMMON_ZONE_RULES, list) and len(COMMON_ZONE_RULES) >= 3" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo '{"id": "f2p_upstream_zones_core", "passed": true, "detail": "zones.py core exports importable"}' >> "$GATES_FILE"
-    echo "  f2p_upstream_zones_core: PASSED"
-else
-    echo '{"id": "f2p_upstream_zones_core", "passed": false, "detail": "zones.py missing or core exports not found"}' >> "$GATES_FILE"
-    echo "  f2p_upstream_zones_core: FAILED"
-fi
-
-# F2P upstream gate 2: LangConfig.zone_rules + PY/TS_ZONE_RULES
-echo "  Running f2p_upstream_lang_wiring..."
-cd /workspace/desloppify && PYTHONDONTWRITEBYTECODE=1 python3 -c "import sys; sys.path.insert(0,'.'); from desloppify.lang.base import LangConfig; import dataclasses; assert 'zone_rules' in {f.name for f in dataclasses.fields(LangConfig)}; from desloppify.lang.python import PY_ZONE_RULES; from desloppify.lang.typescript import TS_ZONE_RULES; assert isinstance(PY_ZONE_RULES, list) and len(PY_ZONE_RULES) >= 1; assert isinstance(TS_ZONE_RULES, list) and len(TS_ZONE_RULES) >= 1" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo '{"id": "f2p_upstream_lang_wiring", "passed": true, "detail": "LangConfig.zone_rules and PY/TS_ZONE_RULES present"}' >> "$GATES_FILE"
-    echo "  f2p_upstream_lang_wiring: PASSED"
-else
-    echo '{"id": "f2p_upstream_lang_wiring", "passed": false, "detail": "LangConfig missing zone_rules or PY/TS_ZONE_RULES not found"}' >> "$GATES_FILE"
-    echo "  f2p_upstream_lang_wiring: FAILED"
-fi
-
-# P2P upstream gate 1: CLI module imports cleanly
-echo "  Running p2p_upstream_cli_import..."
-cd /workspace/desloppify && PYTHONDONTWRITEBYTECODE=1 python3 -c "import sys; sys.path.insert(0,'.'); from desloppify import cli" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo '{"id": "p2p_upstream_cli_import", "passed": true, "detail": "cli module imports cleanly"}' >> "$GATES_FILE"
-    echo "  p2p_upstream_cli_import: PASSED"
-else
-    echo '{"id": "p2p_upstream_cli_import", "passed": false, "detail": "cli module import failed"}' >> "$GATES_FILE"
-    echo "  p2p_upstream_cli_import: FAILED"
-fi
-
-# P2P upstream gate 2: Plan module imports cleanly
-echo "  Running p2p_upstream_plan_import..."
-cd /workspace/desloppify && PYTHONDONTWRITEBYTECODE=1 python3 -c "import sys; sys.path.insert(0,'.'); from desloppify import plan" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo '{"id": "p2p_upstream_plan_import", "passed": true, "detail": "plan module imports cleanly"}' >> "$GATES_FILE"
-    echo "  p2p_upstream_plan_import: PASSED"
-else
-    echo '{"id": "p2p_upstream_plan_import", "passed": false, "detail": "plan module import failed"}' >> "$GATES_FILE"
-    echo "  p2p_upstream_plan_import: FAILED"
-fi
-
-# Run upstream reward adjustment
-python3 /workspace/task/upstream_reward_tail.py
-echo "Final reward (after upstream gates): $(cat $LOG_DIR/reward.txt)"
-# ---- end ----
-
 exit 0

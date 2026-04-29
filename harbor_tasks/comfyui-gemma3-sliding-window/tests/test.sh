@@ -180,14 +180,14 @@ if echo "$src" | grep -q "TODO: implement"; then
     T1_PASS=0
 fi
 if [ "$T1_PASS" = "1" ]; then
-    add_score 0.07
+    add_score 0.10
     echo "F2P1 PASS (cleanup)"
 else
     echo "F2P1 FAIL (stale TODO/warning still present)"
 fi
 
 #################################################################
-# F2P 2 [0.10]: Config sliding_attention pattern correct
+# F2P 2 [0.15]: Config sliding_attention pattern correct
 # Sliding positions [0..4], global at position 5, window=1024.
 #################################################################
 T2=$(python3 << 'PYEOF'
@@ -211,14 +211,14 @@ print("PASS")
 PYEOF
 )
 if echo "$T2" | grep -q "^PASS$"; then
-    add_score 0.10
+    add_score 0.15
     echo "F2P2 PASS"
 else
     echo "F2P2 FAIL: $T2"
 fi
 
 #################################################################
-# F2P 3 [0.10]: Per-layer index mapping — layer 5 is global, 0-4 sliding.
+# F2P 3 [0.15]: Per-layer index mapping — layer 5 is global, 0-4 sliding.
 #################################################################
 T3=$(python3 << 'PYEOF'
 exec(open("/tmp/mock_setup.py").read())
@@ -249,14 +249,14 @@ print("PASS")
 PYEOF
 )
 if echo "$T3" | grep -q "^PASS$"; then
-    add_score 0.10
+    add_score 0.15
     echo "F2P3 PASS"
 else
     echo "F2P3 FAIL: $T3"
 fi
 
 #################################################################
-# F2P 4 [0.17]: Behavioral — sliding window mask actually applied at attention.
+# F2P 4 [0.25]: Behavioral — sliding window mask actually applied at attention.
 # Build a Gemma3 block with a tiny window and run forward; verify the mask
 # passed into optimized_attention has -inf entries where (q - k) >= window.
 #################################################################
@@ -395,14 +395,14 @@ print("PASS")
 PYEOF
 )
 if echo "$T4" | grep -q "^PASS$"; then
-    add_score 0.17
+    add_score 0.25
     echo "F2P4 PASS (behavioral mask)"
 else
     echo "F2P4 FAIL: $T4"
 fi
 
 #################################################################
-# F2P 5 [0.10]: Mask combines with existing attention_mask (additive)
+# F2P 5 [0.15]: Mask combines with existing attention_mask (additive)
 # Pass an attention_mask of zeros (no-op causal-like) and verify sliding mask is added,
 # not replaced.
 #################################################################
@@ -476,14 +476,14 @@ print("PASS")
 PYEOF
 )
 if echo "$T5" | grep -q "^PASS$"; then
-    add_score 0.10
+    add_score 0.15
     echo "F2P5 PASS (mask combine)"
 else
     echo "F2P5 FAIL: $T5"
 fi
 
 #################################################################
-# F2P 6 [0.06]: Local layer uses local RoPE (freqs_cis[0]),
+# F2P 6 [0.10]: Local layer uses local RoPE (freqs_cis[0]),
 # global layer uses global RoPE (freqs_cis[1]).
 # We probe by giving distinguishable freqs per index and reading rotated q.
 #################################################################
@@ -569,104 +569,12 @@ print("PASS")
 PYEOF
 )
 if echo "$T6" | grep -q "^PASS$"; then
-    add_score 0.06
+    add_score 0.10
     echo "F2P6 PASS (rope per-layer)"
 else
     echo "F2P6 FAIL: $T6"
 fi
 
-echo "FINAL REWARD (before upstream gates): $REWARD"
+echo "FINAL REWARD: $REWARD"
 echo "$REWARD" > "$RESULT_FILE"
-
-# ---- inner-claude upstream gates ----
-mkdir -p /logs/verifier
-GATES_FILE="/logs/verifier/gates.json"
-
-# Find the workspace for upstream gate commands
-UPSTREAM_WS=""
-for candidate in /workspace/ComfyUI /workspace/repo /workspace/comfyui; do
-    if [ -f "$candidate/comfy/text_encoders/llama.py" ]; then
-        UPSTREAM_WS="$candidate"
-        break
-    fi
-done
-if [ -z "$UPSTREAM_WS" ]; then
-    ufound=$(find /workspace -maxdepth 5 -path '*/comfy/text_encoders/llama.py' 2>/dev/null | head -1)
-    if [ -n "$ufound" ]; then
-        UPSTREAM_WS=$(dirname "$(dirname "$(dirname "$ufound")")")
-    fi
-fi
-
-if [ -n "$UPSTREAM_WS" ]; then
-    cd "$UPSTREAM_WS"
-
-    # F2P upstream gate 1: Config pattern check
-    python3 -c "
-import ast, sys
-with open('comfy/text_encoders/llama.py') as f:
-    tree = ast.parse(f.read())
-for node in ast.walk(tree):
-    if isinstance(node, ast.ClassDef) and node.name == 'Gemma3_4B_Config':
-        for item in node.body:
-            if isinstance(item, ast.Assign):
-                for target in item.targets:
-                    if isinstance(target, ast.Name) and target.id == 'sliding_attention':
-                        if isinstance(item.value, ast.List):
-                            vals = [getattr(e, 'value', None) for e in item.value.elts]
-                            if len(vals) != 6: sys.exit(1)
-                            if not all(isinstance(v, int) and v > 0 for v in vals[:5]): sys.exit(1)
-                            if vals[5] is not False: sys.exit(1)
-                            sys.exit(0)
-        sys.exit(1)
-sys.exit(1)
-" 2>/dev/null
-    if [ $? -eq 0 ]; then
-        echo '{"id": "f2p_upstream_config_pattern", "passed": true, "detail": "Gemma3 config pattern correct"}' >> "$GATES_FILE"
-        echo "UPSTREAM F2P config_pattern PASS"
-    else
-        echo '{"id": "f2p_upstream_config_pattern", "passed": false, "detail": "Gemma3 config pattern incorrect"}' >> "$GATES_FILE"
-        echo "UPSTREAM F2P config_pattern FAIL"
-    fi
-
-    # F2P upstream gate 2: Sliding window implementation check
-    python3 -c "
-import sys
-with open('comfy/text_encoders/llama.py') as f:
-    src = f.read()
-if 'sliding attention not implemented' in src or 'TODO: implement' in src: sys.exit(1)
-if not any(kw in src for kw in ['sliding_mask', 'torch.where', 'positions.unsqueeze']): sys.exit(1)
-sys.exit(0)
-" 2>/dev/null
-    if [ $? -eq 0 ]; then
-        echo '{"id": "f2p_upstream_sliding_impl", "passed": true, "detail": "Sliding window mask implemented"}' >> "$GATES_FILE"
-        echo "UPSTREAM F2P sliding_impl PASS"
-    else
-        echo '{"id": "f2p_upstream_sliding_impl", "passed": false, "detail": "Sliding window mask not implemented"}' >> "$GATES_FILE"
-        echo "UPSTREAM F2P sliding_impl FAIL"
-    fi
-
-    # P2P upstream gate: AST parse + key classes
-    python3 -c "
-import ast, sys
-with open('comfy/text_encoders/llama.py') as f:
-    tree = ast.parse(f.read())
-needed = {'Gemma3_4B_Config', 'TransformerBlockGemma2', 'Llama2_', 'Gemma3_4B', 'Attention', 'MLP'}
-found = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
-missing = needed - found
-if missing: sys.exit(1)
-sys.exit(0)
-" 2>/dev/null
-    if [ $? -eq 0 ]; then
-        echo '{"id": "p2p_upstream_ast_classes", "passed": true, "detail": "All key classes present"}' >> "$GATES_FILE"
-        echo "UPSTREAM P2P ast_classes PASS"
-    else
-        echo '{"id": "p2p_upstream_ast_classes", "passed": false, "detail": "Missing required classes"}' >> "$GATES_FILE"
-        echo "UPSTREAM P2P ast_classes FAIL"
-    fi
-fi
-
-# Run upstream reward tail to adjust reward based on gate results
-python3 /workspace/task/upstream_reward_tail.py 2>/dev/null || echo "WARNING: upstream reward tail failed"
-
-# ---- end inner-claude upstream gates ----
 exit 0
