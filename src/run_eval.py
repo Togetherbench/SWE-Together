@@ -155,6 +155,11 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
             "LITELLM_PROXY_MODEL": or_model,
             "LITELLM_PROXY_PORT": "4210",
             "OPENROUTER_API_KEY": or_key,
+            # Proxy's _build_request uses FALLBACK_KEY for OR Bearer auth on
+            # the is_or=True branch — that branch fires for OR-as-primary too,
+            # not just OR-as-fallback. Without this, OR-primary requests ship
+            # `Authorization: Bearer ` (empty) and get 401'd.
+            "PROXY_FALLBACK_KEY": or_key,
         })
         return env
 

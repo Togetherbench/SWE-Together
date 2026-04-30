@@ -125,6 +125,10 @@ FALLBACK_KEY = "{fallback_key}"
 FALLBACK_MODEL = "{fallback_model}"
 MAX_RETRIES = 2
 RETRY_DELAY = 5  # seconds
+# Cap upstream wait so a stuck OR upstream can't wedge the whole proxy.
+# Anthropic Messages API calls in Harbor evals normally finish in <2 min;
+# 10 min covers worst-case slow-provider draws on OR (DeepInfra/SiliconFlow).
+UPSTREAM_TIMEOUT = 600
 
 class Proxy(http.server.BaseHTTPRequestHandler):
     def _build_request(self, url, body, is_or):
@@ -168,7 +172,7 @@ class Proxy(http.server.BaseHTTPRequestHandler):
         for attempt in range(MAX_RETRIES + 1):
             req = self._build_request(url, body_primary, IS_OPENROUTER)
             try:
-                with urllib.request.urlopen(req, context=ctx) as resp:
+                with urllib.request.urlopen(req, context=ctx, timeout=UPSTREAM_TIMEOUT) as resp:
                     resp_body = resp.read()
                     self.send_response(resp.status)
                     for k, v in resp.getheaders():
@@ -216,7 +220,7 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             fb_url = FALLBACK_URL + self.path
             req = self._build_request(fb_url, body_fb, True)
             try:
-                with urllib.request.urlopen(req, context=ctx) as resp:
+                with urllib.request.urlopen(req, context=ctx, timeout=UPSTREAM_TIMEOUT) as resp:
                     resp_body = resp.read()
                     self.send_response(resp.status)
                     for k, v in resp.getheaders():
@@ -254,7 +258,10 @@ class Proxy(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # suppress logs
 
-server = http.server.HTTPServer(("0.0.0.0", PORT), Proxy)
+server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Proxy)
+# Don't keep daemon threads waiting at shutdown — let in-flight requests die
+# cleanly instead of pinning the process if a CC call gets cancelled.
+server.daemon_threads = True
 print(f"Proxy listening on port {{PORT}}")
 server.serve_forever()
 '''
