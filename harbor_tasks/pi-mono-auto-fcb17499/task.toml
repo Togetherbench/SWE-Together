@@ -16,7 +16,7 @@ session_resolution_reasoning = "Final user message 'ok, docs are in order?' foll
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-fcb17499:32515e845cb3"

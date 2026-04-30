@@ -16,7 +16,7 @@ junior_time_estimate_min = 60.0
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-1b58dd4f:6545774b1baf"

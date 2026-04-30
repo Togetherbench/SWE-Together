@@ -16,7 +16,7 @@ session_resolution_reasoning = "User asked 'good to commit and push and close th
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-a4fca584:53f845603e42"

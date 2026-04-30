@@ -16,7 +16,7 @@ session_resolution_reasoning = "Final user request 'make a .md doc' was fulfille
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/reigh-taskspane-lightbox-bug:5f437ba954e9"

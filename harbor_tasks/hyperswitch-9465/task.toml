@@ -13,7 +13,7 @@ session_resolution_reasoning = "Agent declared all DB schema changes complete in
 timeout_sec = 600.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/hyperswitch-9465:e0a65d3f4aaf"

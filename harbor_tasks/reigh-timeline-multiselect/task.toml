@@ -16,7 +16,7 @@ session_resolution_reasoning = "Session ran out of context 3 times (turns 4, 12,
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/reigh-timeline-multiselect:ddb8c3292767"

@@ -16,7 +16,7 @@ session_resolution_reasoning = "User said 'ok commit and push', assistant confir
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 2400.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-ec7037ba:b078986589d6"

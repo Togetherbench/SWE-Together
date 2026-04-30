@@ -16,7 +16,7 @@ session_resolution_reasoning = "Agent announced completion at msg 48 summarizing
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 900.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/sd-scripts-multiresolution-compat:7432f570c9a9"

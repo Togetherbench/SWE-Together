@@ -15,7 +15,7 @@ junior_time_estimate_min = 60.0
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 1800.0
+timeout_sec = 3600.0
 
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/sd-scripts-fp8-lumina:78147425ddf9"
