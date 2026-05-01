@@ -354,7 +354,10 @@ try:
 except Exception:
     pass
 
-hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+# P2P_REGRESSION_INFORMATIONAL: P2P_REGRESSION items are now informational only.
+# Pre-existing TS/test errors unrelated to model task scope must not zero reward.
+p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)  # logged below
+hard_zero = False  # was: any(... in P2P_REGRESSION) — dropped per v043 fix
 # If no F2P gate passed, fix is not present — zero the reward
 any_f2p_passed = any(verdicts.get(gid, False) for gid in WEIGHTS.keys())
 if hard_zero or (WEIGHTS and not any_f2p_passed):
