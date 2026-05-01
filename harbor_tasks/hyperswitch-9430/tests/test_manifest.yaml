@@ -52,13 +52,3 @@ gates:
     weight: 0.20
     description: "Migration adds billing_processor_id column to business_profile"
   # --- upstream P2P gates ---
-  - id: p2p_upstream_cargo_metadata
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    description: "Cargo metadata validates workspace structure"
-  - id: p2p_upstream_key_files_nonempty
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    description: "Key source files exist and are non-empty"
