@@ -1,4 +1,5 @@
 FROM python:3.12.8-slim-bookworm
+ARG REBUILD_TOKEN=v042-20260430  # cache-bust to force rebuild on top of new base layers
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates build-essential tmux jq bc sudo && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /logs/verifier /logs/agent/sessions

@@ -1,4 +1,5 @@
 FROM python:3.12.8-slim
+ARG REBUILD_TOKEN=v042-20260430  # cache-bust to force rebuild on top of new base layers
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
