@@ -577,4 +577,27 @@ fi
 
 echo "FINAL REWARD: $REWARD"
 echo "$REWARD" > "$RESULT_FILE"
+# ---- v043 P2P_REGRESSION enforcement (manual) ----
+# Runs each P2P_REGRESSION command; if any fails, caps reward to 0.0000.
+_V043M_ANY_FAIL=0
+_v043m_run_gate() {
+    local id="$1" cmd="$2"
+    if timeout 240 bash -c "$cmd" >/dev/null 2>&1; then
+        echo "[v043 P2P OK] $id"
+    else
+        echo "[v043 P2P FAIL] $id"
+        _V043M_ANY_FAIL=1
+    fi
+}
+_v043m_run_gate p2p_upstream_ast_classes 'cd /workspace/ComfyUI && python3 -c "import ast, sys; tree = ast.parse(open('\''comfy/text_encoders/llama.py'\'').read()); needed = {'\''Gemma3_4B_Config'\'', '\''TransformerBlockGemma2'\'', '\''Llama2_'\'', '\''Gemma3_4B'\'', '\''Attention'\'', '\''MLP'\''}; found = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}; sys.exit(1) if needed - found else sys.exit(0)"'
+
+if [ "${_V043M_ANY_FAIL:-0}" = "1" ]; then
+    if [ -f /logs/verifier/reward.txt ]; then
+        prev=$(cat /logs/verifier/reward.txt 2>/dev/null | head -1)
+        echo "[v043] capping reward (prev=$prev) to 0.0000 due to P2P regression"
+        echo "0.0000" > /logs/verifier/reward.txt
+    fi
+fi
+# ---- v043 end P2P_REGRESSION enforcement ----
+
 exit 0
