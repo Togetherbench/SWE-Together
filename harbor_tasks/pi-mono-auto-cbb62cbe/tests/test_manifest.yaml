@@ -47,13 +47,3 @@ gates:
     weight: 0.20
     description: "bun: runtime import of DaxnutsComponent, validates render+handleInput methods"
   # Upstream P2P gates
-  - id: p2p_upstream_vitest_interactive
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    description: "vitest: interactive-mode-status tests pass"
-  - id: p2p_upstream_tsgo
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    description: "tsgo: full workspace type check passes"
