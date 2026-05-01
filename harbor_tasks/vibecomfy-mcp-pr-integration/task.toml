@@ -19,7 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/vibecomfy-mcp-pr-integration:12023002cbd6"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/vibecomfy-mcp-pr-integration:ac450300fcee"
 build_timeout_sec = 600.0
 cpus = 2
 memory = "4G"
