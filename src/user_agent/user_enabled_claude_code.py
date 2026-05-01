@@ -204,9 +204,9 @@ class Proxy(http.server.BaseHTTPRequestHandler):
                     while True:
                         chunk = resp.read1(8192)  # read1 = per upstream chunk, doesn't block to fill buffer
                         if not chunk:
-                            self.wfile.write(b"0\r\n\r\n")
+                            self.wfile.write(b"0\\r\\n\\r\\n")
                             break
-                        self.wfile.write(f"{{len(chunk):x}}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.write(f"{{len(chunk):x}}\\r\\n".encode() + chunk + b"\\r\\n")
                         self.wfile.flush()
                     return
             except urllib.error.HTTPError as e:
@@ -259,9 +259,9 @@ class Proxy(http.server.BaseHTTPRequestHandler):
                     while True:
                         chunk = resp.read1(8192)
                         if not chunk:
-                            self.wfile.write(b"0\r\n\r\n")
+                            self.wfile.write(b"0\\r\\n\\r\\n")
                             break
-                        self.wfile.write(f"{{len(chunk):x}}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.write(f"{{len(chunk):x}}\\r\\n".encode() + chunk + b"\\r\\n")
                         self.wfile.flush()
                     return
             except urllib.error.HTTPError as e:
