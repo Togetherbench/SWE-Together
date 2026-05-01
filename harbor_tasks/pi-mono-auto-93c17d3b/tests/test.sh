@@ -58,7 +58,53 @@ run_upstream_gates() {
     fi
 
     # Adjust reward based on upstream gates
-    python3 /workspace/task/upstream_reward_tail.py
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {
+    "f2p_gate1_cmd_and_handler": 0.09,
+    "f2p_gate2_protocol_injected": 0.12,
+    "f2p_gate3_reacts_to_signals": 0.12,
+    "f2p_gate4_distinct_signals": 0.09,
+    "f2p_gate5_inactive_no_reaction": 0.09,
+    "f2p_gate6_pattern_fidelity": 0.09,
+    "f2p_upstream_file_exists": 0.2,
+    "f2p_upstream_ext_loadable": 0.2
+}
+P2P_REGRESSION = ["p2p_upstream_extensions_dir", "p2p_upstream_existing_ext_compiles"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    # Preserve the bash-computed legacy reward and add upstream F2P gate
+    # weights on top for any upstream gate that passed.
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += float(w)
+reward = max(0.0, min(1.0, reward))
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write(f"{reward:.4f}\n")
+PYEOF
 }
 trap run_upstream_gates EXIT
 

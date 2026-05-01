@@ -1,34 +1,34 @@
 version: 1.0
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  message: legacy
+  deliverable: see instruction.md
 gates:
-  # --- Upstream F2P gates (0.20 each, 0.40 total upstream) ---
-  - id: f2p_upstream_full_recon
-    kind: F2P
-    turn: null
-    weight: 0.20
-    command: "cd /workspace && python3 reconstruct_weight.py 2>&1 | grep -q 'All passed!'"
-    description: "Runs reconstruct_weight.py and checks all 6 SVDQ params reconstruct with max_diff<0.1"
-  - id: f2p_upstream_single_param
-    kind: F2P
-    turn: null
-    weight: 0.20
-    command: "cd /workspace && python3 -c \"import sys; sys.path.insert(0,'.'); from reconstruct_weight import reconstruct_weight; max_d,_=reconstruct_weight('attn.to_out.0'); sys.exit(0 if max_d<0.1 else 1)\""
-    description: "Imports reconstruct_weight and checks attn.to_out.0 param reconstructs with max_diff<0.1"
-  # Remaining 0.60 F2P weight is handled by existing test.sh internal gates
-
-  # --- Upstream P2P regression gates ---
-  - id: p2p_upstream_syntax
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    command: "python3 -c \"import ast; ast.parse(open('/workspace/reconstruct_weight.py').read())\""
-    description: "Ensures reconstruct_weight.py is syntactically valid Python"
-  - id: p2p_upstream_torch_import
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    command: "python3 -c \"import torch; assert __import__('os').path.isfile('/workspace/pt/attn.to_out.0.weight.pt')\""
-    description: "Verifies torch is available and ground-truth data files exist in pt/"
+- id: f2p_upstream_full_recon
+  kind: F2P
+  turn: null
+  weight: 0.5
+  command: cd /workspace && python3 reconstruct_weight.py 2>&1 | grep -q 'All passed!'
+  description: Runs reconstruct_weight.py and checks all 6 SVDQ params reconstruct
+    with max_diff<0.1
+- id: f2p_upstream_single_param
+  kind: F2P
+  turn: null
+  weight: 0.5
+  command: cd /workspace && python3 -c "import sys; sys.path.insert(0,'.'); from reconstruct_weight
+    import reconstruct_weight; max_d,_=reconstruct_weight('attn.to_out.0'); sys.exit(0
+    if max_d<0.1 else 1)"
+  description: Imports reconstruct_weight and checks attn.to_out.0 param reconstructs
+    with max_diff<0.1
+- id: p2p_upstream_syntax
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  command: python3 -c "import ast; ast.parse(open('/workspace/reconstruct_weight.py').read())"
+  description: Ensures reconstruct_weight.py is syntactically valid Python
+- id: p2p_upstream_torch_import
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  command: python3 -c "import torch; assert __import__('os').path.isfile('/workspace/pt/attn.to_out.0.weight.pt')"
+  description: Verifies torch is available and ground-truth data files exist in pt/

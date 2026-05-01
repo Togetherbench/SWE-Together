@@ -1,27 +1,35 @@
 version: 1.0
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  message: legacy
+  deliverable: see instruction.md
 gates:
-  - id: f2p_upstream_domain_kafka_propagation
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "Domain + Kafka field propagation"
-    command: "cd /workspace/hyperswitch && grep -q 'active_attempts_group_id' crates/hyperswitch_domain_models/src/payments.rs && grep -q 'active_attempt_id_type' crates/hyperswitch_domain_models/src/payments.rs && grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent.rs && grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent_event.rs"
-    description: "Verifies new split payment fields propagated to domain models and kafka event structs"
-  - id: f2p_upstream_migration_completeness
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "Migration file completeness"
-    command: "cd /workspace/hyperswitch && grep -rq 'active_attempts_group_id' migrations/ && grep -rq 'active_attempt_id_type' migrations/ && grep -rq 'attempts_group_id' migrations/"
-    description: "Verifies SQL migration files exist with all 3 new column ALTER TABLE statements"
-  - id: p2p_upstream_cargo_metadata
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Cargo metadata workspace integrity"
-    command: "cd /workspace/hyperswitch && export PATH=/usr/local/cargo/bin:/root/.cargo/bin:$PATH && timeout 60 cargo metadata --format-version 1 --no-deps > /dev/null 2>&1"
-    description: "Verifies Cargo workspace metadata loads without errors"
+- id: f2p_upstream_domain_kafka_propagation
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: Domain + Kafka field propagation
+  command: cd /workspace/hyperswitch && grep -q 'active_attempts_group_id' crates/hyperswitch_domain_models/src/payments.rs
+    && grep -q 'active_attempt_id_type' crates/hyperswitch_domain_models/src/payments.rs
+    && grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent.rs
+    && grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent_event.rs
+  description: Verifies new split payment fields propagated to domain models and kafka
+    event structs
+- id: f2p_upstream_migration_completeness
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: Migration file completeness
+  command: cd /workspace/hyperswitch && grep -rq 'active_attempts_group_id' migrations/
+    && grep -rq 'active_attempt_id_type' migrations/ && grep -rq 'attempts_group_id'
+    migrations/
+  description: Verifies SQL migration files exist with all 3 new column ALTER TABLE
+    statements
+- id: p2p_upstream_cargo_metadata
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Cargo metadata workspace integrity
+  command: cd /workspace/hyperswitch && export PATH=/usr/local/cargo/bin:/root/.cargo/bin:$PATH
+    && timeout 60 cargo metadata --format-version 1 --no-deps > /dev/null 2>&1
+  description: Verifies Cargo workspace metadata loads without errors

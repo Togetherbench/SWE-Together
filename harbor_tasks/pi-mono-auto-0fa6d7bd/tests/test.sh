@@ -400,7 +400,46 @@ echo "{\"id\": \"p2p_upstream_vitest_tool_exec\", \"passed\": $([ $P2P_VITEST_RC
 echo "P2P upstream vitest: rc=$P2P_VITEST_RC"
 
 # Upstream reward tail
-python3 /workspace/task/upstream_reward_tail.py
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {
+    "f2p_upstream_bash_timing": 0.2
+}
+P2P_REGRESSION = ["p2p_upstream_tsgo_typecheck", "p2p_upstream_biome_lint", "p2p_upstream_vitest_tool_exec"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    # Preserve the bash-computed legacy reward and add upstream F2P gate
+    # weights on top for any upstream gate that passed.
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += float(w)
+reward = max(0.0, min(1.0, reward))
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write(f"{reward:.4f}\n")
+PYEOF
 # ---- end ----
 
 exit 0

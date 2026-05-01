@@ -1,24 +1,30 @@
 version: 1.0
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  message: legacy
+  deliverable: see instruction.md
 gates:
-  - id: f2p_upstream_risk_tiers_import
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "Import and verify classifyToolRisk from risk-tiers.ts"
-    command: "cd /workspace/openclaw && node --import tsx -e \"import { classifyToolRisk } from './src/security/risk-tiers.ts'; if (classifyToolRisk('bash') !== 'high') process.exit(1);\""
-  - id: f2p_upstream_decision_flow_import
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "Import and verify createSecurityDecisionFlow from decision-flow.ts"
-    command: "cd /workspace/openclaw && node --import tsx -e \"import { createSecurityDecisionFlow } from './src/security/decision-flow.ts'; const f = createSecurityDecisionFlow({}); if (typeof f.evaluate !== 'function') process.exit(1);\""
-  - id: p2p_upstream_external_content
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Existing external-content.ts still importable"
-    command: "cd /workspace/openclaw && node --import tsx -e \"import { detectSuspiciousPatterns } from './src/security/external-content.ts'; if (typeof detectSuspiciousPatterns !== 'function') process.exit(1);\""
+- id: f2p_upstream_risk_tiers_import
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: Import and verify classifyToolRisk from risk-tiers.ts
+  command: cd /workspace/openclaw && node --import tsx -e "import { classifyToolRisk
+    } from './src/security/risk-tiers.ts'; if (classifyToolRisk('bash') !== 'high')
+    process.exit(1);"
+- id: f2p_upstream_decision_flow_import
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: Import and verify createSecurityDecisionFlow from decision-flow.ts
+  command: cd /workspace/openclaw && node --import tsx -e "import { createSecurityDecisionFlow
+    } from './src/security/decision-flow.ts'; const f = createSecurityDecisionFlow({});
+    if (typeof f.evaluate !== 'function') process.exit(1);"
+- id: p2p_upstream_external_content
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Existing external-content.ts still importable
+  command: cd /workspace/openclaw && node --import tsx -e "import { detectSuspiciousPatterns
+    } from './src/security/external-content.ts'; if (typeof detectSuspiciousPatterns
+    !== 'function') process.exit(1);"

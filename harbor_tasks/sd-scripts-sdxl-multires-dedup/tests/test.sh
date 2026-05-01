@@ -449,5 +449,53 @@ echo "  p2p_upstream_py_compile_all: RC=$P2P1_RC"
 # ---- upstream reward adjustment ----
 echo ""
 echo "=== Upstream reward adjustment ==="
-$VENV_PYTHON /workspace/task/upstream_reward_tail.py 2>&1 || python3 /workspace/task/upstream_reward_tail.py 2>&1
+python3 - <<'PYEOF'
+import json, os, sys
+WEIGHTS = {
+    "t1_f2p_strategy_sd_multires": 0.12,
+    "t1_f2p_strategy_sd_load_size": 0.06,
+    "t4_f2p_skip_dup_field": 0.09,
+    "t4_f2p_skip_dup_dedup_logic": 0.09,
+    "t5_f2p_unwrap_function_behavioral": 0.09,
+    "t5_f2p_unwrap_orig_mod_handling": 0.06,
+    "t7_f2p_unet_orig_mod": 0.06,
+    "t7_f2p_unet_orig_mod_dispatch": 0.03,
+    "f2p_upstream_unwrap_multires": 0.2,
+    "f2p_upstream_skipdup_origmod": 0.2
+}
+P2P_REGRESSION = ["p2p_base_imports", "p2p_upstream_fb8ee95f", "p2p_upstream_py_compile_all"]
+verdicts = {}
+try:
+    with open('/logs/verifier/gates.json') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            d = json.loads(line)
+            gid = d.get('id')
+            if gid:
+                verdicts[gid] = bool(d.get('passed'))
+except FileNotFoundError:
+    pass
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+
+p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
+if p2p_failed or not f2p_any_pass:
+    reward = 0.0
+else:
+    # Preserve the bash-computed legacy reward and add upstream F2P gate
+    # weights on top for any upstream gate that passed.
+    reward = existing
+    for gid, w in WEIGHTS.items():
+        if verdicts.get(gid):
+            reward += float(w)
+reward = max(0.0, min(1.0, reward))
+with open('/logs/verifier/reward.txt', 'w') as f:
+    f.write(f"{reward:.4f}\n")
+PYEOF
 # ---- end ----

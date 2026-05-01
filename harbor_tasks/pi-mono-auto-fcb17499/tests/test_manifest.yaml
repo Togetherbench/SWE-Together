@@ -1,27 +1,30 @@
 version: 1.0
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  message: legacy
+  deliverable: see instruction.md
 gates:
-  - id: f2p_upstream_interface_property
-    kind: F2P
-    turn: null
-    label: "EditorComponent uses paddingX property syntax"
-    command: "cd /workspace/pi-mono && grep -q 'paddingX?: number' packages/tui/src/editor-component.ts"
-    weight: 0.20
-    description: "Checks editor-component.ts uses paddingX?: number property instead of setPaddingX?() method"
-  - id: f2p_upstream_requestrender_done
-    kind: F2P
-    turn: null
-    label: "showSelector done closure calls requestRender"
-    command: "cd /workspace/pi-mono && awk '/private showSelector\\(/,/const \\{ component/' packages/coding-agent/src/modes/interactive/interactive-mode.ts | grep -q 'requestRender'"
-    weight: 0.20
-    description: "Checks the done() closure in showSelector calls requestRender() to fix stale editor render"
-  - id: p2p_upstream_editor_tests
-    kind: P2P_REGRESSION
-    turn: null
-    label: "TUI editor test suite (173 tests)"
-    command: "cd /workspace/pi-mono && node --test --import tsx packages/tui/test/editor.test.ts"
-    weight: 0
-    description: "Full editor component test suite ensures no regressions in editor behavior"
+- id: f2p_upstream_interface_property
+  kind: F2P
+  turn: null
+  label: EditorComponent uses paddingX property syntax
+  command: 'cd /workspace/pi-mono && grep -q ''paddingX?: number'' packages/tui/src/editor-component.ts'
+  weight: 0.5
+  description: 'Checks editor-component.ts uses paddingX?: number property instead
+    of setPaddingX?() method'
+- id: f2p_upstream_requestrender_done
+  kind: F2P
+  turn: null
+  label: showSelector done closure calls requestRender
+  command: cd /workspace/pi-mono && awk '/private showSelector\(/,/const \{ component/'
+    packages/coding-agent/src/modes/interactive/interactive-mode.ts | grep -q 'requestRender'
+  weight: 0.5
+  description: Checks the done() closure in showSelector calls requestRender() to
+    fix stale editor render
+- id: p2p_upstream_editor_tests
+  kind: P2P_REGRESSION
+  turn: null
+  label: TUI editor test suite (173 tests)
+  command: cd /workspace/pi-mono && node --test --import tsx packages/tui/test/editor.test.ts
+  weight: 0
+  description: Full editor component test suite ensures no regressions in editor behavior
