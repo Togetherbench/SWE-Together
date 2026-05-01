@@ -147,6 +147,10 @@ class Proxy(http.server.BaseHTTPRequestHandler):
         # Opus 4.7 trials cost ~10-20x more than they should.
         is_anthropic_route = REMAP_MODEL.startswith("anthropic/")
         strip_beta = is_or and not is_anthropic_route
+        # [v043-ark] ARK Coding Plan (volces.com) requires Bearer auth on the
+        # primary path, NOT x-api-key. Anthropic-compat probe confirmed
+        # `Authorization: Bearer <key>` returns 200 while `x-api-key` returns 401.
+        is_ark = "volces.com" in TARGET
         headers = {{}}
         for k, v in self.headers.items():
             k_lower = k.lower()
@@ -159,6 +163,10 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             headers["Authorization"] = f"Bearer {{FALLBACK_KEY}}"
             headers["HTTP-Referer"] = "https://togetherbench.com"
             headers["X-Title"] = "togetherbench-eval"
+            for h in ("x-api-key", "X-Api-Key"):
+                headers.pop(h, None)
+        elif is_ark:
+            headers["Authorization"] = f"Bearer {{API_KEY}}"
             for h in ("x-api-key", "X-Api-Key"):
                 headers.pop(h, None)
         else:
