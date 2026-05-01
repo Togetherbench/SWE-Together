@@ -235,3 +235,27 @@ print('PASS')
 REWARD=$(awk -v s="$SCORE" 'BEGIN{ if (s>1.0) s=1.0; printf "%.4f", s }')
 log "Final reward: $REWARD"
 echo "$REWARD" > "$REWARD_FILE"
+
+# ---- v043 P2P_REGRESSION enforcement (manual) ----
+# Runs each P2P_REGRESSION command; if any fails, caps reward to 0.0000.
+_V043M_ANY_FAIL=0
+_v043m_run_gate() {
+    local id="$1" cmd="$2"
+    if timeout 240 bash -c "$cmd" >/dev/null 2>&1; then
+        echo "[v043 P2P OK] $id"
+    else
+        echo "[v043 P2P FAIL] $id"
+        _V043M_ANY_FAIL=1
+    fi
+}
+_v043m_run_gate p2p_upstream_basic_functionality 'cd /workspace/repo && python3 -c "from dataclaw.anonymizer import anonymize_text, _hash_username; assert anonymize_text('\''hello alice'\'', '\''alice'\'', '\''HASH'\'') == '\''hello HASH'\''; assert _hash_username('\''test'\'').startswith('\''user_'\''); print('\''OK'\'')"'
+_v043m_run_gate p2p_upstream_import 'cd /workspace/repo && python3 -c "from dataclaw.anonymizer import anonymize_text, anonymize_path, Anonymizer, _hash_username, _replace_username; print('\''OK'\'')"'
+
+if [ "${_V043M_ANY_FAIL:-0}" = "1" ]; then
+    if [ -f /logs/verifier/reward.txt ]; then
+        prev=$(cat /logs/verifier/reward.txt 2>/dev/null | head -1)
+        echo "[v043] capping reward (prev=$prev) to 0.0000 due to P2P regression"
+        echo "0.0000" > /logs/verifier/reward.txt
+    fi
+fi
+# ---- v043 end P2P_REGRESSION enforcement ----
