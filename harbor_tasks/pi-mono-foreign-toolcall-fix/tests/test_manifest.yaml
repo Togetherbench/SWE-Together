@@ -56,15 +56,3 @@ gates:
   kind: F2P
   weight: 0.1
   description: Output call_id from copilot pipe-id contains no substring '_cHXKTw3' (the buggy '/'->'_' substitution signature)
-- id: p2p_upstream_771580d1
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): npm_typecheck_ai @ 235b247'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-foreign-toolcall-fix_p2p_bundle.yaml
-- id: p2p_upstream_816994b6
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): vitest_session_manager_ai @ 235b247'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-foreign-toolcall-fix_p2p_bundle.yaml
