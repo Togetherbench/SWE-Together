@@ -87,27 +87,3 @@ gates:
   kind: P2P_GATING
   weight: 0.0
   description: instruction.md is unchanged.
-- id: p2p_upstream_771580d1
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): npm_typecheck_ai @ 9063a71'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-41636ae5_p2p_bundle.yaml
-- id: p2p_upstream_816994b6
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): vitest_session_manager_ai @ 9063a71'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-41636ae5_p2p_bundle.yaml
-- id: p2p_upstream_e395cbc7
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): npm_typecheck_coding-agent @ 9063a71'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-41636ae5_p2p_bundle.yaml
-- id: p2p_upstream_522628b0
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): vitest_session_manager_coding-agent @ 9063a71'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-41636ae5_p2p_bundle.yaml
