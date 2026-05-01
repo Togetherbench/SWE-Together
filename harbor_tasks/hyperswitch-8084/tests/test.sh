@@ -1,10 +1,16 @@
 #!/bin/bash
 set +e
-# [v041-fix] rustup default stable
-if command -v rustup >/dev/null 2>&1; then
-    rustup default stable >/dev/null 2>&1 || true
-fi
+# [v042-fix] Robust Rust toolchain setup. Direct cargo binary on PATH
+# bypasses rustup's proxy (which fails 'could not choose a version of cargo
+# to run' when no toolchain is installed).
 export PATH="/usr/local/cargo/bin:/root/.cargo/bin:$PATH"
+hash -r 2>/dev/null || true
+if command -v rustup >/dev/null 2>&1; then
+    rustup show active-toolchain >/dev/null 2>&1 \
+        || rustup default stable 2>&1 \
+        || rustup install stable 2>&1 \
+        || true
+fi
 
 mkdir -p /logs/verifier
 GATES_FILE=/logs/verifier/gates.json

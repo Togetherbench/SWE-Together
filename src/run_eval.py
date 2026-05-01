@@ -152,6 +152,12 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
             "API_TIMEOUT_MS": "6000000",
+            # [v042] Cap output tokens. Some OR upstreams (DeepInfra, Mara,
+            # Inceptron) report context_length=204800 with max_tokens=128000
+            # reserved for output → only 76800 left for input + tool defs +
+            # context. Capping output to 32000 leaves ~170k for input, which
+            # fits Claude Code's typical prompt for these tasks.
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000",
             "LITELLM_PROXY_MODEL": or_model,
             "LITELLM_PROXY_PORT": "4210",
             "OPENROUTER_API_KEY": or_key,
