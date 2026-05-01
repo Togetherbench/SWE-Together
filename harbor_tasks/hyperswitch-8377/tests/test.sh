@@ -293,7 +293,7 @@ echo "$REWARD" > /logs/verifier/reward.txt
 
 # ---- inner-claude upstream gates ----
 export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH="/usr/local/cargo/bin:$PATH"
-rustup default stable >/dev/null 2>&1 || true
+command -v rustup >/dev/null 2>&1 && (rustup show active-toolchain >/dev/null 2>&1 || rustup default stable 2>&1 || rustup install stable 2>&1 || true)
 
 mkdir -p /logs/verifier
 
