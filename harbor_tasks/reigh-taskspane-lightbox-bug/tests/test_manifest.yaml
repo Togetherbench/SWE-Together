@@ -62,15 +62,3 @@ gates:
   weight: 0.2
   description: Code path for orphan/deleted-segment fallback to simple viewer exists alongside the in-context lightbox (two
     distinct render branches).
-- id: p2p_upstream_523760b1
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): tsc_noemit @ d9e6dc5'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-taskspane-lightbox-bug_p2p_bundle.yaml
-- id: p2p_upstream_cdf050a5
-  turn: null
-  kind: P2P_REGRESSION
-  weight: 0.0
-  description: 'upstream(reg): npm_run_build @ d9e6dc5'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-taskspane-lightbox-bug_p2p_bundle.yaml
