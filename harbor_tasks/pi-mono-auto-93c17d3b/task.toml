@@ -19,7 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-93c17d3b:e994fbb2725b"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-auto-93c17d3b:4aa56133bd5d"
 build_timeout_sec = 600.0
 cpus = 1
 memory = "4G"

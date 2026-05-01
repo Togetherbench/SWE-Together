@@ -19,7 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/arr-monitor-add-processes-flag:edab320640c6"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/arr-monitor-add-processes-flag:705636e17158"
 build_timeout_sec = 600.0
 cpus = 1
 memory = "4G"

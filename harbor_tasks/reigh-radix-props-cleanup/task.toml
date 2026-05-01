@@ -19,7 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/reigh-radix-props-cleanup:0e09d82d190c"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/reigh-radix-props-cleanup:021e7e44ddc2"
 build_timeout_sec = 600.0
 cpus = 1
 memory = "4G"

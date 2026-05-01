@@ -19,7 +19,7 @@ timeout_sec = 600.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/hyperswitch-9430:dfd64fe8a546"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/hyperswitch-9430:0ab3cef5ba5b"
 build_timeout_sec = 1800.0
 cpus = 2
 memory = "8G"

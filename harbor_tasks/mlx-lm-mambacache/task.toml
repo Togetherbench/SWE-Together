@@ -20,7 +20,7 @@ timeout_sec = 3600.0
 allow_internet = true
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/mlx-lm-mambacache:597d93f5b240"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/mlx-lm-mambacache:c118b3e8281f"
 build_timeout_sec = 600.0
 cpus = 2
 memory = "4G"

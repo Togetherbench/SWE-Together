@@ -20,7 +20,7 @@ timeout_sec = 3600.0
 allow_internet = true
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/triton-msvc-c4267-warnings:55a8f6b4481c"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/triton-msvc-c4267-warnings:a14bd8bd0f37"
 build_timeout_sec = 600.0
 cpus = 1
 memory = "4G"
