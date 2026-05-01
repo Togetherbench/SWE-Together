@@ -5,6 +5,7 @@ jobs/
 .env
 trials/
 trials-*/
+trials_*/        # underscore-suffixed eval-result dirs (kimi25, glm51, mm25, mm27, etc.) — protect from `git clean -fd`
 __pycache__/
 session_collection/
 .claude/worktrees/
