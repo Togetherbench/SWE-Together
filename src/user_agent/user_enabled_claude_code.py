@@ -131,6 +131,12 @@ RETRY_DELAY = 5  # seconds
 UPSTREAM_TIMEOUT = 600
 
 class Proxy(http.server.BaseHTTPRequestHandler):
+    # [v042-fix-streaming] HTTP/1.1 enables chunked transfer-encoding for
+    # streamed SSE pass-through. Without this, BaseHTTPRequestHandler defaults
+    # to HTTP/1.0 (no chunking) and we'd have to buffer-then-set-Content-Length,
+    # which is the bug we're fixing.
+    protocol_version = "HTTP/1.1"
+
     def _build_request(self, url, body, is_or):
         """Build a request for either primary or OpenRouter fallback."""
         # [v042-fix] Only strip anthropic-beta for NON-Anthropic OR routes.
@@ -181,14 +187,27 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             req = self._build_request(url, body_primary, IS_OPENROUTER)
             try:
                 with urllib.request.urlopen(req, context=ctx, timeout=UPSTREAM_TIMEOUT) as resp:
-                    resp_body = resp.read()
+                    # [v042-fix-streaming] Stream chunks instead of buffering.
+                    # CC sends `stream:true`; upstream returns SSE with chunked
+                    # transfer-encoding. Old code did `resp.read()` (full
+                    # buffer) + Content-Length, making CC's parser see SSE
+                    # bytes as a fixed-length JSON body → "Failed to parse JSON".
+                    # Now: re-encode chunks as Transfer-Encoding: chunked so CC
+                    # sees a real streamed response.
                     self.send_response(resp.status)
                     for k, v in resp.getheaders():
-                        if k.lower() not in ("transfer-encoding", "content-encoding"):
-                            self.send_header(k, v)
-                    self.send_header("Content-Length", str(len(resp_body)))
+                        if k.lower() in ("content-encoding", "content-length", "transfer-encoding"):
+                            continue
+                        self.send_header(k, v)
+                    self.send_header("Transfer-Encoding", "chunked")
                     self.end_headers()
-                    self.wfile.write(resp_body)
+                    while True:
+                        chunk = resp.read1(8192)  # read1 = per upstream chunk, doesn't block to fill buffer
+                        if not chunk:
+                            self.wfile.write(b"0\r\n\r\n")
+                            break
+                        self.wfile.write(f"{{len(chunk):x}}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.flush()
                     return
             except urllib.error.HTTPError as e:
                 if e.code == 429 and attempt < MAX_RETRIES:
@@ -229,14 +248,21 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             req = self._build_request(fb_url, body_fb, True)
             try:
                 with urllib.request.urlopen(req, context=ctx, timeout=UPSTREAM_TIMEOUT) as resp:
-                    resp_body = resp.read()
+                    # [v042-fix-streaming] Same chunked-streaming pattern as primary path.
                     self.send_response(resp.status)
                     for k, v in resp.getheaders():
-                        if k.lower() not in ("transfer-encoding", "content-encoding"):
-                            self.send_header(k, v)
-                    self.send_header("Content-Length", str(len(resp_body)))
+                        if k.lower() in ("content-encoding", "content-length", "transfer-encoding"):
+                            continue
+                        self.send_header(k, v)
+                    self.send_header("Transfer-Encoding", "chunked")
                     self.end_headers()
-                    self.wfile.write(resp_body)
+                    while True:
+                        chunk = resp.read1(8192)
+                        if not chunk:
+                            self.wfile.write(b"0\r\n\r\n")
+                            break
+                        self.wfile.write(f"{{len(chunk):x}}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.flush()
                     return
             except urllib.error.HTTPError as e:
                 resp_body = e.read()
