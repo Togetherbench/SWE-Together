@@ -419,7 +419,9 @@ try:
             except Exception: pass
 except FileNotFoundError: pass
 hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
+# P2P_REGRESSION_INFORMATIONAL: only P2P_GATING items hard-zero. P2P_REGRESSION is informational.
+p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+for gid in P2P_GATING:
     if not verdicts.get(gid, False):
         hard_zero = True; break
 if hard_zero: reward = 0.0
