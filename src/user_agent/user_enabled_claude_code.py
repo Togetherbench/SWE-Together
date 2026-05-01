@@ -133,12 +133,20 @@ UPSTREAM_TIMEOUT = 600
 class Proxy(http.server.BaseHTTPRequestHandler):
     def _build_request(self, url, body, is_or):
         """Build a request for either primary or OpenRouter fallback."""
+        # [v042-fix] Only strip anthropic-beta for NON-Anthropic OR routes.
+        # OR rejects anthropic-beta for kimi/minimax/glm/qwen, but Anthropic
+        # routed through OR Bedrock honors it — and CC needs it to enable
+        # prompt caching (anthropic-beta: prompt-caching-2024-07-31). Without
+        # this header, every turn re-sends the full system+tools+history and
+        # Opus 4.7 trials cost ~10-20x more than they should.
+        is_anthropic_route = REMAP_MODEL.startswith("anthropic/")
+        strip_beta = is_or and not is_anthropic_route
         headers = {{}}
         for k, v in self.headers.items():
             k_lower = k.lower()
             if k_lower in ("host", "content-length"):
                 continue
-            if is_or and k_lower == "anthropic-beta":
+            if strip_beta and k_lower == "anthropic-beta":
                 continue
             headers[k] = v
         if is_or:
