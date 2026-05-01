@@ -95,9 +95,13 @@ f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else 
 if p2p_failed or not f2p_any_pass:
     reward = 0.0
 else:
-    # Preserve the bash-computed legacy reward and add upstream F2P gate
-    # weights on top for any upstream gate that passed.
-    reward = existing
+    # Weighted-replace: upstream F2P gate weights replace a proportional
+    # share of the bash-computed inner reward. When WEIGHTS sums to 1.0, the
+    # inner reward is fully subsumed by upstream gates (intentional). When
+    # WEIGHTS sums to <1.0, the remainder scales the legacy inner reward so
+    # the total is naturally bounded to [0, 1] without additive inflation.
+    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+    reward = existing * inner_weight
     for gid, w in WEIGHTS.items():
         if verdicts.get(gid):
             reward += float(w)
