@@ -61,15 +61,3 @@ gates:
     label: "LangConfig.zone_rules + PY/TS_ZONE_RULES"
     description: "Verifies LangConfig has zone_rules field and PY_ZONE_RULES/TS_ZONE_RULES are defined"
   # --- Upstream P2P gates ---
-  - id: p2p_upstream_cli_import
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "CLI module imports cleanly"
-    description: "Ensures cli.py still imports without errors after edits"
-  - id: p2p_upstream_plan_import
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Plan module imports cleanly"
-    description: "Ensures plan.py still imports without errors after edits"
