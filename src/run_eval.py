@@ -433,10 +433,14 @@ def _sanitize_and_upload(trials_dir: Path):
         log.info("Skipping trace upload: BUCKET_NAME not set")
         return
 
-    # Sanitize
+    # Sanitize — pass --trials-dir so non-default paths (trials_<model>_v0XX/)
+    # are scrubbed. Without this arg, sanitize_traces.py defaults to ./trials
+    # and silently skips our actual run output. Was a critical bug pre-v0.4.2:
+    # OR API keys + ANTHROPIC_AUTH_TOKEN leaked unredacted into 1755 files.
     if sanitize_script.exists():
-        log.info("Sanitizing traces...")
-        _sp.run([python_bin, str(sanitize_script)], cwd=str(REPO_ROOT), timeout=120, check=False)
+        log.info("Sanitizing traces in %s ...", trials_dir)
+        _sp.run([python_bin, str(sanitize_script), "--trials-dir", str(trials_dir)],
+                cwd=str(REPO_ROOT), timeout=600, check=False)
 
     # Upload — the existing script only checks trials/, so we upload manually
     endpoint = os.environ.get("BUCKET_ENDPOINT", "")
