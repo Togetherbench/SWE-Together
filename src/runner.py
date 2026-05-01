@@ -85,6 +85,7 @@ _PROVIDER_MAP = {
     "glmd":        ("GLM_API_KEY",         "ANTHROPIC_API_KEY"),
     "minimaxd":    ("MINIMAX_API_KEY",     "ANTHROPIC_API_KEY"),
     "ark":         ("ARK_API_KEY",         "ANTHROPIC_API_KEY"),
+    "deepseek":    ("DEEPSEEK_API_KEY",    "ANTHROPIC_API_KEY"),
 }
 
 # Proxy URLs for routing non-Anthropic models through Claude Code CLI.
@@ -99,6 +100,7 @@ _GLM_BASE_URL = "https://api.z.ai/api/anthropic"
 _MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 _ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding"
 _GLMD_BASE_URL = "https://api.z.ai/api/anthropic"
+_DEEPSEEK_BASE_URL = "https://api.deepseek.com/anthropic"
 
 
 def resolve_model(model_arg: str) -> tuple[str, str, str]:

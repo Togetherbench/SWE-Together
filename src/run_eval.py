@@ -63,6 +63,7 @@ from runner import (
     _MINIMAX_BASE_URL,
     _ARK_BASE_URL,
     _GLMD_BASE_URL,
+    _DEEPSEEK_BASE_URL,
 )
 
 logging.basicConfig(
@@ -268,6 +269,16 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         # glm-4.7, glm-5.1, deepseek-v3.2, doubao-seed-code, doubao-seed-2.0-code, etc.
         ark_model = model_arg.split("/", 1)[1]
         env.update(_proxy_env(_ARK_BASE_URL, ark_model, action_key))
+        return env
+
+    if provider == "deepseek":
+        # DeepSeek direct — Anthropic-compat at api.deepseek.com/anthropic.
+        # /v1/models/<name> returns 404 (per ARK/MMD/GLMD known-broken pattern)
+        # so MUST route through proxy. x-api-key auth (proxy default).
+        # Supported: deepseek-v4-pro, deepseek-v4-flash. (`[1m]` suffix accepted
+        # but not canonical; bare IDs match `/v1/models` listing.)
+        ds_model = model_arg.split("/", 1)[1]
+        env.update(_proxy_env(_DEEPSEEK_BASE_URL, ds_model, action_key))
         return env
 
     # Unknown provider — pass key directly
