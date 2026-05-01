@@ -664,7 +664,10 @@ try:
         existing = float(f.read().strip() or 0)
 except Exception:
     pass
-hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+# P2P_REGRESSION_INFORMATIONAL: P2P_REGRESSION items are now informational only.
+# Pre-existing TS/test errors unrelated to model task scope must not zero reward.
+p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)  # logged below
+hard_zero = False  # was: any(... in P2P_REGRESSION) — dropped per v043 fix
 if hard_zero:
     reward = 0.0
 else:
