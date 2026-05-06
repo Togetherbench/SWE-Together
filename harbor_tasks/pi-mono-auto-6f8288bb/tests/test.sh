@@ -14,18 +14,23 @@ cd /workspace/pi-mono 2>/dev/null || { echo "0.0" > "$REWARD_FILE"; exit 0; }
 command -v npx >/dev/null 2>&1 || { echo "npx missing"; echo "0.0" > "$REWARD_FILE"; exit 0; }
 
 # ═══════════════════════════════════════════════════════════════════
-# P2P GATE: TypeScript compilation
+# P2P GATE: TypeScript compilation (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 # ═══════════════════════════════════════════════════════════════════
-echo "=== P2P GATE: TypeScript compilation ==="
+echo "=== P2P GATE: TypeScript compilation (scoped) ==="
+CHANGED_TS_FILES=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
 COMPILE_OK=0
-if npx tsgo --noEmit > /tmp/tsc.out 2>&1; then
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "No .ts/.tsx changes in agent diff — gate vacuously passes"
     COMPILE_OK=1
-elif npx tsc --noEmit > /tmp/tsc.out 2>&1; then
+elif npx tsgo --noEmit $CHANGED_TS_FILES > /tmp/tsc.out 2>&1; then
+    COMPILE_OK=1
+elif npx tsc --noEmit $CHANGED_TS_FILES > /tmp/tsc.out 2>&1; then
     COMPILE_OK=1
 fi
-tail -30 /tmp/tsc.out
+[ -f /tmp/tsc.out ] && tail -30 /tmp/tsc.out
 if [ "$COMPILE_OK" -ne 1 ]; then
-    echo "TypeScript compilation failed — regression"
+    echo "TypeScript compilation failed on agent-changed files — regression"
     echo "0.0" > "$REWARD_FILE"
     exit 0
 fi

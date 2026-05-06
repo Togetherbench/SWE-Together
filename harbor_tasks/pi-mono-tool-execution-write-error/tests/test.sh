@@ -144,10 +144,22 @@ fs.writeFileSync('/tmp/edit_block.txt',  extractBlock(editRe));
 WRITE_BLOCK=$(cat /tmp/write_block.txt 2>/dev/null)
 EDIT_BLOCK=$(cat /tmp/edit_block.txt 2>/dev/null)
 
+# If the rigid `if (this.toolName === 'write')` regex didn't locate a block,
+# the agent may have restructured the conditional (switch, ternary, named
+# helper, different property). Fall back to verifying the source file itself
+# mentions a write-tool branch with error handling, and use the entire file
+# body as the WRITE_BLOCK for the downstream pattern checks. This avoids
+# rejecting valid solutions that simply use a different code-block marker.
 if [ -z "$WRITE_BLOCK" ]; then
-    echo "GATE FAIL: could not locate write block"
-    REWARD=0
-    finish
+    if grep -qE "(toolName|name|tool)\s*===?\s*['\"]write['\"]|case\s+['\"]write['\"]|['\"]write['\"]\s*:" "$TARGET_FILE" 2>/dev/null; then
+        echo "GATE NOTE: rigid write-block regex missed; falling back to whole-file body"
+        cp "$TARGET_FILE" /tmp/write_block.txt
+        WRITE_BLOCK=$(cat /tmp/write_block.txt)
+    else
+        echo "GATE FAIL: source file has no write-tool branch at all"
+        REWARD=0
+        finish
+    fi
 fi
 
 # ============================================================

@@ -485,14 +485,19 @@ else
   echo "p2p_upstream_vitest_foreign_id: SKIP (no vitest or test file)"
 fi
 
-# P2P gate 2: tsgo type check
-echo "=== Upstream P2P gate: p2p_upstream_tsgo ==="
+# P2P gate 2: tsgo type check (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
+echo "=== Upstream P2P gate: p2p_upstream_tsgo (scoped) ==="
 cd /workspace/pi-mono
-if npx tsgo --noEmit 2>&1; then
-  echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo passed"}' >> "$GATES_FILE"
+CHANGED_TS_FILES=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+  echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"no agent .ts/.tsx changes — gate skipped"}' >> "$GATES_FILE"
+  echo "p2p_upstream_tsgo: PASS (no agent .ts/.tsx changes — gate skipped)"
+elif npx tsgo --noEmit $CHANGED_TS_FILES 2>&1; then
+  echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo passed on agent-changed files"}' >> "$GATES_FILE"
   echo "p2p_upstream_tsgo: PASS"
 else
-  echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo failed"}' >> "$GATES_FILE"
+  echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo failed on agent-changed files"}' >> "$GATES_FILE"
   echo "p2p_upstream_tsgo: FAIL"
 fi
 

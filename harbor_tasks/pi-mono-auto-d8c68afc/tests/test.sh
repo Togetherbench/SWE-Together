@@ -313,17 +313,24 @@ else
     echo "FAIL"
 fi
 
-# P2P: tsgo typecheck
-echo "--- p2p_upstream_tsgo ---"
+# P2P: tsgo typecheck (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
+echo "--- p2p_upstream_tsgo (scoped) ---"
 cd /workspace/pi-mono
-npx tsgo --noEmit > /tmp/p2p_tsgo.log 2>&1
-P2P_TSGO_RC=$?
-if [ $P2P_TSGO_RC -eq 0 ]; then
-    echo '{"id": "p2p_upstream_tsgo", "passed": true, "detail": "typecheck passed"}' >> /logs/verifier/gates.json
-    echo "PASS"
+CHANGED_TS_FILES=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo '{"id": "p2p_upstream_tsgo", "passed": true, "detail": "no agent .ts/.tsx changes — gate skipped"}' >> /logs/verifier/gates.json
+    echo "PASS (no agent .ts/.tsx changes — gate skipped)"
 else
-    echo '{"id": "p2p_upstream_tsgo", "passed": false, "detail": "typecheck failed"}' >> /logs/verifier/gates.json
-    echo "FAIL"
+    npx tsgo --noEmit $CHANGED_TS_FILES > /tmp/p2p_tsgo.log 2>&1
+    P2P_TSGO_RC=$?
+    if [ $P2P_TSGO_RC -eq 0 ]; then
+        echo '{"id": "p2p_upstream_tsgo", "passed": true, "detail": "typecheck passed on agent-changed files"}' >> /logs/verifier/gates.json
+        echo "PASS"
+    else
+        echo '{"id": "p2p_upstream_tsgo", "passed": false, "detail": "typecheck failed on agent-changed files"}' >> /logs/verifier/gates.json
+        echo "FAIL"
+    fi
 fi
 
 # P2P: biome check on changed files

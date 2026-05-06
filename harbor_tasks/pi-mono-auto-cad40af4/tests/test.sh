@@ -46,14 +46,20 @@ fi
 
 # ---------------------------------------------------------------
 # P2P GATE: TypeScript compilation must succeed (no reward weight).
+# Scoped to agent-touched .ts/.tsx files: pre-existing errors in
+# sandbox/index.ts and similar files would otherwise force every reward to 0.
 # ---------------------------------------------------------------
-if ! npx tsgo --noEmit > /tmp/verifier/tsgo.log 2>&1; then
-    echo "GATE FAIL: tsgo --noEmit failed (regression)"
+CHANGED_TS_FILES=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "GATE OK: tsgo --noEmit (no agent .ts/.tsx changes — gate skipped)"
+elif ! npx tsgo --noEmit $CHANGED_TS_FILES > /tmp/verifier/tsgo.log 2>&1; then
+    echo "GATE FAIL: tsgo --noEmit failed on agent-changed files (regression)"
     tail -40 /tmp/verifier/tsgo.log
     REWARD=0
     finish
+else
+    echo "GATE OK: tsgo --noEmit passes on agent-changed files"
 fi
-echo "GATE OK: tsgo --noEmit passes"
 
 # ---------------------------------------------------------------
 # Build behavioral harness for editor gating logic.
@@ -388,15 +394,22 @@ else
     echo "FAIL: f2p_upstream_structural_emptiness"
 fi
 
-# P2P upstream gate 1: tsgo compilation
-echo "--- upstream gate: p2p_upstream_tsgo_tui ---"
-npx tsgo -p packages/tui/tsconfig.build.json --noEmit > /tmp/verifier/tsgo_upstream.log 2>&1
-if [ $? -eq 0 ]; then
-    echo '{"id": "p2p_upstream_tsgo_tui", "passed": true, "detail": "tsgo compilation succeeded"}' >> "$GATES_FILE"
-    echo "PASS: p2p_upstream_tsgo_tui"
+# P2P upstream gate 1: tsgo compilation (scoped to agent-touched .ts/.tsx files in packages/tui)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
+echo "--- upstream gate: p2p_upstream_tsgo_tui (scoped) ---"
+CHANGED_TS_FILES=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '^packages/tui/.*\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo '{"id": "p2p_upstream_tsgo_tui", "passed": true, "detail": "no agent .ts/.tsx changes in packages/tui — gate skipped"}' >> "$GATES_FILE"
+    echo "PASS: p2p_upstream_tsgo_tui (no agent .ts/.tsx changes — gate skipped)"
 else
-    echo '{"id": "p2p_upstream_tsgo_tui", "passed": false, "detail": "tsgo compilation failed"}' >> "$GATES_FILE"
-    echo "FAIL: p2p_upstream_tsgo_tui"
+    npx tsgo --noEmit $CHANGED_TS_FILES > /tmp/verifier/tsgo_upstream.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo '{"id": "p2p_upstream_tsgo_tui", "passed": true, "detail": "tsgo compilation succeeded on agent-changed files"}' >> "$GATES_FILE"
+        echo "PASS: p2p_upstream_tsgo_tui"
+    else
+        echo '{"id": "p2p_upstream_tsgo_tui", "passed": false, "detail": "tsgo compilation failed on agent-changed files"}' >> "$GATES_FILE"
+        echo "FAIL: p2p_upstream_tsgo_tui"
+    fi
 fi
 
 # P2P upstream gate 2: editor tests

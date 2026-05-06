@@ -545,7 +545,7 @@ run_v043_gate() {
         emit "$id" false "rc=$rc; $tail"
     fi
 }
-run_v043_gate p2p_upstream_e395cbc7 'npm_typecheck_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_e395cbc7 'npm_typecheck_coding-agent' 'cd /workspace/pi-mono && CHANGED=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E "^packages/coding-agent/.*\.tsx?$" | sort -u | tr "\n" " "); if [ -z "$CHANGED" ]; then echo "no agent .ts/.tsx changes in packages/coding-agent — gate skipped"; exit 0; fi; cd /workspace/pi-mono && timeout 120 npx tsgo --noEmit $CHANGED 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
 run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
 
 # Recompute reward using v043 weights.

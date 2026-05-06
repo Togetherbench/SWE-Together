@@ -359,19 +359,26 @@ else
   emit_gate "p2p_upstream_vitest_skills" "false" "vitest skills tests failed"
 fi
 
-# --- P2P: p2p_upstream_tsgo_typecheck ---
-(
-  set +e
-  cd /workspace/pi-mono || exit 1
-  timeout 120 node_modules/.bin/tsgo --noEmit 2>&1
-  exit $?
-)
-if [ $? -eq 0 ]; then
-  echo "PASS: p2p_upstream_tsgo_typecheck"
-  emit_gate "p2p_upstream_tsgo_typecheck" "true" "tsgo typecheck passes"
+# --- P2P: p2p_upstream_tsgo_typecheck (scoped to agent-touched .ts/.tsx files) ---
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
+CHANGED_TS_FILES=$(cd /workspace/pi-mono && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+  echo "PASS: p2p_upstream_tsgo_typecheck (no agent .ts/.tsx changes — gate skipped)"
+  emit_gate "p2p_upstream_tsgo_typecheck" "true" "no agent .ts/.tsx changes — gate skipped"
 else
-  echo "FAIL: p2p_upstream_tsgo_typecheck"
-  emit_gate "p2p_upstream_tsgo_typecheck" "false" "tsgo typecheck failed"
+  (
+    set +e
+    cd /workspace/pi-mono || exit 1
+    timeout 120 node_modules/.bin/tsgo --noEmit $CHANGED_TS_FILES 2>&1
+    exit $?
+  )
+  if [ $? -eq 0 ]; then
+    echo "PASS: p2p_upstream_tsgo_typecheck"
+    emit_gate "p2p_upstream_tsgo_typecheck" "true" "tsgo typecheck passes on agent-changed files"
+  else
+    echo "FAIL: p2p_upstream_tsgo_typecheck"
+    emit_gate "p2p_upstream_tsgo_typecheck" "false" "tsgo typecheck failed on agent-changed files"
+  fi
 fi
 
 # --- Upstream reward tail ---

@@ -285,20 +285,26 @@ else
     echo "FAIL"
 fi
 
-# P2P gate: tsgo compilation succeeds
+# P2P gate: tsgo compilation succeeds (scoped to agent-touched .ts/.tsx files in packages/coding-agent)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 echo ""
-echo "=== UPSTREAM P2P: tsgo compilation ==="
-cd /workspace/pi-mono/packages/coding-agent
-TSGO_OUT=$(npx tsgo -p tsconfig.build.json 2>&1)
-TSGO_RC=$?
-cd /workspace/pi-mono
-if [ "$TSGO_RC" -eq 0 ]; then
-    echo '{"id": "p2p_upstream_tsgo_build", "passed": true, "detail": "tsgo compilation succeeded"}' >> "$GATES_FILE"
-    echo "PASS"
+echo "=== UPSTREAM P2P: tsgo compilation (scoped) ==="
+CHANGED_TS_FILES=$(cd /workspace/pi-mono && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '^packages/coding-agent/.*\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo '{"id": "p2p_upstream_tsgo_build", "passed": true, "detail": "no agent .ts/.tsx changes in packages/coding-agent — gate skipped"}' >> "$GATES_FILE"
+    echo "PASS (no agent .ts/.tsx changes — gate skipped)"
 else
-    echo '{"id": "p2p_upstream_tsgo_build", "passed": false, "detail": "tsgo compilation failed"}' >> "$GATES_FILE"
-    echo "FAIL"
-    echo "$TSGO_OUT" | tail -10
+    cd /workspace/pi-mono
+    TSGO_OUT=$(npx tsgo --noEmit $CHANGED_TS_FILES 2>&1)
+    TSGO_RC=$?
+    if [ "$TSGO_RC" -eq 0 ]; then
+        echo '{"id": "p2p_upstream_tsgo_build", "passed": true, "detail": "tsgo --noEmit succeeded on agent-changed files"}' >> "$GATES_FILE"
+        echo "PASS"
+    else
+        echo '{"id": "p2p_upstream_tsgo_build", "passed": false, "detail": "tsgo --noEmit failed on agent-changed files"}' >> "$GATES_FILE"
+        echo "FAIL"
+        echo "$TSGO_OUT" | tail -10
+    fi
 fi
 
 # P2P gate: vitest extensions-runner tests pass

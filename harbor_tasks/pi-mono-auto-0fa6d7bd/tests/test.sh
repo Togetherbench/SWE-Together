@@ -378,11 +378,19 @@ rm -f packages/coding-agent/test/_f2p_upstream_bash_timing.test.ts
 echo "{\"id\": \"f2p_upstream_bash_timing\", \"passed\": $([ $F2P_TIMING_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$F2P_TIMING_RC\"}" >> /logs/verifier/gates.json
 echo "F2P upstream bash_timing: rc=$F2P_TIMING_RC"
 
-# P2P gate: tsgo type check
-echo "=== P2P Upstream Gate: tsgo --noEmit ==="
-timeout 60 npx tsgo --noEmit >/tmp/p2p_tsgo_$$.log 2>&1
-P2P_TSGO_RC=$?
-echo "{\"id\": \"p2p_upstream_tsgo_typecheck\", \"passed\": $([ $P2P_TSGO_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$P2P_TSGO_RC\"}" >> /logs/verifier/gates.json
+# P2P gate: tsgo type check (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
+echo "=== P2P Upstream Gate: tsgo --noEmit (scoped) ==="
+CHANGED_TS_FILES=$(cd "$REPO" && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "No .ts/.tsx changes in agent diff — gate vacuously passes"
+    P2P_TSGO_RC=0
+    echo "{\"id\": \"p2p_upstream_tsgo_typecheck\", \"passed\": true, \"detail\": \"no agent .ts/.tsx changes — gate skipped\"}" >> /logs/verifier/gates.json
+else
+    timeout 60 npx tsgo --noEmit $CHANGED_TS_FILES >/tmp/p2p_tsgo_$$.log 2>&1
+    P2P_TSGO_RC=$?
+    echo "{\"id\": \"p2p_upstream_tsgo_typecheck\", \"passed\": $([ $P2P_TSGO_RC -eq 0 ] && echo true || echo false), \"detail\": \"rc=$P2P_TSGO_RC\"}" >> /logs/verifier/gates.json
+fi
 echo "P2P upstream tsgo: rc=$P2P_TSGO_RC"
 
 # P2P gate: biome lint

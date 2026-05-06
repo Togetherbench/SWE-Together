@@ -395,9 +395,9 @@ run_v043_gate() {
         emit "$id" false "rc=$rc; $tail"
     fi
 }
-run_v043_gate p2p_upstream_9dadbbf2 'npm_typecheck_agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/agent && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_9dadbbf2 'npm_typecheck_agent' 'cd /workspace/pi-mono && CHANGED=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E "^packages/agent/.*\.tsx?$" | sort -u | tr "\n" " "); if [ -z "$CHANGED" ]; then echo "no agent .ts/.tsx changes in packages/agent — gate skipped"; exit 0; fi; cd /workspace/pi-mono && timeout 120 npx tsgo --noEmit $CHANGED 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
 run_v043_gate p2p_upstream_8548d166 'vitest_session_manager_agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/agent && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
-run_v043_gate p2p_upstream_771580d1 'npm_typecheck_ai' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/ai && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_771580d1 'npm_typecheck_ai' 'cd /workspace/pi-mono && CHANGED=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E "^packages/ai/.*\.tsx?$" | sort -u | tr "\n" " "); if [ -z "$CHANGED" ]; then echo "no agent .ts/.tsx changes in packages/ai — gate skipped"; exit 0; fi; cd /workspace/pi-mono && timeout 120 npx tsgo --noEmit $CHANGED 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
 run_v043_gate p2p_upstream_816994b6 'vitest_session_manager_ai' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/ai && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
 
 # Recompute reward using v043 weights.

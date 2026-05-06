@@ -81,15 +81,15 @@ echo "Detected Task field: $TASK_FIELD (from $TYPE_FILE)"
 # F2P Gates — total weight = 1.0
 ###############################################################################
 
-# Weights:
-#   G1  isSegmentVideoTask uses correct field (behavioral, executed)   0.25
-#   G2  isSegmentVideoTask gates routing in TasksPane (call-site)      0.10
-#   G3  Shot-context routing exists & is reachable                     0.20
+# Weights (rebalanced — behavioral gates dominate, structural greps capped):
+#   G1  isSegmentVideoTask uses correct field (behavioral, executed)   0.45
+#   G2  isSegmentVideoTask gates routing in TasksPane (call-site)      0.025  (structural grep)
+#   G3  Shot-context routing exists & is reachable                     0.025  (structural grep)
 #       (deep-link nav OR in-place segmentSlot lightbox)
-#   G4  extractPairShotGenerationId returns expected id (behavioral)   0.15
-#   G5  Receiver wiring: useSegmentSlotMode handles openSegmentSlot    0.15
+#   G4  extractPairShotGenerationId returns expected id (behavioral)   0.45
+#   G5  Receiver wiring: useSegmentSlotMode handles openSegmentSlot    0.025  (structural grep)
 #       OR a dedicated SegmentSlot lightbox hook for TasksPane exists
-#   G6  Completeness: ≥2 of {task-utils, TaskItem/TasksPane,            0.15
+#   G6  Completeness: ≥2 of {task-utils, TaskItem/TasksPane,            0.025  (structural grep)
 #       useSegmentSlotMode/SegmentSlotTaskLightbox} touched
 #       AND non-trivial line counts in those touched files
 #
@@ -100,7 +100,7 @@ SCORE=0
 ###############################################################################
 # G1 — Behavioral: actually evaluate isSegmentVideoTask in node
 ###############################################################################
-echo "=== G1: isSegmentVideoTask returns true for individual_travel_segment (0.25) ==="
+echo "=== G1: isSegmentVideoTask returns true for individual_travel_segment (0.45) ==="
 G1=0
 if [ -f "$TASK_UTILS" ] && command -v node >/dev/null 2>&1; then
   TMPJS=$(mktemp /tmp/tu_XXXXXX.mjs)
@@ -154,7 +154,7 @@ EOF
      && echo "$OUT" | grep -q '"okPositive":true' \
      && echo "$OUT" | grep -q '"okNegative":true'; then
     echo "G1 PASS"
-    G1=25
+    G1=450
   else
     echo "G1 FAIL"
   fi
@@ -166,7 +166,7 @@ SCORE=$((SCORE+G1))
 ###############################################################################
 # G2 — isSegmentVideoTask CALLED inside TasksPane component tree
 ###############################################################################
-echo "=== G2: isSegmentVideoTask gates routing at call-site (0.10) ==="
+echo "=== G2: isSegmentVideoTask gates routing at call-site (0.025) ==="
 G2=0
 CALL_HITS=$(grep -rEn "isSegmentVideoTask\s*\(" "$TASKSPANE_DIR" src/shared/hooks 2>/dev/null \
   | grep -v "export const isSegmentVideoTask" \
@@ -174,7 +174,7 @@ CALL_HITS=$(grep -rEn "isSegmentVideoTask\s*\(" "$TASKSPANE_DIR" src/shared/hook
   | wc -l)
 echo "isSegmentVideoTask call-site count: $CALL_HITS"
 if [ "$CALL_HITS" -ge 1 ]; then
-  G2=10
+  G2=25
   echo "G2 PASS"
 else
   echo "G2 FAIL"
@@ -184,7 +184,7 @@ SCORE=$((SCORE+G2))
 ###############################################################################
 # G3 — Shot-context routing wired in TasksPane (deep-link OR in-place)
 ###############################################################################
-echo "=== G3: shot-context routing exists in TasksPane (0.20) ==="
+echo "=== G3: shot-context routing exists in TasksPane (0.025) ==="
 G3=0
 
 # Strategy A: navigation to /tools/travel-between-images#<shotId> with openSegmentSlot
@@ -214,11 +214,11 @@ if [ $A_OK -eq 1 ] || [ $B_OK -eq 1 ]; then
     fi
   done
   if [ $GATED_OK -eq 1 ]; then
-    G3=20
+    G3=25
     echo "G3 PASS"
   else
     echo "G3 PARTIAL: routing exists but not co-located with isSegmentVideoTask gate"
-    G3=10
+    G3=12
   fi
 else
   echo "G3 FAIL"
@@ -228,7 +228,7 @@ SCORE=$((SCORE+G3))
 ###############################################################################
 # G4 — Behavioral: extractPairShotGenerationId returns expected id
 ###############################################################################
-echo "=== G4: extractPairShotGenerationId returns correct id (0.15) ==="
+echo "=== G4: extractPairShotGenerationId returns correct id (0.45) ==="
 G4=0
 if [ -f "$TASK_UTILS" ] && command -v node >/dev/null 2>&1; then
   TMPJS=$(mktemp /tmp/ep_XXXXXX.mjs)
@@ -271,10 +271,10 @@ EOF
       echo "$OUT" | grep -q '"r4":null' && OK=$((OK+1))
       echo "G4 sub-checks passed: $OK/4"
       if [ $OK -ge 3 ]; then
-        G4=15
+        G4=450
         echo "G4 PASS"
       elif [ $OK -ge 2 ]; then
-        G4=8
+        G4=225
         echo "G4 PARTIAL"
       fi
     fi
@@ -287,7 +287,7 @@ SCORE=$((SCORE+G4))
 ###############################################################################
 # G5 — Receiver wiring (handles the open-on-arrival)
 ###############################################################################
-echo "=== G5: receiver wiring for shot-context open (0.15) ==="
+echo "=== G5: receiver wiring for shot-context open (0.025) ==="
 G5=0
 
 # Path A: useSegmentSlotMode reads location.state.openSegmentSlot
@@ -316,7 +316,7 @@ fi
 
 echo "Receiver paths: A=$A B=$B C=$C"
 if [ $A -eq 1 ] || [ $B -eq 1 ] || [ $C -eq 1 ]; then
-  G5=15
+  G5=25
   echo "G5 PASS"
 else
   echo "G5 FAIL"
@@ -326,7 +326,7 @@ SCORE=$((SCORE+G5))
 ###############################################################################
 # G6 — Completeness via heuristic file-touch detection
 ###############################################################################
-echo "=== G6: completeness across required files (0.15) ==="
+echo "=== G6: completeness across required files (0.025) ==="
 G6=0
 
 # Capture line counts (proxy for "was edited / non-trivial")
@@ -359,11 +359,11 @@ fi
 TOUCHED=$((T1+T2+T3))
 echo "Completeness components met: T1=$T1 T2=$T2 T3=$T3 (sum=$TOUCHED)"
 if [ $TOUCHED -ge 3 ]; then
-  G6=15
+  G6=25
 elif [ $TOUCHED -eq 2 ]; then
-  G6=8
+  G6=13
 elif [ $TOUCHED -eq 1 ]; then
-  G6=3
+  G6=5
 fi
 SCORE=$((SCORE+G6))
 
@@ -390,8 +390,8 @@ fi
 ###############################################################################
 # Compute final reward
 ###############################################################################
-# SCORE is in units of 1/100. Convert to 0.00–1.00.
-echo "G1=$G1 G2=$G2 G3=$G3 G4=$G4 G5=$G5 G6=$G6 SCORE=$SCORE/100"
-REWARD=$(awk -v s="$SCORE" 'BEGIN { printf "%.2f", s/100.0 }')
+# SCORE is in units of 1/1000. Convert to 0.000–1.000.
+echo "G1=$G1 G2=$G2 G3=$G3 G4=$G4 G5=$G5 G6=$G6 SCORE=$SCORE/1000"
+REWARD=$(awk -v s="$SCORE" 'BEGIN { printf "%.3f", s/1000.0 }')
 echo "FINAL REWARD: $REWARD"
 echo "$REWARD" > /logs/verifier/reward.txt

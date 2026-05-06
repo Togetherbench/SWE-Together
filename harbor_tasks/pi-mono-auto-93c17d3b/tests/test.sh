@@ -61,15 +61,13 @@ run_upstream_gates() {
 python3 - <<'PYEOF'
 import json, os, sys
 WEIGHTS = {
-    "f2p_gate1_cmd_and_handler": 0.09,
-    "f2p_gate2_protocol_injected": 0.12,
-    "f2p_gate3_reacts_to_signals": 0.12,
-    "f2p_gate4_distinct_signals": 0.09,
-    "f2p_gate5_inactive_no_reaction": 0.09,
-    "f2p_gate6_pattern_fidelity": 0.09,
-    "f2p_upstream_file_exists": 0.2,
-    "f2p_upstream_ext_loadable": 0.2
+    "f2p_upstream_file_exists": 0.05,    # informational; reduced from 0.20
+    "f2p_upstream_ext_loadable": 0.05,   # informational; reduced from 0.20
 }
+# inner_weight = 1.0 - 0.10 = 0.90 → bash-computed behavioral reward (the
+# genuine inner gate, accumulated via add_reward) gets 90% weight.
+# The former f2p_gate1..6 keys were never emitted into gates.json, so they
+# only shrank inner_weight without ever contributing — removed.
 P2P_REGRESSION = ["p2p_upstream_extensions_dir", "p2p_upstream_existing_ext_compiles"]
 verdicts = {}
 try:

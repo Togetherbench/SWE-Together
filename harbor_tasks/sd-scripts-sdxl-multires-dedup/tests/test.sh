@@ -19,6 +19,9 @@ run_py() {
     cd "$REPO" && "$PYTHON" -c "$1" 2>&1
 }
 
+# Ensure verifier-side Python deps are present (numpy needed by p2p_upstream gate)
+python3 -c "import numpy" 2>/dev/null || pip install -q numpy 2>/dev/null || pip3 install -q numpy 2>/dev/null || true
+
 # ════════════════════════════════════════════════════════════════════
 # P2P GATE: base imports must still work (gating only, no reward)
 # ════════════════════════════════════════════════════════════════════

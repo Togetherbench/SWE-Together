@@ -348,18 +348,25 @@ else
     emit_gate "p2p_upstream_vitest_pm_pass" "false" "no tests passed"
 fi
 
-# P2P upstream gate 2: tsgo type checking
+# P2P upstream gate 2: tsgo type checking (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 echo ""
-echo "=== Upstream P2P: tsgo --noEmit ==="
-TSGO_OUTPUT=$(cd "$REPO_DIR" && timeout 60 npx tsgo --noEmit 2>&1)
-TSGO_RC=$?
-echo "$TSGO_OUTPUT" | tail -10
-if [ $TSGO_RC -eq 0 ]; then
-    echo "PASS: upstream P2P tsgo type check"
-    emit_gate "p2p_upstream_tsgo_noEmit" "true" "type checking passed"
+echo "=== Upstream P2P: tsgo --noEmit (scoped) ==="
+CHANGED_TS_FILES=$(cd "$REPO_DIR" && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "PASS: upstream P2P tsgo type check (no agent .ts/.tsx changes — gate skipped)"
+    emit_gate "p2p_upstream_tsgo_noEmit" "true" "no agent .ts/.tsx changes — gate skipped"
 else
-    echo "FAIL: upstream P2P tsgo type check"
-    emit_gate "p2p_upstream_tsgo_noEmit" "false" "type checking failed"
+    TSGO_OUTPUT=$(cd "$REPO_DIR" && timeout 60 npx tsgo --noEmit $CHANGED_TS_FILES 2>&1)
+    TSGO_RC=$?
+    echo "$TSGO_OUTPUT" | tail -10
+    if [ $TSGO_RC -eq 0 ]; then
+        echo "PASS: upstream P2P tsgo type check"
+        emit_gate "p2p_upstream_tsgo_noEmit" "true" "type checking passed on agent-changed files"
+    else
+        echo "FAIL: upstream P2P tsgo type check"
+        emit_gate "p2p_upstream_tsgo_noEmit" "false" "type checking failed on agent-changed files"
+    fi
 fi
 
 # P2P upstream gate 3: biome check on package-manager.ts

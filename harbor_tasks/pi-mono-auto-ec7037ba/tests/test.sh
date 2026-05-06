@@ -160,8 +160,8 @@ for pkg_file in "$AI_CL" "$TUI_CL" "$CA_CL"; do
 done
 
 ATTRIB_PATTERN='\(\[#[0-9]+\]\(https://github\.com/badlogic/pi-mono/(issues|pull)/[0-9]+\)( by \[@[^]]+\]\(https://github\.com/[^)]+\))?\)'
-NEW_BULLETS=$(grep -cE '^[[:space:]]*-[[:space:]]+' "$TMP_NEW" 2>/dev/null || echo 0)
-ATTRIBUTED=$(grep -cE "$ATTRIB_PATTERN" "$TMP_NEW" 2>/dev/null || echo 0)
+NEW_BULLETS=$( { grep -cE '^[[:space:]]*-[[:space:]]+' "$TMP_NEW" 2>/dev/null || echo 0; } | head -1 )
+ATTRIBUTED=$( { grep -cE "$ATTRIB_PATTERN" "$TMP_NEW" 2>/dev/null || echo 0; } | head -1 )
 
 if [ "$NEW_BULLETS" -ge 2 ] && [ "$ATTRIBUTED" -ge 2 ]; then
   emit t1_f2p_changelog_attribution_format true "new=${NEW_BULLETS} attributed=${ATTRIBUTED}"
@@ -453,9 +453,9 @@ run_v043_gate() {
         emit "$id" false "rc=$rc; $tail"
     fi
 }
-run_v043_gate p2p_upstream_771580d1 'npm_typecheck_ai' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/ai && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_771580d1 'npm_typecheck_ai' 'cd /workspace/pi-mono && CHANGED=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E "^packages/ai/.*\.tsx?$" | sort -u | tr "\n" " "); if [ -z "$CHANGED" ]; then echo "no agent .ts/.tsx changes in packages/ai — gate skipped"; exit 0; fi; cd /workspace/pi-mono && timeout 120 npx tsgo --noEmit $CHANGED 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
 run_v043_gate p2p_upstream_816994b6 'vitest_session_manager_ai' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/ai && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
-run_v043_gate p2p_upstream_e395cbc7 'npm_typecheck_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx tsgo --noEmit -p tsconfig.build.json 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
+run_v043_gate p2p_upstream_e395cbc7 'npm_typecheck_coding-agent' 'cd /workspace/pi-mono && CHANGED=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E "^packages/coding-agent/.*\.tsx?$" | sort -u | tr "\n" " "); if [ -z "$CHANGED" ]; then echo "no agent .ts/.tsx changes in packages/coding-agent — gate skipped"; exit 0; fi; cd /workspace/pi-mono && timeout 120 npx tsgo --noEmit $CHANGED 2>&1 | tail -5; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 124 ]; then exit $rc; fi'
 run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /workspace/pi-mono && cd /workspace/pi-mono/packages/coding-agent && timeout 120 npx vitest run test/path-utils.test.ts --reporter=basic 2>&1 | tail -10'
 
 # Recompute reward using v043 weights.

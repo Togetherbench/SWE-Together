@@ -28,19 +28,25 @@ if [ ! -f "$AGENT_SESSION" ]; then
 fi
 
 # =============================================================================
-# Gate P2P (gating only, no reward): TypeScript compiles
+# Gate P2P (gating only, no reward): TypeScript compiles (scoped to agent diff)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 # If this fails on the agent's patch, treat as regression and return 0.
 # =============================================================================
 echo "=== P2P Gate: TypeScript compilation (gating only, no reward) ==="
-TSC_OUT=$(cd "$REPO" && npx tsgo --noEmit 2>&1)
-TSC_EXIT=$?
-if [ $TSC_EXIT -ne 0 ]; then
-    echo "FAIL: TypeScript compilation regression"
-    echo "$TSC_OUT" | tail -40
-    REWARD=0.0
-    finish
+CHANGED_TS_FILES=$(cd "$REPO" && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "PASS: no agent .ts/.tsx changes — gate skipped"
+else
+    TSC_OUT=$(cd "$REPO" && npx tsgo --noEmit $CHANGED_TS_FILES 2>&1)
+    TSC_EXIT=$?
+    if [ $TSC_EXIT -ne 0 ]; then
+        echo "FAIL: TypeScript compilation regression on agent-changed files"
+        echo "$TSC_OUT" | tail -40
+        REWARD=0.0
+        finish
+    fi
+    echo "PASS: tsc clean on agent-changed files"
 fi
-echo "PASS: tsc clean"
 
 # =============================================================================
 # F2P Gate 1 (weight 0.50): The buggy `hasBindings` guard around
@@ -339,17 +345,24 @@ else
     echo "FAIL: upstream changelog entry"
 fi
 
-# P2P upstream gate: tsgo typecheck
+# P2P upstream gate: tsgo typecheck (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 echo ""
-echo "=== Upstream P2P: tsgo --noEmit ==="
-cd /workspace/pi-mono && npx tsgo --noEmit 2>&1 | tail -20
-P2P_TSGO_RC=$?
-if [ $P2P_TSGO_RC -eq 0 ]; then
-    echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo --noEmit clean"}' >> "$GATES_JSON"
-    echo "PASS: upstream tsgo typecheck"
+echo "=== Upstream P2P: tsgo --noEmit (scoped) ==="
+CHANGED_TS_FILES=$(cd /workspace/pi-mono && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "PASS: upstream tsgo typecheck (no agent .ts/.tsx changes — gate skipped)"
+    echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"no agent .ts/.tsx changes — gate skipped"}' >> "$GATES_JSON"
 else
-    echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo --noEmit failed"}' >> "$GATES_JSON"
-    echo "FAIL: upstream tsgo typecheck"
+    cd /workspace/pi-mono && npx tsgo --noEmit $CHANGED_TS_FILES 2>&1 | tail -20
+    P2P_TSGO_RC=${PIPESTATUS[0]}
+    if [ $P2P_TSGO_RC -eq 0 ]; then
+        echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo --noEmit clean on agent-changed files"}' >> "$GATES_JSON"
+        echo "PASS: upstream tsgo typecheck"
+    else
+        echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo --noEmit failed on agent-changed files"}' >> "$GATES_JSON"
+        echo "FAIL: upstream tsgo typecheck"
+    fi
 fi
 
 # Run upstream reward tail

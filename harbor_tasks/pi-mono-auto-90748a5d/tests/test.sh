@@ -375,14 +375,22 @@ else
     echo '{"id":"p2p_upstream_biome","passed":false,"detail":"biome check failed"}' >> "$GATES_FILE"
 fi
 
-# P2P: tsgo type check
-node_modules/.bin/tsgo --noEmit > /tmp/_gate_tsgo.log 2>&1
-_gate_tsgo_rc=$?
-tail -5 /tmp/_gate_tsgo.log
-if [ "$_gate_tsgo_rc" -eq 0 ]; then
-    echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo --noEmit passed"}' >> "$GATES_FILE"
+# P2P: tsgo type check (scoped to agent-touched .ts/.tsx files)
+# Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
+CHANGED_TS_FILES=$((git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+if [ -z "$CHANGED_TS_FILES" ]; then
+    echo "No .ts/.tsx changes in agent diff — gate vacuously passes"
+    _gate_tsgo_rc=0
+    echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"no agent .ts/.tsx changes — gate skipped"}' >> "$GATES_FILE"
 else
-    echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo --noEmit failed"}' >> "$GATES_FILE"
+    node_modules/.bin/tsgo --noEmit $CHANGED_TS_FILES > /tmp/_gate_tsgo.log 2>&1
+    _gate_tsgo_rc=$?
+    tail -5 /tmp/_gate_tsgo.log
+    if [ "$_gate_tsgo_rc" -eq 0 ]; then
+        echo '{"id":"p2p_upstream_tsgo","passed":true,"detail":"tsgo --noEmit passed on agent-changed files"}' >> "$GATES_FILE"
+    else
+        echo '{"id":"p2p_upstream_tsgo","passed":false,"detail":"tsgo --noEmit failed on agent-changed files"}' >> "$GATES_FILE"
+    fi
 fi
 
 # P2P: vitest clipboard-image tests
