@@ -344,6 +344,27 @@ server.serve_forever()
             else:
                 log.info("Header-strip proxy started successfully")
 
+        # Tag every git repo under /workspace as `harbor-base` so per-turn
+        # `git diff` can compare against the pre-agent state even after the
+        # agent runs `git commit` mid-trial.  Without this, `git diff HEAD`
+        # returns empty after the first commit, silently black-holing all
+        # subsequent agent work from our patch capture.
+        tag_cmd = (
+            'set +e\n'
+            'cd /workspace 2>/dev/null || exit 0\n'
+            'for d in */; do\n'
+            '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
+            '    (cd "$d" && git tag -f harbor-base HEAD 2>/dev/null) || true\n'
+            '  fi\n'
+            'done\n'
+        )
+        try:
+            await environment.exec(command=tag_cmd, cwd="/workspace",
+                                   env={}, timeout_sec=30)
+            log.debug("harbor-base tagged in /workspace git repos")
+        except Exception as e:
+            log.debug("harbor-base tagging failed (best-effort): %s", e)
+
     # ── session ID extraction ────────────────────────────────────────
 
     def _find_session_id(self) -> str | None:
@@ -575,19 +596,30 @@ server.serve_forever()
         patch.  Fix: capture stdout separately, check exit code, mark
         capture failures explicitly.
         """
+        # v0.4.3 fix E: prefer `git diff harbor-base` over `git diff HEAD`.
+        # The `harbor-base` tag is set in `setup` to point at the pre-agent
+        # commit; using it means we capture cumulative agent work even after
+        # `git commit` (under HEAD this would have returned empty post-commit
+        # and silently lost the rest of the trial's edits).  Falls back to
+        # `git diff HEAD` if the tag doesn't exist (older trials, third-party
+        # workspace setups).
         cmd = (
             'set +e\n'
             'cd /workspace 2>/dev/null || exit 0\n'
             'for d in */; do\n'
             '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
-            '    DIFF_OUT=$(cd "$d" && git --no-pager diff HEAD 2>/dev/null)\n'
+            '    BASE_REF=HEAD\n'
+            '    if (cd "$d" && git rev-parse --verify harbor-base >/dev/null 2>&1); then\n'
+            '      BASE_REF=harbor-base\n'
+            '    fi\n'
+            '    DIFF_OUT=$(cd "$d" && git --no-pager diff $BASE_REF 2>/dev/null)\n'
             '    DIFF_RC=$?\n'
             '    echo "=== $d ==="\n'
             '    if [ $DIFF_RC -eq 0 ]; then\n'
             '      printf %s "$DIFF_OUT"\n'
             '      echo ""\n'
             '    else\n'
-            '      echo "# capture-failed: git diff HEAD exit=$DIFF_RC"\n'
+            '      echo "# capture-failed: git diff $BASE_REF exit=$DIFF_RC"\n'
             '    fi\n'
             '  fi\n'
             'done\n'
