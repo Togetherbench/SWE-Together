@@ -349,12 +349,22 @@ server.serve_forever()
         # agent runs `git commit` mid-trial.  Without this, `git diff HEAD`
         # returns empty after the first commit, silently black-holing all
         # subsequent agent work from our patch capture.
+        #
+        # v0.4.3 audit refinement: snapshot the WORKING TREE state before
+        # tagging.  ~10-20% of task Dockerfiles do post-checkout mutations
+        # (`rm -f AGENTS.md CLAUDE.md`, `sed -i`, etc.) without a follow-up
+        # `git commit`.  Without the pre-tag snapshot, those Dockerfile
+        # mutations show up as phantom "agent edits" in every per-turn diff.
         tag_cmd = (
             'set +e\n'
             'cd /workspace 2>/dev/null || exit 0\n'
             'for d in */; do\n'
             '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
-            '    (cd "$d" && git tag -f harbor-base HEAD 2>/dev/null) || true\n'
+            '    (cd "$d" && \\\n'
+            '       git add -A 2>/dev/null && \\\n'
+            '       git -c user.email=harbor@base -c user.name=harbor \\\n'
+            '         commit --allow-empty -m "harbor-base" --quiet 2>/dev/null && \\\n'
+            '       git tag -f harbor-base HEAD 2>/dev/null) || true\n'
             '  fi\n'
             'done\n'
         )
