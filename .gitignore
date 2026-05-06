@@ -19,3 +19,9 @@ patch_library/
 
 # Claude Code harness runtime state (PID lock)
 .claude/scheduled_tasks.lock
+
+# Screening pipeline outputs (step1_fetch.py + downstream stages)
+scripts/screening/sessions_raw/
+scripts/screening/new_dataclaw/
+scripts/screening/swechat/
+scripts/screening/github_stars_cache.json
