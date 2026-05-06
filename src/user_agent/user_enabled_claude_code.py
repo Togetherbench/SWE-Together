@@ -145,8 +145,13 @@ class Proxy(http.server.BaseHTTPRequestHandler):
         # prompt caching (anthropic-beta: prompt-caching-2024-07-31). Without
         # this header, every turn re-sends the full system+tools+history and
         # Opus 4.7 trials cost ~10-20x more than they should.
+        # [v043-zai-cache] Also keep beta for z-ai/* routes — z.ai's GLM
+        # endpoint supports cache_control: ephemeral when surfaced through
+        # OR's Anthropic-compat layer, IF we pin upstream to z-ai (see
+        # provider injection in do_POST).
         is_anthropic_route = REMAP_MODEL.startswith("anthropic/")
-        strip_beta = is_or and not is_anthropic_route
+        is_zai_route = REMAP_MODEL.startswith("z-ai/")
+        strip_beta = is_or and not is_anthropic_route and not is_zai_route
         # [v043-ark] ARK Coding Plan (volces.com) requires Bearer auth on the
         # primary path, NOT x-api-key. Anthropic-compat probe confirmed
         # `Authorization: Bearer <key>` returns 200 while `x-api-key` returns 401.
@@ -183,6 +188,12 @@ class Proxy(http.server.BaseHTTPRequestHandler):
             try:
                 data = json.loads(raw_body)
                 data["model"] = REMAP_MODEL
+                # [v043-zai-cache] Pin OR routing to z-ai upstream when the
+                # remapped model is z-ai/*, so the Anthropic-compat call hits
+                # z.ai's GLM endpoint (which supports prompt caching) instead
+                # of a load-balanced third-party serving glm-5.1.
+                if IS_OPENROUTER and REMAP_MODEL.startswith("z-ai/"):
+                    data["provider"] = {{"only": ["z-ai"]}}
                 body_primary = json.dumps(data).encode()
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -555,15 +566,31 @@ server.serve_forever()
         Writes to <logs_dir>/patches/turn-<N>.patch. The final turn's patch is
         also copied to <logs_dir>/final.patch for easy access. Best-effort —
         silently no-ops if /workspace has no git repos or exec fails.
+
+        Failure mode this guards against: in v0.4.3 ~65% of trials silently
+        wrote git's "Not a git repository" warning + `git diff -h` usage text
+        to the patch file because the original cmd used `2>&1` (mixed
+        stderr in) and didn't check the exit code.  Downstream replay then
+        treated the help text as the agent's diff and applied a "garbage"
+        patch.  Fix: capture stdout separately, check exit code, mark
+        capture failures explicitly.
         """
         cmd = (
-            'set +e; cd /workspace 2>/dev/null && '
-            'for d in */; do '
-            '  if [ -d "$d/.git" ]; then '
-            '    echo "=== $d ==="; '
-            '    (cd "$d" && git --no-pager diff HEAD 2>&1); '
-            '  fi; '
-            'done'
+            'set +e\n'
+            'cd /workspace 2>/dev/null || exit 0\n'
+            'for d in */; do\n'
+            '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
+            '    DIFF_OUT=$(cd "$d" && git --no-pager diff HEAD 2>/dev/null)\n'
+            '    DIFF_RC=$?\n'
+            '    echo "=== $d ==="\n'
+            '    if [ $DIFF_RC -eq 0 ]; then\n'
+            '      printf %s "$DIFF_OUT"\n'
+            '      echo ""\n'
+            '    else\n'
+            '      echo "# capture-failed: git diff HEAD exit=$DIFF_RC"\n'
+            '    fi\n'
+            '  fi\n'
+            'done\n'
         )
         try:
             result = await environment.exec(

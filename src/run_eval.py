@@ -135,6 +135,12 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
 
     if provider == "anthropic":
         env["ANTHROPIC_API_KEY"] = action_key
+        # Forward CLAUDE_CODE_EFFORT_LEVEL (low/medium/high/xhigh/max) for
+        # Claude Opus 4.7. xhigh is the recommended default for coding/agentic
+        # use; controls adaptive-thinking depth via Anthropic's effort param.
+        effort = os.environ.get("CLAUDE_CODE_EFFORT_LEVEL")
+        if effort:
+            env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
         return env
 
     if provider == "openrouter":

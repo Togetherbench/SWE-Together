@@ -34,7 +34,9 @@ class ClaudeCode(BaseInstalledAgent):
             "reasoning_effort",
             cli="--effort",
             type="enum",
-            choices=["low", "medium", "high"],
+            # Updated for Claude Opus 4.7 — adds xhigh (recommended for coding/
+            # agentic work) and max. Old enum only knew low/medium/high.
+            choices=["low", "medium", "high", "xhigh", "max"],
             env_fallback="CLAUDE_CODE_EFFORT_LEVEL",
         ),
         CliFlag(
