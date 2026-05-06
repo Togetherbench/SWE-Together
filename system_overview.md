@@ -47,17 +47,22 @@ Four stages, each with a narrow script boundary:
   screened pool          tests → review          Harbor orchestrator    traces.togetherbench.com
 ```
 
-### 1. Ingest — `session_collection/`
+### 1. Ingest — `scripts/screening/` (code) + `session_collection/` (data)
 
-Raw sessions arrive from DataClaw on HuggingFace and pass through an LLM-based
-screen that enforces the benchmark's hard criteria: public repo, specific base
-commit, no secrets, reconstructible outputs, and — the constraint that
-distinguishes this benchmark — *at least three meaningful user interventions*.
-Single-turn sessions are rejected at this stage because they cannot exercise
-the correction loop the benchmark is built to test.
+Raw sessions arrive from DataClaw on HuggingFace and pass through a Gemini-only
+screening pipeline that enforces the benchmark's hard criteria: public repo,
+specific base commit, no secrets, reconstructible outputs, and — the
+constraint that distinguishes this benchmark — *at least three meaningful user
+interventions*. Single-turn sessions are rejected at this stage because they
+cannot exercise the correction loop the benchmark is built to test.
 
-Screen: `session_collection/screen_with_openai.py`. Extracted candidates land
-in `sessions_raw/`.
+Stage 1 (`scripts/screening/screen_with_gemini.py`) — Gemini 3 Flash with
+grounded search identifies the primary repo, star count, and whether the
+session is actually modifying code. Stage 2 (`scripts/screening/llm_rescreen.py`)
+— Gemini 3.1 Pro deep judge rules on whether the work is reproducible in a
+clean Harbor task. Bulk session data and screening outputs live (gitignored)
+under `session_collection/`; the scripts and design docs are tracked at
+`scripts/screening/`.
 
 ### 2. Author task — `.claude/commands/`
 
@@ -310,7 +315,8 @@ harbor_tasks/         # 101 self-contained task directories
 base_images/          # 5 cluster Dockerfiles (comfyui, hyperswitch, pi-mono, reigh, sd-scripts)
                       #   inherited by 100+ thin-child task images; CC v2.1.108 baked here
 sessions_raw/         # raw DataClaw + pi-mono + hyperswitch sessions (provenance only)
-session_collection/   # ingest + screening pipeline
+session_collection/   # ingest + screening data (gitignored; fetch from HF dataset alexshengzhili/dataclaw-harbor-candidates)
+scripts/screening/    # ingest + screening code (Gemini-only judge)
 src/
   run_eval.py         # in-process batch evaluator (Harbor LocalOrchestrator)
   runner.py           # model resolution, user-sim wiring, single-task CLI
