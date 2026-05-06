@@ -213,6 +213,26 @@ class Proxy(http.server.BaseHTTPRequestHandler):
                     # bytes as a fixed-length JSON body → "Failed to parse JSON".
                     # Now: re-encode chunks as Transfer-Encoding: chunked so CC
                     # sees a real streamed response.
+                    # [v043-zai-throttle] Peek the first upstream chunk to
+                    # detect z.ai's silent rate-limit pattern: HTTP 200 +
+                    # `event: error` + code 1302 inside the SSE body. z.ai
+                    # emits throttles as malformed Anthropic-spec SSE inside
+                    # an HTTP 200 (not a 429), so urllib never raises and CC
+                    # synthesizes a turn-1 "Failed to parse JSON". Retry with
+                    # backoff so the throttle window can clear.
+                    first_chunk = resp.read1(8192)
+                    if (b"event: error" in first_chunk
+                            and (b'"code":"1302"' in first_chunk
+                                 or b"Rate limit" in first_chunk
+                                 or b"rate limit" in first_chunk)):
+                        if attempt < MAX_RETRIES:
+                            print(f"[proxy] z.ai silent throttle (attempt {{attempt+1}}/{{MAX_RETRIES+1}}), retrying in {{RETRY_DELAY}}s...", flush=True)
+                            time.sleep(RETRY_DELAY)
+                            continue
+                        elif FALLBACK_URL and FALLBACK_MODEL:
+                            print(f"[proxy] z.ai silent throttle exhausted, falling back to OpenRouter/{{FALLBACK_MODEL}}", flush=True)
+                            break
+                        # else: forward the throttle SSE verbatim so CC sees it
                     self.send_response(resp.status)
                     for k, v in resp.getheaders():
                         if k.lower() in ("content-encoding", "content-length", "transfer-encoding"):
@@ -220,6 +240,9 @@ class Proxy(http.server.BaseHTTPRequestHandler):
                         self.send_header(k, v)
                     self.send_header("Transfer-Encoding", "chunked")
                     self.end_headers()
+                    if first_chunk:
+                        self.wfile.write(f"{{len(first_chunk):x}}\\r\\n".encode() + first_chunk + b"\\r\\n")
+                        self.wfile.flush()
                     while True:
                         chunk = resp.read1(8192)  # read1 = per upstream chunk, doesn't block to fill buffer
                         if not chunk:
