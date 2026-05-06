@@ -58,7 +58,7 @@ cannot exercise the correction loop the benchmark is built to test.
 
 Stage 1 (`scripts/screening/step2_screen_with_llm.py`) — Gemini 3 Flash with
 grounded search identifies the primary repo, star count, and whether the
-session is actually modifying code. Stage 2 (`scripts/screening/llm_rescreen.py`)
+session is actually modifying code. Stage 2 (`scripts/screening/step2_1_llm_rescreen.py`)
 — Gemini 3.1 Pro deep judge rules on whether the work is reproducible in a
 clean Harbor task. Bulk session data and screening outputs live (gitignored)
 under `session_collection/`; the scripts and design docs are tracked at
