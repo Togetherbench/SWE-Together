@@ -87,12 +87,16 @@ agents trying to game it.
 | Silver | Import + call + assert on output | `merged = Cache.merge([c1, c2]); assert merged.shape[0] == 2` |
 | Bronze | AST/regex — only when code can't execute (Triton, CUDA C++, missing deps) | function exists AND body > 3 non-docstring stmts |
 
-**P2P is the anti-theatrical mechanism.** If the upstream repo has a CPU-safe
-subset of its own test suite, that subset runs inside `test.sh` as a
-regression gate (10–20% of reward). A verifier that only checks the reported
-symptom can be satisfied by a narrow fix that breaks neighboring behavior;
-the repo's own pytest/vitest suite catches that class of regression. If no
-upstream tests exist we skip P2P — a synthetic P2P is worse than none.
+**P2P is the anti-theatrical mechanism — but it never carries weight.** If
+the upstream repo has a CPU-safe subset of its own test suite, that subset
+runs inside `test.sh` as a regression gate. The gate is **gating only**:
+on failure it caps the trial reward to 0.0; on pass it contributes nothing
+positive. (Pre-v0.4.3 the implementation was additive — a P2P pass added
+~10–20% to the reward and an F2P pass on top of that hit the 1.0 ceiling,
+indistinguishable from a perfect solve. Commit `c8bc168a` standardized the
+weighted-replace formula across 30 verifiers.) If a manifest declares a
+P2P_REGRESSION gate without a backing `command:` field, drop the entry —
+decorative gates with `weight: 0.0` are clutter, not signal.
 
 **AST trash — what the linter (`src/lint_tests.py`) rejects:**
 
@@ -208,14 +212,15 @@ data is cached for 24 h; index endpoints for 5 min.
 These are decisions that should not be changed casually. Each exists because
 we have been burned by its absence.
 
-**User simulator model is hardcoded.** `_USER_SIM_MODEL =
-"gemini/gemini-3.1-pro-preview"` appears at `src/run_eval.py:431` and
-`src/runner.py:262`. The `--user-model` CLI flag was removed on 2026-04-12.
-A different user sim behaves differently — different trigger sensitivity,
+**User simulator model defaults to Gemini 3.1 Pro and is treated as fixed
+infrastructure.** The default `openrouter/google/gemini-3.1-pro-preview`
+lives in `src/run_eval.py` and `src/runner.py`; the `--user-model` flag
+exists for ablation but every published cohort uses the default. A
+different user sim behaves differently — different trigger sensitivity,
 different phrasing, different tolerance for partial solutions — and that
 makes scores across runs incomparable. The benchmark measures *agent*
-capability under consistent feedback; the user sim is fixed infrastructure,
-not a knob.
+capability under consistent feedback; do not change the sim model when
+producing comparable numbers.
 
 **All agents use the `claude-code` adapter.** Harbor also supports Terminus
 2, but only Claude Code is used here. Every target model — Opus, Sonnet,
@@ -248,30 +253,42 @@ is content-addressed and stale caches will silently serve the old image.
 
 The benchmark is honest about where it is weak.
 
-**Single-turn tasks still exist.** As of 2026-04-11, 14 of 40 task directories
+**Single-turn tasks still exist.** A subset of `harbor_tasks/` directories
 are single-turn by design — the `user_simulation_prompt.md` explicitly tells
 the user sim to send zero messages. These tasks measure coding ability but
 not the correction loop, and they should not carry the TogetherBench label.
-Examples: `nunchaku-bias-permutation`, `desloppify-treesitter-plugins`,
-`flash-attention-autotune-cache`, `mlx-lm-mambacache`,
-`openclaw-security-review-flow`. Converting these to multi-turn (or dropping
-them) is active work.
+Per the v0.4.3 audit (`analysis/V043_IMPROVEMENT_PLAN.md`): 26 all-zero, 3
+all-perfect, and 8 tight-cluster (std < 0.05) tasks dilute the signal —
+pruning them widens cohort spread from 0.16 to 0.24 (+50%) on a 60-task
+suite. Pruning is active work tracked against the v0.4.3-prep branch.
 
-**Some multi-turn tasks reach 1.0 with zero user interventions.** Roughly
-seven tasks — including `sd-scripts-sdxl-multires-dedup` and
-`comfyui-newbie-lumina-refactor` — score 1.0 on models that never received a
-single user-sim reply. Either the user sim's trigger conditions are too
-narrow, or the tests do not actually require the later-turn work. The
-target ceiling for a well-designed task is a T0 score below 0.5; anything
-meaningfully higher is a signal that Turn 1's instruction is doing the
-work the user turns were meant to do.
+**Some multi-turn tasks reach 1.0 with zero user interventions.** A handful
+of tasks score 1.0 on models that never received a single user-sim reply.
+Either the user sim's trigger conditions are too narrow, or the tests do
+not actually require the later-turn work. The target ceiling for a
+well-designed task is a T0 score below 0.5; anything meaningfully higher
+is a signal that Turn 1's instruction is doing the work the user turns
+were meant to do. Two tasks (`hyperswitch-8338`, `pi-mono-auto-41636ae5`)
+are P0 in this category: their Dockerfiles pin to the *post-fix* commit,
+giving every model 0.82–0.93 free credit.
 
 **Buggy state is reverse-engineered, not captured live.** Base commits are
 pinned and the synthesis is deterministic, but the regex-based removal in
 `synthesize_buggy_state.py` is fragile against upstream refactors. Tasks
-that clone from squash-merged PR branches (e.g., `comfyui-fp8-newbie`
-pinned at `37a976a`) depend on GitHub retaining orphaned commits — we
-should mirror or tag these for durability.
+that clone from squash-merged PR branches depend on GitHub retaining
+orphaned commits — we should mirror or tag these for durability.
+
+**Source-session resolution is uneven.** Per the 2026-04-21 audit
+(`scripts/lint/session_resolution_audit.py`), of the 140 tasks scaffolded
+during v0.4.0, **~25% have low-fidelity ground truth** — the original
+session ended on a rate limit, ran out of credits mid-debug, or stalled
+without confirming a fix. Distribution: 86 resolved (61%), 31 cut_off
+(22%), 19 ambiguous (14%), 4 stuck (3%). Hyperswitch dominates `cut_off`
+(~20 of 31 — the Rust scaffolding wave). Each task carries a
+`session_resolution` field in `task.toml [metadata]` so downstream
+analyses can filter or weight accordingly. An evaluated agent's
+"failure" on a `cut_off` task may reflect baseline incompleteness rather
+than capability.
 
 **Verifier accepts multiple approaches by design.** Tests are written to
 accept both the session's approach and the merged PR's approach. This is
@@ -289,33 +306,51 @@ accepted limitation rather than a solved problem.
 ## Codebase map
 
 ```
-harbor_tasks/         # 40 self-contained task directories
-sessions_raw/         # raw DataClaw sessions (provenance only)
+harbor_tasks/         # 101 self-contained task directories
+base_images/          # 5 cluster Dockerfiles (comfyui, hyperswitch, pi-mono, reigh, sd-scripts)
+                      #   inherited by 100+ thin-child task images; CC v2.1.108 baked here
+sessions_raw/         # raw DataClaw + pi-mono + hyperswitch sessions (provenance only)
 session_collection/   # ingest + screening pipeline
 src/
   run_eval.py         # in-process batch evaluator (Harbor LocalOrchestrator)
-  runner.py           # model resolution, user-sim wiring, CLI runner
-  user_agent/         # Claude Code adapter wrapper; per-turn scoring lives here
+  runner.py           # model resolution, user-sim wiring, single-task CLI
+  user_agent/         # Claude Code adapter wrapper; per-turn scoring + LiteLLM proxy launcher
+                      #   user_enabled_claude_code.py launches the in-sandbox proxy on :4210
   lint_tests.py       # static anti-gaming linter for test.sh files
   validate_tasks.py   # E2B nop-baseline validation (catches all-perfect bugs)
   fix_tasks.py        # boss-agent (Opus in E2B) iterative task-hardening loop
 scripts/
-  build_trajectory.py # post-hoc trajectory.json construction
-  upload_traces.py    # S3 publish
-  sanitize_traces.py  # strip secrets before upload
+  build_leaderboard.py        # cohort → clean_mean / shared / discriminating tables
+  per_turn_replay.py          # replay verifier on each turn's cumulative patch
+  per_turn_replay_sweep.py    # cohort-wide replay (concurrency-capped at 5)
+  user_sim_stats.py           # avg turns / intervene% / no-op% per cohort
+  generate_v043_report.py     # compose V043_REPORT.md from JSON outputs
+  finalize_v043.sh            # full release orchestrator: stats → leaderboard → replay
+                              #                            → report → tar.zst → gh release
+  audit_v043_uploads.py       # S3 upload-coverage audit (per-cohort, per-trial-file)
+  sanitize_traces.py          # strip secrets before upload (path-aware since v0.4.2)
+  upload_traces.py            # S3 publish
+analysis/
+  V043_REPORT.md              # release report
+  V043_RELEASE_NOTES.md       # public release notes
+  V043_IMPROVEMENT_PLAN.md    # post-v0.4.3 roadmap
+  v043_leaderboard.{json,md}  # canonical leaderboard
 deploy/
-  start_viewer.py     # Railway entrypoint for traces.togetherbench.com
-  railway.toml        # Railway config
-.claude/commands/     # six slash commands that drive the authoring workflow
-external/harbor/      # vendored Harbor (TerminalBench harness)
-trials-<tag>/         # per-run output: trajectory.json + transcripts + rewards
+  start_viewer.py             # Railway entrypoint for traces.togetherbench.com
+  railway.toml                # Railway config
+.claude/commands/             # screen-session, scaffold-task, write-tests, review-task,
+                              #   validate-task, run-eval — the authoring workflow
+external/harbor/              # vendored Harbor (TerminalBench harness)
+trials_<cohort>_v043/         # v0.4.3 per-cohort trial dirs
+release_assets_v043/          # tar.zst per cohort, uploaded to GitHub release
 ```
 
 ## Version + reproducibility
 
 Each eval run stamps its outputs with the git SHA, tag (or `untagged`), and
 tree-clean flag (`run_eval.py` around line 460). Published results in
-README.md pin a specific version tag (`togetherbench@0.2.0`, commit
-`631fe6c`). Results should always be cited alongside the version that
-produced them — the task set, the verifier logic, and the user-sim model
-all affect scores and all evolve.
+README.md pin a specific version tag (`togetherbench@0.4.3`, GitHub release
+`v0.4.3-20260501`). Results should always be cited alongside the version
+that produced them — the task set, the verifier logic, the user-sim model
+(currently v0.6.0), and the Claude Code binary (pinned to 2.1.108 in every
+task image) all affect scores and all evolve.
