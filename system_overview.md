@@ -56,9 +56,9 @@ constraint that distinguishes this benchmark — *at least three meaningful user
 interventions*. Single-turn sessions are rejected at this stage because they
 cannot exercise the correction loop the benchmark is built to test.
 
-Stage 1 (`scripts/screening/step2_screen_with_llm.py`) — Gemini 3 Flash with
+Stage 1 (`data-pipeline/screening/scripts/step2_screen_with_llm.py`) — Gemini 3 Flash with
 grounded search identifies the primary repo, star count, and whether the
-session is actually modifying code. Stage 2 (`scripts/screening/step2_screen_with_llm.py`)
+session is actually modifying code. Stage 2 (`data-pipeline/screening/scripts/step2_screen_with_llm.py`)
 — Gemini 3.1 Pro deep judge rules on whether the work is reproducible in a
 clean Harbor task. Bulk session data and screening outputs live (gitignored)
 under `session_collection/`; the scripts and design docs are tracked at

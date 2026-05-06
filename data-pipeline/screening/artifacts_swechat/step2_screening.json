@@ -5006,5 +5006,1077 @@
     "verdict": "VIABLE",
     "session_id": "1fef816f-ddaa-4e79-b52a-c8c91467ceb8",
     "repo": "moltis-org/moltis"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves refactoring and deduplicating Gleam code across multiple files, which can be evaluated by checking the final file state and running tests in a container.",
+    "verdict": "VIABLE",
+    "session_id": "fc1b6372-cf48-474e-8fe0-a169de234fbd",
+    "repo": "Brickell-Research/caffeine_lang"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves updating local configuration files and running a script to propagate changes, which can be fully reproduced and evaluated in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "6c7a4541-f2f7-4a40-bbc3-603193025e07",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves creating an end-to-end test script, debugging the exposed bug, and modifying Go source files to fix the issue, all of which can be reproduced in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "4ded0de6-8acf-40a5-ba46-7f9bb1ad903c",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves a clear refactoring task based on a provided plan, which can be evaluated by checking the resulting code changes and running tests.",
+    "verdict": "VIABLE",
+    "session_id": "6f43cd6f-8873-4965-ad4a-39be1f21316c",
+    "repo": "Brickell-Research/caffeine_lang"
+  },
+  {
+    "primary_deliverable": "analysis_only",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on fetching live pull request comments via the GitHub API and writing to a local file outside the repository, which requires external state and authentication not available in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e8272168-3129-4187-8b33-b2f29570d9ff",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on macOS-specific clipboard commands (pbcopy), a running tmux server, and applying personal home-manager configurations to the host system, which cannot be easily reproduced in a clean Linux Docker container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "6d726179-fd4c-4078-acd0-9f8ed2364b4b",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement LSP features in Gleam and TypeScript, which can be reproduced and evaluated in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "8bd921dd-077e-47e5-b14e-cb7a9406cf15",
+    "repo": "Brickell-Research/caffeine_lang"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves fixing a UI bug and adding a feature (highlighting selected menu) in a Python Textual app, which can be evaluated by checking the code changes.",
+    "verdict": "VIABLE",
+    "session_id": "0aa626fb-a261-47f6-a52e-2f5ba5fdd5a8",
+    "repo": "kgcrom/cluefin"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on local absolute paths and external directories (like ~/.claude/skills) that will not exist in a clean container environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "0e19590c-2126-45e2-bc59-81d76d9da168",
+    "repo": "ujuc/dotrc"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The task involves debugging and fixing a local shell prompt configuration (Starship) based on the user's specific local git state and environment, which cannot be reliably reproduced in a clean container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "497ae4c2-3818-4c52-aa65-31f65d89500c",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a specific plan to add tests and update SDK accounts, which can be evaluated by checking the file modifications and running the tests in a container with Solana tools.",
+    "verdict": "VIABLE",
+    "session_id": "3ccffa05-ed7d-4ab4-a37b-d0752f56f74c",
+    "repo": "Lightprotocol/light-protocol"
+  },
+  {
+    "primary_deliverable": "pr_creation",
+    "reproducible_in_harbor": false,
+    "reason": "The user's instructions are focused on automating Git and GitHub operations like creating commits and pull requests, rather than providing a coding task that can be evaluated by file state.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "0475faa1-06c4-4183-b2d4-71e5ee114c54",
+    "repo": "hackers-pub/android"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The agent relies heavily on live GitHub Actions feedback via the `gh` CLI to iterate on the fix, which cannot be reproduced in an isolated container without external credentials and live CI.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "652bb704-d6ef-4aef-8371-1c0a8dd289e9",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is implementing a specific plan for tmux pane content storage and fixing shell tests, which can be evaluated by checking the file edits and test results, ignoring the final PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "0332642c-477f-4778-8796-0f87dc7c2650",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a tmux sessionizer script within a dotfiles repository, which can be evaluated by checking the resulting file modifications.",
+    "verdict": "VIABLE",
+    "session_id": "712ac31c-4f63-49b7-851c-7c2435789654",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task involves fixing a Nix/devenv-based CI setup in a personal dotfiles repository, which requires specific local environment tools (Nix, devenv) to test and modifies files outside the repository workspace.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e58a7526-b044-46ca-ba54-30796d7fb0cd",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task involves modifying fish shell functions to add a specific flag, which can be evaluated by checking the file edits, even if the PR creation step is skipped.",
+    "verdict": "VIABLE",
+    "session_id": "9db037e9-09f4-4224-9e61-6c285a365332",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The user instructions consist of truncated diffs and lack a clear, self-contained goal for the agent to achieve.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "6ef2f338-8b9e-403c-82f8-5261bb727ad8",
+    "repo": "marin-community/marin"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task heavily relies on the GitHub CLI (`gh`) to fetch PR details and CI logs from an external remote, which will fail in an isolated Harbor container without GitHub authentication.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "7906a757-816d-4fb0-bb9b-d6052c75c26f",
+    "repo": "basher83/lunar-claude"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on interactive user feedback from local testing and fetches necessary context from an external repository's PR via the GitHub CLI, which cannot be reliably reproduced in an isolated, single-prompt environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "6b3dad3f-ee84-4682-9ad8-d78cf89af4e0",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying configuration files within a dotfiles repository to add new tmux and fish features, which can be evaluated by checking the file contents.",
+    "verdict": "VIABLE",
+    "session_id": "83b2b5df-ccc6-4a65-b740-2fd3a285ea74",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying configuration files within a dotfiles repository, which can be evaluated by checking the file diffs.",
+    "verdict": "VIABLE",
+    "session_id": "f693495f-6f55-4063-a032-383f7c670a28",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task heavily relies on inspecting the user's live system state, such as running tmux sessions and local log files, which will not exist in a clean Docker container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "07c4c057-2c3a-4182-b615-061ae9733747",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session is completely empty with no user messages, tool uses, or edits.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "ses_352ec3b3affe9q536qT0QXhLIN",
+    "repo": "Sagit-chu/flvx"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session includes open-ended requests for suggestions ('any other improvements') and relies on highly personalized dotfile configurations, making it unsuitable for a deterministic benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "f2ac1f1e-7a52-44c5-88b7-f45f6ba3cec8",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The agent edits files outside the target repository using absolute paths specific to the user's local environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "d044e6bf-a45b-461e-905a-21fb10294c11",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task heavily depends on the local installation and execution of the 'claude' CLI tool to determine the correct flags and handle specific warning messages.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "94747aa7-b29d-4a3a-b4a0-d43c6b09c80a",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is writing fishtape tests for fish functions and updating the Makefile, which can be evaluated by checking the file state, ignoring the PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "187ec711-a685-45a5-a31b-dd049cb5c04a",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "deployment_ops",
+    "reproducible_in_harbor": false,
+    "reason": "The session heavily relies on live GitHub Actions execution, PR creation, and remote git notes verification which cannot be reproduced in an isolated Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "42fe7930-0cbb-474b-9249-b92b59f193ec",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves fixing a bug in how CLI arguments are passed in a Go file, which can be evaluated by checking the resulting code changes.",
+    "verdict": "VIABLE",
+    "session_id": "228404dc-d548-4490-a92e-f892104f3aee",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a specific bug fix/refactor based on a provided plan, which results in substantive code edits that can be evaluated in a clean container.",
+    "verdict": "VIABLE",
+    "session_id": "2f5833ec-423b-47b4-9535-556896507b53",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session focuses on implementing a specific code fix for an E2E test hang, which can be evaluated by running the tests in a container, and the git push is just a final publishing step.",
+    "verdict": "VIABLE",
+    "session_id": "1f16d7cf-395f-440f-b041-fe3156f9b13d",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is adding a new command to the Makefile, which can be evaluated by checking the file contents without needing the PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "0954b644-63ed-425a-8e4d-2b5a2bb4dc3e",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on specific local CLI tools (mise, hk) and user-specific environment configurations that would not be present in a standard Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "2f509180-8bbc-46ab-9798-de1fdffcc8c0",
+    "repo": "basher83/lunar-claude"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session is highly exploratory and primarily focused on planning and writing markdown documentation using external GitHub API calls, making it difficult to define a clear, deterministic objective.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "7d3da1d6-e8cb-4a49-b026-7eea4403f551",
+    "repo": "basher83/lunar-claude"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves fixing a specific bug in the E2E test suite, which can be evaluated by running the tests in the container.",
+    "verdict": "VIABLE",
+    "session_id": "244e8e66-9431-4487-bb38-4c351e4a33bb",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "analysis_only",
+    "reproducible_in_harbor": false,
+    "reason": "The task is to provide a code review for an existing pull request, which involves no code edits and relies on external GitHub state.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "981adbbf-4e3e-4a01-9463-75f0ea4d9af7",
+    "repo": "frank-fs/frank"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on an external local directory (/Users/alisha/Projects/setup-kiro-action) for reference, which would not be available in the isolated Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "a6375286-82fb-48a9-90fd-f8e611e47d1b",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on specific local tools (droid CLI, mise, tmux), external GitHub Actions logs, and interactive local feedback (hearing a sound) that cannot be replicated in a clean Docker container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e24bec4f-0ec1-4a86-bc8d-b2082f315a38",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying GitHub Actions workflow files to fix CI authentication, which can be done and evaluated in an isolated container.",
+    "verdict": "VIABLE",
+    "session_id": "f4ab6660-ba4d-4488-ba34-43574ff63fd2",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on fetching and comparing live pull requests using the GitHub CLI, which depends on external, mutable state that cannot be reliably reproduced in an isolated environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e3b926ff-dbbc-4b9b-9659-ffc3c6cfb9d6",
+    "repo": "Nagi-ovo/gemini-voyager"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The only edited file is a local Claude plan/skill file outside the repository, which cannot be evaluated in a standard Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "8f15321d-2333-415f-a295-a31e4d8776e8",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task involves modifying tmux and fish configurations in a dotfiles repository, which can be evaluated based on the file edits despite the final PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "763e9cb1-e9d8-4b4a-9f44-8d2f835c8484",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task depends heavily on external repositories and local environment paths (e.g., ~/ghq/github.com/openai/symphony/) that will not be present in a clean Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "d0e2d87a-6bc5-4663-9af1-b2ec7a7a248e",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session explicitly requires editing files outside the repository in the user's home directory (~/.claude/...) and relies on local tooling (mise) that would not be present in a standard clean container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "599952a0-b4b6-41ff-9176-7b268429c876",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on editing files within a local git worktree (.worktrees/cozy-baking-glacier) which would not exist in a fresh clone of the repository.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "80a57739-bc39-40ff-a01f-13e02a86387d",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The task involves debugging and modifying the user's local Claude CLI configuration and hooks, which is specific to their local environment and not a general repository coding task.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "dd5197f0-29aa-4ca8-a59a-0a730bf08219",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on the user's local environment, custom CLI tools like hk, mise, and git-cliff, and local plugin paths that would not be present in a clean container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "f94473cb-8629-4512-9c00-68aff6fd3a85",
+    "repo": "basher83/lunar-claude"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on a specific local multi-repo environment and absolute paths (/Users/ninawork/entire/devenv/entire.io) that will not exist in a standard single-repo Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "1d0832aa-dda4-4240-8c31-8f5c05446140",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session is highly conversational, relies on step-by-step user guidance, and uses Claude CLI specific features like subagents and plan files which cannot be easily converted into a single upfront instruction.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e6966714-8b03-4df0-83da-bd0ce7a9ad79",
+    "repo": "Lightprotocol/light-protocol"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying local test scripts and configuration files to use a specific tool via `mise`, which can be evaluated by checking the file diffs.",
+    "verdict": "VIABLE",
+    "session_id": "023bbea8-22cf-431a-bb57-e38238833ced",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a specific coding plan to add default progress logging to an engine script and verifying it with tests, which can be fully reproduced in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "d4d64332-6793-4ee5-814a-71d3c8c5d3d3",
+    "repo": "yorrick/claude-code-plugins"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session is completely empty with no user messages, tool uses, or edits.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "ses_2fd419c71ffeqSOLZEn9Pmpv8P",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The task requires creating a GitHub issue using the `gh` CLI, which depends on external authentication and network access not available in an isolated Harbor environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "185136bc-648d-4ba4-ad73-7caa4d4a50eb",
+    "repo": "yorrick/claude-code-plugins"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on the user's local environment, specific git branch states, and external UI feedback that cannot be replicated in a clean container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "61b0a478-d835-45a6-936a-9d30f7ba786c",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on fetching live PR comments from GitHub and accessing local files outside the repository workspace.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "9a206664-989e-4c1d-978f-9c5e780c609e",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task requires a sibling repository (hackerspub-ios) to be present locally for reference, which is not supported in a standard single-repo Harbor environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "948a3954-6196-4010-8a1f-80c4cef48fcc",
+    "repo": "hackers-pub/android"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on fetching live GitHub issues via the `gh` CLI and uses hardcoded local absolute paths specific to the user's machine, making it impossible to reproduce in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "888c33d3-3597-4418-a278-23e664432c9c",
+    "repo": "yorrick/claude-code-plugins"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on a specific local Claude plugin and its scripts (e.g., superpowers brainstorming skill) which will not be present in a clean Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "8a9ec257-cad9-4634-866d-d0bffa235e37",
+    "repo": "hackers-pub/android"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session involves editing files outside the repository in the user's home directory (~/.claude/settings.json) and relies on local environment specifics.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "f60a0c86-7dcb-4ee7-b1cc-8c4624f3d85b",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on fetching a specific PR from GitHub, running a formatter, and pushing the changes back to a remote repository, which requires external network access and authentication.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "b81dac60-0d18-4379-9948-7ad1fbf4fd9f",
+    "repo": "Nagi-ovo/gemini-voyager"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on fetching and resolving comments from a live GitHub PR using the GitHub API, which requires authentication and external state that cannot be reliably reproduced in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "4beea700-0de7-44f3-b5cc-31e24e4fb5b7",
+    "repo": "moltis-org/moltis"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task heavily relies on interacting with remote GitHub PRs and branches (e.g., `gh pr checkout 1272`, `git fetch origin claude-auto`) which would not be available or stable in an isolated Harbor environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "6ea75ebe-b348-407c-9781-8b65b31df6e6",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is the creation of Nix configuration files for input-leap, which can be reproduced and evaluated in a containerized environment without requiring the final git push or PR creation steps.",
+    "verdict": "VIABLE",
+    "session_id": "af21f33a-2b39-4ff3-9aa0-b69d86da5e53",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The user's initial instructions do not describe the actual task of upgrading worktrunk, making it impossible for an agent to reproduce the work from the prompt alone.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "45369b8c-9ea7-4dc4-aaf9-953bd3d6d1df",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session heavily relies on user-specific absolute paths, local cache directories, and local tools like `mise` and `hk` that won't be present in a standard Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "240b285b-b905-411a-8b50-31dc37b7b18e",
+    "repo": "basher83/lunar-claude"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is a substantive refactoring task (renaming 'memory' to 'platform' across the codebase) based on a provided plan, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "8d3ad54f-2fc2-4ce3-9d9c-41a296d18590",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan by making substantive code changes to a local repository, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "8b8fb545-d939-4392-a9e9-244f76ca803e",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is implementing a technical plan by editing TypeScript files, which can be evaluated by checking the file state, and the PR creation steps can simply be omitted.",
+    "verdict": "VIABLE",
+    "session_id": "e67d6b81-d473-4818-a90b-607bf71836aa",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproduceable_in_harbor": true,
+    "reason": "The core task is a code refactor based on a local markdown plan, which can be evaluated by checking the file edits and running typechecks, ignoring the final git push.",
+    "verdict": "VIABLE",
+    "session_id": "17bd9380-51d0-4a29-baf6-c3168a366c2d",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "pr_creation",
+    "reproducible_in_harbor": false,
+    "reason": "The session primarily consists of executing a macro to create, push, and merge a pull request using the GitHub CLI, which relies on remote state and authentication.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "79364fb1-2c0d-4589-a630-540c24e7dc00",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves concrete code refactoring and file moves to standardize a tRPC implementation, which can be evaluated by checking the final file state and running local build commands.",
+    "verdict": "VIABLE",
+    "session_id": "2eb77b53-8f2a-45b8-8545-bad05b80c973",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is a substantive code refactoring (renaming 'console' to 'app'), which can be evaluated based on the file edits regardless of the subsequent PR creation and merging steps.",
+    "verdict": "VIABLE",
+    "session_id": "1b2b0fc4-1663-46d2-a598-c9a2cebf1763",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement a technical plan, which can be evaluated by checking the final file state and running the build/typecheck commands.",
+    "verdict": "VIABLE",
+    "session_id": "e88739a1-85f8-4915-967e-939d66f635b8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan and making specific code changes to TypeScript files, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "2c374f61-0e70-47b9-917c-2f49d91b745f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on external services (Vercel, Sentry) and a running local server, which cannot be reproduced in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "f4bf1f65-e7c0-4444-be4b-99997a4467de",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a specific technical plan to add Sentry observability to Inngest, which requires standard code edits that can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "36cc9e63-2ad3-4e06-81ed-c7f7d0273647",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is implementing a technical plan through substantive code edits, which can be evaluated independently of the final PR creation and merge steps.",
+    "verdict": "VIABLE",
+    "session_id": "87115b06-1514-4181-ba0e-abb57141e869",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is deleting specific files and directories, which can be easily reproduced and verified in a local container environment by checking the file system state.",
+    "verdict": "VIABLE",
+    "session_id": "3b0ce6fc-beba-47c2-ac8e-dfbae68a630d",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is implementing a technical plan by modifying code, which can be evaluated by checking the file state, and the final PR creation step can be omitted.",
+    "verdict": "VIABLE",
+    "session_id": "53f207c9-c4cb-4494-884f-75003ac628d8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on querying Sentry via the CLI to investigate issues, which requires external authentication and environment variables not available in a clean container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "7596272b-4e69-4141-8c7c-ac47e9f935e1",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is implementing a technical plan through substantive code edits, which can be evaluated independently of the final PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "289ecb79-26df-4c19-b144-a98275720d82",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily discussion and planning, focusing on reviewing and editing a markdown plan file rather than making substantive, objectively scorable code changes.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "544503bf-0b19-4394-9f9e-127f076384d9",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on visual feedback to verify UI changes and ends with the user stating the feature is not working, making it unsuitable for an automated benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "4e694877-7f93-4ac2-880a-69a98deeb097",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on iterative user feedback and clarifications spread across multiple messages, which cannot be replicated in a zero-shot Harbor environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "b11e39c2-46ca-4fea-9d13-1dd89789733a",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on multi-turn user guidance and mid-task decision making that cannot be easily condensed into a single upfront prompt.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "b95f51ff-18bf-4420-a0da-8b546c5b0672",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement a platform-aware keyboard shortcut fix, which can be reproduced and evaluated based on the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "56ab0e9d-059f-473c-96b2-de1112daced3",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a specific technical plan present in the repository, resulting in clear code changes and file deletions that can be evaluated.",
+    "verdict": "VIABLE",
+    "session_id": "ad3bd1e2-b919-4e30-bb23-66fe2bcb2457",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task involves implementing a Vercel provider integration that requires external webhooks, callbacks, and live user testing against the Vercel service, which cannot be reproduced in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "276d32bf-2b7f-43b1-8e5c-53227219c1e1",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "deployment_ops",
+    "reproducible_in_harbor": false,
+    "reason": "The session heavily relies on interacting with live external services (GitHub push, ngrok, Inngest) and a specific local development environment to test webhooks.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "8ad1e17d-8c68-48d9-8883-23f2ebde4772",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on out-of-band user actions, specifically the user manually creating and adding an API key to a local environment file, which an autonomous agent cannot replicate.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "9cb0420f-2c45-448e-9364-50eb75410a78",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task heavily relies on interacting with local services (Inngest, Postgres, Drizzle Studio) and specific MCP servers that would not be available in an isolated Harbor container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "49c01799-9274-4d70-b727-f2400411af6c",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on live user testing and external services like Clerk and GitHub OAuth, with the user providing interactive feedback based on live state that cannot be reproduced in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "4f748467-d7b7-4b04-9fd2-e41b06634b88",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily discussion and planning resulting in a markdown plan file rather than substantive code changes.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "994fc246-7a46-424f-974c-7f965aa32909",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves straightforward file modifications and script creation that can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "c49df4d8-8acd-4bd6-82d4-13813ee611c8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The user prompts contain PII redaction artifacts (<PRESIDIO_ANONYMIZED_EMAIL_ADDRESS>) and highly conversational, disjointed instructions that make it unsuitable for an automated benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "c1fdfdd7-0121-476d-b756-dafb45b9aa49",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a local technical plan by modifying Next.js frontend files, which can be evaluated by checking the file state and running the build.",
+    "verdict": "VIABLE",
+    "session_id": "89c26bc4-8ef0-4306-8f27-1445a6f7c43c",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code edits to implement a specific technical plan, which can be evaluated based on the resulting file state regardless of the final git commit step.",
+    "verdict": "VIABLE",
+    "session_id": "b7d52209-4084-456a-a08b-47adc9eae5a0",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves creating and refining a changelog MDX file based on a plan, which is standard file editing that can be reproduced in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "cb489f22-6b89-4d60-b7cb-e2e2c0f24795",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "analysis_only",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily interactive discussion and planning that results in a markdown file, relying heavily on user feedback rather than substantive code edits.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e15d6bad-9a57-459e-a8da-8966da1d84fc",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan to standardize blog and changelog slugs, resulting in local code changes that can be evaluated in a container.",
+    "verdict": "VIABLE",
+    "session_id": "b0f62a6a-56fa-4f7a-ba9d-c86ee85e5fc8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement a local plan, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "e3dc32fb-2d38-4c38-9433-a3581019724c",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily focused on writing a blog post based on the user's personal story and interactive feedback, making it a subjective content creation task rather than a reproducible coding benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "fb44e5a4-0dad-4012-b451-75b6277115e3",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on an external 'agent-browser' tool and live external websites (linear.app) to gather design references, which cannot be reliably reproduced in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "34e22330-b703-4399-b66c-89607c9847ed",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is a simple CSS variable modification that can be evaluated by checking the file diff, and the commit step can be ignored.",
+    "verdict": "VIABLE",
+    "session_id": "a9d4a535-98e6-4b17-95c7-f41400f07004",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan and fixing UI issues (missing logos) through substantive code edits in a Next.js application, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "5d9c80ec-38ee-47bc-b6d3-207a469c6b8a",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session consists entirely of the agent staging and committing existing local changes rather than writing or modifying code.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "b2c4a88b-cdd7-4852-8669-d0423c8c312f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves reverting a file to a previous state found in git history and deleting unused components, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "be539511-77f7-4b0c-a743-629644b786bc",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves a simple file rename which can be easily reproduced and verified by checking the file paths in the repository.",
+    "verdict": "VIABLE",
+    "session_id": "68f3e23e-d0f7-4f4c-be18-f2cdd3a1f313",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies heavily on visual feedback from the user regarding a Remotion video composition, which cannot be replicated in a headless, automated environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "f180c43b-2cc1-4cc8-ba37-e17fd307ad91",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session is highly interactive and the actual task description is missing from the initial prompts, making it impossible to extract a single clear instruction for a zero-shot benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "70bcc8f7-64f5-4a60-847f-c490ae42f61f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session is highly interactive and relies on specific user choices ('Option A', 'yes') and custom commands ('/implement_plan') to guide the agent, making it unsuitable for a zero-shot autonomous benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "6cad50eb-3328-4769-903a-e984681992cb",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on iterative, subjective human feedback regarding UI elements across multiple turns, making it difficult to condense into a single upfront instruction for an automated benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "23ca592b-3cc5-4708-8c22-c378fda0658b",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan by making substantive code changes to React components and API routes, which can be fully reproduced and evaluated in a clean container.",
+    "verdict": "VIABLE",
+    "session_id": "a4bc0bfc-668e-4a15-8ef1-334a9cdb72df",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task requires visual feedback and iterative adjustments based on how the UI looks in a browser, which is not suitable for an automated headless benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "9ecc3f03-4ba1-415b-a145-2797ccc5bacc",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session consists of highly iterative, subjective UI tweaks that rely on visual feedback and contradictory adjustments, making it unsuitable for a single-turn automated benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e6161535-9b0d-462b-bcff-9c03a6c69a27",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code edits to UI components and layouts that can be reproduced and evaluated in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "06a07398-177c-47f4-814a-c3bce019d849",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The instruction 'clean up @thoughts/' is too vague to be a reproducible benchmark task, and the agent only deletes files using bash commands without making substantive code edits.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "34749343-331b-4b8f-b0f7-7f6cbdbeffd5",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan and fixing bugs through substantive code edits, which can be evaluated based on the final file state in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "4723fd57-8356-4584-90d4-0d80c5b4181f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on a generic macro prompt that does not specify the plan path, and the agent attempts to interact with an external Neon database which would fail in an isolated environment.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "cbdabbc0-05f3-472a-93f4-1042a34df45a",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task relies on an open-ended prompt ('leftover QoL') where the agent suggests a refactor and the user approves it, making the exact code changes non-deterministic and unsuitable for an automated benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "8212d848-7bb0-4e23-ba70-127601f1a626",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan by making code changes and running local checks, which can be fully reproduced and evaluated based on the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "bc51cf0d-6b78-48bc-aff8-c8f448eac2df",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task involves subjective visual design of a canvas element based on an external image and relies heavily on continuous interactive user feedback.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "a9c8f24b-4c6f-44d8-8fed-afd8292c55bf",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The task involves highly subjective visual design changes ('more mathy aesthetics') that rely on visual feedback via a browser, making it impossible to objectively score in an automated benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "65c7d9c3-3261-4bf1-9689-85e298d4780c",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "analysis_only",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily discussion and planning, resulting only in a single markdown research document edit rather than substantive code changes.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "e4697f77-4e51-480b-8a3d-5df95fd094ea",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session consists of straightforward UI layout modifications and commenting out sections in a Next.js page, which can be easily reproduced and verified in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "88dcfaf6-7863-4454-a5bf-267d0dd0a5fb",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves making substantive frontend code changes to a landing page based on layout and content instructions, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "3712fa4e-19a9-4d39-aa2c-383b5d2117d5",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "analysis_only",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily discussion and planning about licensing with no substantive code edits.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "ff964f91-d2c8-4bd8-86cf-c4755ed697f9",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies heavily on external services and local infrastructure, including the GitHub API, ngrok, and a Postgres database via MCP, which cannot be easily reproduced in an isolated container.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "746cb06d-9e74-4d91-85db-7f0369772f15",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing unit tests and modifying code based on a local markdown plan, which can be easily reproduced in an isolated container.",
+    "verdict": "VIABLE",
+    "session_id": "c4de5fee-a4ed-4b40-beca-83e9df1eca3f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "other",
+    "reproducible_in_harbor": false,
+    "reason": "The session relies on a specific local '.claude/worktrees' setup and the only edit is a markdown plan file, making it unsuitable for a standard coding benchmark.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "0d35e35d-5cc8-4a89-83cb-a0b5f261c87d",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves executing a predefined technical plan to upgrade core packages and align dependencies, which can be evaluated by checking the resulting package.json and lockfile changes.",
+    "verdict": "VIABLE",
+    "session_id": "934cd75b-3a77-4c6e-99e8-919e7114459a",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "analysis_only",
+    "reproducible_in_harbor": false,
+    "reason": "The session is primarily discussion and planning, resulting only in markdown plan files rather than substantive code changes.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "0fffd38c-94dd-4ac6-80bd-eb4333f22359",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": false,
+    "reason": "The session is driven by a highly specific local agent script with fragmented, generic instructions ('proceed', 'done with 3') and the core work is just a trivial dependency bump.",
+    "verdict": "NOT_VIABLE",
+    "session_id": "de353b1b-6095-4073-8f3e-5335fcc58452",
+    "repo": "lightfastai/lightfast"
   }
 ]

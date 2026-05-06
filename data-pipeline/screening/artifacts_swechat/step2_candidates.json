@@ -18,6 +18,30 @@
   {
     "primary_deliverable": "code_changes",
     "reproducible_in_harbor": true,
+    "reason": "The session involves refactoring and deduplicating Gleam code across multiple files, which can be evaluated by checking the final file state and running tests in a container.",
+    "verdict": "VIABLE",
+    "session_id": "fc1b6372-cf48-474e-8fe0-a169de234fbd",
+    "repo": "Brickell-Research/caffeine_lang"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves a clear refactoring task based on a provided plan, which can be evaluated by checking the resulting code changes and running tests.",
+    "verdict": "VIABLE",
+    "session_id": "6f43cd6f-8873-4965-ad4a-39be1f21316c",
+    "repo": "Brickell-Research/caffeine_lang"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement LSP features in Gleam and TypeScript, which can be reproduced and evaluated in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "8bd921dd-077e-47e5-b14e-cb7a9406cf15",
+    "repo": "Brickell-Research/caffeine_lang"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
     "reason": "The session involves making substantive code and documentation changes to implement configurable SQLite memory limits, which can be evaluated by checking the modified files or running tests in a container.",
     "verdict": "VIABLE",
     "session_id": "50b2b10a-1be0-441f-aafb-3c5828f0fcc9",
@@ -101,6 +125,14 @@
     "reason": "The task involves refactoring test helpers and filling coverage gaps in local files, which can be fully evaluated by checking the file state and running tests in a container.",
     "verdict": "VIABLE",
     "session_id": "963378ab-8ce4-472d-9903-07279f2a4b07",
+    "repo": "Lightprotocol/light-protocol"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a specific plan to add tests and update SDK accounts, which can be evaluated by checking the file modifications and running the tests in a container with Solana tools.",
+    "verdict": "VIABLE",
+    "session_id": "3ccffa05-ed7d-4ab4-a37b-d0752f56f74c",
     "repo": "Lightprotocol/light-protocol"
   },
   {
@@ -1434,6 +1466,62 @@
   {
     "primary_deliverable": "code_changes",
     "reproducible_in_harbor": true,
+    "reason": "The session involves creating an end-to-end test script, debugging the exposed bug, and modifying Go source files to fix the issue, all of which can be reproduced in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "4ded0de6-8acf-40a5-ba46-7f9bb1ad903c",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves fixing a bug in how CLI arguments are passed in a Go file, which can be evaluated by checking the resulting code changes.",
+    "verdict": "VIABLE",
+    "session_id": "228404dc-d548-4490-a92e-f892104f3aee",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a specific bug fix/refactor based on a provided plan, which results in substantive code edits that can be evaluated in a clean container.",
+    "verdict": "VIABLE",
+    "session_id": "2f5833ec-423b-47b4-9535-556896507b53",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session focuses on implementing a specific code fix for an E2E test hang, which can be evaluated by running the tests in a container, and the git push is just a final publishing step.",
+    "verdict": "VIABLE",
+    "session_id": "1f16d7cf-395f-440f-b041-fe3156f9b13d",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves fixing a specific bug in the E2E test suite, which can be evaluated by running the tests in the container.",
+    "verdict": "VIABLE",
+    "session_id": "244e8e66-9431-4487-bb38-4c351e4a33bb",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying GitHub Actions workflow files to fix CI authentication, which can be done and evaluated in an isolated container.",
+    "verdict": "VIABLE",
+    "session_id": "f4ab6660-ba4d-4488-ba34-43574ff63fd2",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying local test scripts and configuration files to use a specific tool via `mise`, which can be evaluated by checking the file diffs.",
+    "verdict": "VIABLE",
+    "session_id": "023bbea8-22cf-431a-bb57-e38238833ced",
+    "repo": "entireio/cli"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
     "reason": "The task involves fixing a bug in the codebase related to ad loading, which can be evaluated by checking the resulting code changes.",
     "verdict": "VIABLE",
     "session_id": "161a699e-f62c-4087-8a96-ef1103acdb77",
@@ -1534,6 +1622,270 @@
     "verdict": "VIABLE",
     "session_id": "87bd6c67-719e-45bf-a604-5bee04304abb",
     "repo": "kgcrom/cluefin"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves fixing a UI bug and adding a feature (highlighting selected menu) in a Python Textual app, which can be evaluated by checking the code changes.",
+    "verdict": "VIABLE",
+    "session_id": "0aa626fb-a261-47f6-a52e-2f5ba5fdd5a8",
+    "repo": "kgcrom/cluefin"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is a substantive refactoring task (renaming 'memory' to 'platform' across the codebase) based on a provided plan, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "8d3ad54f-2fc2-4ce3-9d9c-41a296d18590",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan by making substantive code changes to a local repository, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "8b8fb545-d939-4392-a9e9-244f76ca803e",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is implementing a technical plan by editing TypeScript files, which can be evaluated by checking the file state, and the PR creation steps can simply be omitted.",
+    "verdict": "VIABLE",
+    "session_id": "e67d6b81-d473-4818-a90b-607bf71836aa",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves concrete code refactoring and file moves to standardize a tRPC implementation, which can be evaluated by checking the final file state and running local build commands.",
+    "verdict": "VIABLE",
+    "session_id": "2eb77b53-8f2a-45b8-8545-bad05b80c973",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is a substantive code refactoring (renaming 'console' to 'app'), which can be evaluated based on the file edits regardless of the subsequent PR creation and merging steps.",
+    "verdict": "VIABLE",
+    "session_id": "1b2b0fc4-1663-46d2-a598-c9a2cebf1763",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement a technical plan, which can be evaluated by checking the final file state and running the build/typecheck commands.",
+    "verdict": "VIABLE",
+    "session_id": "e88739a1-85f8-4915-967e-939d66f635b8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan and making specific code changes to TypeScript files, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "2c374f61-0e70-47b9-917c-2f49d91b745f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a specific technical plan to add Sentry observability to Inngest, which requires standard code edits that can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "36cc9e63-2ad3-4e06-81ed-c7f7d0273647",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is implementing a technical plan through substantive code edits, which can be evaluated independently of the final PR creation and merge steps.",
+    "verdict": "VIABLE",
+    "session_id": "87115b06-1514-4181-ba0e-abb57141e869",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is deleting specific files and directories, which can be easily reproduced and verified in a local container environment by checking the file system state.",
+    "verdict": "VIABLE",
+    "session_id": "3b0ce6fc-beba-47c2-ac8e-dfbae68a630d",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is implementing a technical plan by modifying code, which can be evaluated by checking the file state, and the final PR creation step can be omitted.",
+    "verdict": "VIABLE",
+    "session_id": "53f207c9-c4cb-4494-884f-75003ac628d8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is implementing a technical plan through substantive code edits, which can be evaluated independently of the final PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "289ecb79-26df-4c19-b144-a98275720d82",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement a platform-aware keyboard shortcut fix, which can be reproduced and evaluated based on the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "56ab0e9d-059f-473c-96b2-de1112daced3",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a specific technical plan present in the repository, resulting in clear code changes and file deletions that can be evaluated.",
+    "verdict": "VIABLE",
+    "session_id": "ad3bd1e2-b919-4e30-bb23-66fe2bcb2457",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves straightforward file modifications and script creation that can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "c49df4d8-8acd-4bd6-82d4-13813ee611c8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a local technical plan by modifying Next.js frontend files, which can be evaluated by checking the file state and running the build.",
+    "verdict": "VIABLE",
+    "session_id": "89c26bc4-8ef0-4306-8f27-1445a6f7c43c",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code edits to implement a specific technical plan, which can be evaluated based on the resulting file state regardless of the final git commit step.",
+    "verdict": "VIABLE",
+    "session_id": "b7d52209-4084-456a-a08b-47adc9eae5a0",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves creating and refining a changelog MDX file based on a plan, which is standard file editing that can be reproduced in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "cb489f22-6b89-4d60-b7cb-e2e2c0f24795",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan to standardize blog and changelog slugs, resulting in local code changes that can be evaluated in a container.",
+    "verdict": "VIABLE",
+    "session_id": "b0f62a6a-56fa-4f7a-ba9d-c86ee85e5fc8",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code changes to implement a local plan, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "e3dc32fb-2d38-4c38-9433-a3581019724c",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is a simple CSS variable modification that can be evaluated by checking the file diff, and the commit step can be ignored.",
+    "verdict": "VIABLE",
+    "session_id": "a9d4a535-98e6-4b17-95c7-f41400f07004",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan and fixing UI issues (missing logos) through substantive code edits in a Next.js application, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "5d9c80ec-38ee-47bc-b6d3-207a469c6b8a",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves reverting a file to a previous state found in git history and deleting unused components, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "be539511-77f7-4b0c-a743-629644b786bc",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves a simple file rename which can be easily reproduced and verified by checking the file paths in the repository.",
+    "verdict": "VIABLE",
+    "session_id": "68f3e23e-d0f7-4f4c-be18-f2cdd3a1f313",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan by making substantive code changes to React components and API routes, which can be fully reproduced and evaluated in a clean container.",
+    "verdict": "VIABLE",
+    "session_id": "a4bc0bfc-668e-4a15-8ef1-334a9cdb72df",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves substantive code edits to UI components and layouts that can be reproduced and evaluated in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "06a07398-177c-47f4-814a-c3bce019d849",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan and fixing bugs through substantive code edits, which can be evaluated based on the final file state in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "4723fd57-8356-4584-90d4-0d80c5b4181f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a technical plan by making code changes and running local checks, which can be fully reproduced and evaluated based on the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "bc51cf0d-6b78-48bc-aff8-c8f448eac2df",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session consists of straightforward UI layout modifications and commenting out sections in a Next.js page, which can be easily reproduced and verified in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "88dcfaf6-7863-4454-a5bf-267d0dd0a5fb",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves making substantive frontend code changes to a landing page based on layout and content instructions, which can be evaluated by checking the final file state.",
+    "verdict": "VIABLE",
+    "session_id": "3712fa4e-19a9-4d39-aa2c-383b5d2117d5",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing unit tests and modifying code based on a local markdown plan, which can be easily reproduced in an isolated container.",
+    "verdict": "VIABLE",
+    "session_id": "c4de5fee-a4ed-4b40-beca-83e9df1eca3f",
+    "repo": "lightfastai/lightfast"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves executing a predefined technical plan to upgrade core packages and align dependencies, which can be evaluated by checking the resulting package.json and lockfile changes.",
+    "verdict": "VIABLE",
+    "session_id": "934cd75b-3a77-4c6e-99e8-919e7114459a",
+    "repo": "lightfastai/lightfast"
   },
   {
     "primary_deliverable": "code_changes",
@@ -2186,9 +2538,97 @@
   {
     "primary_deliverable": "code_changes",
     "reproducible_in_harbor": true,
+    "reason": "The task involves updating local configuration files and running a script to propagate changes, which can be fully reproduced and evaluated in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "6c7a4541-f2f7-4a40-bbc3-603193025e07",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is implementing a specific plan for tmux pane content storage and fixing shell tests, which can be evaluated by checking the file edits and test results, ignoring the final PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "0332642c-477f-4778-8796-0f87dc7c2650",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves implementing a tmux sessionizer script within a dotfiles repository, which can be evaluated by checking the resulting file modifications.",
+    "verdict": "VIABLE",
+    "session_id": "712ac31c-4f63-49b7-851c-7c2435789654",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task involves modifying fish shell functions to add a specific flag, which can be evaluated by checking the file edits, even if the PR creation step is skipped.",
+    "verdict": "VIABLE",
+    "session_id": "9db037e9-09f4-4224-9e61-6c285a365332",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying configuration files within a dotfiles repository to add new tmux and fish features, which can be evaluated by checking the file contents.",
+    "verdict": "VIABLE",
+    "session_id": "83b2b5df-ccc6-4a65-b740-2fd3a285ea74",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The task involves modifying configuration files within a dotfiles repository, which can be evaluated by checking the file diffs.",
+    "verdict": "VIABLE",
+    "session_id": "f693495f-6f55-4063-a032-383f7c670a28",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is writing fishtape tests for fish functions and updating the Makefile, which can be evaluated by checking the file state, ignoring the PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "187ec711-a685-45a5-a31b-dd049cb5c04a",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task is adding a new command to the Makefile, which can be evaluated by checking the file contents without needing the PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "0954b644-63ed-425a-8e4d-2b5a2bb4dc3e",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core task involves modifying tmux and fish configurations in a dotfiles repository, which can be evaluated based on the file edits despite the final PR creation step.",
+    "verdict": "VIABLE",
+    "session_id": "763e9cb1-e9d8-4b4a-9f44-8d2f835c8484",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The core value of the session is the creation of Nix configuration files for input-leap, which can be reproduced and evaluated in a containerized environment without requiring the final git push or PR creation steps.",
+    "verdict": "VIABLE",
+    "session_id": "af21f33a-2b39-4ff3-9aa0-b69d86da5e53",
+    "repo": "shunkakinoki/dotfiles"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
     "reason": "The core task involves updating markdown documentation files with specific guidelines, which can be fully reproduced and evaluated in an isolated container.",
     "verdict": "VIABLE",
     "session_id": "2c6fd2f9-51a5-4621-aebb-7120cc242cba",
     "repo": "vaayne/agent-kit"
+  },
+  {
+    "primary_deliverable": "code_changes",
+    "reproducible_in_harbor": true,
+    "reason": "The session involves implementing a specific coding plan to add default progress logging to an engine script and verifying it with tests, which can be fully reproduced in a containerized environment.",
+    "verdict": "VIABLE",
+    "session_id": "d4d64332-6793-4ee5-814a-71d3c8c5d3d3",
+    "repo": "yorrick/claude-code-plugins"
   }
 ]

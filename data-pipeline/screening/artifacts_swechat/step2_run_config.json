@@ -1,0 +1,9 @@
+{
+  "source": "swechat",
+  "model": "gemini-3.1-pro-preview",
+  "limit": 0,
+  "workers": 10,
+  "resume": true,
+  "n_input_sessions": 760,
+  "n_to_screen": 760
+}
