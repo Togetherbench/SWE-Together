@@ -224,7 +224,7 @@ trials/<task>__<id>/
     ↓ GPT-5.4 quick screen + Opus 4.6 deep screen + session-resolution audit
 ~675 viable sessions (after filtering for 3+ meaningful interventions, public repo,
                        no secrets, reconstructible outputs, resolved/scoped enough)
-    ↓ batch_scaffold.py + scaffold_manifest.json (deterministic generation)
+    ↓ scripts/screening/run_pipeline.py (fans out to /scaffold-task + /write-tests via 4 parallel Claude workers)
     ↓ Opus boss-agent fan-out in E2B (~$1.16/task; iterate test.sh + Dockerfile)
     ↓ Tier-A rubric enforcement (lint_tests.py + write-tests.md)
 101 Harbor benchmark tasks  (current trunk: 73 TS, 20 Python, 7 C/C++,
