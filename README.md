@@ -1,4 +1,4 @@
-# SWE-Replay
+# SWE-Together
 
 A benchmark derived from real multi-turn coding sessions, measuring **coding agent performance under iterative user correction** — the loop that single-turn benchmarks ignore.
 
@@ -76,8 +76,8 @@ DeepSeek runs the longest sessions with the most no-ops (agent mostly on-track);
 ### Setup
 
 ```bash
-git clone https://github.com/Togetherbench/SWE-Replay.git
-cd SWE-Replay
+git clone https://github.com/Togetherbench/SWE-Together.git
+cd SWE-Together
 
 # Install dependencies (use uv, not pip)
 uv sync

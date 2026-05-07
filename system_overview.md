@@ -1,6 +1,6 @@
 # System Overview
 
-This document describes how SWE-Replay is built: the pipeline that produces
+This document describes how SWE-Together is built: the pipeline that produces
 tasks, the harness that evaluates agents on them, and the design commitments
 that keep results comparable across runs. For the research question and
 published scores, see [README.md](README.md).
@@ -261,7 +261,7 @@ The benchmark is honest about where it is weak.
 **Single-turn tasks still exist.** A subset of `harbor_tasks/` directories
 are single-turn by design — the `user_simulation_prompt.md` explicitly tells
 the user sim to send zero messages. These tasks measure coding ability but
-not the correction loop, and they should not carry the SWE-Replay label.
+not the correction loop, and they should not carry the SWE-Together label.
 Per the v0.4.3 audit (`analysis/V043_IMPROVEMENT_PLAN.md`): 26 all-zero, 3
 all-perfect, and 8 tight-cluster (std < 0.05) tasks dilute the signal —
 pruning them widens cohort spread from 0.16 to 0.24 (+50%) on a 60-task
