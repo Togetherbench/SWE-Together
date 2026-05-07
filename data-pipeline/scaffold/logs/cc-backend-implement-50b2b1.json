@@ -1,0 +1,16 @@
+{
+  "session_id": "50b2b10a-1be0-441f-aafb-3c5828f0fcc9",
+  "task_name": "cc-backend-implement-50b2b1",
+  "repo": "ClusterCockpit/cc-backend",
+  "stars": 22,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.051293",
+  "sandbox_id": "iggvzv4cotrt2xrsps37z",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All steps completed. Here's a summary of the task created at `harbor_tasks/cc-backend-implement-50b2b1/`:\n\n## Task: cc-backend-implement-50b2b1\n\n**Files created (8):**\n\n| File | Purpose |\n|------|---------|\n| `original_session.json` | Raw session transcript (154KB, valid JSON) |\n| `instruction.md` | First user message verbatim \u2014 detailed plan to make SQLite memory limits configurable |\n| `task.toml` | Harbor metadata (medium difficulty, feature category, allow_internet under [environment]) |\n| `environment/Dockerfile` | ubuntu:24.04 + Go 1.25.0 + libsqlite3-dev, clones repo at commit `5c726641` |\n| `user_simulation_prompt.md` | 4-turn user simulator: plan \u2192 \"add README\" \u2192 \"explain sizing\" \u2192 \"add clarification\" |\n| `tests/test.sh` | 7 behavioral F2P gates with weighted-replace formula (\u03a3WEIGHTS = 1.00) |\n| `tests/test_manifest.yaml` | Gate definitions \u2014 all 7 F2P gates with commands, no single weight > 0.20 |\n| `README.md` | Task metadata and user behavior summary |\n\n**Viability check:** All 7 hard requirements passed (22-star public repo, code modification, CPU-reproducible, no credentials, no live PR writes, 4 genuine user messages, Edit/Write operations on repo files).\n\n**Lint:** `python3 scripts/lint_tests.py --task cc-backend-implement-50b2b1 --fail-on HIGH` \u2192 0 findings.\n\n**Test design:**\n- 90% behavioral (runtime Go programs verifying PRAGMA values match config)\n- 10% structural (DbConfig struct reflection, schema text check)\n- Core behavioral test: F2P_CACHE_DRIVEN (0.20 weight) \u2014 verifies `PRAGMA cache_size` matches configured `DbCacheSizeMB`\n- Anti-stub: Go programs actually call `repository.SetConfig()`, `Connect()`, and query PRAGMAs via SQL\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 194560,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:15:46.829280",
+  "elapsed_sec": 1303.777998
+}

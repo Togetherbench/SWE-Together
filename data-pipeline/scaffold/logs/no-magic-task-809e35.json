@@ -1,0 +1,16 @@
+{
+  "session_id": "809e358e-f9d8-4d9d-a17a-6cfc524cc4b6",
+  "task_name": "no-magic-task-809e35",
+  "repo": "Mathews-Tom/no-magic",
+  "stars": 91,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.050612",
+  "sandbox_id": "iytzcemv85285j8z5dyoe",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All 10 steps complete. Here's a final summary of the Harbor task created at `harbor_tasks/no-magic-task-809e35/`:\n\n## Task: no-magic-task-809e35\n\n| File | Description |\n|------|-------------|\n| `instruction.md` | First user message verbatim \u2014 full plan to rename 7 scripts with numeric prefixes and update references |\n| `original_session.json` | Raw session data (413 messages, 7 genuine user turns) |\n| `task.toml` | Harbor metadata \u2014 medium difficulty, refactor category, `allow_internet` correctly under `[environment]` |\n| `environment/Dockerfile` | Clones `Mathews-Tom/no-magic` at `fe129fb`, Ubuntu 24.04, agent user |\n| `tests/test.sh` | 6 F2P gates (0.65 total weight) + 2 P2P regression gates; weighted-replace reward formula |\n| `tests/test_manifest.yaml` | Gate declarations for linting |\n| `user_simulation_prompt.md` | 7-turn simulation guide \u2014 terse, milestone-driven, 141-turn max silence |\n| `README.md` | Task metadata and turn-by-turn summary |\n\n## Key decisions\n- **Base commit**: `fe129fb` \u2014 all 7 scripts exist with original names, before the rename\n- **Rename format**: Underscores (`01_microtokenizer.py`) \u2014 matches the instruction verbatim (the session agent later switched to hyphens due to a `.claude/CLAUDE.md` issue that doesn't exist at this commit)\n- **Lint**: Clean \u2014 0 findings at all severity levels\n- **Test coverage**: 75% behavioral (Gold/Silver), ~15% structural (Bronze), 6 F2P gates, 2 P2P regression gates, anti-stub protection via `py_compile` check\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 778240,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:10:41.085817",
+  "elapsed_sec": 998.035212
+}

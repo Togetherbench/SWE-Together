@@ -1,0 +1,16 @@
+{
+  "session_id": "e71acfcb-86f0-47d5-ab4b-87bbdaf6d5fa",
+  "task_name": "agent-swarm-implement-e71acf",
+  "repo": "desplega-ai/agent-swarm",
+  "stars": 257,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.050089",
+  "sandbox_id": "ir1g10ym16lmlb1z837qo",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All steps complete. Here's the summary of the task created at `harbor_tasks/agent-swarm-implement-e71acf/`:\n\n## Task: agent-swarm-implement-e71acf\n\n| Item | Detail |\n|------|--------|\n| **Repo** | desplega-ai/agent-swarm (257 stars) |\n| **Base commit** | `89216816744d68bb2d58e37c06d995c31b7b626d` |\n| **Category** | feature (domain filtering for agentmail webhooks) |\n| **Difficulty** | medium |\n| **Real user msgs** | 4 |\n\n## Files Created\n\n| File | Purpose |\n|------|---------|\n| `original_session.json` | Raw session (copied verbatim) |\n| `instruction.md` | First user turn \u2014 implement domain filters for webhooks |\n| `task.toml` | Task metadata and environment config |\n| `environment/Dockerfile` | Ubuntu 24.04 + Bun + repo checkout at base commit |\n| `tests/test.sh` | 5 F2P gates with weighted-replace reward formula |\n| `tests/test_manifest.yaml` | Gate definitions (weights sum 0.90) |\n| `user_simulation_prompt.md` | 4-turn user behavior profile |\n| `README.md` | Task overview and CI context |\n\n## Test Gates (5 F2P, weights sum 0.90)\n\n- `f2p_filter_behavior` (0.25) \u2014 behavioral: runs filter functions with known inputs via bun\n- `f2p_tests_pass` (0.25) \u2014 behavioral: agentmail-filters.test.ts exists and passes\n- `f2p_webhook_uses_filters` (0.20) \u2014 structural: webhooks.ts imports/calls filter functions\n- `f2p_no_regressions` (0.20) \u2014 behavioral: existing tests + typecheck still pass\n- `f2p_exports_correct` (0.10) \u2014 structural: filter functions exported from index.ts\n\n## Validation\n\n- `lint_tests.py` \u2014 0 findings (HIGH, MEDIUM, LOW)\n- `test.sh` \u2014 bash syntax OK\n- Instruction-test alignment \u2014 reachable and appropriate\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 163840,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:05:46.000283",
+  "elapsed_sec": 702.950207
+}

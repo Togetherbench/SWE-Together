@@ -1,0 +1,49 @@
+# Harbor test manifest — light-protocol-implement-7adad1
+# See test.sh for the weighted-replace reward formula implementation.
+#
+# Gate summary:
+#   F2P (fail-to-pass): 6 gates, Σ weights = 1.0
+#   P2P_REGRESSION: 1 gate, weight 0 (gating-only)
+
+gates:
+  - id: "atafield-idempotent"
+    kind: "F2P"
+    weight: 0.25
+    description: "AtaField struct has idempotent: bool field (tree-sitter AST check on light_account.rs)"
+    command: "python3 verifier atafield-idempotent"
+
+  - id: "compile-macros"
+    kind: "F2P"
+    weight: 0.25
+    description: "cargo test -p light-sdk-macros compiles and all macro unit tests pass"
+    command: "cargo test -p light-sdk-macros"
+
+  - id: "keywords-idempotent"
+    kind: "F2P"
+    weight: 0.15
+    description: "ASSOCIATED_TOKEN_NAMESPACE_KEYS array contains \"idempotent\" (tree-sitter AST check)"
+    command: "python3 verifier keywords-idempotent"
+
+  - id: "boolean-flag-system"
+    kind: "F2P"
+    weight: 0.15
+    description: "BOOLEAN_FLAG_KEYS_BY_NAMESPACE constant and is_boolean_flag_key function exist (tree-sitter AST check)"
+    command: "python3 verifier boolean-flag-system"
+
+  - id: "builder-uses-idempotent"
+    kind: "F2P"
+    weight: 0.10
+    description: "ATA codegen references the idempotent field instead of hardcoding .idempotent() (tree-sitter AST check)"
+    command: "python3 verifier builder-uses-idempotent"
+
+  - id: "non-idempotent-file"
+    kind: "F2P"
+    weight: 0.10
+    description: "New single_ata_non_idempotent.rs file exists with a struct definition (existence + parse check)"
+    command: "python3 verifier non-idempotent-file"
+
+  - id: "atafield-regression"
+    kind: "P2P_REGRESSION"
+    weight: 0
+    description: "AtaField still has original fields: field_ident, has_init, owner, mint (regression guard)"
+    command: "python3 verifier atafield-regression"

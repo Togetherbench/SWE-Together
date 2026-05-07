@@ -1,0 +1,16 @@
+{
+  "session_id": "d64e5ae1-b801-4415-bdcc-214d3ca127a0",
+  "task_name": "rudel-task-d64e5a",
+  "repo": "obsessiondb/rudel",
+  "stars": 184,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.050285",
+  "sandbox_id": "imexzm95w0m1dgeix63n2",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All 10 steps complete. Here's the summary:\n\n## Task `rudel-task-d64e5a` \u2014 Complete\n\n### Screening (Step 1)\nAll 7 hard requirements pass. Session is VIABLE.\n\n### Deliverables\n\n| File | Status |\n|------|--------|\n| `original_session.json` | Copied from sessions_raw |\n| `instruction.md` | First user message verbatim: \"setup CI for github actions...\" |\n| `task.toml` | v1.0, medium difficulty, feature category |\n| `environment/Dockerfile` | 30 lines, ubuntu:24.04 + Bun 1.3.5, clones at `e8b05db` |\n| `tests/test.sh` | 192 lines, weighted-replace formula, 5 F2P checks + 1 P2P gate |\n| `tests/test_manifest.yaml` | 6 gates (ci_exists, pkg_verify_script, turbo_tasks_added, ci_single_verify, pkg_no_filter_star, ci_not_empty), heredoc Python commands |\n| `user_simulation_prompt.md` | 4 user turns documented with calibration and overview table |\n| `README.md` | Task metadata and verifier summary |\n\n### Quality Gates\n- **Lint**: 0 findings (HIGH/MEDIUM/LOW) \u2014 clean\n- **WEIGHTS sum**: 0.90 (inner weight 0.10)\n- **Gate split**: 5 F2P (80% behavioral, 10% structural) + 1 P2P_REGRESSION\n- **Dockerfile**: No `USER agent` line (no owner fixup needed), all required packages installed\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 102400,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:16:26.106515",
+  "elapsed_sec": 1343.056257
+}

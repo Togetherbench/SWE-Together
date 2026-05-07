@@ -32,3 +32,7 @@ scripts/screening/sessions_raw/
 scripts/screening/new_dataclaw/
 scripts/screening/swechat/
 scripts/screening/github_stars_cache.json
+
+# Pre-fetched SWE-chat session JSONs (regenerable via step3_prefetch_viable.py)
+data-pipeline/screening/artifacts_swechat/sessions_raw/
+data-pipeline/screening/artifacts_swechat/step3_prefetch_failures.json

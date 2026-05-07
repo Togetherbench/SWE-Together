@@ -1,0 +1,54 @@
+version: "1.0"
+task: gemini-voyager-task-c5c01d
+
+gates:
+  - id: f2p_module_behavior
+    kind: F2P
+    weight: 0.20
+    description: >
+      Snow effect module (src/pages/content/snowEffect/index.ts) exists and has
+      correct structure: exports startSnowEffect, creates a canvas element with
+      position:fixed and pointer-events:none, has non-trivial enable() and
+      disable() functions. Rejects stub implementations with empty bodies.
+
+  - id: f2p_snowflake_variety
+    kind: F2P
+    weight: 0.15
+    description: >
+      Snowflake rendering has varied visual properties — at least 3 of: random
+      or multiple distinct sizes, opacity/alpha variation between particles,
+      varied fall speeds (random or multiple values), and reasonable particle
+      count (>= 50). Verifies the effect is visually interesting, not uniform.
+
+  - id: f2p_lifecycle
+    kind: F2P
+    weight: 0.15
+    description: >
+      enable() appends canvas to DOM, disable() removes canvas AND calls
+      cancelAnimationFrame, module listens to chrome.storage changes for
+      gvSnowEffect/SNOW_EFFECT key. Verifies proper lifecycle management
+      and storage reactivity pattern (sidebarAutoHide pattern).
+
+  - id: f2p_registration
+    kind: F2P
+    weight: 0.10
+    description: >
+      Content script (index.tsx) imports startSnowEffect from ./snowEffect/index
+      and calls it after startSidebarAutoHide with appropriate delay
+      (LIGHT_FEATURE_INIT_DELAY). Verifies integration follows the established
+      staggered initialization pattern.
+
+  - id: f2p_tests_exist
+    kind: F2P
+    weight: 0.10
+    description: >
+      Test file exists at snowEffect/__tests__/snowEffect.test.ts with at least
+      2 test blocks and 3 assertions. Tests reference snow effect concepts
+      (enable/disable/canvas/snowflake). Rejects empty or stub test files.
+
+p2p_gates:
+  - id: p2p_typecheck
+    description: "TypeScript type checking (tsc --noEmit) passes with zero errors"
+
+  - id: p2p_vitest
+    description: "All vitest tests pass, including pre-existing tests"

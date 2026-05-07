@@ -1,0 +1,16 @@
+{
+  "session_id": "c5c01d3f-dbb6-436c-9179-17702671f6c0",
+  "task_name": "gemini-voyager-task-c5c01d",
+  "repo": "Nagi-ovo/gemini-voyager",
+  "stars": 7668,
+  "status": "success",
+  "started_at": "2026-05-06T18:35:34.773907",
+  "sandbox_id": "iqjor6r2lciy3qbcixwsy",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "Task `gemini-voyager-task-c5c01d` has been created and committed. Here's a summary:\n\n**Task:** Snow effect feature implementation for the Gemini Voyager Chrome extension (Nagi-ovo/gemini-voyager, 7668 stars)\n\n**Base commit:** `4e9d91695130a0dcde1c1f93cf41151c42e6ea52`\n\n**Files created (harbor_tasks/gemini-voyager-task-c5c01d/):**\n\n| File | Purpose |\n|------|---------|\n| `original_session.json` | Raw SWE-chat session (5 genuine user msgs in 230 turns) |\n| `instruction.md` | First user message verbatim \u2014 detailed snow effect implementation plan |\n| `task.toml` | Metadata: medium difficulty, feature category, allow_internet=true |\n| `user_simulation_prompt.md` | 5-turn simulator: detailed spec \u2192 silent \u2192 aesthetic feedback (Chinese) |\n| `environment/Dockerfile` | ubuntu:24.04 + bun + repo at base commit |\n| `tests/test.sh` | 5 F2P gates (\u03a3=0.70) + 2 P2P regression gates, weighted-replace formula |\n| `tests/test_manifest.yaml` | Gate descriptions matching test.sh |\n| `README.md` | Task metadata overview |\n\n**Verification:**\n- 7 hard requirements passed (public repo 20+ stars, code modification, CPU-reproducible, no credentials, no PR writes, 3+ genuine msgs, code modifications confirmed)\n- `scripts/lint_tests.py` passed with 0 findings (no HIGH, MEDIUM, or LOW)\n- `bash -n` syntax check passed on test.sh\n- Dockerfile structure valid (build deferred per E2B sandbox constraints)\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 450560,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T18:52:28.570758",
+  "elapsed_sec": 1013.79687
+}

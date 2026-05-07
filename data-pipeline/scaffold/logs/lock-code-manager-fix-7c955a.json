@@ -1,0 +1,16 @@
+{
+  "session_id": "7c955a97-89aa-424d-84c1-3b2571976d8a",
+  "task_name": "lock-code-manager-fix-7c955a",
+  "repo": "raman325/lock_code_manager",
+  "stars": 80,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.050963",
+  "sandbox_id": "irduk90rd37y3ebitpggr",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All steps complete. Here's a summary of the created task:\n\n## Task: lock-code-manager-fix-7c955a\n\n**Directory:** `harbor_tasks/lock-code-manager-fix-7c955a/`\n\n### Files created (8):\n| File | Description |\n|------|-------------|\n| `instruction.md` | First user message verbatim \u2014 plan to fix overlapping lock coordinator race |\n| `task.toml` | Harbor task config (medium difficulty, bugfix, 120s verify timeout) |\n| `environment/Dockerfile` | Clones `raman325/lock_code_manager` at `de0c2b8`, installs Python deps |\n| `original_session.json` | Raw SWE-chat session (622 messages, 254 user turns) |\n| `user_simulation_prompt.md` | User behavior profile \u2014 15 genuine messages, 42-turn max silence |\n| `tests/test.sh` | Verification script with 8 F2P gates + 3 P2P gates, weighted-replace formula |\n| `tests/test_manifest.yaml` | Gate definitions (4 GOLD, 2 SILVER, 2 BRONZE, 3 P2P) |\n| `README.md` | Task overview with turn-by-turn summary and verification gate table |\n\n### Verification gates (0.90 total F2P weight):\n- **GOLD (0.60):** `_setup_complete` Event field, `.set()` in both paths, await on reuse, flag-guarded `_safe_unsub`\n- **SILVER (0.20):** Pytest passes, new overlapping-locks test functions exist\n- **BRONZE (0.10):** Anti-stub check, `nonlocal` keyword in `_on_started`\n- **P2P (gating):** No syntax errors, test suite runs, files exist\n\n### Validation:\n- Lint: 0 findings (clean)\n- task.toml: valid TOML\n- test.sh: valid bash syntax\n- Instruction-test alignment: all gates trace to specific changes in the plan\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 1167360,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:12:38.336156",
+  "elapsed_sec": 1115.285201
+}

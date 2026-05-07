@@ -1,0 +1,16 @@
+{
+  "session_id": "0cd9a25d-dd2b-48e2-b0a2-706af237a682",
+  "task_name": "marin-task-0cd9a2",
+  "repo": "marin-community/marin",
+  "stars": 766,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.049751",
+  "sandbox_id": "iit8nydv8rlxmtahh1tux",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All 10 steps complete. Here's the summary of the created task:\n\n## Task: marin-task-0cd9a2\n\n**Location:** `harbor_tasks/marin-task-0cd9a2/`\n\n### Files created (8 files):\n\n| File | Description |\n|------|-------------|\n| `original_session.json` | Raw session transcript (copy) |\n| `instruction.md` | \"Great, now save this haiku into entire_haiku.txt\" |\n| `task.toml` | Metadata, timeouts, environment config |\n| `environment/Dockerfile` | Ubuntu 24.04, clones marin at `d21ff56c4` |\n| `user_simulation_prompt.md` | 3-turn simulator with 2 follow-ups after instruction |\n| `tests/test.sh` | Verifier with weighted-replace reward formula |\n| `tests/test_manifest.yaml` | 3 F2P + 5 P2P gate declarations |\n| `README.md` | Task summary and simulator behavior |\n\n### Verification results:\n- **Lint:** 0 findings at HIGH severity\n- **Expected haiku:** reward = 1.000000 (all gates pass)\n- **Missing file:** reward = 0.000000 (F2P gates fail)\n- **Stub content (\"test\"):** reward = 0.000000 (all P2P gates fail)\n- **Haiku without \"entire\":** reward = 0.800000 (keyword gate fails)\n- **Alternative valid haiku:** reward = 1.000000 (all gates pass)\n\n### Gate structure:\n- **3 F2P gates** (gating): file_exists, not_empty, text_content\n- **5 P2P gates** (weighted, sum = 1.00): three_lines (0.20), syllable_pattern (0.30), entire_keyword (0.20), not_stub (0.15), line_length (0.15)\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 40960,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:10:52.116169",
+  "elapsed_sec": 1009.066425
+}

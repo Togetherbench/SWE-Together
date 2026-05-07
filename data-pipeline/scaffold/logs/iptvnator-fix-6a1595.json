@@ -1,0 +1,16 @@
+{
+  "session_id": "6a15955e-2329-4286-b213-af704b432131",
+  "task_name": "iptvnator-fix-6a1595",
+  "repo": "4gray/iptvnator",
+  "stars": 5637,
+  "status": "success",
+  "started_at": "2026-05-06T18:54:03.049134",
+  "sandbox_id": "iqugtl6yvdijmtffym0yb",
+  "scaffold_exit_code": 0,
+  "scaffold_stdout_tail": "All 9 steps complete. Here's a summary of the task created:\n\n## Task: iptvnator-fix-6a1595\n\n### Screening\n- **Viable**: All 7 hard requirements met\n- Session: `6a15955e-2329-4286-b213-af704b432131`\n- Repo: `4gray/iptvnator` (5637 stars, public)\n- 4 genuine user messages, 162 agent turns\n- Multiple Write/Edit operations on repo files\n\n### Files Created\n\n| File | Description |\n|------|-------------|\n| `original_session.json` | Full session transcript |\n| `instruction.md` | First user message verbatim (EPG throttling plan) |\n| `task.toml` | Task metadata (medium difficulty, feature, 10/45 min estimates) |\n| `environment/Dockerfile` | Ubuntu 24.04 + Node 22 + pnpm, clones repo at base commit `c06feb1f` |\n| `user_simulation_prompt.md` | 4-turn simulation with calibration, turn descriptions, overview table |\n| `tests/test.sh` | 5 F2P gates + 1 P2P regression, weighted-replace formula |\n| `tests/test_manifest.yaml` | Gate definitions with weights summing to 1.0 |\n| `README.md` | Task overview with base commit, CI commands, user behavior summary |\n\n### Key Decisions\n- **Base commit**: `c06feb1ff6374da381bfeba5932a17ebfdca973c` (verified via GitHub API \u2014 matches the starting file state with `@ViewChild`/`@Output` decorators and `requestedChannels` Set)\n- **Weights**: 5 F2P gates (0.25 + 0.20 + 0.20 + 0.20 + 0.15 = 1.0), all \u2264 0.30 max\n- **Lint**: 0 findings at any severity level\n- **Skipped**: Docker build (no Docker daemon) and git push/PR (no remote or GH auth)\n",
+  "scaffold_stderr_tail": "",
+  "tar_bytes": 481280,
+  "files_landed": 8,
+  "finished_at": "2026-05-06T19:09:53.515619",
+  "elapsed_sec": 950.46649
+}
