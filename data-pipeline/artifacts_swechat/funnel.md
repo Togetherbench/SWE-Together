@@ -20,13 +20,6 @@ step2_screening.json (full)                   760   (760/760, no parse losses)
 step2_candidates.json                         329   (43.3% of step1, 5.6% of raw)
 ```
 
-> **2026-05-06 filter relaxation.** Three changes to step1: dropped
-> `is_fork` (was filtering 0 rows), dropped `session_success` (redundant
-> Gemini-derived signal that step2 Pro already independently judges), and
-> lowered `stars` from 20 to 10 (SWE-chat repos are pre-filtered to public
-> GitHub projects, so a lower star bar is fine). step1 626 → 760
-> (+134 / +21%); after step2 Pro the candidate pool 274 → 329 (+55 / +20%).
-
 ## Step 1 — `step1_collect.py --source swechat`
 
 Deterministic Stage-0 filters (no LLM). All thresholds in
@@ -116,9 +109,6 @@ Per-session Pro answers (stored in [`step2_screening.json`](step2_screening.json
 - `verdict` ∈ {VIABLE, NOT_VIABLE}
 - `reason` (1 sentence)
 
-Most recent run was a `--resume` against the prior 626-input result file:
-626 already-judged sessions reused, only the 134 newly-added (from the
-2026-05-06 relaxation) sent to Pro.
 
 ### Verdict distribution (all 760)
 
