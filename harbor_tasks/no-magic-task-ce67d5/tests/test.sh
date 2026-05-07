@@ -287,7 +287,7 @@ f2p_any_pass = any(verdicts.get(gid) for gid in WEIGHTS)
 # Check if any P2P gate failed (P2P_FAILED env var)
 p2p_failed = os.environ.get("P2P_FAILED", "false") == "true"
 
-if p2p_failed or not f2p_any_pass:
+if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
 else:
     inner_weight = max(0.0, 1.0 - sum(WEIGHTS.values()))
