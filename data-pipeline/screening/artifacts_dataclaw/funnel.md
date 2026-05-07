@@ -1,5 +1,15 @@
 # DataClaw Test Construction Audit
 
+> **Historical snapshot — 2026-03-29.** Audit of the 45-task DataClaw
+> selection from v0.4.3 prep. Spot-checked 2026-05-06: only ~6 of the
+> ~11 tasks named below still exist in the active 101-task suite (e.g.
+> `sd-scripts-torch-compile-sdxl`, `openclaw-agents-md-create`,
+> `llama-cpp-lora-moe-rank1`, `amdgpu-kernel-619-compat`,
+> `triton-amd-fp8-lowering` were removed). The largest recommendations
+> here — P2P regression gap and weighted-replace verifier shape — were
+> addressed in v0.4.3 (see commit `c8bc168a` and `analysis/V043_REPORT.md`).
+> A re-audit against the current 101-task suite has not been performed.
+
 Snapshot of test-construction quality across the 45 published DataClaw
 Harbor tasks as of 2026-03-29 (verified against actual implementations in
 SWE-bench, SWE-ABS, UTBoost, PatchDiff, ImpossibleBench; cross-referenced
