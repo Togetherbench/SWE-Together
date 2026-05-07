@@ -1,6 +1,13 @@
 # Session Collection Pipeline
 
-End-to-end pipeline that turns multi-turn coding sessions from upstream HuggingFace datasets into reproducible Harbor benchmark tasks. Two upstream sources are wired in: **DataClaw** (32 community `dataclaw`-tagged HF datasets) and **SWE-chat** (Stanford `SALT-NLP/SWE-chat`).
+End-to-end pipeline that turns multi-turn coding sessions from upstream HuggingFace datasets into reproducible Harbor benchmark tasks. **Four upstream sources** have contributed to the published task suite, but only the first two are wired into this `--source` orchestrator:
+
+- **DataClaw** — 32 community `dataclaw`-tagged HF datasets (`--source dataclaw`)
+- **SWE-chat** — Stanford `SALT-NLP/SWE-chat` (`--source swechat`)
+- **Pi-staging** — 29 HF datasets via `badlogic/pi-share-hf` *(ad-hoc, pre-orchestrator)*
+- **Hyperswitch** — `archit11/claude_traces_hs` *(ad-hoc, pre-orchestrator)*
+
+Pi-staging and Hyperswitch were sourced and screened by hand before the unified pipeline existed; their tasks live in `harbor_tasks/` but were never produced by the scripts in this directory. The funnel + commands below describe the active two-source path.
 
 ## v0.4.3 Data Composition (101 tasks)
 
