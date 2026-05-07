@@ -265,7 +265,7 @@ not the correction loop, and they should not carry the SWE-Together label.
 Per the v0.4.3 audit (`analysis/V043_IMPROVEMENT_PLAN.md`): 26 all-zero, 3
 all-perfect, and 8 tight-cluster (std < 0.05) tasks dilute the signal —
 pruning them widens cohort spread from 0.16 to 0.24 (+50%) on a 60-task
-suite. Pruning is active work tracked against the v0.4.3-prep branch.
+suite.
 
 **Some multi-turn tasks reach 1.0 with zero user interventions.** A handful
 of tasks score 1.0 on models that never received a single user-sim reply.
@@ -311,7 +311,7 @@ accepted limitation rather than a solved problem.
 ## Codebase map
 
 ```
-harbor_tasks/         # 101 self-contained task directories
+harbor_tasks/         # 181 self-contained task directories
 base_images/          # 5 cluster Dockerfiles (comfyui, hyperswitch, pi-mono, reigh, sd-scripts)
                       #   inherited by 100+ thin-child task images; CC v2.1.108 baked here
 sessions_raw/         # raw DataClaw + pi-mono + hyperswitch sessions (provenance only)
@@ -324,22 +324,26 @@ src/
                       #   user_enabled_claude_code.py launches the in-sandbox proxy on :4210
   lint_tests.py       # static anti-gaming linter for test.sh files
   validate_tasks.py   # E2B nop-baseline validation (catches all-perfect bugs)
-  fix_tasks.py        # boss-agent (Opus in E2B) iterative task-hardening loop
 scripts/
   build_leaderboard.py        # cohort → clean_mean / shared / discriminating tables
+  build_e2b_templates.py      # single-task E2B template creation
+  build_all_templates.py      # bulk E2B template pre-build
   per_turn_replay.py          # replay verifier on each turn's cumulative patch
   per_turn_replay_sweep.py    # cohort-wide replay (concurrency-capped at 5)
+  replay_all_against_latest.py # bulk replay with --never-downgrade
+  iterative_test_repair.py    # auto-repair test.sh via agent loop
+  lint_tests.py               # test quality linter (R001–R010)
   user_sim_stats.py           # avg turns / intervene% / no-op% per cohort
   generate_v043_report.py     # compose V043_REPORT.md from JSON outputs
   finalize_v043.sh            # full release orchestrator: stats → leaderboard → replay
                               #                            → report → tar.zst → gh release
-  audit_v043_uploads.py       # S3 upload-coverage audit (per-cohort, per-trial-file)
   sanitize_traces.py          # strip secrets before upload (path-aware since v0.4.2)
   upload_traces.py            # S3 publish
 analysis/
   V043_REPORT.md              # release report
   V043_RELEASE_NOTES.md       # public release notes
   V043_IMPROVEMENT_PLAN.md    # post-v0.4.3 roadmap
+  _v043_corrections_block.md  # v0.4.3.1 corrected metrics (clean means, shared-task, per-turn)
   v043_leaderboard.{json,md}  # canonical leaderboard
 deploy/
   start_viewer.py             # Railway entrypoint for traces.togetherbench.com
@@ -355,8 +359,8 @@ release_assets_v043/          # tar.zst per cohort, uploaded to GitHub release
 
 Each eval run stamps its outputs with the git SHA, tag (or `untagged`), and
 tree-clean flag (`run_eval.py` around line 460). Published results in
-README.md pin a specific version tag (`togetherbench@0.4.3`, GitHub release
-`v0.4.3-20260501`). Results should always be cited alongside the version
-that produced them — the task set, the verifier logic, the user-sim model
-(currently v0.6.0), and the Claude Code binary (pinned to 2.1.108 in every
-task image) all affect scores and all evolve.
+README.md pin a specific version tag (`togetherbench@0.4.3.1`). Results
+should always be cited alongside the version that produced them — the task
+set, the verifier logic, the user-sim model (currently v0.6.0), and the
+Claude Code binary (pinned to 2.1.108 in every task image) all affect
+scores and all evolve.
