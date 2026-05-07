@@ -2,7 +2,7 @@
   "task_name": "cli-task-e5813e",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test ./... 2>&1",
+  "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/home/agent/cli",
   "FAIL_TO_PASS": [
     "TestParseHookEvent_TurnEnd_RequiresOpenCode",

@@ -1,0 +1,10 @@
+{
+  "task_name": "pi-mono-auto-95de1efe",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/pi-mono",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "_upgraded_from_legacy": true
+}

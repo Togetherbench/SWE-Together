@@ -2,7 +2,7 @@
   "task_name": "cli-task-ea3f8f",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test ./... 2>&1",
+  "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/workspace/cli",
   "FAIL_TO_PASS": [
     "TestCursorAgent_ResolveSessionFile_NestedDirOnly",

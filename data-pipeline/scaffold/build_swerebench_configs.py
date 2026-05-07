@@ -202,7 +202,9 @@ sys.path.insert(0, eval_dir)
 from log_parsers import NAME_TO_PARSER
 
 cfg = json.load(open(cfg_path))
-log = open(log_path).read()
+import re as _re
+_ansi_re = _re.compile(r"\x1b\[[0-9;]*[mGKHfABCDsuJ]")
+log = _ansi_re.sub("", open(log_path).read())
 
 parser = NAME_TO_PARSER.get(cfg["log_parser"])
 if parser is None:

@@ -19,6 +19,6 @@ timeout_sec = 3600.0
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/cli-task-dbd2bf:bd2f0a61ad7c"
 build_timeout_sec = 1800.0
 allow_internet = true
-cpus = 1
+cpus = 4
 memory = "4G"
 storage = "10G"
