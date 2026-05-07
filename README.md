@@ -26,7 +26,7 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**101 tasks** under `harbor_tasks/` (v0.4.3-prep) derived from real coding sessions (DataClaw, filtered to repos with 20+ GitHub stars) plus a small set of curated synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier with `F2P` (weighted) and `P2P_REGRESSION` (gating) gate types.
+**101 tasks** under `harbor_tasks/` (v0.4.3-prep), all derived from **real recorded coding sessions** across three sourcing waves: DataClaw publishers via `peteromallet/dataclaw` (46 tasks), the `pi_staging` harvest of `pi-share-hf` exports (32 tasks: 31 `pi-mono-*` + 1 `pi-excel-*`), and `archit11/claude_traces_hs` Hyperswitch traces (23 tasks). DataClaw sessions are filtered to repos with 20+ GitHub stars. No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier with `F2P` (weighted) and `P2P_REGRESSION` (gating) gate types.
 
 The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
 
@@ -76,8 +76,8 @@ DeepSeek runs the longest sessions with the most no-ops (agent mostly on-track);
 ### Setup
 
 ```bash
-git clone https://github.com/findalexli/multi-user-turn-codebench.git
-cd multi-user-turn-codebench
+git clone https://github.com/Togetherbench/SWE-Replay.git
+cd SWE-Replay
 
 # Install dependencies (use uv, not pip)
 uv sync
@@ -220,15 +220,17 @@ trials/<task>__<id>/
 ## Data Pipeline
 
 ```
-~2,200 raw sessions (DataClaw + pi-mono + hyperswitch + reigh)
-    ↓ GPT-5.4 quick screen + Opus 4.6 deep screen + session-resolution audit
-~675 viable sessions (after filtering for 3+ meaningful interventions, public repo,
+~5,200 raw sessions across 3 sourcing waves:
+  ├─ pi_staging harvest        2,397  (29 HF datasets, top: badlogicgames/pi-mono 627, thomasmustier/pi-for-excel 140)
+  ├─ new_dataclaw harvest      ~2,014 (16+ DataClaw publishers; top: woctordho, gutenbergpbc, REXX-NEW, peteromallet, segin)
+  └─ archit11/claude_traces_hs   ~784 (third-party HF research dataset on juspay/hyperswitch)
+    ↓ GPT-5.4 quick screen + Opus 4.6 deep screen + session-resolution audit (~$179 total)
+~862 viable sessions (after filtering for 3+ meaningful interventions, public repo,
                        no secrets, reconstructible outputs, resolved/scoped enough)
     ↓ scripts/screening/run_pipeline.py (fans out to /scaffold-task + /write-tests via 4 parallel Claude workers)
     ↓ Opus boss-agent fan-out in E2B (~$1.16/task; iterate test.sh + Dockerfile)
     ↓ Tier-A rubric enforcement (lint_tests.py + write-tests.md)
-101 Harbor benchmark tasks  (current trunk: 73 TS, 20 Python, 7 C/C++,
-                              1 Rust cluster of 25 hyperswitch tasks ↗ varies)
+101 Harbor benchmark tasks  (current trunk: 44 TS, 30 Python, 23 Rust, 4 C/C++)
     ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, 25 concurrent E2B sandboxes)
     ↓ scripts/finalize_v043.sh (user_sim_stats → build_leaderboard → per_turn_replay
                                  → generate_v043_report → tar.zst → gh release upload)
@@ -285,4 +287,4 @@ When citing results, always include the benchmark version:
 
 ## Data Source
 
-Sessions sourced from [DataClaw](https://github.com/banodoco/dataclaw) — a community dataset of real coding agent interactions. Filtered for repos with 20+ GitHub stars. Dataset: [alexshengzhili/dataclaw-harbor-candidates](https://huggingface.co/datasets/alexshengzhili/dataclaw-harbor-candidates) (2,228 sessions).
+DataClaw-source sessions come from the distributed publishing ecosystem of [peteromallet/dataclaw](https://github.com/peteromallet/dataclaw) — a CLI that exports Claude Code / Codex / Pi conversation history to Hugging Face as redacted datasets (every export tagged `dataclaw`; discoverable at [`?other=dataclaw`](https://huggingface.co/datasets?other=dataclaw)). DataClaw sessions are filtered to repos with 20+ GitHub stars. Our consolidated screening snapshot lives at [`alexshengzhili/dataclaw-harbor-candidates`](https://huggingface.co/datasets/alexshengzhili/dataclaw-harbor-candidates) (1,468 rows as of 2026-05-06; was 2,228 at 2026-03-24 audit). Pi-ecosystem and Hyperswitch sessions come from `pi-share-hf` exports and `archit11/claude_traces_hs` respectively (see Data Pipeline above).
