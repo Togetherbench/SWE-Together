@@ -539,11 +539,12 @@ f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
 if p2p_failed or not f2p_any_pass:
     reward = 0.0
 else:
-    reward = existing
+    # weighted-replace formula (c8bc168a standard, replaces additive)
+    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+    reward = existing * inner_weight
     for gid, w in WEIGHTS.items():
         if verdicts.get(gid):
-            reward += w
-    reward = min(reward, 1.0)
+            reward += float(w)
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

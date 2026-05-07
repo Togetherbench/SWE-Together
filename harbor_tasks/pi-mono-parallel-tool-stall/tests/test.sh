@@ -85,9 +85,9 @@ RUNNER_DIFF=0
 INTERACTIVE_DIFF=0
 AGENT_DIFF=0
 if [ -d "$REPO/.git" ]; then
-  RUNNER_DIFF=$(cd "$REPO" && git diff HEAD -- "packages/coding-agent/src/core/extensions/runner.ts" 2>/dev/null | wc -l)
-  INTERACTIVE_DIFF=$(cd "$REPO" && git diff HEAD -- "packages/coding-agent/src/modes/interactive/interactive-mode.ts" 2>/dev/null | wc -l)
-  AGENT_DIFF=$(cd "$REPO" && git diff HEAD -- "packages/agent/src/agent-loop.ts" 2>/dev/null | wc -l)
+  RUNNER_DIFF=$(cd "$REPO" && { git diff HEAD -- "packages/coding-agent/src/core/extensions/runner.ts" 2>/dev/null; git diff HEAD~5..HEAD -- "packages/coding-agent/src/core/extensions/runner.ts" 2>/dev/null; } | wc -l)
+  INTERACTIVE_DIFF=$(cd "$REPO" && { git diff HEAD -- "packages/coding-agent/src/modes/interactive/interactive-mode.ts" 2>/dev/null; git diff HEAD~5..HEAD -- "packages/coding-agent/src/modes/interactive/interactive-mode.ts" 2>/dev/null; } | wc -l)
+  AGENT_DIFF=$(cd "$REPO" && { git diff HEAD -- "packages/agent/src/agent-loop.ts" 2>/dev/null; git diff HEAD~5..HEAD -- "packages/agent/src/agent-loop.ts" 2>/dev/null; } | wc -l)
 fi
 HOTSPOT_DIFF=$((RUNNER_DIFF + INTERACTIVE_DIFF + AGENT_DIFF))
 echo "RUNNER_DIFF=$RUNNER_DIFF INTERACTIVE_DIFF=$INTERACTIVE_DIFF AGENT_DIFF=$AGENT_DIFF"

@@ -108,16 +108,16 @@ $RUNNER_NOCMT"
 # We require BOTH a scope-key shape AND at least one picker-ish value AND at
 # least one editor/global-ish value so a comment or a single tag can't satisfy.
 ###############################################################################
-PICKER_VALS='picker|selector|session-?picker|tree-?picker|tree|models|overlay|prompt'
-GLOBAL_VALS='editor|global|app|chat|input|message|composer'
+PICKER_VALS='picker|selector|select|session-?picker|tree-?picker|tree|models|overlay|prompt|list|menu|combo'
+GLOBAL_VALS='editor|global|app|chat|input|message|composer|main|root|view'
 
 # Count occurrences of `scope:` (or `scope =`) in declarations.
-SCOPE_DECL_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]")
+SCOPE_DECL_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -ciE "scope[[:space:]]*[:=][[:space:]]*['\"]")
 
 # Find scope values that are picker-like
-PICKER_SCOPE_HITS=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($PICKER_VALS)['\"]")
+PICKER_SCOPE_HITS=$(printf '%s\n' "$KB_NOCMT" | grep -ciE "scope[[:space:]]*[:=][[:space:]]*['\"]($PICKER_VALS)['\"]")
 # Find scope values that are global/editor-like
-GLOBAL_SCOPE_HITS=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($GLOBAL_VALS)['\"]")
+GLOBAL_SCOPE_HITS=$(printf '%s\n' "$KB_NOCMT" | grep -ciE "scope[[:space:]]*[:=][[:space:]]*['\"]($GLOBAL_VALS)['\"]")
 
 # Alternative shape: scopes registry like PICKER_SCOPES = [...] / SCOPES = {...}
 SCOPE_REGISTRY=$(printf '%s\n' "$COMBINED_NOCMT" | grep -cE "(PICKER_SCOPES|GLOBAL_SCOPES|EDITOR_SCOPES|KEYBINDING_SCOPES|SCOPE_(SET|MAP|TABLE)|coexistingScopes)")
@@ -136,11 +136,11 @@ fi
 # Must NOT be satisfied by the buggy base which uses an allowlist
 # RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS.
 ###############################################################################
-RUNNER_HAS_SCOPE=$(printf '%s\n' "$RUNNER_NOCMT" | grep -cE "(scope|isPickerScope|isGlobalKeybinding|getEditorScope|definitions|conflictsWith|canConflict|coexist)")
+RUNNER_HAS_SCOPE=$(printf '%s\n' "$RUNNER_NOCMT" | grep -ciE "(scope|isPickerScope|isGlobalKeybinding|getEditorScope|definitions|conflictsWith|canConflict|coexist)")
 RUNNER_HAS_RESERVED_ONLY=$(printf '%s\n' "$RUNNER_NOCMT" | grep -cE "RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS")
 
 # Code structure: an `if`/`for` referencing scope (not just a string literal).
-RUNNER_USES_SCOPE_LOGIC=$(printf '%s\n' "$RUNNER_NOCMT" | grep -cE "\.scope|\.scopes|scope[[:space:]]*===|scope[[:space:]]*!==|\\bscope\\b.*(\\?|\\&\\&|\\|\\|)")
+RUNNER_USES_SCOPE_LOGIC=$(printf '%s\n' "$RUNNER_NOCMT" | grep -ciE "\.scope|\.scopes|scope[[:space:]]*===|scope[[:space:]]*!==|\\bscope\\b.*(\\?|\\&\\&|\\|\\|)")
 
 if [ "$RUNNER_HAS_SCOPE" -ge 2 ] && [ "$RUNNER_USES_SCOPE_LOGIC" -ge 1 ]; then
     emit t6_f2p_runner_consults_scope true "scope_refs=$RUNNER_HAS_SCOPE logic=$RUNNER_USES_SCOPE_LOGIC reserved=$RUNNER_HAS_RESERVED_ONLY"
@@ -153,7 +153,7 @@ fi
 # Multiple picker/selector/tree-scope tags so the new model is actually applied
 # broadly (not just one demo entry).
 ###############################################################################
-PICKER_TAG_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($PICKER_VALS)['\"]")
+PICKER_TAG_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -ciE "scope[[:space:]]*[:=][[:space:]]*['\"]($PICKER_VALS)['\"]")
 # Also count occurrences via a registry mapping (e.g., `'app.session.toggleSort': 'picker'`).
 PICKER_MAP_COUNT=$(printf '%s\n' "$COMBINED_NOCMT" | grep -cE "['\"]($PICKER_VALS)['\"]")
 
@@ -170,8 +170,8 @@ fi
 # At least some keys flagged as global/editor scope so conflict detection
 # still has a target set. Prevents "make every key picker-scope" stub.
 ###############################################################################
-GLOBAL_TAG_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -cE "scope[[:space:]]*[:=][[:space:]]*['\"]($GLOBAL_VALS)['\"]")
-GLOBAL_REGISTRY_HIT=$(printf '%s\n' "$COMBINED_NOCMT" | grep -cE "(GLOBAL_SCOPES|EDITOR_SCOPES|isGlobalKeybinding|isEditorScope|global.*scope|editor.*scope)")
+GLOBAL_TAG_COUNT=$(printf '%s\n' "$KB_NOCMT" | grep -ciE "scope[[:space:]]*[:=][[:space:]]*['\"]($GLOBAL_VALS)['\"]")
+GLOBAL_REGISTRY_HIT=$(printf '%s\n' "$COMBINED_NOCMT" | grep -ciE "(GLOBAL_SCOPES|EDITOR_SCOPES|isGlobalKeybinding|isEditorScope|global.*scope|editor.*scope)")
 
 if [ "$GLOBAL_TAG_COUNT" -ge 1 ] || [ "$GLOBAL_REGISTRY_HIT" -ge 2 ]; then
     emit t11_f2p_global_editor_scope_keys_present true "global_tags=$GLOBAL_TAG_COUNT reg=$GLOBAL_REGISTRY_HIT"
