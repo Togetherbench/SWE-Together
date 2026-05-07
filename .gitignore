@@ -49,3 +49,15 @@ data-pipeline/screening/artifacts_swechat/step4_extraction_failures.json
 harbor_tasks/*/tests/*.legacy.bak
 =======
 >>>>>>> origin/main
+
+# Safety patterns added 2026-05-07: prevent accidental commit of secrets / huge eval outputs
+.env*.bak
+.env.bak
+cohort_logs_*/
+trials_*_swerb/
+trials_*_swerb_v*/
+trials_*_v043/
+trials_*_v043*.tar
+trials_*_v043*.tar.zst
+_v043_corrections_data.json
+69e17aa991dbacfdd9316e25/
