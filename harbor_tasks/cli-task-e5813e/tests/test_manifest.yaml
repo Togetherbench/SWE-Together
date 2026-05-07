@@ -1,0 +1,77 @@
+version: "1.0"
+description: >
+  Verifies the OpenCode agent refactoring: JSONL replaced with export JSON format,
+  plugin simplified, lifecycle uses opencode export, and cleanup exists.
+
+gates:
+  # ===== F2P Behavioral Gates =====
+  - id: build_succeeds
+    kind: F2P
+    weight: 0.20
+    description: "Full project compiles with go build ./..."
+    command: "go build ./..."
+    timeout_sec: 120
+
+  - id: opencode_tests_pass
+    kind: F2P
+    weight: 0.25
+    description: "OpenCode unit tests pass with new export JSON format"
+    command: "go test ./cmd/entire/cli/agent/opencode/..."
+    timeout_sec: 120
+
+  - id: summarize_tests_pass
+    kind: F2P
+    weight: 0.15
+    description: "Summarize tests pass (uses opencode transcript parsing)"
+    command: "go test ./cmd/entire/cli/summarize/..."
+    timeout_sec: 120
+
+  # ===== F2P Structural Gates =====
+  - id: export_session_type
+    kind: F2P
+    weight: 0.20
+    description: "ExportSession struct exists with Info and Messages fields"
+    command: "go/ast check: types.go contains ExportSession with Messages []ExportMessage"
+
+  - id: parse_export_session_fn
+    kind: F2P
+    weight: 0.10
+    description: "ParseExportSession function exists returning *ExportSession"
+    command: "go/ast check: transcript.go has ParseExportSession with proper signature"
+
+  - id: run_opencode_export_fn
+    kind: F2P
+    weight: 0.05
+    description: "runOpenCodeExport CLI wrapper function exists"
+    command: "go/ast check: cli_commands.go has runOpenCodeExport"
+
+  - id: cleanup_transcript_fn
+    kind: F2P
+    weight: 0.05
+    description: "CleanupCachedTranscript function exists in state.go"
+    command: "go/ast check: state.go has CleanupCachedTranscript"
+
+  # ===== P2P_REGRESSION Gates (blocking only) =====
+  - id: no_parse_messages
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Legacy ParseMessages function is removed"
+    command: "go/ast check: ParseMessages does NOT exist in opencode package"
+
+  - id: no_transcript_path_in_raw_types
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "TranscriptPath field removed from sessionInfoRaw and turnStartRaw"
+    command: "go/ast check: sessionInfoRaw and turnStartRaw have no TranscriptPath"
+
+  - id: no_jsonl_refs_in_plugin
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "entire_plugin.ts has no .jsonl references"
+    command: "go/ast check: entire_plugin.ts content scan for .jsonl"
+
+  - id: no_export_json_copy_in_lifecycle
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "lifecycle.go no longer copies .export.json files"
+    command: "go/ast check: lifecycle.go content scan for .export.json copy logic"

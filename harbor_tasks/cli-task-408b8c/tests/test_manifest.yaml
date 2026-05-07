@@ -1,0 +1,25 @@
+version: 1
+gates:
+  - id: existing_tests_pass
+    kind: P2P_REGRESSION
+    command: "cd /workspace/entireio-cli && go test ./cmd/entire/cli/strategy/... -count=1 -timeout 180s 2>&1"
+
+  - id: cache_works
+    kind: F2P
+    weight: 0.25
+    command: "cd /workspace/entireio-cli && go run ./.harbor-verify/verify.go /logs/verifier/gates_f2p.json 2>&1 && python3 -c \"import json; g=json.load(open('/logs/verifier/gates_f2p.json')); print('OK' if g.get('cache_works') else 'cache_works failed')\" | grep -q OK"
+
+  - id: worktree_resolves
+    kind: F2P
+    weight: 0.25
+    command: "python3 -c \"import json; g=json.load(open('/logs/verifier/gates_f2p.json')); print('OK' if g.get('worktree_resolves') else 'worktree_resolves failed')\" | grep -q OK"
+
+  - id: cache_clearable
+    kind: F2P
+    weight: 0.20
+    command: "python3 -c \"import json; g=json.load(open('/logs/verifier/gates_f2p.json')); print('OK' if g.get('cache_clearable') else 'cache_clearable failed')\" | grep -q OK"
+
+  - id: returns_repo_root
+    kind: F2P
+    weight: 0.15
+    command: "python3 -c \"import json; g=json.load(open('/logs/verifier/gates_f2p.json')); print('OK' if g.get('returns_repo_root') else 'returns_repo_root failed')\" | grep -q OK"

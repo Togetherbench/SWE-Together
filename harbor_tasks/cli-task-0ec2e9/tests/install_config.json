@@ -1,0 +1,22 @@
+{
+  "task_name": "cli-task-0ec2e9",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./... 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [
+    "TestMergeUnique"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/opencode/transcript.go",
+    "cmd/entire/cli/lifecycle.go",
+    "cmd/entire/cli/state.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/state_test.go"
+  ],
+  "commit_sha": "c941affb6709e0898f0d23eef9ab5fc9545d1119",
+  "commit_message_first_line": "make sure fallback using just git status works with opencode",
+  "agent_percentage": 100.0
+}

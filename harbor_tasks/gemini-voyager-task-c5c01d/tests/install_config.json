@@ -1,0 +1,37 @@
+{
+  "task_name": "gemini-voyager-task-c5c01d",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [
+    "creates canvas when enabled via storage",
+    "does not create canvas when disabled",
+    "removes canvas when disabled via storage change",
+    "creates canvas when enabled via storage change",
+    "cleans up on beforeunload"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "src/core/types/common.ts",
+    "src/locales/ar/messages.json",
+    "src/locales/en/messages.json",
+    "src/locales/es/messages.json",
+    "src/locales/fr/messages.json",
+    "src/locales/ja/messages.json",
+    "src/locales/ko/messages.json",
+    "src/locales/pt/messages.json",
+    "src/locales/ru/messages.json",
+    "src/locales/zh/messages.json",
+    "src/locales/zh_TW/messages.json",
+    "src/pages/content/index.tsx",
+    "src/pages/content/snowEffect/index.ts",
+    "src/pages/popup/Popup.tsx"
+  ],
+  "test_files": [
+    "src/pages/content/snowEffect/__tests__/snowEffect.test.ts"
+  ],
+  "commit_sha": "495f08050ef1c0242e19486a10e532688cea5027",
+  "commit_message_first_line": "feat: add a toggleable \u2744\ufe0f effect to Gemini pages",
+  "agent_percentage": 76.41325536062378
+}

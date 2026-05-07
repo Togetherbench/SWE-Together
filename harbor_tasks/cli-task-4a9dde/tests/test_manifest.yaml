@@ -1,0 +1,38 @@
+manifest_version: "1.0"
+gates:
+  # P2P_REGRESSION: gating only, any failure → reward = 0.0
+  - id: p2p_compile
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Project compiles without errors"
+
+  - id: p2p_existing_tests
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Existing strategy package unit tests still pass"
+
+  # F2P: weighted behavioral gates (60%+) and structural gates (≤40%)
+  - id: gemini_has_tty
+    kind: F2P
+    weight: 0.30
+    description: "Behavioral: hasTTY() returns false when GEMINI_CLI=1"
+
+  - id: gemini_confirm_default
+    kind: F2P
+    weight: 0.30
+    description: "Behavioral: askConfirmTTY() returns default answer when GEMINI_CLI=1 (no TTY read)"
+
+  - id: gemini_no_hang
+    kind: F2P
+    weight: 0.25
+    description: "Behavioral: both functions return promptly (< 5s) when GEMINI_CLI=1"
+
+  - id: gemini_env_detect
+    kind: F2P
+    weight: 0.10
+    description: "Structural: GEMINI_CLI env var referenced in strategy package Go files"
+
+  - id: file_mod
+    kind: F2P
+    weight: 0.05
+    description: "Structural: manual_commit_hooks.go contains GEMINI_CLI check"

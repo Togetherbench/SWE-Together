@@ -39,3 +39,13 @@ data-pipeline/screening/artifacts_swechat/step3_prefetch_failures.json
 
 # Per-run scaffold logs (regenerated on every run; useful locally only)
 data-pipeline/scaffold/logs/
+<<<<<<< HEAD
+
+# Pre-fetched canonical patches (regenerable via step4_extract_canonical_patches.py)
+data-pipeline/screening/artifacts_swechat/canonical_patches/
+data-pipeline/screening/artifacts_swechat/step4_extraction_failures.json
+
+# Backups left by build_swerebench_configs.py (originals live in git history)
+harbor_tasks/*/tests/*.legacy.bak
+=======
+>>>>>>> origin/main

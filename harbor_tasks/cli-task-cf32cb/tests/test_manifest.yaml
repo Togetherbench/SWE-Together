@@ -1,0 +1,62 @@
+version: "1.0"
+task: cli-task-cf32cb
+
+gates:
+  # --- P2P_REGRESSION gates (gating-only) ---
+  - id: p2p_compiles
+    kind: P2P_REGRESSION
+    description: "All production code compiles without errors"
+    command: "go build ./cmd/entire/cli/"
+
+  - id: p2p_vet_passes
+    kind: P2P_REGRESSION
+    description: "go vet passes — no broken references or unused imports"
+    command: "go vet ./cmd/entire/cli/"
+
+  - id: p2p_collect_checkpoints_kept
+    kind: P2P_REGRESSION
+    description: "collectCheckpointsByAge is preserved (still needed by resolveLatestCheckpoint)"
+    command: "go doc cmd/entire/cli.collectCheckpointsByAge > /dev/null 2>&1"
+
+  # --- F2P gates (positive weight) ---
+  - id: f2p_resolve_latest_test
+    kind: F2P
+    weight: 0.20
+    description: "resolveLatestCheckpoint returns newest checkpoint regardless of input order"
+    command: "go test --count=1 -run TestResolveLatestCheckpoint ./cmd/entire/cli/"
+
+  - id: f2p_integration_test
+    kind: F2P
+    weight: 0.18
+    description: "Integration test — squash merge resumes only from latest checkpoint"
+    command: "go test -tags=integration --count=1 -run TestResume_SquashMergeMultipleCheckpoints ./cmd/entire/cli/integration_test/ -timeout 120s"
+
+  - id: f2p_all_unit_tests
+    kind: F2P
+    weight: 0.12
+    description: "All unit tests pass — no regressions from the refactor"
+    command: "go test --count=1 ./cmd/entire/cli/ -timeout 60s"
+
+  - id: f2p_no_resume_multiple
+    kind: F2P
+    weight: 0.10
+    description: "resumeMultipleCheckpoints function is removed"
+    command: "! go doc cmd/entire/cli.resumeMultipleCheckpoints > /dev/null 2>&1"
+
+  - id: f2p_no_deduplicate
+    kind: F2P
+    weight: 0.10
+    description: "deduplicateSessions function is removed"
+    command: "! go doc cmd/entire/cli.deduplicateSessions > /dev/null 2>&1"
+
+  - id: f2p_get_metadata_tree
+    kind: F2P
+    weight: 0.08
+    description: "getMetadataTree helper function exists"
+    command: "go doc cmd/entire/cli.getMetadataTree > /dev/null 2>&1"
+
+  - id: f2p_no_background_ctx
+    kind: F2P
+    weight: 0.07
+    description: "getMetadataTree accepts context.Context (no context.Background() internally)"
+    command: "go doc cmd/entire/cli.getMetadataTree 2>&1 | grep -q 'ctx context.Context'"

@@ -1,0 +1,21 @@
+{
+  "task_name": "cli-task-726de6",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./... 2>&1",
+  "repo_dir": "/repo",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/agent.go",
+    "cmd/entire/cli/agent/claudecode/lifecycle.go",
+    "cmd/entire/cli/agent/factoryaidroid/lifecycle.go",
+    "cmd/entire/cli/hooks.go",
+    "cmd/entire/cli/lifecycle.go",
+    "docs/architecture/agent-guide.md"
+  ],
+  "test_files": [],
+  "commit_sha": "8118d5ed7a670908b75ff700d4dbdfd540e8627b",
+  "commit_message_first_line": "handle factory ai welcome message, new HookResponseWriter interface",
+  "agent_percentage": 100.0
+}

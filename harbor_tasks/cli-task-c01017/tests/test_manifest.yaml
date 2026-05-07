@@ -1,0 +1,82 @@
+version: "1.0"
+task: cli-task-c01017
+description: >
+  Verify that Gemini transcript parsing handles array-format content fields.
+  The bug: GeminiMessage.Content is typed as `string` but real Gemini CLI
+  transcripts use `[{"text": "..."}]` for user messages. json.Unmarshal fails
+  on the type mismatch, breaking the entire checkpoint pipeline.
+
+gates:
+  # ── Behavioral F2P gates (weighted, contribute to reward) ───────────────
+  - id: compile_check
+    kind: F2P
+    weight: 0.05
+    description: "Package compiles without errors"
+    command: "go build ./cmd/entire/cli/agent/geminicli/..."
+
+  - id: parse_array_content
+    kind: F2P
+    weight: 0.25
+    description: >
+      ParseTranscript handles real Gemini format: user messages with array
+      content ([{"text": "..."}]) and gemini messages with string content,
+      within a single transcript. Extracted text must match input.
+    command: "go test ./cmd/entire/cli/agent/geminicli/... -run ^TestV_ParseArrayContent$ -count=1"
+    anti_stub: >
+      The test Go file verifier_behavioral_test.go parses a transcript with 4
+      messages (2 user array-content, 2 gemini string-content) and asserts
+      each message's Content field matches the original input text.
+
+  - id: extract_prompts
+    kind: F2P
+    weight: 0.20
+    description: >
+      ExtractAllUserPrompts, ExtractLastUserPrompt, and multi-part array
+      content all work correctly with array-format user content.
+    command: "go test ./cmd/entire/cli/agent/geminicli/... -run '^TestV_ExtractPromptsArray$|^TestV_ExtractLastPromptArray$|^TestV_ArrayContentMultipleParts$' -count=1"
+    anti_stub: >
+      Extracts prompts from 2 user messages with array content, verifies
+      correct ordering. Multi-part test joins ["part one", "part two"] with
+      newlines.
+
+  - id: backward_compat
+    kind: F2P
+    weight: 0.15
+    description: >
+      Backward compatibility: existing string-format content, null content
+      fields, and tool call preservation all continue to work.
+    command: "go test ./cmd/entire/cli/agent/geminicli/... -run '^TestV_StringContentStillWorks$|^TestV_NullContent$|^TestV_ToolCallsPreserved$' -count=1"
+    anti_stub: >
+      String content parses as before. Null content yields empty string.
+      Tool calls survive the custom UnmarshalJSON path.
+
+  - id: extract_files
+    kind: F2P
+    weight: 0.10
+    description: >
+      ExtractModifiedFiles works with array-format user content: identifies
+      files modified by tool calls in gemini messages.
+    command: "go test ./cmd/entire/cli/agent/geminicli/... -run ^TestV_ExtractFilesArray$ -count=1"
+    anti_stub: >
+      Parses a transcript where user messages use array content and gemini
+      messages have write_file/edit_file tool calls. Verifies 2 files found.
+
+  # ── P2P regression gates (gating-only, zero on fail) ────────────────────
+  - id: upstream_tests_pass
+    kind: P2P_REGRESSION
+    description: >
+      Existing upstream tests in geminicli and strategy packages still pass.
+      Failures here zero the entire reward.
+    command: "go test ./cmd/entire/cli/agent/geminicli/... -count=1 && go test ./cmd/entire/cli/strategy/... -count=1"
+
+# Reward formula: weighted-replace (NOT additive)
+# inner_weight = 1.0 - sum(F2P weights) = 0.25
+# reward = existing * 0.25 + sum(earned weights)
+# Baseline existing = 0.10 (at least one F2P pass yields nonzero reward)
+reward_formula:
+  type: weighted-replace
+  inner_weight: 0.25
+  baseline: 1.0
+  note: >
+    P2P gates are gating-only: if upstream_tests_pass fails, reward = 0.0
+    regardless of F2P scores. If no F2P gate passes, reward = 0.0.

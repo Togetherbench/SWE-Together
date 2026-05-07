@@ -1,0 +1,37 @@
+version: "1.0"
+gates:
+  - id: unique_id_test
+    kind: F2P
+    weight: 0.30
+    command: "go test -run unique/consecutive checkpoint ID test"
+    description: "Test for unique checkpoint IDs across consecutive commits exists and passes"
+
+  - id: amend_tests_pass
+    kind: F2P
+    weight: 0.15
+    command: "go test -run TestPrepareCommitMsg_Amend"
+    description: "Existing amend-related PrepareCommitMsg tests still pass with the fix"
+
+  - id: strategy_pkg_tests
+    kind: F2P
+    weight: 0.20
+    command: "go test ./cmd/entire/cli/strategy/..."
+    description: "Full strategy package tests pass without regressions"
+
+  - id: no_pending_prepare
+    kind: F2P
+    weight: 0.12
+    command: "python3 structural check"
+    description: "PrepareCommitMsg new-content path does not reference PendingCheckpointID for ID reuse"
+
+  - id: no_pending_agent
+    kind: F2P
+    weight: 0.12
+    command: "python3 structural check"
+    description: "addTrailerForAgentCommit does not reference PendingCheckpointID for ID reuse"
+
+  - id: fresh_id_generation
+    kind: F2P
+    weight: 0.11
+    command: "python3 structural check"
+    description: "Both PrepareCommitMsg and addTrailerForAgentCommit call id.Generate() for fresh checkpoint IDs"

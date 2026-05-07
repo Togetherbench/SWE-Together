@@ -1,0 +1,117 @@
+version: "1.0"
+task: agent-swarm-task-4a881b
+
+gates:
+  # ===================
+  # GOLD: Behavioral (hard) — 0.35
+  # ===================
+  - id: G4_SCHEDULER_ONETIME
+    kind: F2P
+    type: f2p
+    description: "Scheduler auto-disables one-time schedules after execution across all code paths (executeSchedule, recoverMissedSchedules, runScheduleNow, error handler)"
+    weight: 0.20
+    tier: gold
+    category: behavioral
+
+  - id: G5_MCP_CREATE_ONETIME
+    kind: F2P
+    type: f2p
+    description: "create-schedule MCP tool accepts scheduleType, delayMs, runAt params and validates one-time vs recurring constraints"
+    weight: 0.15
+    tier: gold
+    category: behavioral
+
+  # ===================
+  # SILVER: Behavioral — 0.21
+  # ===================
+  - id: G6_HTTP_API_ONETIME
+    kind: F2P
+    type: f2p
+    description: "HTTP POST/PUT/GET /api/schedules handles scheduleType, delayMs, runAt with proper validation"
+    weight: 0.10
+    tier: silver
+    category: behavioral
+
+  - id: G7_MCP_LIST_FILTER
+    kind: F2P
+    type: f2p
+    description: "list-schedules MCP tool supports scheduleType filter and hideCompleted parameter"
+    weight: 0.06
+    tier: silver
+    category: behavioral
+
+  - id: G9_MCP_UPDATE_RESTRICT
+    kind: F2P
+    type: f2p
+    description: "update-schedule prevents changing scheduleType after creation and handles one-time completion state"
+    weight: 0.05
+    tier: silver
+    category: behavioral
+
+  # ===================
+  # BRONZE: Structural — 0.30
+  # ===================
+  - id: G1_MIGRATION_SCHEMA
+    kind: F2P
+    type: f2p
+    description: "New migration file creates scheduleType column with relaxed CHECK constraint; 001_initial.sql updated for fresh DBs"
+    weight: 0.12
+    tier: bronze
+    category: structural
+
+  - id: G2_TYPES_SCHEMA
+    kind: F2P
+    type: f2p
+    description: "types.ts ScheduledTaskSchema includes scheduleType field and refine() allows one_time without cron/interval"
+    weight: 0.08
+    tier: bronze
+    category: structural
+
+  - id: G3_DB_LAYER
+    kind: F2P
+    type: f2p
+    description: "db.ts has scheduleType in ScheduledTaskRow, rowToScheduledTask, CreateScheduledTaskData, and UpdateScheduledTaskData"
+    weight: 0.06
+    tier: bronze
+    category: structural
+
+  - id: G8_UI_TYPES
+    kind: F2P
+    type: f2p
+    description: "new-ui/src/api/types.ts ScheduledTask interface includes scheduleType field"
+    weight: 0.04
+    tier: bronze
+    category: structural
+
+  # ===================
+  # P2P REGRESSION: Gating only (zero reward on fail)
+  # ===================
+  - id: P2P_TESTS_PASS
+    kind: P2P
+    type: p2p
+    description: "All existing bun tests pass (no regression)"
+    weight: 0.0
+    tier: platinum
+    category: regression
+
+  - id: P2P_TSC_PASS
+    kind: P2P
+    type: p2p
+    description: "TypeScript type check passes (bun run tsc:check)"
+    weight: 0.0
+    tier: platinum
+    category: regression
+
+  - id: P2P_NO_CALCNEXT_ONETIME
+    kind: P2P
+    type: p2p
+    description: "calculateNextRun() is NOT called for one-time schedules in any execution path"
+    weight: 0.0
+    tier: platinum
+    category: regression
+
+metadata:
+  behavioral_weight: 0.56
+  structural_weight: 0.30
+  behavioral_ratio: 0.651
+  total_f2p_weight: 0.86

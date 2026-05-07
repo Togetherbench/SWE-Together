@@ -1,0 +1,41 @@
+{
+  "task_name": "agent-swarm-task-4a881b",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/agent-swarm",
+  "FAIL_TO_PASS": [
+    "create one-time schedule with delayMs computes nextRunAt",
+    "create one-time schedule with runAt stores nextRunAt",
+    "one-time schedule does not require cronExpression or intervalMs",
+    "executing one-time schedule auto-disables it",
+    "one-time schedules hidden by default in list",
+    "filter by scheduleType works",
+    "existing recurring schedules default to scheduleType recurring"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "new-ui/src/api/types.ts",
+    "new-ui/src/pages/schedules/[id]/page.tsx",
+    "new-ui/src/pages/schedules/page.tsx",
+    "package.json",
+    "src/be/db.ts",
+    "src/be/migrations/001_initial.sql",
+    "src/be/migrations/002_one_time_schedules.sql",
+    "src/http/schedules.ts",
+    "src/http/stats.ts",
+    "src/scheduler/scheduler.ts",
+    "src/tools/schedules/create-schedule.ts",
+    "src/tools/schedules/list-schedules.ts",
+    "src/tools/schedules/update-schedule.ts",
+    "src/types.ts",
+    "thoughts/taras/plans/2026-03-06-one-time-scheduled-tasks.md"
+  ],
+  "test_files": [
+    "src/scheduler/scheduler.test.ts",
+    "src/tests/scheduled-tasks.test.ts"
+  ],
+  "commit_sha": "58f2aa27d5e35752ef405084a4db633749fce23b",
+  "commit_message_first_line": "feat: one-time scheduled tasks (v1.36.0)",
+  "agent_percentage": 99.89754098360656
+}

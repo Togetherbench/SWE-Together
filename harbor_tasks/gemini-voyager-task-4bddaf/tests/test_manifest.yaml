@@ -1,0 +1,111 @@
+gates:
+  - id: "F2P_TYPECHECK"
+    kind: "F2P"
+    weight: 0.15
+    command: |
+      cd /workspace/repo && bun run typecheck > /tmp/typecheck.log 2>&1
+      test $? -eq 0
+
+  - id: "F2P_STORAGE_KEY"
+    kind: "F2P"
+    weight: 0.15
+    command: |
+      python3 -c "
+      import re
+      with open('/workspace/repo/src/core/types/common.ts') as f:
+          text = f.read()
+      cleaned = re.sub(r'//.*', '', text)
+      cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+      matches = re.findall(r\"(GV_\w*(?:POPUP|SECTION|ORDER|REORDER)\w*)\s*:\s*'\", cleaned)
+      print(len(matches))
+      " 2>/dev/null | grep -qv '^0$'
+
+  - id: "F2P_SECTION_ARRAY"
+    kind: "F2P"
+    weight: 0.15
+    command: |
+      python3 -c "
+      import re
+      with open('/workspace/repo/src/pages/popup/Popup.tsx') as f:
+          text = f.read()
+      cleaned = re.sub(r'//.*', '', text)
+      cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+      arrays = re.findall(r\"const\s+(\w*(?:SECTION|POPUP|ORDER)\w*)\s*=\s*\[([^\]]{50,})\]\", cleaned, re.DOTALL)
+      found = any(len(re.findall(r\"'([^']+)'\", body)) >= 10 for _, body in arrays)
+      print(1 if found else 0)
+      " 2>/dev/null | grep -q '^1$'
+
+  - id: "P2P_REORDER_UI"
+    kind: "P2P"
+    weight: 0.20
+    command: |
+      python3 -c "
+      import re
+      with open('/workspace/repo/src/pages/popup/Popup.tsx') as f:
+          text = f.read()
+      cleaned = re.sub(r'//.*', '', text)
+      cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+      s = 0
+      if re.search(r'<(?:button|div)[^>]*onClick.*?<svg.*?</svg>', cleaned, re.DOTALL) and re.search(r'<polyline[^>]*points=', cleaned):
+          s += 1
+      if re.search(r'disabled\s*=\s*\{', cleaned):
+          s += 1
+      if re.search(r'(?:aria-label|title)\s*=\s*\{[^}]*?(?:move|Move|up|down|Up|Down|上|下)', cleaned):
+          s += 1
+      print(1 if s >= 2 else 0)
+      " 2>/dev/null | grep -q '^1$'
+
+  - id: "P2P_MOVE_LOGIC"
+    kind: "P2P"
+    weight: 0.15
+    command: |
+      python3 -c "
+      import re
+      with open('/workspace/repo/src/pages/popup/Popup.tsx') as f:
+          text = f.read()
+      cleaned = re.sub(r'//.*', '', text)
+      cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+      s = 0
+      if re.search(r'\.(?:indexOf|findIndex)\s*\(', cleaned):
+          s += 1
+      if re.search(r'const\s+\w+\s*=\s*\[\.\.\.\w+\]', cleaned) or re.search(r'\[\w+\]\s*=\s*\[\w+\]\s*,\s*\[\w+\]\s*=\s*\[\w+\]', cleaned):
+          s += 1
+      if re.search(r'set\w*(?:Section|Order|Reorder)\w*', cleaned):
+          s += 1
+      print(1 if s >= 2 else 0)
+      " 2>/dev/null | grep -q '^1$'
+
+  - id: "P2P_STORAGE_SAVE"
+    kind: "P2P"
+    weight: 0.10
+    command: |
+      python3 -c "
+      import re
+      with open('/workspace/repo/src/pages/popup/Popup.tsx') as f:
+          text = f.read()
+      cleaned = re.sub(r'//.*', '', text)
+      cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+      found = bool(re.search(r'(?:chrome\.storage\.sync\.set|setSyncStorage)\s*\(', cleaned))
+      print(1 if found else 0)
+      " 2>/dev/null | grep -q '^1$'
+
+  - id: "P2P_I18N"
+    kind: "P2P"
+    weight: 0.05
+    command: |
+      python3 -c "
+      import json
+      with open('/workspace/repo/src/locales/en/messages.json') as f:
+          data = json.load(f)
+      up = data.get('moveSectionUp', {}).get('message', '')
+      down = data.get('moveSectionDown', {}).get('message', '')
+      ok = bool(up.strip()) and bool(down.strip())
+      print(1 if ok else 0)
+      " 2>/dev/null | grep -q '^1$'
+
+  - id: "P2P_REGRESSION_TESTS"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    command: |
+      cd /workspace/repo && bun run test > /tmp/vitest.log 2>&1
+      test $? -eq 0

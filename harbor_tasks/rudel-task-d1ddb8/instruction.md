@@ -1,0 +1,1 @@
+call `rudel enable` it should add the rudel hooks to .claude/settings.json but it doesnt do anything

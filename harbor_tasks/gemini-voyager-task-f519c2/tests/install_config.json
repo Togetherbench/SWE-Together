@@ -1,0 +1,16 @@
+{
+  "task_name": "gemini-voyager-task-f519c2",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/opt/gemini-voyager",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "src/pages/content/folder/manager.ts"
+  ],
+  "test_files": [],
+  "commit_sha": "cb2f2441d9af9a3821285cbd6901d998d63b9301",
+  "commit_message_first_line": "fix(folder): fix drag-and-drop onto conversations inside folders (#430)",
+  "agent_percentage": 95.71428571428572
+}

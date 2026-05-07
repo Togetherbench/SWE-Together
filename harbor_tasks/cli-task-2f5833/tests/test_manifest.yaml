@@ -1,0 +1,86 @@
+version: "1.0"
+task_id: cli-task-2f5833
+
+gates:
+  # ── P2P_REGRESSION (gating-only, zero reward on fail) ──
+  - id: P2P1_build
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Go build compiles without errors"
+
+  - id: P2P2_unit_tests
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Unit tests pass (non-integration)"
+
+  # ── F2P Gold (behavioral, hard to game): 0.45 ──
+  - id: G1_gold_no_extract_prompts
+    kind: F2P
+    weight: 0.15
+    category: behavioral
+    description: "handleLifecycleTurnEnd does NOT call ExtractPrompts from transcript"
+    anti_stub: "Must not contain ExtractPrompts call in lifecycle.go without it being called from TurnEnd"
+
+  - id: G2_gold_shadow_filesystem_fallback
+    kind: F2P
+    weight: 0.15
+    category: behavioral
+    description: "finalizeAllTurnCheckpoints reads prompts from shadow branch + filesystem fallback"
+    anti_stub: "Must use readPromptsFromShadowBranch/readPromptsFromFilesystem in finalization, not extractUserPrompts alone"
+
+  - id: G3_gold_no_prompt_overwrite
+    kind: F2P
+    weight: 0.15
+    category: behavioral
+    description: "handleLifecycleTurnEnd does NOT overwrite prompt.txt via WriteFile"
+    anti_stub: "Must not combine PromptFileName with WriteFile in TurnEnd function scope"
+
+  # ── F2P Silver (behavioral but easier to stub): 0.35 ──
+  - id: S1_silver_no_extract_summary
+    kind: F2P
+    weight: 0.10
+    category: behavioral
+    description: "ExtractSummary removed from TranscriptAnalyzer interface in agent.go"
+
+  - id: S2_silver_no_summary_filename
+    kind: F2P
+    weight: 0.10
+    category: behavioral
+    description: "SummaryFileName constant removed from paths.go"
+
+  - id: S3_silver_last_prompt_field
+    kind: F2P
+    weight: 0.05
+    category: behavioral
+    description: "FirstPrompt field renamed to LastPrompt in session state struct"
+
+  - id: S4_silver_lifecycle_commit_msg
+    kind: F2P
+    weight: 0.10
+    category: behavioral
+    description: "TurnEnd uses LoadSessionState for commit message prompt, not allPrompts[-1]"
+
+  # ── F2P Bronze (structural): 0.20 ──
+  - id: B1_bronze_max_last_prompt_runes
+    kind: F2P
+    weight: 0.05
+    category: structural
+    description: "maxFirstPromptRunes renamed to maxLastPromptRunes in types.go"
+
+  - id: B2_bronze_turn_start_append
+    kind: F2P
+    weight: 0.05
+    category: structural
+    description: "TurnStart appends event.Prompt to filesystem prompt.txt"
+
+  - id: B3_bronze_agent_summary_removed
+    kind: F2P
+    weight: 0.05
+    category: structural
+    description: "ExtractSummary implementations removed from claudecode, geminicli, opencode agents"
+
+  - id: B4_bronze_simulate_prompt_helpers
+    kind: F2P
+    weight: 0.05
+    category: structural
+    description: "SimulateUserPromptSubmitWithPrompt test helper added to hooks.go"

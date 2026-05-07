@@ -1,0 +1,30 @@
+gates:
+  - id: fallback_core
+    kind: F2P
+    weight: 0.20
+    description: "ReadLatestSessionPromptFromCommittedTree falls back to earlier session when latest has no prompt.txt (core bug fix)"
+
+  - id: multi_empty_fallback
+    kind: F2P
+    weight: 0.15
+    description: "Falls back through multiple empty sessions to find a prompt"
+
+  - id: empty_prompt_fallback
+    kind: F2P
+    weight: 0.15
+    description: "Falls back when latest session has an empty prompt.txt file"
+
+  - id: no_prompt_empty
+    kind: F2P
+    weight: 0.15
+    description: "Returns empty string when no session in the checkpoint has a prompt"
+
+  - id: regression_existing
+    kind: F2P
+    weight: 0.10
+    description: "Existing ReadLatestSessionPromptFromCommittedTree tests still pass (no regressions)"
+
+  - id: not_stub
+    kind: F2P
+    weight: 0.10
+    description: "Function body is non-trivial (>3 meaningful lines, not a stub)"

@@ -1,0 +1,39 @@
+{
+  "task_name": "cli-task-32ba47",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./... 2>&1",
+  "repo_dir": "/workspace/cli",
+  "FAIL_TO_PASS": [
+    "TestParseFromFileAtLine_ValidMixedMessages",
+    "TestParseFromFileAtLine_SkipsMalformedLines",
+    "TestParseFromFileAtLine_LargeLines",
+    "TestParseFromFileAtLine_LineExceedsScannerBuffer",
+    "TestParseFromFileAtLine_LineExceedsScannerBufferWithOffset",
+    "TestParseFromFileAtLine_EntireFile",
+    "TestParseFromFileAtLine_Offset",
+    "TestParseFromFileAtLine_OffsetBeyondEnd",
+    "TestParseFromFileAtLine_SkipsMalformedLinesWithOffset"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/claudecode/claude.go",
+    "cmd/entire/cli/agent/claudecode/transcript.go",
+    "cmd/entire/cli/debug.go",
+    "cmd/entire/cli/hooks_claudecode_handlers.go",
+    "cmd/entire/cli/rewind.go",
+    "cmd/entire/cli/strategy/manual_commit_condensation.go",
+    "cmd/entire/cli/transcript.go",
+    "cmd/entire/cli/transcript/parse.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/agent/claudecode/transcript_test.go",
+    "cmd/entire/cli/explain_test.go",
+    "cmd/entire/cli/integration_test/agent_test.go",
+    "cmd/entire/cli/transcript/parse_test.go",
+    "cmd/entire/cli/transcript_test.go"
+  ],
+  "commit_sha": "bfe48cf1276a962cf45fd81aee5cfa77057a5f9d",
+  "commit_message_first_line": "Consolidate duplicate JSONL transcript parsers into shared transcript package",
+  "agent_percentage": 100.0
+}

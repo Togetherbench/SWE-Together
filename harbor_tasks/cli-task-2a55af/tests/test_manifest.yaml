@@ -1,0 +1,67 @@
+version: "1.0"
+description: "Verifier for Gemini session ID extraction fix in rewind.go"
+kind: "test_manifest"
+
+gates:
+  - id: gold_extract_behavior
+    kind: F2P
+    description: >
+      Behavioral: extractSessionIDFromMetadata returns the correct basename for all
+      path formats (UUID, legacy date-prefixed, auto-commit sharded, simple IDs).
+      The original bug used SplitN("-", 4) which truncated UUIDs by treating
+      hyphen segments as date-prefix components. Any correct fix must return the
+      full directory basename for UUID paths.
+    weight: 0.20
+    category: gold
+
+  - id: silver_no_buggy_split
+    kind: F2P
+    description: >
+      Source analysis: extractSessionIDFromMetadata must not use the buggy
+      SplitN with "-" and count 4 pattern that caused UUID truncation.
+    weight: 0.15
+    category: silver
+
+  - id: silver_sessionid_fallback
+    kind: F2P
+    description: >
+      Source analysis: Call sites (runRewindInteractive, runRewindToInternal)
+      must prefer selectedPoint.SessionID (from Entire-Session trailer) over
+      path-based extraction from metadata directory. This ensures the more
+      reliable trailer-supplied ID takes precedence.
+    weight: 0.15
+    category: silver
+
+  - id: bronze_uses_base
+    kind: F2P
+    description: >
+      Structural: rewind.go uses filepath.Base to extract directory basename.
+    weight: 0.10
+    category: bronze
+
+  - id: bronze_test_coverage
+    kind: F2P
+    description: >
+      Structural: Tests exist for extractSessionIDFromMetadata in rewind_test.go.
+    weight: 0.10
+    category: bronze
+
+  - id: bronze_call_site_precedence
+    kind: F2P
+    description: >
+      Structural: selectedPoint.SessionID is referenced in rewind.go, indicating
+      the call sites check the trailer-supplied session ID.
+    weight: 0.10
+    category: bronze
+
+  - id: p2p_build
+    kind: P2P_REGRESSION
+    description: "Package must still compile (go build succeeds)"
+
+  - id: p2p_existing_tests
+    kind: P2P_REGRESSION
+    description: "Existing tests in cmd/entire/cli/ must still pass"
+
+# Weights sum: 0.20 + 0.15 + 0.15 + 0.10 + 0.10 + 0.10 = 0.80 (≤ 1.0)
+# Gold + Silver = 0.50 = 62.5% (≥ 60%, passes the >=60% behavioral rule)
+# Bronze = 0.30 = 37.5% (≤ 40%, passes the <=40% structural rule)

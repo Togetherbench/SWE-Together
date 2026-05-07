@@ -1,0 +1,20 @@
+gates:
+  - id: "math-tests-exist"
+    kind: "F2P"
+    weight: 0.20
+    description: "At least 3 math/LaTeX-related test cases exist and were executed"
+
+  - id: "math-tests-pass"
+    kind: "F2P"
+    weight: 0.30
+    description: "All math/LaTeX test cases pass (fails on buggy version, passes after fix)"
+
+  - id: "suite-healthy"
+    kind: "F2P"
+    weight: 0.20
+    description: "Test suite runs successfully with at least 13 total tests"
+
+  - id: "no-regressions"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    description: "Zero failures in pre-existing non-math tests (gate only — zero reward on fail)"

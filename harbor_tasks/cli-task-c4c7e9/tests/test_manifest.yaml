@@ -1,0 +1,57 @@
+version: "1.0"
+task_id: cli-task-c4c7e9
+
+gates:
+  - id: g1_trail_title_file_gone
+    kind: F2P
+    description: "trail_title.go file must not exist on disk or in git"
+    weight: 0.25
+    category: behavioral
+    command: "test ! -f /workspace/repo/cmd/entire/cli/summarize/trail_title.go"
+    anti_stub: "Rejects empty or stub files (<= 5 lines)"
+
+  - id: g2_summarize_import_gone
+    kind: F2P
+    description: "summarize import must not exist in manual_commit_hooks.go"
+    weight: 0.20
+    category: behavioral
+    command: 'grep -qF "github.com/entireio/cli/cmd/entire/cli/summarize" /workspace/repo/cmd/entire/cli/strategy/manual_commit_hooks.go'
+    invert: true
+
+  - id: g3_gen_func_gone
+    kind: F2P
+    description: "generateTrailTitleForTrail function must not exist"
+    weight: 0.25
+    category: behavioral
+    command: 'grep -qE "^func generateTrailTitleForTrail\b" /workspace/repo/cmd/entire/cli/strategy/manual_commit_hooks.go'
+    invert: true
+    anti_stub: "If found, body must have > 3 meaningful statements"
+
+  - id: g4_gen_trail_title_func_gone
+    kind: F2P
+    description: "GenerateTrailTitle function must not exist anywhere in cmd/"
+    weight: 0.15
+    category: behavioral
+    command: 'grep -rlE "^func GenerateTrailTitle\b" --include="*.go" /workspace/repo/cmd/'
+    invert: true
+
+  - id: g5_go_vet_clean
+    kind: F2P
+    description: "go vet passes on affected packages"
+    weight: 0.10
+    category: structural
+    command: "cd /workspace/repo && go vet ./cmd/entire/cli/strategy/... ./cmd/entire/cli/summarize/..."
+
+  - id: g6_obj_files
+    kind: F2P
+    description: "No stale files in summarize/ referencing GenerateTrailTitle"
+    weight: 0.05
+    category: structural
+    command: 'find /workspace/repo/cmd/entire/cli/summarize/ -name "*.go" -exec grep -l "GenerateTrailTitle" {} \; 2>/dev/null'
+    invert: true
+
+  - id: p2p_code_compiles
+    kind: P2P
+    description: "go build succeeds on the entire cmd/entire/... tree"
+    category: structural
+    command: "cd /workspace/repo && go build ./cmd/entire/..."

@@ -1,0 +1,20 @@
+{
+  "task_name": "agent-swarm-task-ea4bd8",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/agent-swarm",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    ".gitignore",
+    "Dockerfile.worker",
+    "docker-entrypoint.sh",
+    "new-ui/src/api/hooks/use-agents.ts",
+    "package.json"
+  ],
+  "test_files": [],
+  "commit_sha": "c26a402303d469dbdbc96dcc9e10970aae319f3a",
+  "commit_message_first_line": "docker improvements",
+  "agent_percentage": 94.28571428571428
+}

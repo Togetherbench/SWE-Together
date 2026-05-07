@@ -1,0 +1,75 @@
+version: "1.0"
+task: cli-task-b12319
+
+gates:
+  # ── P2P REGRESSION: gating only, zero reward on any failure ──────────
+  - id: p2p-go-build
+    kind: P2P_REGRESSION
+    description: "go build ./cmd/entire/cli/... compiles without errors"
+    command: "go build ./cmd/entire/cli/..."
+
+  - id: p2p-go-vet
+    kind: P2P_REGRESSION
+    description: "go vet ./cmd/entire/cli/... reports no issues"
+    command: "go vet ./cmd/entire/cli/..."
+
+  - id: p2p-cursor-removed
+    kind: P2P_REGRESSION
+    description: "Built-in cursor agent directory no longer exists"
+    command: "test ! -d /workspace/cli/cmd/entire/cli/agent/cursor"
+
+  # ── F2P GOLD: External package structure and API (0.15) ──────────────
+  - id: f2p-external-package
+    kind: F2P
+    weight: 0.15
+    description: "cmd/entire/cli/agent/external/ package exists with New(), DiscoverAndRegister(), Wrap(), InfoResponse, Capabilities, ProtocolVersion"
+    command: "python3 checks/external_package.py"
+
+  # ── F2P GOLD: Cursor agent binary structure (0.15) ───────────────────
+  - id: f2p-cursor-binary
+    kind: F2P
+    weight: 0.15
+    description: "cmd/entire-agent-cursor/ is a standalone main package implementing the external protocol subcommands"
+    command: "python3 checks/cursor_binary.py"
+
+  # ── F2P GOLD: hooks_cmd.go uses discovery (0.15) ────────────────────
+  - id: f2p-hooks-discovery
+    kind: F2P
+    weight: 0.15
+    description: "hooks_cmd.go calls external.DiscoverAndRegister() and does NOT import cursor agent"
+    command: "python3 checks/hooks_discovery.py"
+
+  # ── F2P SILVER: condensation test drops cursor (0.10) ────────────────
+  - id: f2p-condensation-no-cursor
+    kind: F2P
+    weight: 0.10
+    description: "manual_commit_condensation_test.go has no cursor import or AgentTypeCursor references"
+    command: "python3 checks/condensation_test.py"
+
+  # ── F2P SILVER: architecture test skips external (0.10) ─────────────
+  - id: f2p-arch-test-skip
+    kind: F2P
+    weight: 0.10
+    description: "architecture_test.go skips 'external' in skipDirs"
+    command: "python3 checks/arch_test.py"
+
+  # ── F2P BRONZE: protocol doc exists (0.05) ───────────────────────────
+  - id: f2p-protocol-doc
+    kind: F2P
+    weight: 0.05
+    description: "docs/architecture/external-agent-protocol.md exists with protocol content"
+    command: "python3 checks/protocol_doc.py"
+
+  # ── F2P BRONZE: external tests pass (0.10) ───────────────────────────
+  - id: f2p-go-tests
+    kind: F2P
+    weight: 0.10
+    description: "go test ./cmd/entire/cli/agent/external/... compiles and tests pass"
+    command: "go test -run=^$ ./cmd/entire/cli/agent/external/... -count=1 -timeout 60s"
+
+  # ── F2P BRONZE: cursor binary builds (0.05) ──────────────────────────
+  - id: f2p-cursor-build
+    kind: F2P
+    weight: 0.05
+    description: "go build ./cmd/entire-agent-cursor/ succeeds"
+    command: "go build -o /tmp/entire-agent-cursor ./cmd/entire-agent-cursor/"

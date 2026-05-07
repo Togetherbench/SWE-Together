@@ -1,0 +1,44 @@
+# Harbor Test Manifest — gemini-voyager-task-16a5c7
+#
+# Task: Rename "Gemini Voyager" → "Voyager" in user-facing extension strings.
+# Changes affect locale files, export service footers, and prompt manager title.
+
+version: "1.0"
+
+gates:
+  # ── P2P_REGRESSION (gating only) ──
+  - id: P2P_1
+    description: "All 10 locale files exist and are valid JSON"
+    kind: P2P_REGRESSION
+    weight: 0.0
+
+  - id: P2P_2
+    description: "Key export service and prompt files exist (no deletions)"
+    kind: P2P_REGRESSION
+    weight: 0.0
+
+  # ── F2P (weighted) ──
+  - id: F2P_LOCALE_CLEAN
+    description: "No 'Gemini Voyager' in any locale JSON message values"
+    kind: F2P
+    weight: 0.30
+
+  - id: F2P_EXPORT_CLEAN
+    description: "No 'Gemini Voyager' in export service footer strings"
+    kind: F2P
+    weight: 0.25
+
+  - id: F2P_PROMPT_CLEAN
+    description: "No 'Gemini Voyager' in prompt manager title (prompt/index.ts)"
+    kind: F2P
+    weight: 0.20
+
+  - id: F2P_VOYAGER_PRESENT
+    description: "extName message is 'Voyager' in at least 5 locale files"
+    kind: F2P
+    weight: 0.15
+
+  - id: F2P_TEST_UPDATED
+    description: "Test file expects 'Voyager' not 'Gemini Voyager'"
+    kind: F2P
+    weight: 0.10

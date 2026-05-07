@@ -1,0 +1,77 @@
+# Test manifest for agent-swarm-task-ea4bd8
+# Gates are evaluated by test.sh; this manifest provides metadata for linting and reporting.
+
+gates:
+  # === F2P (Feature-to-Pass) gates ===
+  # Sum of weights = 0.25 + 0.20 + 0.25 + 0.15 + 0.15 = 1.00
+  - id: dockerfile_apt_consolidation
+    kind: F2P
+    weight: 0.25
+    description: "Dockerfile.worker has consolidated apt-get into ~1 RUN instead of 3"
+    command: "python3 parse_dockerfile_apt.py"
+    category: behavioral
+
+  - id: dockerfile_npm_pinned
+    kind: F2P
+    weight: 0.20
+    description: "npm install -g uses pinned versions, no @latest for wts/qa-use"
+    command: "python3 check_npm_pinned.py"
+    category: behavioral
+
+  - id: entrypoint_mcp_json_jq
+    kind: F2P
+    weight: 0.25
+    description: "docker-entrypoint.sh generates MCP JSON using jq instead of heredoc"
+    command: "python3 check_entrypoint_mcp.py"
+    category: behavioral
+
+  - id: dockerfile_marketplace_build_time
+    kind: F2P
+    weight: 0.15
+    description: "Dockerfile.worker installs marketplace plugins at build time"
+    command: "python3 check_marketplace_dockerfile.py"
+    category: structural
+
+  - id: use_agents_lazy
+    kind: F2P
+    weight: 0.15
+    description: "use-agents.ts calls fetchAgent with lazy-load flag (false, 2nd arg)"
+    command: "python3 check_lazy_tasks.py"
+    category: behavioral
+
+  # === P2P (Prevent-to-Prevent regression) gates ===
+  # These are gating-only — no positive weight, must all pass to get any reward.
+  - id: p2p_entrypoint_no_marketplace
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "docker-entrypoint.sh does NOT install marketplace plugins at runtime"
+    command: "python3 check_entrypoint_no_marketplace.py"
+    category: structural
+
+  - id: p2p_entrypoint_no_wts_config
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "docker-entrypoint.sh does NOT create wts config.json at runtime"
+    command: "python3 check_entrypoint_no_wts.py"
+    category: structural
+
+  - id: p2p_entrypoint_mcp_not_heredoc
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "docker-entrypoint.sh does NOT use heredoc for mcp.json generation"
+    command: "python3 check_mcp_not_heredoc.py"
+    category: structural
+
+  - id: p2p_dockerfile_wts_build_time
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Dockerfile.worker creates wts config at build time"
+    command: "python3 check_dockerfile_wts.py"
+    category: structural
+
+  - id: p2p_entrypoint_no_static_dirs
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "docker-entrypoint.sh does NOT create static shared/memory dirs"
+    command: "python3 check_entrypoint_no_static.py"
+    category: structural

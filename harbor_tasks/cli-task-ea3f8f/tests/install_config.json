@@ -1,0 +1,21 @@
+{
+  "task_name": "cli-task-ea3f8f",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./... 2>&1",
+  "repo_dir": "/workspace/cli",
+  "FAIL_TO_PASS": [
+    "TestCursorAgent_ResolveSessionFile_NestedDirOnly",
+    "TestCursorAgent_ResolveSessionFile_PrefersNested"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/cursor/cursor.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/agent/cursor/cursor_test.go"
+  ],
+  "commit_sha": "1f8339c17043706f067e41b2df3c6d856a3a0ec5",
+  "commit_message_first_line": "handle both IDE paths and agent paths",
+  "agent_percentage": 100.0
+}

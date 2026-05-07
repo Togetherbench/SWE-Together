@@ -1,0 +1,33 @@
+version: "1.0"
+task: cli-task-2c3e30
+
+gates:
+  - id: f2p_build
+    kind: F2P
+    weight: 0.10
+    description: "Go code compiles successfully"
+    command: "go build ./cmd/entire/cli/ ./cmd/entire/cli/strategy/"
+
+  - id: f2p_existing_tests_pass
+    kind: F2P
+    weight: 0.30
+    description: "All existing unit tests pass (regression check)"
+    command: "go test ./cmd/entire/cli/ ./cmd/entire/cli/strategy/ -count=1 -timeout=120s"
+
+  - id: f2p_sort_test_pass
+    kind: F2P
+    weight: 0.30
+    description: "A test exercising checkpoint timestamp sorting exists and passes"
+    command: "go test ./cmd/entire/cli/ -count=1 -run 'SortsByCreatedAt|CreatedAt|SortCheckpoint|Sort.*Checkpoint|sort.*checkpoint|Checkpoint.*Sort|Checkpoint.*Order|OrderCheckpoint' -v -timeout=60s"
+
+  - id: f2p_sort_phase_exists
+    kind: F2P
+    weight: 0.20
+    description: "resumeMultipleCheckpoints has a sort-before-restore structure"
+    command: "python3 /logs/verifier/check_sort.py /workspace/repo/cmd/entire/cli/resume.go"
+
+  - id: p2p_no_unsorted_restore
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "ResumeMultipleCheckpoints does NOT directly iterate checkpointIDs and restore without intermediate sort"
+    command: "python3 /logs/verifier/check_no_unsorted.py /workspace/repo/cmd/entire/cli/resume.go"

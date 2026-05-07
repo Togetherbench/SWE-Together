@@ -1,0 +1,25 @@
+gates:
+  - id: build_compiles
+    kind: F2P
+    weight: 0.18
+    description: "go build ./... succeeds"
+  - id: existing_tests_pass
+    kind: F2P
+    weight: 0.18
+    description: "Existing unit tests in cmd/entire/cli still pass"
+  - id: go_vet_clean
+    kind: F2P
+    weight: 0.12
+    description: "go vet reports no issues in the CLI package"
+  - id: metadata_has_location_field
+    kind: F2P
+    weight: 0.10
+    description: "CommittedMetadata stores transcript location info (TranscriptPath field or per-session agent info)"
+  - id: write_passes_location
+    kind: F2P
+    weight: 0.10
+    description: "Checkpoint write path passes transcript location to metadata (SessionTranscriptPath or equivalent)"
+  - id: restore_uses_location
+    kind: F2P
+    weight: 0.10
+    description: "Restore logic uses per-session transcript location (resolveTranscriptPathFromMetadata or per-session agent dirs)"

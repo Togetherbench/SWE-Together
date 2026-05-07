@@ -1,0 +1,25 @@
+{
+  "task_name": "cli-task-19def0",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./... 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [
+    "TestState_IsStale",
+    "TestStateStore_Load_DeletesStaleSession",
+    "TestStateStore_List_DeletesStaleSession",
+    "TestLoadSessionState_DeletesStaleSession"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/session/state.go",
+    "cmd/entire/cli/strategy/session_state.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/session/state_test.go",
+    "cmd/entire/cli/strategy/session_state_test.go"
+  ],
+  "commit_sha": "4fc9356037dc7f5d1552e416508ec59c24a783ac",
+  "commit_message_first_line": "Clean stale session files (#438)",
+  "agent_percentage": 100.0
+}

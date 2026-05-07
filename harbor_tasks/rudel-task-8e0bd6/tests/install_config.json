@@ -1,0 +1,29 @@
+{
+  "task_name": "rudel-task-8e0bd6",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/rudel",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "apps/web/package.json",
+    "apps/web/src/components/analytics/ChartCard.tsx",
+    "apps/web/src/layouts/DashboardLayout.tsx",
+    "apps/web/src/lib/screenshot.ts",
+    "apps/web/src/pages/dashboard/DeveloperDetailPage.tsx",
+    "apps/web/src/pages/dashboard/DevelopersListPage.tsx",
+    "apps/web/src/pages/dashboard/ErrorsPage.tsx",
+    "apps/web/src/pages/dashboard/LearningsPage.tsx",
+    "apps/web/src/pages/dashboard/OverviewPage.tsx",
+    "apps/web/src/pages/dashboard/ProjectDetailPage.tsx",
+    "apps/web/src/pages/dashboard/ProjectsListPage.tsx",
+    "apps/web/src/pages/dashboard/ROIPage.tsx",
+    "apps/web/src/pages/dashboard/SessionsListPage.tsx",
+    "bun.lock"
+  ],
+  "test_files": [],
+  "commit_sha": "9f5a1633e80abb372099f4a51b0e6742850396e6",
+  "commit_message_first_line": "feat: add export/share buttons with watermark to dashboard charts",
+  "agent_percentage": 96.79715302491103
+}

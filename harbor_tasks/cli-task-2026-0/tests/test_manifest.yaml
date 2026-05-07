@@ -1,0 +1,19 @@
+gates:
+  - id: detached_unix_exists
+    kind: P2P_REGRESSION
+    command: "test -f /repo/cmd/entire/cli/telemetry/detached_unix.go"
+  - id: spawn_func_exists
+    kind: P2P_REGRESSION
+    command: "grep -q 'func spawnDetachedAnalytics' /repo/cmd/entire/cli/telemetry/detached_unix.go"
+  - id: unit_tests_pass
+    kind: F2P
+    command: "cd /repo && go test -count=1 -timeout 120s ./..."
+    weight: 0.30
+  - id: no_nil_stdout_stderr
+    kind: F2P
+    command: "cd /repo && python3 tests/check_no_nil_fds.py"
+    weight: 0.20
+  - id: discard_sink_used
+    kind: F2P
+    command: "cd /repo && python3 tests/check_discard_sink.py"
+    weight: 0.20

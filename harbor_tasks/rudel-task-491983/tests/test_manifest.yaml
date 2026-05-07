@@ -1,0 +1,32 @@
+version: "1.0"
+
+gates:
+  - id: avgOrNull_in_details
+    kind: F2P
+    label: "getProjectDetails uses avgOrNull (not bare AVG) for aggregate columns"
+    weight: 0.25
+
+  - id: zero_sessions_null_check
+    kind: F2P
+    label: "getProjectDetails null check includes total_sessions === 0 guard"
+    weight: 0.20
+
+  - id: git_remote_nav_fallback
+    kind: F2P
+    label: "ProjectsListPage navigation uses git_remote as fallback key"
+    weight: 0.20
+
+  - id: func_details_exists
+    kind: F2P
+    label: "getProjectDetails function exists and is exported"
+    weight: 0.15
+
+  - id: func_rowclick_exists
+    kind: P2P_REGRESSION
+    label: "handleRowClick function exists in ProjectsListPage"
+    weight: 0.0
+
+  - id: files_intact
+    kind: P2P_REGRESSION
+    label: "Both target files exist with meaningful content"
+    weight: 0.0

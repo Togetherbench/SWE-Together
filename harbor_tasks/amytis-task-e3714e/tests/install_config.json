@@ -1,0 +1,30 @@
+{
+  "task_name": "amytis-task-e3714e",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/opt/amytis",
+  "FAIL_TO_PASS": [
+    "[slug]/page throws when redirectFrom alias conflicts with ",
+    "[slug]/page includes Unicode single-segment redirectFrom slug as param",
+    "[slug]/page includes auto-path series slug when autoPaths enabled",
+    "[slug]/page includes Unicode auto-path series slug when autoPaths enabled",
+    "[slug]/page uses customPaths prefix for series with override, not the series slug",
+    "[slug]/[postSlug] includes encoded Unicode postSlug variants in non-production",
+    "[slug]/[postSlug] does not include encoded Unicode postSlug variants in production",
+    "[slug]/page/[page]/page returns placeholder when no custom paths"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "src/app/[slug]/[postSlug]/page.tsx",
+    "src/app/[slug]/page.tsx",
+    "src/app/[slug]/page/[page]/page.tsx",
+    "src/lib/urls.ts"
+  ],
+  "test_files": [
+    "tests/unit/static-params.test.ts"
+  ],
+  "commit_sha": "e2911fc508d9ccc60b02b35d4a793201d2f52e8d",
+  "commit_message_first_line": "test: add autoPaths/customPaths coverage and fix mock isolation",
+  "agent_percentage": 100.0
+}

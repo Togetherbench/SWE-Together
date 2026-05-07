@@ -1,0 +1,39 @@
+# Test manifest for cli-task-726de6
+# Canonical CI: .github/workflows/ci.yml -> mise run test:ci -> go test -tags=integration -race ./...
+# Go version: 1.26.0 (from go.mod and .mise.toml)
+gates:
+  - id: "outputhook-gone"
+    kind: "F2P"
+    weight: 0.25
+    command: "python3 -c \"import sys; content=open('/repo/cmd/entire/cli/hooks.go').read(); sys.exit(0 if 'func outputHookResponse' not in content and 'type hookResponse struct' not in content else 1)\""
+    description: "Verify hooks.go no longer defines outputHookResponse function or hookResponse struct"
+  - id: "lifecycle-agent-dispatch"
+    kind: "F2P"
+    weight: 0.25
+    command: "python3 -c \"import sys; content=open('/repo/cmd/entire/cli/lifecycle.go').read(); sys.exit(0 if 'outputHookResponse(' not in content else 1)\""
+    description: "Verify lifecycle.go does not directly call outputHookResponse"
+  - id: "factoryai-plaintext"
+    kind: "F2P"
+    weight: 0.20
+    command: "python3 -c \"import sys,re; content=open('/repo/cmd/entire/cli/agent/factoryaidroid/lifecycle.go').read(); sys.exit(0 if re.search(r'fmt\\.Fprint|fmt\\.Println|fmt\\.Printf', content) else 1)\""
+    description: "Verify Factory AI Droid outputs plain text via fmt.Fprint*"
+  - id: "claude-json-response"
+    kind: "F2P"
+    weight: 0.15
+    command: "python3 -c \"import sys,re; content=open('/repo/cmd/entire/cli/agent/claudecode/lifecycle.go').read(); sys.exit(0 if re.search(r'WriteHookResponse|HookResponse|systemMessage', content) else 1)\""
+    description: "Verify Claude Code implements hook response output mechanism"
+  - id: "compiles"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    command: "cd /repo && go build ./..."
+    description: "Code must compile"
+  - id: "core-tests-pass"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    command: "cd /repo && go test ./cmd/entire/cli/agent/... -count=1 -timeout=120s"
+    description: "Core agent package tests must pass"
+  - id: "go-vet-clean"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    command: "cd /repo && go vet ./cmd/entire/cli/hooks.go"
+    description: "hooks.go must pass go vet (no unused imports)"

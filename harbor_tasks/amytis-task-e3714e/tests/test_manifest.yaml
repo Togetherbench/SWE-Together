@@ -1,0 +1,39 @@
+version: "1.0"
+task: amytis-task-e3714e
+
+gates:
+  - id: g1_hasown
+    kind: F2P
+    description: "Object.hasOwn(customPaths, ...) used in all 4 target source files (urls.ts, [slug]/page.tsx, [slug]/[postSlug]/page.tsx, [slug]/page/[page]/page.tsx)"
+    weight: 0.25
+    command: "bun run ast_check.ts <repo> && python3 -c 'import sys,json; d=json.load(sys.stdin); exit(0 if d.get(\"all_four_files_have_hasown\") else 1)'"
+
+  - id: g2_no_in
+    kind: F2P
+    description: "No 'in' operator on 'customPaths' in any source file under src/"
+    weight: 0.20
+    command: "bun run ast_check.ts <repo> && python3 -c 'import sys,json; d=json.load(sys.stdin); exit(0 if d.get(\"all_four_files_no_in\") else 1)'"
+
+  - id: g3_behavioral
+    kind: F2P
+    description: "Verifier behavioral tests pass: prototype-safety, autoPaths routing, Unicode slugs, customPaths override precedence"
+    weight: 0.20
+    command: "cp <test_dir>/verifier.test.ts tests/verifier/ && bun test tests/verifier"
+
+  - id: g4_tsc
+    kind: F2P
+    description: "TypeScript compilation succeeds (tsc --noEmit)"
+    weight: 0.10
+    command: "npx tsc --noEmit"
+
+  - id: g5_modified
+    kind: F2P
+    description: "All 4 target source files were modified from the base commit"
+    weight: 0.05
+    command: "for f in src/lib/urls.ts src/app/[slug]/page.tsx src/app/[slug]/[postSlug]/page.tsx src/app/[slug]/page/[page]/page.tsx; do git diff --quiet HEAD -- \"$f\" && exit 1; done; exit 0"
+
+  - id: p2p_unit_tests
+    kind: P2P
+    description: "Existing bun unit tests must continue to pass"
+    weight: 0.0
+    command: "bun test tests/unit"

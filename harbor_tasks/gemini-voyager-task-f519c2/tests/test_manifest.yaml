@@ -1,0 +1,38 @@
+gates:
+  # ---- F2P gates (free-to-play: feature verification) ----
+  - id: dragleave_fix
+    kind: F2P
+    weight: 0.25
+    command: cd /opt/gemini-voyager && bun run /harbor/tests/verify_fix.ts dragleave_fix
+    description: setupDropZone dragleave handler checks boundary coordinates before removing highlight
+
+  - id: ensure_method
+    kind: F2P
+    weight: 0.25
+    command: cd /opt/gemini-voyager && bun run /harbor/tests/verify_fix.ts ensure_method
+    description: ensureConversationsInFolder exists as a private method on FolderManager
+
+  - id: drop_preinsert
+    kind: F2P
+    weight: 0.25
+    command: cd /opt/gemini-voyager && bun run /harbor/tests/verify_fix.ts drop_preinsert
+    description: drop handlers call ensureConversationsInFolder before reorderOrMoveConversations
+
+  - id: method_depth
+    kind: F2P
+    weight: 0.25
+    command: cd /opt/gemini-voyager && bun run /harbor/tests/verify_fix.ts method_depth
+    description: ensureConversationsInFolder has non-trivial body (>3 meaningful statements)
+
+  # ---- P2P_REGRESSION gates (pay-to-play: anti-regression, gating only) ----
+  - id: typecheck
+    kind: P2P_REGRESSION
+    weight: 0.0
+    command: cd /opt/gemini-voyager && bun run typecheck
+    description: TypeScript typecheck (tsc --noEmit) must pass
+
+  - id: existing_tests
+    kind: P2P_REGRESSION
+    weight: 0.0
+    command: cd /opt/gemini-voyager && bun run test
+    description: Existing vitest test suite must pass

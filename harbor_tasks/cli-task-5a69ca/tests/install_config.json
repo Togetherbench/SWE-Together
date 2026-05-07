@@ -1,0 +1,29 @@
+{
+  "task_name": "cli-task-5a69ca",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./... 2>&1",
+  "repo_dir": "/workspace/cli",
+  "FAIL_TO_PASS": [
+    "TestAutoCommit_InitializeSession_EmptyRepo",
+    "TestIsEmptyRepository",
+    "TestManualCommit_InitializeSession_EmptyRepo"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/hooks_claudecode_handlers.go",
+    "cmd/entire/cli/setup.go",
+    "cmd/entire/cli/strategy/auto_commit.go",
+    "cmd/entire/cli/strategy/common.go",
+    "cmd/entire/cli/strategy/manual_commit_session.go",
+    "cmd/entire/cli/strategy/strategy.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/strategy/auto_commit_test.go",
+    "cmd/entire/cli/strategy/common_test.go",
+    "cmd/entire/cli/strategy/manual_commit_test.go"
+  ],
+  "commit_sha": "f0bea6191b2c13602e6a80eb002af68340f0f450",
+  "commit_message_first_line": "Fix empty repo \"reference not found\" error (#242)",
+  "agent_percentage": 100.0
+}

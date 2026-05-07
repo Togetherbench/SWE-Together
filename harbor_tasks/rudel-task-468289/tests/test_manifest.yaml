@@ -1,0 +1,129 @@
+# CI source: .github/workflows/ci.yml → bunx turbo run lint check-types test build
+gates:
+  # ── F2P gates (at least one must pass for any reward) ──
+  - id: f2p_types_check
+    kind: F2P
+    description: "TypeScript compilation succeeds in apps/web"
+    command: "cd /workspace/rudel/apps/web && bun run check-types"
+    timeout_sec: 120
+
+  - id: f2p_charttooltip_file
+    kind: F2P
+    description: "ChartTooltip.tsx component file exists"
+    command: "test -f /workspace/rudel/apps/web/src/components/charts/ChartTooltip.tsx"
+    timeout_sec: 5
+
+  - id: f2p_charttooltip_export
+    kind: F2P
+    description: "ChartTooltip component is exported from ChartTooltip.tsx"
+    command: |-
+      python3 -c "
+      content = open('/workspace/rudel/apps/web/src/components/charts/ChartTooltip.tsx').read()
+      assert 'export function ChartTooltip' in content, 'ChartTooltip not exported'
+      print('OK')
+      "
+    timeout_sec: 5
+
+  # ── Weighted F2P gates ──
+  - id: w_stable_colors
+    kind: F2P
+    weight: 0.25
+    description: "ErrorTrendChart has stable color ordering (colorMap based on total_errors rank, not active metric)"
+    command: |-
+      python3 -c "
+      import re
+      with open('/workspace/rudel/apps/web/src/components/charts/ErrorTrendChart.tsx') as f:
+          content = f.read()
+      has_stable = 'stableColorOrder' in content or 'stable_color_order' in content
+      has_total_errors = 'total_errors' in content
+      uses_color_map = 'colorMap.get(' in content
+      uses_index = bool(re.search(r'COLORS\\[.*%', content))
+      assert has_stable, 'Missing stable color ordering'
+      assert has_total_errors, 'Missing total_errors reference'
+      assert uses_color_map, 'Not using colorMap for color assignment'
+      assert not uses_index, 'Still using index-based color assignment'
+      print('PASS: ErrorTrendChart stable colors')
+      "
+    timeout_sec: 10
+
+  - id: w_color_maps
+    kind: F2P
+    weight: 0.20
+    description: "ProjectTrendChart and DeveloperTrendChart use colorMap for Line/Bar colors"
+    command: |-
+      python3 -c "
+      import re
+      score = 0
+      for chart in ['ProjectTrendChart', 'DeveloperTrendChart']:
+          path = f'/workspace/rudel/apps/web/src/components/charts/{chart}.tsx'
+          with open(path) as f:
+              content = f.read()
+          has_cm = bool(re.search(r'const colorMap\s*=\s*useMemo', content))
+          uses_cm = 'colorMap.get(' in content
+          if has_cm and uses_cm:
+              score += 1
+              print(f'PASS: {chart} uses colorMap')
+          else:
+              print(f'FAIL: {chart} missing colorMap')
+      assert score >= 2, f'Only {score}/2 charts use colorMap properly'
+      "
+    timeout_sec: 10
+
+  - id: w_sorted_legend
+    kind: F2P
+    weight: 0.15
+    description: "ProjectTrendChart or DeveloperTrendChart has sortedLegendPayload"
+    command: |-
+      python3 -c "
+      import re
+      score = 0
+      for chart in ['ProjectTrendChart', 'DeveloperTrendChart']:
+          path = f'/workspace/rudel/apps/web/src/components/charts/{chart}.tsx'
+          with open(path) as f:
+              content = f.read()
+          has_sorted = 'sortedLegendPayload' in content
+          sorts_total = bool(re.search(r'sort.*totals', content))
+          if has_sorted or sorts_total:
+              score += 1
+              print(f'PASS: {chart} has sorted legend payload')
+          else:
+              print(f'FAIL: {chart} missing sortedLegendPayload')
+      assert score >= 1, f'Only {score}/2 charts have sorted legend: need >= 1'
+      "
+    timeout_sec: 10
+
+  - id: w_dimension_sort
+    kind: F2P
+    weight: 0.15
+    description: "DimensionAnalysisChart sorts split_by keys by total raw value"
+    command: |-
+      python3 -c "
+      import re
+      with open('/workspace/rudel/apps/web/src/components/charts/DimensionAnalysisChart.tsx') as f:
+          content = f.read()
+      has_sort = bool(re.search(r'rawSplitKeys\\.sort|splitKeyTotals', content))
+      assert has_sort, 'DimensionAnalysisChart does not sort split keys'
+      print('PASS: DimensionAnalysisChart sorts split keys')
+      "
+    timeout_sec: 10
+
+  - id: w_tooltip_migration
+    kind: F2P
+    weight: 0.15
+    description: "At least 2 of {LearningsTrendChart, ModelTokensChart, UsageTrendChart} use ChartTooltip"
+    command: |-
+      python3 -c "
+      import re
+      score = 0
+      for chart in ['LearningsTrendChart', 'ModelTokensChart', 'UsageTrendChart']:
+          path = f'/workspace/rudel/apps/web/src/components/charts/{chart}.tsx'
+          with open(path) as f:
+              content = f.read()
+          if 'import { ChartTooltip }' in content and '<ChartTooltip' in content:
+              score += 1
+              print(f'PASS: {chart} uses ChartTooltip')
+          else:
+              print(f'FAIL: {chart} does not use ChartTooltip')
+      assert score >= 2, f'Only {score}/3 chart files use ChartTooltip: need >= 2'
+      "
+    timeout_sec: 10
