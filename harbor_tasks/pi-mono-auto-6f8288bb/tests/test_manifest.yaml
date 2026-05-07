@@ -7,7 +7,7 @@ gates:
 - id: f2p_upstream_qwq_reasoning_map
   kind: F2P
   turn: null
-  weight: 1.0
+  weight: 0.20
   label: qwen-qwq-32b reasoning effort maps to default
   command: "cd /workspace/pi-mono/packages/ai && cat > test/_f2p_qwq_gate.test.ts\
     \ << 'TESTEOF'\nimport { describe, expect, it, vi } from \"vitest\";\nimport {\

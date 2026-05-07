@@ -7,7 +7,7 @@ gates:
 - id: f2p_upstream_bash_timing
   kind: F2P
   turn: null
-  weight: 1.0
+  weight: 0.20
   label: 'Behavioral vitest: bash timing method + render'
   command: "cd /workspace/pi-mono && cd packages/tui && npx tsgo -p tsconfig.build.json\
     \ >/dev/null 2>&1 && cd /workspace/pi-mono && cat > packages/coding-agent/test/_f2p_upstream_bash_timing.test.ts\

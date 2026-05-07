@@ -7,7 +7,7 @@ gates:
 - id: f2p_upstream_skill_loader_skip_dirs
   kind: F2P
   turn: null
-  weight: 1.0
+  weight: 0.20
   label: Skill loader skips venv/__pycache__/site-packages
 - id: p2p_upstream_vitest_skills
   kind: P2P_REGRESSION
