@@ -17,7 +17,7 @@ WORKDIR /workspace/cli
 RUN git checkout 56cdda512ae7242e0801535d92e6aa13e7f71502
 
 # Pre-download Go module dependencies
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Set up directories for Harbor
 RUN mkdir -p /workspace /logs/verifier

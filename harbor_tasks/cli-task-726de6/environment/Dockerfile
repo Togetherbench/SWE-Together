@@ -16,7 +16,7 @@ RUN git clone https://github.com/entireio/cli.git /repo && \
     git checkout 7f1cdc8c441effc233552e9780c51821939a00db
 
 # Download Go module dependencies
-RUN cd /repo && go mod download
+RUN mkdir -p /go && chmod -R 777 /go && cd /repo && go mod download || true
 
 RUN mkdir -p /workspace /logs/verifier
 

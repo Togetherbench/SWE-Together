@@ -20,7 +20,7 @@ RUN git clone https://github.com/entireio/cli.git && \
 
 WORKDIR /workspace/cli
 
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 ENV PYTHONPATH=""
 

@@ -26,7 +26,7 @@ RUN git clone https://github.com/entireio/cli.git && \
 WORKDIR /workspace/cli
 
 # Download Go module dependencies
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Create agent user and set permissions (Go project — chown /go too)
 RUN useradd -m -s /bin/bash agent \

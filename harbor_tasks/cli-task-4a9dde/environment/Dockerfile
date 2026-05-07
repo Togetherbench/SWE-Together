@@ -23,7 +23,7 @@ ENV GOPATH=/go
 ENV PATH=/usr/local/go/bin:/go/bin:$PATH
 
 # Install Go dependencies
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Set up environment
 RUN mkdir -p /workspace /logs/verifier /go

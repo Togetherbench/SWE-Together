@@ -28,7 +28,7 @@ RUN git clone https://github.com/entireio/cli.git && \
 WORKDIR /workspace/cli
 
 # Pre-download Go module dependencies
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Give agent ownership of workspace and dependencies
 RUN chown -R agent:agent /workspace /logs /installed-agent /go

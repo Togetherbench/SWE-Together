@@ -6,6 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential tmux asciinema unzip sqlite3 jq \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 20 (provides npm for pnpm install below)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install bun system-wide so it's available after USER agent switch
 ENV BUN_INSTALL=/usr/local
 RUN curl -fsSL https://bun.sh/install | bash

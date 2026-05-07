@@ -33,7 +33,7 @@ RUN git clone https://github.com/entireio/cli.git \
 
 # Download Go module dependencies
 WORKDIR /workspace/cli
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Pre-install gotestsum for test runner
 RUN go install gotest.tools/gotestsum@latest 2>/dev/null || true

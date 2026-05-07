@@ -19,7 +19,7 @@ RUN git clone https://github.com/entireio/cli.git /entire-cli \
 
 # Pre-download Go module dependencies
 WORKDIR /entire-cli
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Set up environment
 ENV PYTHONPATH="/entire-cli"

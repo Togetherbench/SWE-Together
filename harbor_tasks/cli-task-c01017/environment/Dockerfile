@@ -22,7 +22,7 @@ RUN git clone https://github.com/entireio/cli.git /workspace/repo \
 WORKDIR /workspace/repo
 
 # Download Go module dependencies
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 RUN mkdir -p /logs/verifier /workspace /go
 

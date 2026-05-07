@@ -10,6 +10,14 @@ RUN git clone https://github.com/Mathews-Tom/no-magic.git /home/user/no-magic &&
     cd /home/user/no-magic && \
     git checkout 9a876115d119638e2d2dcd09028001ae258563d7
 
+# Install Python deps if a requirements.txt or pyproject.toml is present.
+# no-magic at 9a87611 is stdlib-only by design, but this guard keeps the
+# Dockerfile robust if future commits add a requirements file.
+RUN cd /home/user/no-magic && \
+    if [ -f requirements.txt ]; then pip install --break-system-packages -r requirements.txt; \
+    elif [ -f pyproject.toml ] || [ -f setup.py ]; then pip install --break-system-packages -e .; \
+    else echo "no requirements file present; skipping pip install"; fi
+
 # Remove the target file so the agent must implement it from scratch.
 # Also remove related video/asset files.
 RUN rm -f /home/user/no-magic/01-foundations/microtokenizer.py \

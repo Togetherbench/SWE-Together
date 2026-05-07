@@ -26,7 +26,7 @@ RUN useradd -m -s /bin/bash agent && mkdir -p /logs/verifier
 WORKDIR /workspace/cli
 
 # Download Go module dependencies
-RUN go mod download
+RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Harbor agent install directory
 RUN mkdir -p /installed-agent && chown -R agent:agent /installed-agent /workspace /logs /go
