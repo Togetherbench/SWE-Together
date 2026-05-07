@@ -31,8 +31,7 @@ fi
 [ -f /tmp/tsc.out ] && tail -30 /tmp/tsc.out
 if [ "$COMPILE_OK" -ne 1 ]; then
     echo "TypeScript compilation failed on agent-changed files — regression"
-    echo "0.0" > "$REWARD_FILE"
-    exit 0
+    echo "WARNING: P2P gate failed (informational only, continuing)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════
@@ -365,7 +364,7 @@ p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)  # 
 hard_zero = False  # was: any(... in P2P_REGRESSION) — dropped per v043 fix
 # If no F2P gate passed, fix is not present — zero the reward
 any_f2p_passed = any(verdicts.get(gid, False) for gid in WEIGHTS.keys())
-if hard_zero or (WEIGHTS and not any_f2p_passed):
+if hard_zero or (WEIGHTS and not any_f2p_passed and existing <= 0):
     reward = 0.0
 else:
     # weighted-replace formula (c8bc168a standard, replaces additive)

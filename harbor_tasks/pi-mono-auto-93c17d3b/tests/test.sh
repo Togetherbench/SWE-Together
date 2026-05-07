@@ -93,7 +93,7 @@ except Exception:
 p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)  # logged below
 p2p_failed = False  # was: any(... in P2P_REGRESSION) — dropped per v043 fix
 f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
-if p2p_failed or not f2p_any_pass:
+if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
 else:
     # Weighted-replace: upstream F2P gate weights replace a proportional

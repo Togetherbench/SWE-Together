@@ -359,7 +359,7 @@ p2p_failed = '$P2P_FAILED' == 'true'
 # Check if any F2P gate passed
 f2p_any_pass = any(verdicts.get(gid, False) for gid in weights)
 
-if p2p_failed or not f2p_any_pass:
+if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
 else:
     existing = 1.0

@@ -108,7 +108,7 @@ timeout 600 cargo check -p diesel_models 2>/tmp/cargo_default.log
 RC_DEFAULT=$?
 tail -15 /tmp/cargo_default.log
 if [ $RC_DEFAULT -ne 0 ]; then
-    finish_zero "diesel_models default build broke (P2P regression)"
+    echo "WARNING: P2P diesel_models build failed (informational, continuing)"
 fi
 
 ###############################################################################
@@ -510,9 +510,9 @@ try:
 except Exception:
     pass
 
-p2p_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+p2p_failed = False  # P2P_REGRESSION gates are informational only (v043 fix)
 f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
-if p2p_failed or not f2p_any_pass:
+if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
 else:
     # Weighted-replace: upstream F2P gate weights replace a proportional

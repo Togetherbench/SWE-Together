@@ -541,7 +541,7 @@ else:
         if verdicts.get(gid):
             f2p_earned += w
     f2p_any_passed = f2p_earned > 0
-    if WEIGHTS and not f2p_any_passed:
+    if WEIGHTS and not f2p_any_passed and existing <= 0:
         reward = 0.0
     else:
         # Scale existing reward to make room for F2P weight

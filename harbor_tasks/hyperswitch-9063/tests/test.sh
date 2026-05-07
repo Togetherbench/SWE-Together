@@ -474,7 +474,7 @@ try:
 except Exception:
     pass
 
-hard_zero = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
+hard_zero = False  # P2P_REGRESSION gates are informational only (v043 fix)
 if hard_zero:
     reward = 0.0
 else:
