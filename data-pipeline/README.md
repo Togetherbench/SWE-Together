@@ -9,6 +9,27 @@ End-to-end pipeline that turns multi-turn coding sessions from upstream HuggingF
 
 Pi-staging and Hyperswitch were sourced and screened by hand before the unified pipeline existed; their tasks live in `harbor_tasks/` but were never produced by the scripts in this directory. The funnel + commands below describe the active two-source path.
 
+## Current task suite (181 tasks across 46 unique repos)
+
+The active suite under `harbor_tasks/` has grown from the v0.4.3 baseline of 101 to **181 tasks**, drawn from **46 unique GitHub repos**. Distribution is highly concentrated — the top 5 repos own 60 % of all tasks:
+
+| Rank | Repo | Tasks | Source |
+|---|---|---:|---|
+| 1 | `entireio/cli` | 45 | SWE-chat |
+| 2 | `badlogic/pi-mono` | 28 | Pi-staging *(via `pi-mono-dev` base image)* |
+| 3 | `juspay/hyperswitch` | 17 | Hyperswitch *(via `hyperswitch-dev` base image)* |
+| 4 | `nagi-ovo/gemini-voyager` | 9 | SWE-chat |
+| 4 | `banodoco/reigh-app` | 9 | DataClaw *(via `reigh-dev` base image)* |
+| 6 | `obsessiondb/rudel` | 8 | SWE-chat |
+| 7 | `kohya-ss/sd-scripts` | 6 | DataClaw *(via `sd-scripts-dev` base image)* |
+| 8 | `moltis-org/moltis` | 5 | SWE-chat |
+| 8 | `comfyanonymous/comfyui` | 5 | DataClaw *(via `comfyui-dev` base image)* |
+| 10 | `hutusi/amytis` | 4 | SWE-chat |
+| 10 | `desplega-ai/agent-swarm` | 4 | SWE-chat |
+| — | 35 other repos | 1–3 each | mixed |
+
+64 of the 181 tasks share one of the 5 cluster base images (`pi-mono`, `hyperswitch`, `reigh`, `sd-scripts`, `comfyui` — see `base_images/`); the remaining 117 tasks each carry a standalone Dockerfile that clones its own upstream commit. The repo concentration is largely a SWE-chat artefact — pre-screening, `entireio/cli` alone contributes 122/329 viable candidates.
+
 ## v0.4.3 Data Composition (101 tasks)
 
 | Cohort | Source | Raw sessions | After screening | Final tasks |
