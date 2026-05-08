@@ -21,7 +21,7 @@ timeout_sec = 3600.0
 [environment]
 docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/pi-mono-extensions-event-refactor:777815ce9597"
 build_timeout_sec = 600.0
-cpus = 1
+cpus = 4
 memory = "4G"
 storage = "10G"
 allow_internet = true
