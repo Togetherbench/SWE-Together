@@ -18,8 +18,7 @@ RUN git clone https://github.com/entireio/cli.git /repo && \
 # Download Go module dependencies
 RUN mkdir -p /go && chmod -R 777 /go && cd /repo && go mod download || true
 
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 # Create agent user and set permissions
 RUN useradd -m -s /bin/bash agent \
     && mkdir -p /installed-agent \

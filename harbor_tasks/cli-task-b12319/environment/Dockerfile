@@ -23,8 +23,7 @@ RUN git config --global user.email "agent@harbor.dev" \
     && git config --global init.defaultBranch main
 
 # Create workspace directories
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 # Clone the repo at the base commit (pre-patch state)
 WORKDIR /workspace
 RUN git clone https://github.com/entireio/cli.git \

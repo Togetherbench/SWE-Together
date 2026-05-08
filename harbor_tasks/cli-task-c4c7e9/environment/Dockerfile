@@ -31,8 +31,7 @@ WORKDIR /workspace/repo
 RUN go mod download 2>&1 || true
 
 # Create workspace directories
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 # Create agent user and set permissions
 RUN useradd -m -s /bin/bash agent \
     && mkdir -p /installed-agent \

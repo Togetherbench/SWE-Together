@@ -12,8 +12,7 @@ RUN git clone https://github.com/entireio/cli.git /opt/cli \
 
 WORKDIR /opt/cli
 
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 RUN useradd -m -s /bin/bash agent \
     && mkdir -p /installed-agent \
     && chown -R agent:agent /workspace /installed-agent /logs /opt/cli

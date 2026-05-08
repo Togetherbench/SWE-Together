@@ -10,8 +10,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
 
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 WORKDIR /workspace
 
 RUN git clone https://github.com/entireio/cli.git && \

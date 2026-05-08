@@ -15,8 +15,7 @@ ENV GOPATH="/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
 
 # Set up workspace directories
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 # Clone repo at the buggy base commit (pre-agent-work state)
 WORKDIR /workspace
 RUN git clone https://github.com/entireio/cli.git && \

@@ -20,8 +20,7 @@ RUN git checkout 56cdda512ae7242e0801535d92e6aa13e7f71502
 RUN mkdir -p /go && chmod -R 777 /go && go mod download || true
 
 # Set up directories for Harbor
-RUN mkdir -p /workspace /logs/verifier
-
+RUN mkdir -p /workspace /logs/verifier /go
 # Create agent user and set permissions
 RUN useradd -m -s /bin/bash agent \
     && mkdir -p /installed-agent \
