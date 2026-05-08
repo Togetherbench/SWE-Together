@@ -1,4 +1,4 @@
-# SWE-Together
+# SWE-Replay
 
 A benchmark derived from real multi-turn coding sessions, measuring **coding agent performance under iterative user correction** — the loop that single-turn benchmarks ignore.
 
@@ -26,50 +26,58 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**181 tasks** under `harbor_tasks/`, all derived from **real recorded coding sessions** across three sourcing waves: DataClaw publishers via `peteromallet/dataclaw`, the `pi_staging` harvest of `pi-share-hf` exports (`pi-mono-*`, `pi-excel-*`), and `archit11/claude_traces_hs` Hyperswitch traces. DataClaw sessions are filtered to repos with 20+ GitHub stars. No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier with `F2P` (weighted) and `P2P_REGRESSION` (gating) gate types.
+**176 tasks** under `harbor_tasks/` (post-v0.4.3 trunk), all derived from **real recorded coding sessions** across four sourcing waves:
+
+- **SWE-chat** (Stanford `SALT-NLP/SWE-chat`) — **154 tasks**, scaffolded via the SWE-chat path in `data-pipeline/`. Largest wave, added post-v0.4.3.
+- **DataClaw** (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) — 46 tasks.
+- **Pi-staging** (`badlogic/pi-share-hf` exports) — 32 tasks (31 `pi-mono-*` + 1 `pi-excel-*`).
+- **Hyperswitch** (`archit11/claude_traces_hs`) — 23 tasks.
+
+No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two scoring tiers coexist:
+
+- **Legacy F2P/P2P** (122 tasks): per-task `tests/test_manifest.yaml` with `F2P` (weighted) + `P2P_REGRESSION` (gating) gates, weighted-replace formula.
+- **SWE-rebench-style** (68 tasks): per-task `tests/install_config.json` declares `test_cmd` + `FAIL_TO_PASS` + `log_parser`. The verifier runs the test command, parses stdout with one of 76 log parsers vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2) (MIT), and scores by `FAIL_TO_PASS` pass rate. See `data-pipeline/scaffold/build_swerebench_configs.py`.
 
 The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
 
-### Results — v0.4.3.1 (6 cohorts, corrected scoring)
+### Results — v0.4.3 (5 cohorts × ~100 tasks)
 
-> **Benchmark version:** `togetherbench@0.4.3.1` (181 tasks, user sim v0.6.0). Full numbers in `analysis/V043_REPORT.md` and `analysis/_v043_corrections_block.md`.
+> **Benchmark version:** `togetherbench@0.4.3` (101 tasks on `v0.4.3-prep`, user sim v0.6.0). Full numbers in `analysis/V043_REPORT.md`.
 >
-> v0.4.3.1 applied systematic scoring corrections: 64 test.sh fixes (P2P_REGRESSION gates, f2p_any_pass zeroing, bash early-exits), 8 Dockerfile fixes, 227 reward.txt re-scored. Results are tied to a specific benchmark version; always reference the version when citing results.
+> Results are tied to a specific benchmark version. The task set, user simulator, and test scripts all change between versions; always reference the version when citing results.
 
 **Clean mean** (broken trials excluded):
 
-| rank | cohort | model | clean_mean | clean_n |
+| rank | cohort | model | clean_mean | n |
 |---|---|---|---|---|
-| 1 | glm51_unified     | `glmd/glm-5.1`                               | **0.4531** | 46 |
-| 2 | deepseek_v4_flash | `deepseek/deepseek-v4-flash`                 | **0.4171** | 91 |
-| 3 | opus46_high       | `anthropic/claude-opus-4-6` (effort=high)    | **0.4084** | 88 |
-| 4 | deepseek_v4_pro   | `deepseek/deepseek-v4-pro`                   | **0.3711** | 90 |
-| 5 | minimax27         | `minimaxd/MiniMax-M2.7`                       | **0.3519** | 91 |
-| 6 | minimax25         | `minimaxd/MiniMax-M2.5`                       | **0.2931** | 94 |
+| 1 | opus46_high      | `anthropic/claude-opus-4-6` (effort=high)    | **0.4961** | 91 |
+| 2 | deepseek_v4_flash | `deepseek/deepseek-v4-flash`                 | **0.4728** | 93 |
+| 3 | deepseek_v4_pro   | `deepseek/deepseek-v4-pro`                   | **0.4465** | 93 |
+| 4 | minimax27        | `minimaxd/MiniMax-M2.7`                       | **0.4084** | 96 |
+| 5 | minimax25        | `minimaxd/MiniMax-M2.5`                       | **0.3333** | 97 |
 
-**Shared-task fair comparison** (n=84 tasks attempted by all 5 active cohorts):
+**Shared-task fair comparison** (n=89 tasks attempted by every cohort):
 
 | rank | cohort | mean |
 |---|---|---|
-| 1 | deepseek_v4_flash | 0.4032 |
-| 2 | opus46_high       | 0.4007 |
-| 3 | deepseek_v4_pro   | 0.3764 |
-| 4 | minimax27         | 0.3470 |
-| 5 | minimax25         | 0.3094 |
+| 1 | opus46_high       | 0.4858 |
+| 2 | deepseek_v4_flash | 0.4506 |
+| 3 | deepseek_v4_pro   | 0.4449 |
+| 4 | minimax27         | 0.3916 |
+| 5 | minimax25         | 0.3367 |
 
 **User-turn behaviour** (all cohorts run through the same v0.6.0 sim):
 
 | cohort | avg turns | intervene% | no-op% |
 |---|---|---|---|
-| deepseek_v4_flash | 9.49 | 43.9% | 44.3% |
-| deepseek_v4_pro   | 7.83 | 42.1% | 43.7% |
-| minimax25         | 9.18 | 53.7% | 37.9% |
-| minimax27         | 6.62 | 59.3% | 34.3% |
-| glm51             | 7.66 | 50.7% | 41.6% |
+| deepseek_v4_flash | 9.46 | 43.4% | 45.1% |
+| deepseek_v4_pro   | 7.74 | 41.4% | 44.1% |
+| minimax25         | 10.17 | 47.8% | 41.4% |
+| minimax27         | 9.67 | 42.0% | 45.9% |
 
-MiniMax and GLM cohorts intervene most (agent outputs need correction more often); DeepSeek has the highest no-op rate (agent mostly on-track).
+DeepSeek runs the longest sessions with the most no-ops (agent mostly on-track); MiniMax cohorts intervene more (agent outputs need correction more often).
 
-> Opus 4.7 was tested but excluded from the leaderboard: CC v2.1.108 sends `thinking.type=enabled`, while Opus 4.7 only accepts `thinking.type=adaptive` → all trials 400'd. Opus 4.6 with `effort=high` is the canonical Anthropic baseline.
+> Opus 4.7 was tested but excluded from the leaderboard: CC v2.1.108 sends `thinking.type=enabled`, while Opus 4.7 only accepts `thinking.type=adaptive` → all trials 400'd. Opus 4.6 with `effort=high` is the canonical Anthropic baseline for v0.4.3.
 
 ---
 
@@ -78,8 +86,8 @@ MiniMax and GLM cohorts intervene most (agent outputs need correction more often
 ### Setup
 
 ```bash
-git clone https://github.com/Togetherbench/SWE-Together.git
-cd SWE-Together
+git clone https://github.com/Togetherbench/SWE-Replay.git
+cd SWE-Replay
 
 # Install dependencies (use uv, not pip)
 uv sync
@@ -222,21 +230,27 @@ trials/<task>__<id>/
 ## Data Pipeline
 
 ```
-~5,200 raw sessions across 3 sourcing waves:
-  ├─ pi_staging harvest        2,397  (29 HF datasets, top: badlogicgames/pi-mono 627, thomasmustier/pi-for-excel 140)
-  ├─ new_dataclaw harvest      ~2,014 (16+ DataClaw publishers; top: woctordho, gutenbergpbc, REXX-NEW, peteromallet, segin)
+~11,000 raw sessions across 4 sourcing waves:
+  ├─ SALT-NLP/SWE-chat         5,851  (Stanford gated HF dataset; largest wave, added post-v0.4.3)
+  ├─ pi_staging harvest        2,397  (29 HF datasets, top: badlogicgames/pi-mono 627)
+  ├─ new_dataclaw harvest      ~2,014 (16+ DataClaw publishers; top: woctordho, peteromallet, segin)
   └─ archit11/claude_traces_hs   ~784 (third-party HF research dataset on juspay/hyperswitch)
-    ↓ GPT-5.4 quick screen + Opus 4.6 deep screen + session-resolution audit (~$179 total)
-~862 viable sessions (after filtering for 3+ meaningful interventions, public repo,
-                       no secrets, reconstructible outputs, resolved/scoped enough)
-    ↓ scripts/screening/run_pipeline.py (fans out to /scaffold-task + /write-tests via 4 parallel Claude workers)
-    ↓ Opus boss-agent fan-out in E2B (~$1.16/task; iterate test.sh + Dockerfile)
-    ↓ Tier-A rubric enforcement (lint_tests.py + write-tests.md)
-181 Harbor benchmark tasks  (TS, Python, Rust, C/C++)
-    ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, 25 concurrent E2B sandboxes)
+    ↓ Step 1: rule-based filter (stars ≥20, ≥3 user msgs, public repo) — no LLM
+    ↓ Step 2: Gemini 3.1 Pro session viability judge (single stage)
+    ↓ Step 4 [SWE-chat only]: extract canonical patch from commits.parquet
+                              (single-commit checkpoints — 170/329 high-trust subset)
+    ↓ Step 5 [SWE-chat only]: Gemini 3.1 Pro patch-aware viability judge
+                              (filter formatting / lockfile / refactor-too-large)
+    ↓ Step 3: E2B + DeepSeek-v4-pro scaffold (claude -p in 8-vCPU sandbox)
+                              (10-step inline prompt: screen → scaffold → tests → audit)
+    ↓ build_swerebench_configs.py [optional]: migrate test.sh to install_config.json
+                              + vendored SWE-rebench log parsers (68 tasks so far)
+176 Harbor benchmark tasks  (post-v0.4.3 trunk: 154 SWE-chat + 36 legacy waves)
+    ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, 20-25 concurrent E2B sandboxes)
     ↓ scripts/finalize_v043.sh (user_sim_stats → build_leaderboard → per_turn_replay
                                  → generate_v043_report → tar.zst → gh release upload)
-v0.4.3.1 release: 6 cohorts, corrected scoring, 181 tasks
+v0.4.3 release: 5 cohorts, ~490 trials, 99 unique tasks scored (101-task suite at the time)
+post-v0.4.3 expansion: 89 net-new tasks (PR #119), 68 with SWE-rebench-style scoring
 ```
 
 A task ships only when (a) its buggy state scores in `(0, 1)` on the verifier (not all-zero, not all-perfect), (b) an alternative valid fix scores ≥0.7 (verifier accepts diverse approaches per the [SWE-bench Verified critique](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)), and (c) a stub solution scores ≤0.3 (verifier doesn't reward shape-only output). See `system_overview.md` for the full author iteration loop.
@@ -261,15 +275,16 @@ Benchmark results are only meaningful when tied to a specific version. Five thin
 ### Release format
 
 ```
-togetherbench@0.4.3.1
-  Tasks: 181
+togetherbench@0.4.3
+  Tasks: 101 (99 unique scored)
+  Commit: e4469d88…
   User sim: v0.6.0
-  Cohorts: opus46_high, deepseek_v4_flash, deepseek_v4_pro, minimax27, minimax25, glm51
+  Cohorts: opus46_high, deepseek_v4_flash, deepseek_v4_pro, minimax27, minimax25
 ```
 
 When citing results, always include the benchmark version:
 
-> "Opus 4.6 (effort=high) scored 0.4007 avg reward on togetherbench@0.4.3.1 shared-84 (181 tasks, user sim v0.6.0)"
+> "Opus 4.6 (effort=high) scored 0.4858 avg reward on togetherbench@0.4.3 shared-89 (101 tasks, user sim v0.6.0)"
 
 ### Version history
 
@@ -280,10 +295,10 @@ When citing results, always include the benchmark version:
 | `@0.3.0–0.3.2` | 2026-04-24 | 40  | v0.5.2 | Coverage-audit pipeline + session-resolution metadata; 25% of tasks tagged low-fidelity. |
 | `@0.4.0` | 2026-04-29 | 127 | v0.6.0 | 140-task expansion (TS/Rust/Py/C). 5 cluster base images, GHCR pipeline. CC pin to 2.1.108. |
 | `@0.4.1–0.4.2` | 2026-04-30 | 127 | v0.6.0 | F2P weight normalization, Rust toolchain symlinks, REBUILD_TOKEN cache-bust, OR proxy SSE streaming, prompt-cache restored, sanitize-traces secret-leak fix. |
-| `@0.4.3` | 2026-05-01 | 101 | v0.6.0 | 5 cohorts (Opus 4.6, DeepSeek×2, MiniMax×2). Score-formula fix (additive→weighted-replace). P2P_REGRESSION semantics split (Option 1 enforce / Option 2 drop). `allow_internet` placement enforcement. ARK Bearer auth. DeepSeek direct. |
-| **`@0.4.3.1`** | **2026-05-07** | **181** | **v0.6.0** | **Systematic scoring corrections: 64 test.sh fixes (P2P gates, f2p_any_pass, bash early-exits), 8 Dockerfiles, 227 reward.txt re-scored. 80 new tasks from scaffold pipeline. 6 cohorts (+glm51). Transcript recovery via `build_patch_library.py` + `replay_grade.py`.** |
+| **`@0.4.3`** | **2026-05-01** | **101** | **v0.6.0** | **5 cohorts (Opus 4.6, DeepSeek×2, MiniMax×2). Score-formula fix (additive→weighted-replace). P2P_REGRESSION semantics split (Option 1 enforce / Option 2 drop). `allow_internet` placement enforcement. ARK Bearer auth. DeepSeek direct.** |
+| `@0.4.3.1` *(post)* | 2026-05-07 | **190** | v0.6.0 | **SWE-chat expansion via single-stage scaffolder**: 89 new tasks (PR #119), all from `SALT-NLP/SWE-chat`. **SWE-rebench-style scoring** introduced (68 tasks): vendored 76 log parsers from SWE-rebench-V2 (MIT), `install_config.json` per task, `FAIL_TO_PASS`-driven scoring. New screening steps 4 (canonical-patch extraction) + 5 (Gemini patch-aware viability judge). |
 
-**Roadmap (per `analysis/V043_IMPROVEMENT_PLAN.md`)**: curate active eval subset from 181 tasks; prune all-zero / all-perfect / tight-cluster tasks to maximize discriminating power. Finish per-turn replay sweep for remaining cohorts.
+**Roadmap (per `analysis/V043_IMPROVEMENT_PLAN.md`)**: prune to ~60-task suite by deleting 26 all-zero / 3 all-perfect / 8 tight-cluster tasks; widens cohort spread from 0.16 → 0.24 (+50%). Re-pin `hyperswitch-8338` and `pi-mono-auto-41636ae5` (both currently pinned to post-fix commits, giving free credit). Finish per-turn replay sweep for `minimax25 / minimax27 / opus46_high` (~750 patches, 8–16h E2B).
 
 ---
 

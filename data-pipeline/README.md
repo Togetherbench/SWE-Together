@@ -39,6 +39,34 @@ The active suite under `harbor_tasks/` has grown from the v0.4.3 baseline of 101
 | Hyperswitch | 1 HuggingFace dataset (`archit11/claude_traces_hs`) | 784 | ~40 scaffolded → 23 after resolution audit | **23** |
 | **Total** | | **5,409** | | **101** |
 
+## Post-v0.4.3 expansion (190 tasks, 2026-05-07)
+
+After the v0.4.3 release the SWE-chat path was wired into this orchestrator and 89 net-new tasks landed via PR #119:
+
+| Wave | Source | Sessions | Final tasks |
+|------|--------|----------|-------------|
+| **SWE-chat** | Stanford `SALT-NLP/SWE-chat` | 5,851 → 760 step1 → 329 step2 VIABLE → 84 step5 patch-VIABLE | **154** (cumulative; ~89 net-new in PR #119) |
+| Legacy waves (DataClaw + Pi + Hyperswitch) | unchanged from v0.4.3 | — | 36 |
+| **Total** | | | **190** |
+
+### SWE-rebench-style scoring (68 tasks)
+
+For SWE-chat tasks where the canonical patch added recognizable test functions, we migrated the scoring from custom F2P/P2P weighted gates to a SWE-bench-Verified-style log-parser eval:
+
+- Each task gets `tests/install_config.json` declaring `language`, `log_parser`, `test_cmd`, `repo_dir`, `FAIL_TO_PASS` (test names extracted from the canonical patch's added test functions).
+- `tests/test.sh` runs the test command, parses stdout via the named parser (one of 76 vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2), MIT), and scores by FAIL_TO_PASS pass rate (or overall pass rate when FAIL_TO_PASS extraction was empty).
+- `tests/log_parsers.py` + `tests/swe_constants.py` are copied alongside `test.sh` so Harbor's `tests/` → `/tests` mount makes the parser available at runtime — no orchestrator change needed.
+
+Coverage: 42 Go (`parse_log_gotest`), 23 TS (`parse_log_vitest`), 4 Rust (`parse_log_cargo`), 1 TS-pnpm.
+
+```bash
+python data-pipeline/scaffold/build_swerebench_configs.py             # all eligible tasks
+python data-pipeline/scaffold/build_swerebench_configs.py --task <name>
+python data-pipeline/scaffold/build_swerebench_configs.py --dry-run
+```
+
+The legacy `tests/test_manifest.yaml` + `tests/test.sh` are preserved as `*.legacy.bak` (gitignored — recoverable from git history).
+
 ### Per-cohort provenance
 
 **DataClaw (46 tasks)** — Screened via the `--source dataclaw` pipeline below.
@@ -189,6 +217,42 @@ DataClaw doesn't need this step — its raw session JSONs are already on local d
 
 ---
 
+## Step 4 [SWE-chat only] — `scripts/step4_extract_canonical_patches.py`
+
+**Extracts the canonical (human-shipped) patch per VIABLE session.** Joins SWE-chat `sessions.parquet` → `commits.parquet` via `canonical_checkpoint_pk` to recover the patch the user eventually committed. Writes one JSON per session into `artifacts_swechat/canonical_patches/<sid>.json` (gitignored) so step 5 + the scaffold pipeline + `build_swerebench_configs.py` can read patches locally without parquet IO.
+
+**Single-commit checkpoints only by default.** Per `Entire CLI` docs, when one checkpoint contains multiple commits the extras are typically follow-up cleanup (`go fmt`, test fixes); the largest patch isn't always the canonical one. Filtering to single-commit checkpoints gives bullet-proof session→patch alignment. Pass `--include-multi-commit` to opt back in.
+
+Verified 2026-05-06: of 329 step2-VIABLE sessions, 200 have any patch and **170 (52%) come from single-commit checkpoints** — the high-trust subset used downstream.
+
+```bash
+python data-pipeline/scripts/step4_extract_canonical_patches.py
+python data-pipeline/scripts/step4_extract_canonical_patches.py --include-multi-commit
+```
+
+---
+
+## Step 5 [SWE-chat only] — `scripts/step5_llm_screen_patches.py`
+
+**Patch-aware Gemini 3.1 Pro viability judge.** Step 2's session-only judge over-rejected sessions whose viability is only obvious from the patch. Step 5 re-screens VIABLE candidates with the patch in context and filters out:
+
+- Pure formatting (`go fmt`, `prettier --write`, whitespace-only)
+- Lockfile / version-bump / generated-file churn
+- Docs-only or test-only changes (no code change to verify against)
+- Sweeping refactors (>30 files — too hard to reproduce)
+- Sessions lacking a clear engineering ask (chat about an idea, save a haiku, etc.)
+- Tasks requiring non-CPU resources (GPU, network APIs, secrets)
+
+```bash
+GEMINI_API_KEY=... python data-pipeline/scripts/step5_llm_screen_patches.py --workers 30
+```
+
+Outputs `artifacts_swechat/step5_patch_viability.json` with per-session `verdict` (`VIABLE` / `NOT_VIABLE` / `NEEDS_REVIEW`) + reason. Latest run: 200 patched sessions → **84 VIABLE / 5 NEEDS_REVIEW / 111 rejected**.
+
+A companion script `recover_step2_rejected.py` re-runs step 5 over step2's *rejected* sessions to recover false negatives (~4% recovery rate per the 2026-05-07 run).
+
+---
+
 ## Step 3 — `scripts/step3_run_pipeline.py`
 
 **E2B-backed scaffold orchestrator.** Each VIABLE candidate gets its own AsyncSandbox, where `claude -p` (driven by DeepSeek-v4-pro) runs an inline 10-step scaffolding prompt. Output `harbor_tasks/<task>/` is tarred out of the sandbox onto the host. Up to `--workers N` candidates run concurrently (default 4; up to 15 with the pre-baked template).
@@ -295,10 +359,19 @@ data-pipeline/
 ├── README.md                          ← this file
 ├── scripts/
 │   ├── step1_collect.py               ← rule-based filter (both upstreams)
-│   ├── step2_screen_with_llm.py       ← Gemini Pro viability judge
+│   ├── step2_screen_with_llm.py       ← Gemini Pro session viability judge
 │   ├── swechat_postprocess_after_step2.py  ← SWE-chat-only transcript prefetch
+│   ├── step4_extract_canonical_patches.py  ← SWE-chat: join sessions × commits parquet
+│   ├── step5_llm_screen_patches.py    ← SWE-chat: Gemini Pro patch-aware judge
+│   ├── recover_step2_rejected.py      ← rescue step5 over step2-rejected sessions
 │   ├── step3_run_pipeline.py          ← E2B + DeepSeek scaffold orchestrator
 │   └── build_template.py              ← one-time E2B template builder
+├── scaffold/
+│   ├── build_swerebench_configs.py    ← migrate task → install_config.json + log_parser
+│   └── log_parsers/                   ← 76 parsers vendored from SWE-rebench-V2 (MIT)
+│       ├── log_parsers.py
+│       ├── swe_constants.py
+│       └── __init__.py
 ├── artifacts_dataclaw/
 │   └── funnel.md                      ← DataClaw funnel report
 └── artifacts_swechat/
@@ -308,6 +381,9 @@ data-pipeline/
     ├── step2_screening.json           ← step 2 full Pro responses
     ├── step2_candidates.json          ← step 2 VIABLE subset (input to step 3)
     ├── step2_run_config.json
+    ├── step5_patch_viability.json     ← step 5 verdicts (VIABLE / NOT_VIABLE / NEEDS_REVIEW)
+    ├── step5_recovered_from_rejected.json ← recover_step2_rejected.py output
+    ├── canonical_patches/<sid>.json   ← gitignored; step 4 output
     ├── sessions_raw/<sid>.json        ← gitignored; populated by post-step-2 prefetch
     └── logs/                          ← gitignored; per-task scaffold logs
 ```

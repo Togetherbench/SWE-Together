@@ -1,109 +1,105 @@
 # Harbor Tasks
 
-Benchmark tasks derived from real multi-turn coding sessions. Each task has a Docker environment, instructions, and automated verification.
+Benchmark tasks derived from real multi-turn coding sessions. Each task ships with a Docker environment, a natural-language instruction (the original user's first message, verbatim), and a deterministic verifier. The user simulator (`src/user_agent/`, currently v0.6.0) drives the multi-turn correction loop on top.
 
 **Live trace viewer**: https://traces.togetherbench.com/jobs/trials
 
-## Task Registry
+## Suite snapshot — 190 tasks (post-v0.4.3, 2026-05-07)
 
-| Task | Source Session | Repo | User Msgs | Original Status | Difficulty | Description |
-|------|---------------|------|-----------|-----------------|------------|-------------|
-| `comfyui-fp8-newbie` | `c53e4e72` | Comfy-Org/ComfyUI | 2 | Partial | medium | Add fp8 quantized Gemma support to NewBie dual CLIP encoder |
-| `desloppify-zone-classification` | `8706443a` | peteromallet/desloppify | 14 | Completed | hard | Implement complete zone classification system (6 components) |
-| `unsloth-idefics3-fix` | `a6fe6467` | unslothai/unsloth | 23 | Incomplete | hard | Add Idefics3 VLM support — hit unsloth_zoo hook compatibility bug |
-| `desloppify-treesitter-plugins` | `7402f7a5` | peteromallet/desloppify | 11 | Partial | hard | Make generic language plugins first-class citizens + tree-sitter integration |
-| `vibecomfy-mcp-server` | `97c34bb6` | peteromallet/VibeComfy | 50 | Completed | hard | Integrate MCP server for ComfyUI node discovery |
-| `unsloth-zoo-vllm-fix` | `bc295ce4` | unslothai/unsloth-zoo | 39 | Completed | medium | Fix UnboundLocalError in vllm_utils for LFM2/Mamba hybrid models |
-| `mlx-lm-mambacache` | `dae75777` | ml-explore/mlx-lm | 15 | Completed | hard | Add MambaCache batching support for batch_generate |
+| Source | Tasks | Notes |
+|---|---:|---|
+| **SWE-chat** (Stanford `SALT-NLP/SWE-chat`) | **122** | Largest wave, added post-v0.4.3 via PR #119. Of which **68 use SWE-rebench-style scoring** (see below). |
+| **Pi-staging** (`badlogic/pi-share-hf` exports) | **32** | 31 `pi-mono-*` + 1 `pi-excel-*`. From the v0.4.3 wave. |
+| **Hyperswitch** (`archit11/claude_traces_hs`) | **23** | Rust, single repo (`juspay/hyperswitch`). From the v0.4.3 wave. |
+| **DataClaw** (`peteromallet/dataclaw` publishers) | **13** | Surviving tasks after the v0.4.3 audit + post-release pruning. |
 
-### Status definitions
+Full provenance + screening funnel: see [`data-pipeline/README.md`](../data-pipeline/README.md).
 
-- **Completed** — the real user + agent finished the task in the original session
-- **Incomplete** — session ended before the task was done (blocking bug, user gave up)
-- **Partial** — some phases done, others not started
-- **Failed** — agent didn't accomplish the task (user cancelled or session ended with no progress)
+## Two scoring tiers
 
-### Conversion status
+Tasks coexist in two scoring formats:
 
-| Task | instruction.md | analysis.md | Dockerfile | test.sh | Verified |
-|------|:-:|:-:|:-:|:-:|:-:|
-| `comfyui-fp8-newbie` | done | done | done | done | done |
-| `desloppify-zone-classification` | done | done | PR #14 | PR #14 | PR #14 |
-| `unsloth-idefics3-fix` | done | done | PR #13 | PR #13 | PR #13 |
-| `desloppify-treesitter-plugins` | done | done | PR #12 | PR #12 | PR #12 |
-| `vibecomfy-mcp-server` | done | done | PR #15 | PR #15 | PR #15 |
-| `unsloth-zoo-vllm-fix` | done | done | PR #16 | PR #16 | PR #16 |
-| `mlx-lm-mambacache` | done | done | PR #17 | PR #17 | PR #17 |
+### 1. Legacy F2P / P2P (122 tasks)
+Per-task `tests/test.sh` + `tests/test_manifest.yaml` declares `F2P` (weighted) and `P2P_REGRESSION` (gating) gates. Reward uses the **weighted-replace formula**:
+```
+reward = legacy_score * inner_share + Σ(passed F2P weights)
+```
+where `inner_share = max(0, 1 − Σ F2P_weights)`. Naturally bounded to `[0, 1]`. P2P_REGRESSION gates can cap reward to 0.0 when a regression check fails. See [CLAUDE.md](../CLAUDE.md) §"Score formula" for the full spec.
 
-### E2E Results (Opus 4.6, minimal instruction)
+### 2. SWE-rebench-style (68 tasks, all SWE-chat)
+Per-task `tests/install_config.json` declares `language`, `log_parser`, `test_cmd`, `repo_dir`, `FAIL_TO_PASS` (test names extracted from the canonical patch's added test functions). The verifier:
+1. Runs `test_cmd` and tees output to a log
+2. Parses the log via the named parser (one of 76 vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2), MIT)
+3. Scores `passed_FAIL_TO_PASS / len(FAIL_TO_PASS)`, or overall pass rate when FAIL_TO_PASS is empty (38/68)
 
-| Task | Reward | Sim msgs | Real msgs |
-|------|--------|----------|-----------|
-| comfyui-fp8-newbie | **1.00** | 6 | 2 |
-| desloppify-treesitter-plugins | **0.75** | 5 | 11 |
-| desloppify-zone-classification | **0.55** | 5 | 14 |
-| unsloth-idefics3-fix | 0.00 | 3 | 23 |
-| vibecomfy-mcp-server | 0.30 | 26 | 50 |
-| unsloth-zoo-vllm-fix | **1.00** | 15 | 39 |
-| mlx-lm-mambacache | **1.00** | 4 | 15 |
+`tests/log_parsers.py` + `tests/swe_constants.py` are copied alongside `test.sh` so Harbor's `tests/` → `/tests` mount makes the parser available at runtime — no orchestrator change needed.
 
-### Dataset exhaustion
+| Language | Tasks | Parser |
+|---|---:|---|
+| Go | 42 | `parse_log_gotest` |
+| TypeScript (vitest via bun) | 22 | `parse_log_vitest` |
+| TypeScript (vitest via pnpm) | 1 | `parse_log_vitest` |
+| Rust | 4 | `parse_log_cargo` |
 
-All 133 sessions from the DataClaw corpus have been evaluated. The 6 tasks above represent the current curated task set:
-- 23 desloppify sessions → 2 retained tasks
-- 25 private-project sessions → 0 tasks (repos not public)
-- 25 sessions with <3 user messages → 0 tasks
-- 16 sessions with no code modifications → 0 tasks
-- Remaining → rejected for GPU requirements, local forks, or rebase tasks
+Migrate or generate via:
+```bash
+python data-pipeline/scaffold/build_swerebench_configs.py             # all eligible tasks
+python data-pipeline/scaffold/build_swerebench_configs.py --task <name>
+python data-pipeline/scaffold/build_swerebench_configs.py --dry-run
+```
 
-### Rejected candidates
+The legacy `tests/test.sh` + `tests/test_manifest.yaml` are preserved per task as `*.legacy.bak` (gitignored — recoverable from git history).
 
-| Session | Repo | Msgs | Reason |
-|---------|------|------|--------|
-| `a48813b3` | radix-ui/primitives | 25 | Main repo (banodoco/Reigh) is private |
-| `fd44efbf` | mattdesl/gifenc | 22 | Main repo (banodoco/Reigh) is private |
-| `ses_37751` | woct0rdho/triton-windows | 10 | Rebase conflict resolution — not reproducible in Docker |
-| `0c813ccf` | thu-ml/SageAttention | 10 | Rebase task — not reproducible |
+## Per-task layout
+
+```
+harbor_tasks/<task>/
+├── instruction.md            # Agent reads this — the real user's first message, verbatim
+├── task.toml                 # difficulty, [agent].timeout_sec, [environment].cpus / memory_mb / allow_internet
+├── environment/
+│   └── Dockerfile            # Clones repo at a pinned commit, installs deps, synthesizes buggy state
+├── tests/
+│   ├── test.sh               # Verifier — emits 0.0–1.0 reward
+│   ├── test_manifest.yaml    # F2P / P2P_REGRESSION gates  (legacy tier)
+│   ├── install_config.json   # log_parser config            (SWE-rebench tier)
+│   ├── log_parsers.py        # Vendored parsers             (SWE-rebench tier)
+│   └── swe_constants.py
+├── user_simulation_prompt.md # Drives the user simulator — per-turn triggers, GT anchoring
+├── original_session.json     # Raw session data (provenance)
+└── README.md                 # Per-task notes (source session, repo, base commit, difficulty)
+```
 
 ## How to run
 
 ```bash
-# Single-turn (agent only)
+# Single trial via Harbor CLI (no user simulator, single-turn)
 harbor run -p harbor_tasks/<task> -a claude-code -m claude-opus-4-6 -n 1
 
-# Multi-turn (with simulated user) — run + auto-publish traces to Railway
-python scripts/run_and_publish.py --task <task>
+# Single trial with user simulator (driven by src/runner.py)
+ANTHROPIC_API_KEY=<key> uv run python src/runner.py \
+    --task <task> --model anthropic/claude-sonnet-4-6
 
-# Run with specific models
-python scripts/run_and_publish.py --task <task> \
-    --model anthropic/claude-opus-4-6 --user-model anthropic/claude-opus-4-6
-
-# Just publish existing traces (skip trial)
-python scripts/run_and_publish.py --task <task> --publish-only
-
-# Low-level: run trial only (no auto-publish)
-.venv/bin/python src/runner.py --config src/config.yaml --task <task>
+# Full async eval across N concurrent E2B sandboxes
+ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
+    --model anthropic/claude-opus-4-6 --tag opus46 \
+    --tasks <task1>,<task2>,... --workers 20 --env-type e2b
 ```
 
-`run_and_publish.py` runs the full pipeline: trial → convert original session → sanitize API keys → upload to Railway S3 → print viewer links. Requires `BUCKET_*` env vars in `.env`.
-
-## Reusable commands
-
-| Command | Description |
-|---------|-------------|
-| `/screen-session <id>` | Evaluate if a DataClaw session can become a task |
-| `/extract-analysis-md` | Create analysis.md (simulator prompt) from session |
-| `/write-tests` | Write gaming-resistant test.sh (3-tier scoring) |
-| `/audit-tests <task>` | Review test reliability (5-question framework) |
-| `/create-task-pr` | Standard PR format with trace links |
+Trial output lands at `trials/<task>__<id>/` with `agent/`, `verifier/reward.txt`, and the user-sim decisions. See [`README.md`](../README.md) §"Running the full eval" for every supported `--model` provider prefix.
 
 ## How to add a new task
 
-1. Screen a session: `/screen-session <session-id>` (checks public repo, CPU-reproducible, 3+ msgs)
-2. Create analysis.md: `/extract-analysis-md` (behavioral playbook, not character sketch)
-3. Create task directory under `harbor_tasks/` with analysis.md, instruction.md, original_session.json
-4. Build Dockerfile, synthesize buggy state
-5. Write tests: `/write-tests <task>` (≥60% behavioral, ≤40% structural)
-6. Audit tests: `/audit-tests <task>` (target gaming score ≤0.30)
-7. Run e2e: `python scripts/run_and_publish.py --task <task>`
-8. Update this README
+1. **Screen a session** — `/screen-session <session-id>` (7 hard requirements: public repo, ≥3 user msgs, no secrets, CPU-reproducible, etc.)
+2. **Scaffold** — `/scaffold-task <name>` creates `harbor_tasks/<name>/` with instruction.md, user_simulation_prompt.md, task.toml, Dockerfile
+3. **Write tests** — `/write-tests <name>` for the legacy F2P/P2P tier, OR run `build_swerebench_configs.py --task <name>` for the SWE-rebench-style tier
+4. **Review** — `/review-task <name>` audits gaming-resistance + instruction/test alignment
+5. **Validate** — `/validate-task <name>` runs buggy baseline + alt-fix in E2B; verifier should score `(0, 1)` on buggy state and `≥0.7` on alt-fix
+6. **Eval** — `/run-eval <name>` runs full E2E with the user simulator (up to 5 iterations, opens a PR when done)
+
+The bulk-scaffolding path for SWE-chat is automated end-to-end via `data-pipeline/scripts/step3_run_pipeline.py` (E2B + DeepSeek). See [`data-pipeline/README.md`](../data-pipeline/README.md).
+
+## Versioning + reproducibility
+
+Per-task contents are immutable at a given commit. The Claude Code CLI is pinned to **2.1.108** in every task image (`base_images/<cluster>/Dockerfile`) so eval runs across days use the same harness binary. See [CLAUDE.md](../CLAUDE.md) §"Claude Code harness version" for the bump procedure.
+
+Benchmark version metadata is captured in every trial's `config.json` (Harbor version, task SHA-256, user-sim version). Always cite results with the version tag — task set, simulator, and tests evolve.
