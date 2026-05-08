@@ -33,9 +33,11 @@ RUN go mod download 2>&1 || true
 # Create workspace directories
 RUN mkdir -p /workspace /logs/verifier /go
 # Create agent user and set permissions
+# NOTE: /go must be chowned to agent so `go mod download` / build cache work at runtime
+# (without this, the agent user hits permission denied on GOPATH).
 RUN useradd -m -s /bin/bash agent \
     && mkdir -p /installed-agent \
-    && chown -R agent:agent /workspace /installed-agent /logs
+    && chown -R agent:agent /workspace /installed-agent /logs /go
 
 USER agent
 WORKDIR /workspace/repo
