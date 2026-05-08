@@ -4,16 +4,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
+    software-properties-common \
+    gnupg \
     build-essential \
     tmux \
     asciinema \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.13 \
+        python3.13-venv \
+        python3.13-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /venv
+# homeassistant>=2026.2.0b0 (in requirements_dev.txt) requires Python >=3.13.2;
+# Ubuntu 24.04 ships only Python 3.12, so use the deadsnakes 3.13 build for the venv.
+RUN python3.13 -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
 RUN pip install --upgrade pip setuptools wheel
