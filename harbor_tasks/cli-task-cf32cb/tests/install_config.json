@@ -2,7 +2,7 @@
   "task_name": "cli-task-cf32cb",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test ./... 2>&1",
+  "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/workspace/cli",
   "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],

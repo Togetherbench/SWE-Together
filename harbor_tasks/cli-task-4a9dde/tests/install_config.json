@@ -2,7 +2,7 @@
   "task_name": "cli-task-4a9dde",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test ./... 2>&1",
+  "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/opt/entire-cli",
   "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],

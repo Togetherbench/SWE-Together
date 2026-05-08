@@ -2,7 +2,7 @@
   "task_name": "cli-task-70c88c",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test ./... 2>&1",
+  "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/workspace/cli",
   "FAIL_TO_PASS": [
     "TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag",

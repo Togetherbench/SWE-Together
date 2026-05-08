@@ -2,7 +2,7 @@
   "task_name": "cli-task-cd4662",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test ./... 2>&1",
+  "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/entire-cli",
   "FAIL_TO_PASS": [
     "TestPrepareCommitMsg_ConsecutiveCommits_UniqueCheckpointIDs"
