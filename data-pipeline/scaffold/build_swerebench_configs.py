@@ -169,6 +169,10 @@ EVAL_SH_TEMPLATE = r'''#!/usr/bin/env bash
 # log_parsers.py and swe_constants.py live alongside this script.
 set +e
 
+# E2B's commands.run(envs=None) strips Dockerfile ENV PATH — hardcode every install location.
+# DO NOT REMOVE: regression in commit f3698bcf4 silently zero'd 175/176 task scores. Restored 2026-05-08.
+export PATH="/usr/local/go/bin:/root/go/bin:/home/agent/go/bin:/usr/local/cargo/bin:/opt/cargo/bin:/root/.cargo/bin:/home/agent/.cargo/bin:/venv/bin:/opt/venv/bin:/usr/local/bin:/root/.bun/bin:/home/agent/.bun/bin:/usr/bin:/bin:${PATH}"
+
 TASK_DIR="${TASK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOGS_DIR="${LOGS_DIR:-/logs/verifier}"
 EVAL_DIR="${EVAL_DIR:-/tests}"

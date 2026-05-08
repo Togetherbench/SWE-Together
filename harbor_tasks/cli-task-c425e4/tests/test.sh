@@ -4,6 +4,9 @@
 # multi-line run blocks in mise.toml after the awk pattern fix.
 set +e
 
+# E2B's commands.run(envs=None) strips Dockerfile ENV PATH — hardcode every install location
+export PATH="/usr/local/go/bin:/root/go/bin:/home/agent/go/bin:/usr/local/cargo/bin:/opt/cargo/bin:/root/.cargo/bin:/home/agent/.cargo/bin:/venv/bin:/opt/venv/bin:/usr/local/bin:/root/.bun/bin:/home/agent/.bun/bin:/usr/bin:/bin:${PATH}"
+
 REPO="/opt/cli"
 LINT_SCRIPT="$REPO/mise-tasks/lint/mise"
 REWARD_FILE="/logs/verifier/reward.txt"

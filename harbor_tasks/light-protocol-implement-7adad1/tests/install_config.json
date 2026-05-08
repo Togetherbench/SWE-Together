@@ -3,7 +3,7 @@
   "language": "rust",
   "log_parser": "parse_log_cargo",
   "test_cmd": "cargo test --release 2>&1",
-  "repo_dir": "/home/agent/light-protocol",
+  "repo_dir": "/home/user/light-protocol",
   "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],
   "_upgraded_from_legacy": true

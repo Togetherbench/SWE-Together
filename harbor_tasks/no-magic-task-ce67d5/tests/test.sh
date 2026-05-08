@@ -14,6 +14,9 @@
 
 set +e
 
+# E2B's commands.run(envs=None) strips Dockerfile ENV PATH — hardcode every install location
+export PATH="/usr/local/go/bin:/root/go/bin:/home/agent/go/bin:/usr/local/cargo/bin:/opt/cargo/bin:/root/.cargo/bin:/home/agent/.cargo/bin:/venv/bin:/opt/venv/bin:/usr/local/bin:/root/.bun/bin:/home/agent/.bun/bin:/usr/bin:/bin:${PATH}"
+
 REPO_DIR="/home/user/no-magic"
 TARGET="$REPO_DIR/01-foundations/microtokenizer.py"
 REWARD_FILE="/logs/verifier/reward.txt"
