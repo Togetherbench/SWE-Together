@@ -549,6 +549,13 @@ async def main():
         os.environ[k] = v
     log.info("  host-env override applied (%d keys)", len(agent_env))
 
+    # Permanent fix for the shichaopei alias collision: prefix every E2B
+    # template alias with our team identifier so we live in a private
+    # namespace no other E2B team can squat on. Patched into Harbor's
+    # e2b.py — see external/harbor/src/harbor/environments/e2b.py.
+    os.environ.setdefault("HARBOR_TEAM_PREFIX", "tb")
+    log.info("  HARBOR_TEAM_PREFIX=%s (E2B alias prefix)", os.environ["HARBOR_TEAM_PREFIX"])
+
     # Determine tasks
     if args.tasks:
         task_names = [t.strip() for t in args.tasks.split(",")]
