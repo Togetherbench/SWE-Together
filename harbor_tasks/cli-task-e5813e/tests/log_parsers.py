@@ -1117,6 +1117,31 @@ def parse_log_jest(log: str) -> dict[str, str]:
     return test_status_map
 
 
+def parse_log_bun_test(log: str) -> dict[str, str]:
+    """
+    Parser for test logs generated with Bun's native test runner (`bun test`).
+
+    Bun emits per-test status as `(pass|fail|skip|todo) <hierarchical name> [Xms]`.
+    Hierarchical name is `file > describe > test_name` (file path included).
+    Pattern derived from observed output (2026-05-08).
+    """
+    test_status_map = {}
+
+    pattern = r"^\((pass|fail|skip|todo)\)\s+(.+?)(?:\s+\[(?:\d+(?:\.\d+)?ms|skipped)\])?$"
+
+    for line in log.split("\n"):
+        match = re.match(pattern, line.strip())
+        if match:
+            status, test_name = match.groups()
+            if status == "pass":
+                test_status_map[test_name] = TestStatus.PASSED.value
+            elif status == "fail":
+                test_status_map[test_name] = TestStatus.FAILED.value
+            elif status in ("skip", "todo"):
+                test_status_map[test_name] = TestStatus.SKIPPED.value
+    return test_status_map
+
+
 def parse_log_jest_json(log: str) -> dict[str, str]:
     """
     Parser for test logs generated with Jest. Assumes the --json flag has been
@@ -3534,6 +3559,8 @@ NAME_TO_PARSER = {
     "parse_log_p5js": parse_log_p5js,
     "parse_log_react_pdf": parse_log_react_pdf,
     "parse_log_jest": parse_log_jest,
+    "parse_log_bun_test": parse_log_bun_test,
+    "parse_log_bun": parse_log_bun_test,
     "parse_log_jest_json": parse_log_jest_json,
     "parse_log_vitest": parse_log_vitest,
     "parse_log_karma": parse_log_karma,

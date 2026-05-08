@@ -1,7 +1,7 @@
 {
   "task_name": "rudel-task-491983",
   "language": "ts_bun",
-  "log_parser": "parse_log_vitest",
+  "log_parser": "parse_log_bun_test",
   "test_cmd": "bun test 2>&1",
   "repo_dir": "/workspace/rudel",
   "FAIL_TO_PASS": [],

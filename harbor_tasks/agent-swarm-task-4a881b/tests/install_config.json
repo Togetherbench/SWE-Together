@@ -1,8 +1,8 @@
 {
   "task_name": "agent-swarm-task-4a881b",
   "language": "ts_bun",
-  "log_parser": "parse_log_vitest",
-  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "log_parser": "parse_log_bun_test",
+  "test_cmd": "bun test 2>&1",
   "repo_dir": "/workspace/agent-swarm",
   "FAIL_TO_PASS": [
     "create one-time schedule with delayMs computes nextRunAt",
