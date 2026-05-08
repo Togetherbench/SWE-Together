@@ -167,28 +167,28 @@ def parse_log_django(log: str) -> dict[str, str]:  # noqa: PLR0912
 
 def parse_log_pytest_v2(log: str) -> dict[str, str]:
     """
-    Parser for test logs generated with PyTest framework (Later Version)
-
-    Args:
-        log (str): log content
-    Returns:
-        dict: test case to test status mapping
+    Parser for pytest logs (handles 3 verbose formats including modern `-v` output
+    that adds `[ N%]` progress indicator after each test status).
     """
     test_status_map = {}
     escapes = "".join(chr(char) for char in range(1, 32))
     translator = str.maketrans("", "", escapes)
+    progress_re = re.compile(r"\s*\[\s*\d+%\]\s*$")
     for line in log.split("\n"):
+        line = re.sub(r"\x1b\[[0-9;]*[mGKHfABCDsuJ]", "", line)
         line = re.sub(r"\[(\d+)m", "", line)
         line = line.translate(translator)
+        line = progress_re.sub("", line).rstrip()
         if any(line.startswith(x.value) for x in TestStatus):
             if line.startswith(TestStatus.FAILED.value):
                 line = line.replace(" - ", " ")
             test_case = line.split()
-            test_status_map[test_case[1]] = test_case[0]
-        # Support older pytest versions by checking if the line ends with the test status
+            if len(test_case) >= 2:
+                test_status_map[test_case[1]] = test_case[0]
         elif any(line.endswith(x.value) for x in TestStatus):
             test_case = line.split()
-            test_status_map[test_case[0]] = test_case[1]
+            if len(test_case) >= 2:
+                test_status_map[test_case[0]] = test_case[-1]
     return test_status_map
 
 
