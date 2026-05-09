@@ -1,0 +1,62 @@
+{
+  "tasks_audited": ["cli-task-0ec2e9", "cli-task-33e050", "cli-task-ea3f8f"],
+  "audit_hypothesis": "dockerfile_commit may equal commit_sha (the FIX commit), making the buggy state actually the fixed state",
+  "audit_verdict": "HYPOTHESIS REJECTED FOR ALL 3 TASKS — dockerfile commits are correctly the PARENT of the fix commit",
+  "method": [
+    "Read environment/Dockerfile for each task; extracted git checkout SHA -> dockerfile_commit",
+    "Read tests/install_config.json for each task; extracted commit_sha (the FIX commit)",
+    "Read data-pipeline/artifacts_cli/canonical_patches/<sid>.json; extracted _base_commit (the parent of the fix)",
+    "Cross-validated upstream by cloning github.com/entireio/cli and running 'git rev-parse <fix_sha>^' for each",
+    "Confirmed git diff --stat <dockerfile_commit> <commit_sha> shows non-trivial changes touching declared source_files"
+  ],
+  "per_task": {
+    "cli-task-0ec2e9": {
+      "session_id": "0ec2e9e2-49e0-4201-9ea8-22f86e352f71",
+      "dockerfile_commit": "988ed897ce0f5474125ffa1ba7442489be7c75c2",
+      "canonical_commit_sha": "c941affb6709e0898f0d23eef9ab5fc9545d1119",
+      "_base_commit": "988ed897ce0f5474125ffa1ba7442489be7c75c2",
+      "upstream_parent_of_fix": "988ed897ce0f5474125ffa1ba7442489be7c75c2",
+      "fix_subject": "make sure fallback using just git status works with opencode",
+      "parent_subject": "fixes codex tool usage patterns with opencode",
+      "diff_stat_base_to_fix": "4 files changed, 90 insertions(+), 2 deletions(-) — touches state.go, lifecycle.go, transcript.go, state_test.go",
+      "bug_present": false,
+      "action_taken": "none — dockerfile_commit == _base_commit == upstream parent(commit_sha); buggy state is correctly the pre-fix parent",
+      "validated_baseline": null,
+      "notes": "Dockerfile correctly checks out the parent of the FIX commit. No correction required."
+    },
+    "cli-task-33e050": {
+      "session_id": "33e0503c-ecf6-44f0-9f93-e70fe49cfa87",
+      "dockerfile_commit": "a009258cdce04b0dde8c4d559361e8b034ad3ae8",
+      "canonical_commit_sha": "10b329188773bee3cb4dedc734fb421a01c08b89",
+      "_base_commit": "a009258cdce04b0dde8c4d559361e8b034ad3ae8",
+      "upstream_parent_of_fix": "a009258cdce04b0dde8c4d559361e8b034ad3ae8",
+      "fix_subject": "if there is no log at commit time, skip too",
+      "parent_subject": "fix: don't wait for sessions that are older then 120s",
+      "diff_stat_base_to_fix": "2 files changed, 18 insertions(+), 19 deletions(-) — touches lifecycle.go, lifecycle_test.go",
+      "bug_present": false,
+      "action_taken": "none — dockerfile_commit == _base_commit == upstream parent(commit_sha); buggy state is correctly the pre-fix parent",
+      "validated_baseline": null,
+      "notes": "Dockerfile correctly checks out the parent of the FIX commit. Side observation: gold F2P test 'TestWaitForTranscriptFlush_NonexistentFile_SkipsWait' already exists at the base commit (the FIX renames/replaces it), so verifier dynamics differ from a typical F2P-tests-don't-exist-at-base setup, but this is unrelated to the audited bug."
+    },
+    "cli-task-ea3f8f": {
+      "session_id": "ea3f8f47-2d40-474f-bb55-bde41f47b79c",
+      "dockerfile_commit": "69b9d730045ad92c202f987e4fee88a3fa0e32aa",
+      "canonical_commit_sha": "1f8339c17043706f067e41b2df3c6d856a3a0ec5",
+      "_base_commit": "69b9d730045ad92c202f987e4fee88a3fa0e32aa",
+      "upstream_parent_of_fix": "69b9d730045ad92c202f987e4fee88a3fa0e32aa",
+      "fix_subject": "handle both IDE paths and agent paths",
+      "parent_subject": "make mid turn working",
+      "diff_stat_base_to_fix": "2 files changed, 27 insertions(+), 3 deletions(-) — touches cursor.go, cursor_test.go",
+      "bug_present": false,
+      "action_taken": "none — dockerfile_commit == _base_commit == upstream parent(commit_sha); buggy state is correctly the pre-fix parent",
+      "validated_baseline": null,
+      "notes": "Dockerfile correctly checks out the parent of the FIX commit. No correction required."
+    }
+  },
+  "summary": {
+    "bug_confirmed_count": 0,
+    "fixes_applied_count": 0,
+    "validated_baseline_count": 0,
+    "rationale_for_no_baseline_run": "No bug was confirmed in any of the 3 tasks; baseline validation was unnecessary. All Dockerfiles correctly synthesize the buggy (pre-fix) state by cloning at the upstream parent of the FIX commit."
+  }
+}
