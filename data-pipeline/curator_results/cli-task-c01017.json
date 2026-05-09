@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-c01017",
+  "started_at": "18:45:57",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\nRemoved 2 incorrect entries from `FAIL_TO_PASS`:\n\n- **`TestExtractLastUserPrompt`** \u2014 Pre-existing table-driven test that PASSES at baseline. The patch adds an `\"array content\"` sub-case to its table, but the parent function already exists and passes. It's P2P, not F2P.\n- **`TestExtractModifiedFilesFromTranscript`** \u2014 Entirely pre-existing test, PASSES at baseline, zero relationship to the new array-content functionality.\n\nThe remaining 5 F2P tests (`TestParseTranscript_ArrayContent`, `TestParseTranscript_ArrayContentMultipleParts`, `TestParseTranscript_NullContent`, `TestExtractAllUserPrompts_ArrayContent`, `TestExtractModifiedFiles_ArrayContent`) are all newly added by the patch, behavioral, and cleanly test the array-content Gemini parsing fix. No patch noise, no P2P_REGRESSION zero bug, no instruction leaks.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "f2p_test_renamed"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": true,
+    "validation_result": "passed",
+    "notes": "Removed TestExtractLastUserPrompt and TestExtractModifiedFilesFromTranscript from FAIL_TO_PASS \u2014 both PASS at baseline (confirmed by running go test). TestExtractLastUserPrompt is a pre-existing table-driven test that gets a new 'array content' case added by the patch; the parent test still passes before the patch. TestExtractModifiedFilesFromTranscript is entirely pre-existing. The remaining 5 F2P tests are all newly-added, behavioral black-box tests that fail (don't exist) at baseline and pass after the fix. No patch noise or other issues found."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-c01017/tests/install_config.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 193.8
+}

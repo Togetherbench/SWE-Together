@@ -1,0 +1,22 @@
+{
+  "task": "marin-task-d62395",
+  "started_at": "manual-curation",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "KEEP",
+    "fixes_applied": [],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": false,
+    "validation_result": null,
+    "notes": "install_config already has 6 behavioral F2P tests targeting the StepMeta→StepSpec merge (test_runner_executes_pipeline, test_runner_respects_dependency_order, test_runner_saves_artifact_automatically, test_resolve_executor_step_preserves_deps, test_artifact_save_and_load_typed, test_artifact_roundtrip_through_pipeline). These all reference the flattened API (step.deps, step.output_path) and would fail at base where StepSpec uses nested meta=StepMeta(...). Caveat: the instruction asks to delete tests/test_step.py and lib/marin/src/marin/execution/step.py but the canonical_patch (files_changed_count=6, no D entries, _n_mutating_ops=30) does not capture file deletions — instruction-vs-canonical-patch divergence on deletions is a known limitation of tool_replay reconstruction, not blocking since the F2P verifier doesn't depend on those deletions."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/marin-task-d62395/tests/install_config.json",
+      "changed": false
+    }
+  },
+  "applied_to_host": false
+}

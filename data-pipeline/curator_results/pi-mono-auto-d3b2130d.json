@@ -1,0 +1,45 @@
+{
+  "task": "pi-mono-auto-d3b2130d",
+  "verdict": "RESCUED",
+  "fixes_applied": [
+    "restore_legacy_test_sh",
+    "restore_legacy_test_manifest"
+  ],
+  "drop_reason_invalidated": "Prior DROP cited TEST_DIFFERENT_TARGET — that the deliverable is a 'live npm registry query result' and that 6 reconstruction warnings on missing sibling repos (../pi-doom, ../pi-package-test, ../pi-gitlab-duo) make the output unreconstructible. Both points collapse on inspection. (1) The task is multi-turn (8 user turns); the literal first-turn instruction is exploratory ('how does npm keyword search work'), but the actual session deliverable — what the user ultimately accepts in turn 8 ('commit and push') — is concrete in-tree code: add the unique 'pi-package' keyword to the publishable pi-mono workspace package.json files (turn 3-4 redirect) and document the discovery mechanic in packages/coding-agent/docs/extensions.md and packages/coding-agent/README.md (turn 6). The user_simulation_prompt.md state graph anchors this: turn 4's deliverable explicitly notes 'target dirs unavailable, agent should fall back to in-tree pi-mono packages'. (2) The 6 file-not-found warnings on ../pi-doom etc. are session-replay artifacts from the original author's local multi-repo workspace; the canonical task target is pi-mono itself, and patch_library/pi-mono-auto-d3b2130d/opus46/ops.json contains 13 successful Edit ops on /workspace/pi-mono/packages/{agent,ai,coding-agent,tui,web-ui}/package.json plus the doc files — empirical proof the deliverable IS reconstructible from the in-tree workspace. (3) The legacy verifier scores exactly this rubric across 7 weighted F2P gates (sum 1.00) — keyword-added, breadth, critical-pkgs-covered, doc-keyword-mention, doc-search-mechanic, search-returns-hits, search-distinct-from-baseline — all behavioral, all executed via node -e on package.json data and git-diff on the docs.",
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": true,
+  "validation_evidence": {
+    "live_trial_rewards": {
+      "trials_minimax27_v043/pi-mono-auto-d3b2130d__rf3D9nw": 0.10,
+      "trials_deepseek_v4_pro_v043/pi-mono-auto-d3b2130d__nDV6riY": 0.10,
+      "trials_opus46_v043/pi-mono-auto-d3b2130d__PRzVCXS": 0.10,
+      "trials_minimax25_v043/pi-mono-auto-d3b2130d__pLWLiSb": 0.10,
+      "trials_deepseek_v4_flash_v043/pi-mono-auto-d3b2130d__WyQNNqm": 0.5255,
+      "trials_deepseek_v4_pro_swerb/pi-mono-auto-d3b2130d__tP35WbM": 0.5255,
+      "trials_deepseek_v4_flash_swerb/pi-mono-auto-d3b2130d__Z2yCX49": 0.5255,
+      "fix_summary_sim_fire": 0.75
+    },
+    "gate_execution_status": "All 7 F2P gates execute cleanly under the legacy test.sh (verified via /trials_minimax27_v043/.../verifier/details.log: 'Found 6 package.json files', 'Search hits: [@mariozechner/pi-agent-core,@mariozechner/pi-ai,@mariozechner/pi-coding-agent,@mariozechner/pi-tui,@mariozechner/pi-web-ui]', explicit per-gate bookkeeping for t4_added/t4_breadth/t4_critical/t6_doc_kw/t6_doc_mech/t7_hits/t7_distinct). P2P_GATING gate p2p_pkg_json_valid evaluates JSON validity on every workspace package.json. The 4 v043 P2P_REGRESSION gates (npm_typecheck_agent, vitest_session_manager_agent, npm_typecheck_ai, vitest_session_manager_ai) are informational-only at weight 0.0 with the v0.4.3.1 P2P_REGRESSION_INFORMATIONAL semantics correctly applied (only P2P_GATING hard-zeros).",
+    "canonical_patch_proof": "patch_library/pi-mono-auto-d3b2130d/{opus46,deepseek_v4_pro,deepseek_v4_flash,minimax25,minimax27}/ops.json all exist with concrete Edit ops on in-tree files. opus46 ops.json has 13 Edit ops: 5 unique package.json files (packages/agent, ai, coding-agent, tui, web-ui) each given the 'pi-package' keyword, plus the documentation edits to coding-agent/docs/extensions.md and coding-agent/README.md. deepseek_v4_flash trials reproduce 0.5255 on replay (decision: replay_no_patch), confirming the patch ops apply cleanly to the base commit and the verifier scores them.",
+    "discrimination": "v043 cohort spread: Opus 4.6 / DS Pro / MiniMax M2.5 / MiniMax M2.7 = 0.10 (nop baseline — these trials hit the search-returns-hits gate via baseline 'pi-' keyword presence but did not commit/push the actual edits, scoring 0.10 for the t7_hits 0.10 weight). DS Flash = 0.5255 (replay path). Sim-fire validation in fix_summary.md observed 0.75 with minimax-m2 + gemini-3.1-pro user-sim. Multi-turn gain Final − T0 is the headline axis here; T0 is structurally low because instruction.md is the verbatim 1st-turn exploratory question."
+  },
+  "actions_taken": [
+    {
+      "action": "cp tests/test.sh.legacy.bak -> tests/test.sh (chmod +x)",
+      "rationale": "The live test.sh was the auto-generated swerebench-style stub (install_config.json + log_parsers.py route through FAIL_TO_PASS). For this task the swerb stub is meaningless — there are no upstream pytest/vitest tests that fail-to-pass on the keyword/docs change; the relevant signal lives in the workspace package.json keywords arrays and the doc-mechanic strings, which are exactly what the legacy 7-gate behavioral verifier scores (t4_added 0.20 + t4_breadth 0.25 + t4_critical 0.15 + t6_doc_kw 0.10 + t6_doc_mech 0.15 + t7_hits 0.10 + t7_distinct 0.05 = 1.00). The legacy verifier already includes the v0.4.3.1 P2P_REGRESSION_INFORMATIONAL block and v043 upstream tsgo+vitest gates as informational-only."
+    },
+    {
+      "action": "cp tests/test_manifest.yaml.legacy.bak -> tests/test_manifest.yaml",
+      "rationale": "The pre-rescue tree had no test_manifest.yaml at all (only the .legacy.bak). Restoring the v042-ci-integrated manifest with 7 F2P gates (sum 1.00), one P2P_GATING (p2p_pkg_json_valid weight 0.0 hard-zeros only on JSON corruption), and 4 P2P_REGRESSION informational gates (sum weight 0.0) — exactly the gate set the restored test.sh executes."
+    }
+  ],
+  "files_modified": [
+    "harbor_tasks/pi-mono-auto-d3b2130d/tests/test.sh",
+    "harbor_tasks/pi-mono-auto-d3b2130d/tests/test_manifest.yaml"
+  ],
+  "repo": "badlogic/pi-mono",
+  "session_resolution": "resolved (0.95 confidence, per fix_summary.md: user said 'ok commit an dpush the changes in the working dir', assistant confirmed 'Done. Committed and pushed the documentation changes for the pi-package keyword.')",
+  "discrimination_observed": "Cross-model spread 0.10 (Opus 4.6 / DS Pro / MiniMax M2.5/M2.7 — nop baseline plus partial t7_hits credit) vs 0.5255 (DS Flash replay) vs 0.75 (gold/sim-fire reference, fix_summary.md). The 0.10 -> 0.5255 -> 0.75 spread is the headline correction-loop axis: agents that stop at the exploratory 'how does npm search work' answer score the floor; agents that follow the user-sim's redirect to add pi-package + document score progressively higher.",
+  "notes": "RESCUE class: legacy.bak restoration. The DROP verdict misread a multi-turn task as if it were single-turn. Per CLAUDE.md: 'instruction.md = first user turn verbatim (no editing)' — the headline test isn't whether the agent answers the literal first question, it's whether the agent navigates the 8-turn correction loop driven by user_simulation_prompt.md's verbatim user-sim messages to produce the concrete in-tree workspace edits the user ultimately accepts. The 6 'file not found: ../pi-doom etc.' warnings are session-replay metadata, not benchmark blockers; the legacy test.sh deliberately scores in-tree pi-mono packages (EXPECTED_PKGS=agent ai coding-agent mom pods tui web-ui), exactly matching the user_simulation_prompt.md turn-4 deliverable note: 'target dirs unavailable, agent should fall back to in-tree pi-mono packages'. The patch_library across 5 model cohorts proves the canonical work IS concrete and reconstructible from the repo diff."
+}

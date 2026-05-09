@@ -1,0 +1,17 @@
+{
+  "task": "pi-mono-auto-d8c68afc",
+  "started_at": "manual-curation",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "DROP",
+    "fixes_applied": [],
+    "drop_reason": "VERIFIER_INERT: the active tests/install_config.json has FAIL_TO_PASS=[] and PASS_TO_PASS=[], so test.sh falls back to overall pass-rate from `bun x vitest run`. There are no targeted F2P gates anchored to the actual fix (interactive-mode.ts shutdownHandler adding `if (!this.session.isStreaming) { void this.shutdown(); }`). The repo-wide vitest run cannot detect whether the bug was fixed — the gold patch and the buggy base both pass/fail the same vitest set, since pi-mono has no test that exercises the deferred-shutdown drain path. The legacy test.sh.legacy.bak has proper behavioral gates for this fix (5 F2P gates: shutdownHandler key, drain path, deferred-when-streaming, shutdown-when-idle, reachable command name) but is not the active verifier. Promoting the legacy gates back into test.sh is a non-trivial rewrite (it's bash+node mock execution, not the install_config/log_parser shape of the current harness) and is outside curator scope.",
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": false,
+    "validation_result": null,
+    "notes": "Prior batch DROP rationale was INCORRECT. The session genuinely (a) renamed registerCommand('quit', ...) -> registerCommand('shutdown', ...) in shutdown-command.ts (msgs 9-11 of original_session.json) and (b) added `process.exit(0)` inside an `if (ctx.isIdle())` guard in the same file (msg 26), before being redirected by the user to fix the issue in coding-agent core (msg 39: shutdownHandler in interactive-mode.ts). Neither was fabricated. The real reason to DROP is verifier-side: the SWE-rebench-style upgrade (`_upgraded_from_legacy: true` in install_config.json) left FAIL_TO_PASS empty and produced an inert verifier for a task whose ground truth is one specific 4-line edit to interactive-mode.ts. Recommendation: this is likely systemic across pi-mono-auto-* tasks that were `_upgraded_from_legacy` with empty FAIL_TO_PASS — worth a sweep audit. To repair this specific task, the legacy gates from test.sh.legacy.bak would need to be restored (or its behavior re-encoded as vitest tests added under packages/coding-agent/test/ that the test_cmd would then pick up) and fail-to-pass IDs registered in install_config.json."
+  },
+  "diffs": {},
+  "applied_to_host": false
+}

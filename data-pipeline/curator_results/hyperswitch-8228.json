@@ -1,0 +1,14 @@
+{
+  "task": "hyperswitch-8228",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "tests/test.sh + tests/test_manifest.yaml: dropped three over-fit F2P gates that reference symbols the gold patch (PR #8227) does NOT touch: (a) t1_f2p_updation_enum_renamed (0.15) — the gold patch deliberately KEEPS UpdationStatusEventResponse / EliminationUpdationStatusEventResponse / ContractUpdationStatusEventResponse intact (visible in the helpers.rs hunk which still emits ContractUpdationStatusEventResponse::ContractUpdationSucceeded); (b) t1_f2p_errors_webhook_rename (0.10) — gold patch never touches crates/router/src/core/errors.rs and WebhookEventUpdationFailed remains in the codebase; (c) t1_f2p_contract_score_rename (0.10) — same, ContractScoreUpdationError is untouched. These three gates were unreachable and capped any agent at 0.65 even with a perfect gold-patch reproduction.",
+    "tests/test.sh: rebalanced the remaining 5 F2P gates to 0.20 each (sum=1.00). Updated WEIGHTS dict in the v043 python tail block, updated 'add' calls in the bash body, and pruned the missing-repo emit list to match. Bash syntax verified with `bash -n`.",
+    "tests/test_manifest.yaml: removed the 3 dropped gate entries; weights of remaining 5 set to 0.2 each."
+  ],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Pre-flag was 'P2P_REGRESSION zero-bug rewrite' but verification shows that fix was ALREADY applied in this test.sh per v0.4.3.1 corrections — the python tail uses a separate p2p_failed loop over an empty P2P_GATING list (P2P_REGRESSION list is declared but only used informationally), and the f2p_any_pass zeroing has the `existing <= 0` guard. The actual scoring trap on this task is F2P over-fit. Gold patch (PR #8227 closing #8228) is a 4-file, +8/-7 typo cleanup: routing_apporach->routing_approach in api_models/routing.rs, event_resposne+routing_apporach in payments/routing.rs, update_respose->update_response in helpers.rs, and a new pub routing_approach: Option<String> field on analytics RoutingEventsResult. Verified by cloning juspay/hyperswitch at base ec908d3 — the over-fit symbols (Updation enums in api_models, Webhook/Contract errors in errors.rs) exist there but are deliberately left alone by the gold patch. Remaining 5 gates align 1:1 with the gold patch: api_models field rename, payments/routing.rs typo cleanup, analytics struct field addition, helpers.rs update_respose fix, behavioral cargo check on api_models. fix_summary.md is now slightly stale (it described 8 gates) but is a non-load-bearing audit artifact."
+}

@@ -1,0 +1,10 @@
+{
+  "task": "hyperswitch-8070",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Pre-flagged GOOD per prior audit. Confirmed: test.sh has no v043 auto-injected tail at all (zero matches for 'v043'); inline scoring uses 8 weighted gates (F2P-A through F2P-H) totaling 1.0 for revenue-recovery algorithm plumbing. Includes a cargo check -p scheduler P2P-style gate that applies a 50% regression penalty if scheduler fails to compile (penalty, not hard-zero — correct per CLAUDE.md). NO P2P_REGRESSION zero bug present. Manifest gate IDs (t1_f2p_workflow_sig_takes_algorithm etc.) don't match the inline F2P-A..H labels but the inline scoring writes reward.txt directly so manifest is documentation-only; this mismatch is benign (test.sh is canonical). Upstream PR 7915 (+220/-63 across 18 files) is exact-fidelity gold."
+}

@@ -1,0 +1,10 @@
+{
+  "task": "pi-mono-auto-796a21ab",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "PR #1382 simpler trigger-compact alt. Canonical patch has NO new behavioral tests — touches CHANGELOG.md, examples/extensions/trigger-compact.ts (1-line type-narrowing fix), src/core/agent-session.ts (~30 lines: getLatestCompactionEntry usage + post-compaction nullable usage), src/core/extensions/types.ts (ContextUsage type now nullable, removed 3 implementation fields), src/modes/interactive/components/footer.ts (delegates to getContextUsage, displays '?' when null). Behavior is verifiable in principle (footer output, ContextUsage shape) but no test file exists in the patch, so populating F2P would be fabrication. Keeping FAIL_TO_PASS=[] (vitest pass-rate fallback). The fallback is meaningful here because the type changes ripple through many call sites — touching ContextUsage incorrectly will break existing tests, giving signal. CHANGELOG present in patch (expected, pi-mono pattern). _fidelity: exact, no warnings."
+}

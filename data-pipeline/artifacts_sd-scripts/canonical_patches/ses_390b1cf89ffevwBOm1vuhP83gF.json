@@ -1,0 +1,33 @@
+{
+  "session_id": "ses_390b1cf89ffevwBOm1vuhP83gF",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "kohya-ss/sd-scripts",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 43,
+  "total_deletions": 0,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tlibrary/train_util.py\n",
+  "numstat": "43\t0\tlibrary/train_util.py\n",
+  "patch": "diff --git a/library/train_util.py b/library/train_util.py\nindex d8577b9..aad51a5 100644\n--- a/library/train_util.py\n+++ b/library/train_util.py\n@@ -1895,6 +1895,49 @@ class BaseDataset(torch.utils.data.Dataset):\n class DreamBoothDataset(BaseDataset):\n     IMAGE_INFO_CACHE_FILE = \"metadata_cache.json\"\n \n+    def rebalance_regularization_images(self):\n+        if not self.is_training_dataset:\n+            return\n+\n+        reg_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []\n+        for image_key, image_info in list(self.image_data.items()):\n+            if not image_info.is_reg:\n+                continue\n+\n+            reg_infos.append((image_info, self.image_to_subset[image_key]))\n+            del self.image_data[image_key]\n+            del self.image_to_subset[image_key]\n+\n+        num_train_images = sum(info.num_repeats for info in self.image_data.values())\n+        if len(reg_infos) == 0:\n+            return\n+\n+        for info, subset in reg_infos:\n+            info.num_repeats = subset.num_repeats\n+\n+        n = 0\n+        first_loop = True\n+        while n < num_train_images:\n+            for info, subset in reg_infos:\n+                if first_loop:\n+                    self.register_image(info, subset)\n+                    n += info.num_repeats\n+                else:\n+                    info.num_repeats += 1\n+                    n += 1\n+                if n >= num_train_images:\n+                    break\n+            first_loop = False\n+\n+    def filter_registered_images_by_orig_resolution(self) -> int:\n+        filtered_count = super().filter_registered_images_by_orig_resolution()\n+\n+        if filtered_count > 0 and self.is_training_dataset:\n+            self.rebalance_regularization_images()\n+            self.update_dataset_image_counts()\n+\n+        return filtered_count\n+\n     # The is_training_dataset defines the type of dataset, training or validation\n     # if is_training_dataset is True -> training dataset\n     # if is_training_dataset is False -> validation dataset\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "sd-scripts",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "lossy",
+  "_reconstruction_warnings": [
+    "op[5] apply_patch: update: hunk anchor not found in library/train_util.py",
+    "op[24] apply_patch: update: hunk anchor not found in library/train_util.py",
+    "op[58] apply_patch: update: hunk anchor not found in library/train_util.py",
+    "op[59] apply_patch: update: hunk anchor not found in library/train_util.py",
+    "op[60] apply_patch: update: hunk anchor not found in library/train_util.py",
+    "op[61] apply_patch: update: hunk anchor not found in library/train_util.py",
+    "op[83] apply_patch: update: hunk anchor not found in library/train_util.py"
+  ],
+  "_base_commit": "34e7138b6a80c2d88f40c99fd68879c6e683f639",
+  "_repo_url": "https://github.com/kohya-ss/sd-scripts",
+  "_task_name": "sd-scripts-float-inf-typo-fix",
+  "_n_mutating_ops": 8
+}

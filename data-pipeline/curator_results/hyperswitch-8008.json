@@ -1,0 +1,14 @@
+{
+  "task": "hyperswitch-8008",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "tests/test.sh: removed bogus F2P gate f2p_upstream_54b5536e (py_compile of /workspace/hyperswitch/transform_script.py and transform_connect_script.py — these files do NOT exist in upstream PR 8007 (which is a Rust connector relocation, +1733/-2613); the gate was an artifact of v043 auto-ingestion picking up agent scratch artifacts). Removed the run_v043_gate invocation and dropped its 0.20 weight; redistributed evenly to the 4 valid F2P stripe-relocation gates (each 0.20 -> 0.25, sum still 1.0).",
+    "tests/test.sh: rewrote v043 python tail to fix P2P_REGRESSION zero-bug — separated p2p_failed loop over P2P_GATING only; P2P_REGRESSION id p2p_upstream_7a8254b6 (cargo metadata) is now informational only.",
+    "tests/test_manifest.yaml: dropped f2p_upstream_54b5536e gate; updated 4 t1_f2p_* gate weights from 0.2 -> 0.25."
+  ],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Pre-flagged TEST_NARROW (large refactor, 5 module-decl checks). Verified: upstream PR 8007 is rename of crates/router/src/connector/stripe.rs to crates/hyperswitch_connectors/src/connectors/stripe.rs plus pub mod and pub use re-export rewiring — exactly what the 4 t1_f2p_* gates check (pub mod stripe; in HC, stripe::Stripe re-export, router/src/connector.rs no longer declares pub mod stripe, router pulls from HC). The TEST_NARROW concern is real (15 files in PR, only 4 spot-check gates) but for a pure relocation+rewire the 4 gates capture the entire behavioral change. The bogus py_compile gate was the actual scoring trap. KEEP+FIX."
+}

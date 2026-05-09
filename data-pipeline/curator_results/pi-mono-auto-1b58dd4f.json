@@ -1,0 +1,17 @@
+{
+  "task": "pi-mono-auto-1b58dd4f",
+  "started_at": "manual-curation",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "KEEP",
+    "fixes_applied": [],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": false,
+    "validation_result": null,
+    "notes": "Has hand-written behavioral test.sh with 4 weighted gates (gate1 reload-no-guard 0.30 via TS AST walk, gate2 behavioral simulation 0.30 via runtime proxy harness, gate3 upstream-reload-structure 0.20, gate4 upstream-changelog-entry 0.20) that target the actual bug (`hasBindings` early-return guard preventing UI methods from working after /reload when starting with no extensions). Per pre-flag 'GOOD per prior audit'. \n\nObservation worth flagging for future audit (NOT applied here): the test.sh gates inspect packages/coding-agent/src/core/agent-session.ts for the `_applyExtensionBindings` symbol and the absence of a `hasBindings` const, but the canonical_patch fixes the bug by editing interactive-mode.ts/print-mode.ts/rpc-mode.ts (removing the early-return when extensionRunner is undefined and unconditionally calling session.bindExtensions). This means a faithful replay of the canonical patch would NOT pass gate1/gate2/gate3 — they're testing a DIFFERENT (likely upstream-merged-PR) version of the fix. The test was probably written from the PR diff while the canonical_patch was reconstructed from the agent's pre-PR session. Either fix is behaviorally correct (both make /reload UI methods work with no prior bindings), but a model that produces the canonical-patch-style fix would score 0 on the structural gates. Marking KEEP per pre-flag, but worth a future re-write to make gates implementation-tolerant across both fix locations."
+  },
+  "diffs": {},
+  "applied_to_host": false
+}

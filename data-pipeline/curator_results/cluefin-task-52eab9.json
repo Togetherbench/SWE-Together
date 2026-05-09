@@ -1,0 +1,10 @@
+{
+  "task": "cluefin-task-52eab9",
+  "verdict": "FIX",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "YAML-only task (3 GitHub Issue Templates) with custom structural test.sh that already handles English/Korean section-id aliases, type checks (checkboxes/dropdown/textarea), label/title prefix validation, and the cluefin-{openapi,ta,cli,desk,xbrl} package set. F2P weights sum to 0.80 (bug 0.20 + feat 0.20 + config 0.15 + pkg 0.15 + files_exist 0.05 + yaml_valid 0.05) — well-balanced, no single-gate dominance. install_config.json is the auto-upgraded pytest stub (FAIL_TO_PASS=[], PASS_TO_PASS=[], test_cmd=pytest) but is dead code: test.sh is a complete standalone YAML verifier and ignores install_config — so the prior audit's path-divergence concern is benign (test.sh runs, install_config doesn't). Canonical patch (163 LOC, 3 YAMLs, Korean labels) aligns perfectly with what test.sh checks. KEEP-leaning, but FIX disposition because of one instruction/test contradiction: instruction.md step 3 says config.yml should have 'contact_links → GitHub Discussions (cluefin repo URL)', but the P2P_REGRESSION gate _p2p_no_contact_links zeroes reward if contact_links exists. The canonical session itself produced config.yml with ONLY 'blank_issues_enabled: false' (matches the original user's 'discussion은 없습니다' clarification mid-session), so the P2P gate is faithful to ground truth and the instruction.md text is the stale/incorrect side. Recommended FIX: drop the contact_links bullet from instruction.md, or weaken _p2p_no_contact_links to an F2P with small negative weight. Prior 18:56 run was skipped due to missing E2B template (tb-cluefin-task-52eab9__90023f6c) — orthogonal infra issue, not a curation problem. Verifier itself is solid; no over-fit to canonical (uses anti-stub >3 meaningful sections check, accepts alternative section-id naming)."
+}

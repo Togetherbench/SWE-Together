@@ -1,30 +1,29 @@
 gates:
-  - id: fallback_core
+  - id: F2P_FALLBACK_LATEST_NO_PROMPT
+    kind: F2P
+    weight: 0.30
+    description: "Falls back from latest session (no prompt.txt) to an earlier session that has prompt.txt — the headline bug fix"
+
+  - id: F2P_FALLBACK_THROUGH_MULTIPLE_EMPTY
+    kind: F2P
+    weight: 0.25
+    description: "Falls back through multiple consecutive empty sessions (confirms iterative loop, not a single fallback)"
+
+  - id: F2P_FALLBACK_EMPTY_PROMPT_FILE
     kind: F2P
     weight: 0.20
-    description: "ReadLatestSessionPromptFromCommittedTree falls back to earlier session when latest has no prompt.txt (core bug fix)"
+    description: "Falls back when latest session has prompt.txt but content is empty (treats empty content like missing prompt)"
 
-  - id: multi_empty_fallback
-    kind: F2P
-    weight: 0.15
-    description: "Falls back through multiple empty sessions to find a prompt"
-
-  - id: empty_prompt_fallback
-    kind: F2P
-    weight: 0.15
-    description: "Falls back when latest session has an empty prompt.txt file"
-
-  - id: no_prompt_empty
-    kind: F2P
-    weight: 0.15
-    description: "Returns empty string when no session in the checkpoint has a prompt"
-
-  - id: regression_existing
+  - id: F2P_REGRESSION_EXISTING
     kind: F2P
     weight: 0.10
-    description: "Existing ReadLatestSessionPromptFromCommittedTree tests still pass (no regressions)"
+    description: "All 7 existing TestReadLatestSessionPromptFromCommittedTree subtests still pass (no regressions)"
 
-  - id: not_stub
+  - id: F2P_NOT_STUB
     kind: F2P
-    weight: 0.10
-    description: "Function body is non-trivial (>3 meaningful lines, not a stub)"
+    weight: 0.15
+    description: "ReadLatestSessionPromptFromCommittedTree body is non-trivial (loop + index use + ≥8 non-blank lines)"
+
+  - id: P2P_GO_BUILD
+    kind: P2P_REGRESSION
+    description: "go build ./cmd/entire/... succeeds — informational only, never zeroes reward"

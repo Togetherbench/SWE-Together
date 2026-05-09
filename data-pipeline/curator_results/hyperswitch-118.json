@@ -1,0 +1,32 @@
+{
+  "task": "hyperswitch-118",
+  "verdict": "RESCUE",
+  "prior_verdict": "DROP",
+  "prior_drop_reason": "Lossy stub: upstream issue #118 has no closing PR; canonical patch empty (0 files).",
+  "rescue_rationale": "The prior DROP read only the auto-generated canonical_patches/hyperswitch-118.json stub (which is genuinely empty: _upstream_pr=null, _pr_lookup_status='issue has no closing PR') and concluded there was no ground truth. That conclusion is wrong: the task name 'hyperswitch-118' is a misnomer from the screening pipeline's instance_id index, but the actual session/PR being reconstructed is juspay/hyperswitch PR #8679 (instruction.md commit message: 'task juspay__hyperswitch-8679', body: 'Closes #8679'). The canonical patch reconstruction failed because the auto-resolver looked up issue #118 (a 2022 race-condition issue) instead of issue/PR #8679, hitting the 'no closing PR' branch. The actual ground truth is fully present and the task is fully validated:\n\n  1. instruction.md embeds the verbatim PR #8679 description, including all required behavioral changes: (a) propagate x-request-id from incoming HTTP request to outgoing AI service call, (b) propagate x-chat-session-id, (c) add CHAT_COUNT counter metric. Specific endpoint, headers, and curl reproducer are spelled out.\n\n  2. tests/test.sh is hand-authored (not auto-generated from a diff) with 7 weighted F2P sub-checks targeting the exact symbols the PR description requires: X_CHAT_SESSION_ID = \"x-chat-session-id\" constant in lib.rs headers module, chat_session_id: Option<String> param on get_data_from_hyperswitch_ai_workflow, .header(...) wiring of both x-request-id AND x-chat-session-id in core/chat.rs, CHAT_COUNT counter_metric! in routes/metrics.rs, and a cargo check -p router behavioral gate (15/100 weight). NO-OP baseline detection short-circuits to 0.0 if zero chat-related signals appear, preventing trivial passes.\n\n  3. fix_summary.md documents 3 rounds of agent validation: Sonnet 4.6 scored 0.90 / 0.90 / 1.00 across rounds; Haiku 4.5 scored 1.00 / 0.73 / 1.00. NOp baseline = 0.00 (verified). Tests refined through 3 iterations to accept multiple valid implementations (HeaderMap vs Option<String>, .header() vs .add_header(), routes/metrics.rs vs core/metrics.rs). Per-test pass/fail breakdown documented for all 6 trial runs.\n\n  4. Task is part of the active v0.4.3 evaluation cohort: trial data exists in analysis/v043_per_turn_analysis.json (deepseek_v4_pro_v043/hyperswitch-118__MUGwDux) and v043_user_sim_stats.json (2 cohort entries). Template alias hyperswitch-118__fb2fdba8 is built and live.\n\n  5. The 'lossy patch' criterion in CLAUDE.md ('outputs reconstructible from repo diff or public artifacts') is satisfied here: the PR description IS the public artifact, and the verifier was reconstructed from it via hand-authored behavioral checks (the documented escape hatch for tasks where auto-diff capture fails but the upstream change is well-specified in the instruction text).",
+  "fixes_applied": [],
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": true,
+  "validation_evidence": {
+    "nop_baseline_reward": 0.0,
+    "sonnet_4_6_rewards": [0.90, 0.90, 1.00],
+    "haiku_4_5_rewards": [1.00, 0.73, 1.00],
+    "rounds": 3,
+    "discriminating_test": "T9 (clone/closure capture in Fn closure)",
+    "per_test_breakdown": "documented in harbor_tasks/hyperswitch-118/fix_summary.md",
+    "v043_trial_data_present": true,
+    "v043_trial_path_example": "trials_deepseek_v4_pro_v043/hyperswitch-118__MUGwDux"
+  },
+  "notes": "The canonical_patches stub is genuinely empty and stays empty — that's fine because the verifier does not depend on a captured diff. test.sh keys on hand-derived behavioral assertions (chat_session_id propagation, CHAT_COUNT metric, X_CHAT_SESSION_ID const, cargo check) extracted from the rich PR #8679 description embedded verbatim in instruction.md. NO-OP detection prevents trivial-pass attacks. The 'session_resolution = stuck' tag in task.toml is accurate: in the original session the agent hit repeated permission-denied errors on Write tool calls and never landed an edit, but the upstream PR #8679 itself was merged and its description is fully reconstructible. Two corollary recommendations (NOT blocking RESCUE): (a) the canonical_patches stub could be re-fetched against PR #8679 to surface the diff, but this is optional since the verifier already works; (b) the misleading task name 'hyperswitch-118' could be renamed to hyperswitch-8679 for clarity, but renaming would invalidate the v0.4.3 trial dirs and template alias — not worth the breakage.",
+  "instance_id_correction": {
+    "stub_says_upstream_issue": 118,
+    "actual_upstream_pr": 8679,
+    "evidence": [
+      "instruction.md line: 'Closes #8679'",
+      "instruction.md line: 'task juspay__hyperswitch-8679'",
+      "user_simulation_prompt.md line 18: 'Task ID: juspay__hyperswitch-8679'",
+      "original_session.json msg[0]: 'Task ID: juspay__hyperswitch-8679'"
+    ]
+  }
+}

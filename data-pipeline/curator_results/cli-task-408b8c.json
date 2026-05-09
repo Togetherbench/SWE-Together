@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-408b8c",
+  "started_at": "18:45:57",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\n**Fix applied:** `TestIsInsideWorktree` was confirmed passing at base before any patch (ran `go test` at the base commit). It was incorrectly placed in `FAIL_TO_PASS`, which would give partial reward (1/3) to a no-op solution. Moved it to `PASS_TO_PASS` as a regression guard.\n\n`TestGetWorktreePath_Cache` and `TestGetWorktreePath_Worktree` are legitimately added by the patch and test caching behavior \u2014 kept in `FAIL_TO_PASS`. Minor over-fit note: both call `ClearWorktreePathCache()` (also patch-added), so agents who cache via a different interface would fail to compile these tests.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "f2p_test_renamed"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": true,
+    "validation_result": "passed",
+    "notes": "TestIsInsideWorktree was already passing at base (confirmed by running tests pre-patch) and should not be in FAIL_TO_PASS; moved it to PASS_TO_PASS. TestGetWorktreePath_Cache and TestGetWorktreePath_Worktree are added by the patch and call ClearWorktreePathCache() (also patch-added) \u2014 moderate over-fit risk since alternative implementations may name the clear function differently, but the tests primarily assert behavioral caching correctness and are retained."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-408b8c/tests/install_config.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 166.3
+}

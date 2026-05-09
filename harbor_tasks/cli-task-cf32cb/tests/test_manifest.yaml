@@ -1,62 +1,71 @@
+# test_manifest.yaml — cli-task-cf32cb
+#
+# Verifier checks that the agent collapsed the multi-checkpoint resume path
+# (PR #534's behavior) into a single-resume from the newest checkpoint by
+# CreatedAt. Canonical patch on entireio/cli (parent commit 78bd0e3d).
+#
+# Gates declared here mirror the inline checks in tests/test.sh; the script
+# evaluates them with comment-stripped grep + a `go build` and writes verdicts
+# to /logs/verifier/gates.json. Reward formula is weighted-replace, F2P sum =
+# 1.00. P2P_REGRESSION gates are informational only (per CLAUDE.md scoring
+# rules) — they never zero the reward.
 version: "1.0"
 task: cli-task-cf32cb
+description: "Verify squash-merge resume path collapses to latest-checkpoint-only"
 
 gates:
-  # --- P2P_REGRESSION gates (gating-only) ---
-  - id: p2p_compiles
-    kind: P2P_REGRESSION
-    description: "All production code compiles without errors"
-    command: "go build ./cmd/entire/cli/"
-
-  - id: p2p_vet_passes
-    kind: P2P_REGRESSION
-    description: "go vet passes — no broken references or unused imports"
-    command: "go vet ./cmd/entire/cli/"
-
-  - id: p2p_collect_checkpoints_kept
-    kind: P2P_REGRESSION
-    description: "collectCheckpointsByAge is preserved (still needed by resolveLatestCheckpoint)"
-    command: "go doc cmd/entire/cli.collectCheckpointsByAge > /dev/null 2>&1"
-
-  # --- F2P gates (positive weight) ---
-  - id: f2p_resolve_latest_test
+  # ── F2P behavioral / structural gates (weight sum: 1.00) ──────────────────
+  - id: F2P_DEAD_HELPERS_REMOVED
     kind: F2P
     weight: 0.20
-    description: "resolveLatestCheckpoint returns newest checkpoint regardless of input order"
-    command: "go test --count=1 -run TestResolveLatestCheckpoint ./cmd/entire/cli/"
+    description: "resume.go no longer references resumeMultipleCheckpoints or deduplicateSessions (function bodies + call sites both removed)."
+    command: |
+      bash -c 'cd /workspace/cli && python3 -c "import re,sys;s=open(\"cmd/entire/cli/resume.go\").read();s=re.sub(r\"/\\*[\\s\\S]*?\\*/\",\"\",s);s=re.sub(r\"//[^\\n]*\",\"\",s);sys.stdout.write(s)" > /tmp/r.go && a=$(grep -c "resumeMultipleCheckpoints" /tmp/r.go); b=$(grep -c "deduplicateSessions" /tmp/r.go); if [ "$a" = "0" ] && [ "$b" = "0" ]; then echo PASS; else echo "FAIL: rmc=$a dedup=$b"; fi'
 
-  - id: f2p_integration_test
+  - id: F2P_RESOLVE_LATEST_ADDED
     kind: F2P
-    weight: 0.18
-    description: "Integration test — squash merge resumes only from latest checkpoint"
-    command: "go test -tags=integration --count=1 -run TestResume_SquashMergeMultipleCheckpoints ./cmd/entire/cli/integration_test/ -timeout 120s"
+    weight: 0.20
+    description: "A new helper that picks the latest checkpoint by CreatedAt is defined and called in resume.go (≥2 references; canonical name resolveLatestCheckpoint, but any 'resolve/pick/select/find/get*latest*checkpoint' identifier is accepted)."
+    command: |
+      bash -c 'cd /workspace/cli && python3 -c "import re,sys;s=open(\"cmd/entire/cli/resume.go\").read();s=re.sub(r\"/\\*[\\s\\S]*?\\*/\",\"\",s);s=re.sub(r\"//[^\\n]*\",\"\",s);sys.stdout.write(s)" > /tmp/r.go && n=$(grep -ciE "[A-Za-z_]*(resolve|pick|select|find|get)[A-Za-z_]*latest[A-Za-z_]*checkpoint[A-Za-z_]*" /tmp/r.go); c=$(grep -c "resolveLatestCheckpoint" /tmp/r.go); if [ "$n" -ge 2 ] || [ "$c" -ge 2 ]; then echo PASS; else echo "FAIL: hits=$n canonical=$c"; fi'
 
-  - id: f2p_all_unit_tests
+  - id: F2P_SKIP_INFO_MESSAGE
     kind: F2P
-    weight: 0.12
-    description: "All unit tests pass — no regressions from the refactor"
-    command: "go test --count=1 ./cmd/entire/cli/ -timeout 60s"
+    weight: 0.20
+    description: "User-visible 'older checkpoints skipped' info message present (≥2 occurrences across resume.go + integration_test/resume_test.go: the printf + the test assertion)."
+    command: |
+      bash -c 'cd /workspace/cli && a=$(grep -c "older checkpoints skipped" cmd/entire/cli/resume.go 2>/dev/null || echo 0); b=$(grep -c "older checkpoints skipped" cmd/entire/cli/integration_test/resume_test.go 2>/dev/null || echo 0); t=$((a+b)); if [ "$t" -ge 2 ]; then echo PASS; else echo "FAIL: total=$t"; fi'
 
-  - id: f2p_no_resume_multiple
+  - id: F2P_DEDUP_TEST_REMOVED
+    kind: F2P
+    weight: 0.15
+    description: "resume_test.go no longer contains TestDeduplicateSessions (the 5 dedup subtests are gone since the helper itself is removed)."
+    command: |
+      bash -c 'cd /workspace/cli && python3 -c "import re,sys;s=open(\"cmd/entire/cli/resume_test.go\").read();s=re.sub(r\"/\\*[\\s\\S]*?\\*/\",\"\",s);s=re.sub(r\"//[^\\n]*\",\"\",s);sys.stdout.write(s)" > /tmp/rt.go && n=$(grep -c "TestDeduplicateSessions" /tmp/rt.go); if [ "$n" = "0" ]; then echo PASS; else echo "FAIL: $n"; fi'
+
+  - id: F2P_LATEST_CHECKPOINT_TEST
+    kind: F2P
+    weight: 0.15
+    description: "resume_test.go gained a unit test for the latest-checkpoint resolver (any function matching ^func\\s+Test[A-Za-z_]*[Ll]atest[A-Za-z_]*[Cc]heckpoint)."
+    command: |
+      bash -c 'cd /workspace/cli && python3 -c "import re,sys;s=open(\"cmd/entire/cli/resume_test.go\").read();s=re.sub(r\"/\\*[\\s\\S]*?\\*/\",\"\",s);s=re.sub(r\"//[^\\n]*\",\"\",s);sys.stdout.write(s)" > /tmp/rt.go && n=$(grep -cE "^func[[:space:]]+Test[A-Za-z_]*[Ll]atest[A-Za-z_]*[Cc]heckpoint" /tmp/rt.go); if [ "$n" -ge 1 ]; then echo PASS; else echo "FAIL"; fi'
+
+  - id: F2P_INTEG_ASSERT_FLIPPED
     kind: F2P
     weight: 0.10
-    description: "resumeMultipleCheckpoints function is removed"
-    command: "! go doc cmd/entire/cli.resumeMultipleCheckpoints > /dev/null 2>&1"
+    description: "integration_test/resume_test.go's squash-merge test no longer asserts 'Restored 2 sessions' for the multi-checkpoint case (≤1 occurrence remains in the file; an unrelated test legitimately keeps one)."
+    command: |
+      bash -c 'cd /workspace/cli && n=$(grep -c "\"Restored 2 sessions\"" cmd/entire/cli/integration_test/resume_test.go 2>/dev/null || echo 0); if [ "$n" -le 1 ]; then echo PASS; else echo "FAIL: $n"; fi'
 
-  - id: f2p_no_deduplicate
-    kind: F2P
-    weight: 0.10
-    description: "deduplicateSessions function is removed"
-    command: "! go doc cmd/entire/cli.deduplicateSessions > /dev/null 2>&1"
+  # ── P2P_REGRESSION (informational only — never positive or negative reward) ──
+  - id: P2P_GO_BUILD
+    kind: P2P_REGRESSION
+    description: "`go build ./cmd/entire/...` succeeds — refactor didn't break compilation."
+    command: |
+      bash -c 'cd /workspace/cli && go build ./cmd/entire/... && echo PASS || echo FAIL'
 
-  - id: f2p_get_metadata_tree
-    kind: F2P
-    weight: 0.08
-    description: "getMetadataTree helper function exists"
-    command: "go doc cmd/entire/cli.getMetadataTree > /dev/null 2>&1"
-
-  - id: f2p_no_background_ctx
-    kind: F2P
-    weight: 0.07
-    description: "getMetadataTree accepts context.Context (no context.Background() internally)"
-    command: "go doc cmd/entire/cli.getMetadataTree 2>&1 | grep -q 'ctx context.Context'"
+  - id: P2P_SOURCE_FILES_EXIST
+    kind: P2P_REGRESSION
+    description: "resume.go + resume_test.go + integration_test/resume_test.go all still exist."
+    command: |
+      bash -c 'cd /workspace/cli && test -f cmd/entire/cli/resume.go && test -f cmd/entire/cli/resume_test.go && test -f cmd/entire/cli/integration_test/resume_test.go && echo PASS || echo FAIL'

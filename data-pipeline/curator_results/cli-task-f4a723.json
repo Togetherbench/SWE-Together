@@ -1,0 +1,18 @@
+{
+  "task": "cli-task-f4a723",
+  "verdict": "FIX_APPLIED",
+  "baseline_score": 0.0,
+  "patched_score": 1.0,
+  "f2p_gates": [
+    {"id": "F2P_FN_SIGNATURE_TWO_PARAMS", "weight": 0.30, "description": "func generateCommitMessage(...) declaration takes 2 parameters and the second references agent.AgentType. Headline contract change — without it the agent-aware fallback is impossible. Implementation-agnostic on parameter NAME (only the type matters)."},
+    {"id": "F2P_HARDCODED_FALLBACK_REMOVED", "weight": 0.20, "description": "commit_message.go no longer contains an unconditional `return \"Claude Code session updates\"` (the buggy hardcoded fallback). Comments stripped before grep so a leftover doc-comment example can't satisfy this gate."},
+    {"id": "F2P_AGENT_PACKAGE_REFERENCED", "weight": 0.20, "description": "commit_message.go references agent.AgentType (≥1 occurrence) — confirms the agent package is imported and used in the implementation file."},
+    {"id": "F2P_CALLSITE_PASSES_AGENT_TYPE", "weight": 0.20, "description": "lifecycle.go calls generateCommitMessage with ≥2 arguments (canonical: ag.Type() as second arg). Implementation-agnostic on the second-argument expression — only call arity is checked."},
+    {"id": "F2P_TEST_NEW_AGENT_CASES", "weight": 0.10, "description": "commit_message_test.go references ≥2 of {AgentTypeCursor, AgentTypeGemini, AgentTypeOpenCode} — proxy for `test cases were added for non-Claude-Code agent types`. 2-of-3 threshold admits partial test additions."}
+  ],
+  "p2p_gates": [
+    {"id": "P2P_GO_BUILD", "kind": "P2P_REGRESSION", "description": "go build ./cmd/entire/... succeeds (informational only per CLAUDE.md — never zeros reward)."}
+  ],
+  "weight_sum": 1.00,
+  "notes": "Replaces SWE-rebench stub (FAIL_TO_PASS=[] caused fallback to overall pass-rate, scoring ≥0.99 on every v0.4.3 trial as pure noise). New gates target the canonical agent-aware-fallback refactor: signature change (1→2 params with agent.AgentType), removal of hardcoded \"Claude Code session updates\" return, lifecycle.go callsite update to pass ag.Type(), and additional test cases for Cursor/Gemini/OpenCode agent types. Validated locally against clone of https://github.com/entireio/cli at parent commit acfa2b49: buggy baseline → reward 0.000 (5/5 F2P fail; P2P go-build passes informationally), canonical patch (data-pipeline/artifacts_cli/canonical_patches/f4a723a3-f761-475d-9b45-5fa0a3282374.json, fidelity=exact, 3 files / +66/-27) → reward 1.000. Partial-credit smoke test (only commit_message.go fixed, lifecycle.go untouched) → reward 0.700, build fails informationally — graceful partial. Anti-overfit: F2P_FN_SIGNATURE_TWO_PARAMS checks parameter type (agent.AgentType), not name; F2P_CALLSITE_PASSES_AGENT_TYPE checks arity, not the specific ag.Type() expression; F2P_TEST_NEW_AGENT_CASES uses 2-of-3 threshold across {Cursor, Gemini, OpenCode}. Go comments are stripped (block + line) before grep on commit_message.go so leftover doc-comment examples can't satisfy `removed` gates. P2P_GO_BUILD is informational only per CLAUDE.md scoring rules; p2p_failed=False hard-coded in the reward block."
+}

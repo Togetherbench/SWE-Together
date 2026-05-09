@@ -1,0 +1,10 @@
+{
+  "task": "agent-swarm-task-4a881b",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Detailed multi-phase plan instruction with 7 explicit acceptance tests at the end. install_config.json FAIL_TO_PASS already lists those 7 test names verbatim and they match the patch-added tests in src/tests/scheduled-tasks.test.ts under the 'One-Time Schedules' describe block. The tests assert behavior on createScheduledTask({scheduleType, ...}) and getScheduledTasks({hideCompleted, scheduleType}) — these param names ARE the public contract the instruction defines, so they are not over-fit to a particular internal helper. Standard SWE-rebench test.sh (no P2P bug). KEEP."
+}

@@ -1,37 +1,63 @@
+# test_manifest.yaml — cli-task-577e8c
+#
+# Verifier checks that the agent added warning logs around `json.Unmarshal`
+# session-data error sites (canonical commit 4beb60c7 on entireio/cli).
+# The user's first message anchored the goal in opencode.go's ReadSession
+# (where ExtractModifiedFiles can fail); the canonical commit also spread
+# the same pattern across 3 strategy/ files. We weight opencode.go heavily
+# (0.55) and reward the broader spread modestly (0.35). go build floors
+# the reward at 0 if the change doesn't compile.
+#
+# Reward formula is weighted-replace, F2P sum = 1.00.
+# P2P_REGRESSION is informational-only (per CLAUDE.md scoring rules) and
+# never zeroes the reward — go-build is here treated as an F2P gate
+# instead, since the build outcome is a required behavioral signal of
+# the change being well-formed.
+version: "1.0"
+description: "Verify warning logs added around session-data unmarshal errors in entireio/cli"
+
 gates:
-  - id: compiles
+  # ── F2P behavioral / structural gates (weight sum: 1.00) ──────────────────
+  - id: F2P_OPENCODE_WARN_IN_READSESSION
     kind: F2P
-    weight: 0.20
-    command: "cd /app && go build ./cmd/entire/cli/agent/opencode/..."
-  - id: tests_pass
+    weight: 0.30
+    description: "ReadSession() in opencode.go contains a logging.* or slog.* call (anchor: user's first turn)."
+    command: "cd /app && python3 /tests/check_ast.py cmd/entire/cli/agent/opencode/opencode.go --check=warn_call_present"
+
+  - id: F2P_OPENCODE_LOG_RICH
     kind: F2P
-    weight: 0.40
-    command: "cd /app && go test ./cmd/entire/cli/agent/opencode/... -count=1 -timeout=60s"
-  - id: warn_call_present
+    weight: 0.25
+    description: "ReadSession's new warn call references a session, references the error, and the error branch has ≥1 meaningful statement beyond modifiedFiles=nil (3-of-3 sub-checks via check_ast.py)."
+    command: |
+      bash -c 'cd /app && python3 /tests/check_ast.py cmd/entire/cli/agent/opencode/opencode.go --check=log_has_session_ref >/dev/null 2>&1 && python3 /tests/check_ast.py cmd/entire/cli/agent/opencode/opencode.go --check=log_has_error >/dev/null 2>&1 && python3 /tests/check_ast.py cmd/entire/cli/agent/opencode/opencode.go --check=error_branch_handles >/dev/null 2>&1 && echo PASS || echo FAIL'
+
+  - id: F2P_LOGGING_IMPORT_SPREAD
     kind: F2P
     weight: 0.15
-    command: "cd /app && python3 /tests/check_ast.py /app/cmd/entire/cli/agent/opencode/opencode.go --check=warn_call_present"
-  - id: log_has_session_ref
+    description: "≥1 of {strategy/common.go, strategy/manual_commit_logs.go, strategy/session.go} gains an import of cmd/entire/cli/logging."
+    command: |
+      bash -c 'cd /app && c=0; for f in cmd/entire/cli/strategy/common.go cmd/entire/cli/strategy/manual_commit_logs.go cmd/entire/cli/strategy/session.go; do if grep -qE "\"github\.com/entireio/cli/cmd/entire/cli/logging\"" "$f" 2>/dev/null; then c=$((c+1)); fi; done; if [ "$c" -ge 1 ]; then echo PASS; else echo "FAIL: $c/3"; fi'
+
+  - id: F2P_UNMARSHAL_WARN_SPREAD
+    kind: F2P
+    weight: 0.20
+    description: "≥1 logging.{Info,Warn,Debug,Error}( call site collectively across strategy/{common,manual_commit_logs,session}.go (buggy baseline: 0; canonical: 6)."
+    command: |
+      bash -c 'cd /app && total=0; for f in cmd/entire/cli/strategy/common.go cmd/entire/cli/strategy/manual_commit_logs.go cmd/entire/cli/strategy/session.go; do n=$(grep -cE "logging\.(Info|Warn|Debug|Error)\(" "$f" 2>/dev/null); n=${n//[[:space:]]/}; total=$((total + ${n:-0})); done; if [ "$total" -ge 1 ]; then echo PASS; else echo "FAIL: $total"; fi'
+
+  - id: F2P_GO_BUILD
     kind: F2P
     weight: 0.10
-    command: "cd /app && python3 /tests/check_ast.py /app/cmd/entire/cli/agent/opencode/opencode.go --check=log_has_session_ref"
-  - id: log_has_error
-    kind: F2P
-    weight: 0.10
-    command: "cd /app && python3 /tests/check_ast.py /app/cmd/entire/cli/agent/opencode/opencode.go --check=log_has_error"
-  - id: error_branch_handles
-    kind: F2P
-    weight: 0.05
-    command: "cd /app && python3 /tests/check_ast.py /app/cmd/entire/cli/agent/opencode/opencode.go --check=error_branch_handles"
+    description: "`go build` of touched packages succeeds (catches missing imports like `context` after adding `context.Background()`)."
+    command: "cd /app && go build ./cmd/entire/cli/agent/opencode/... ./cmd/entire/cli/strategy/..."
 
 default_reward: 0.0
 
 reward_formula:
   kind: weighted-replace
   weights:
-    compiles: 0.20
-    tests_pass: 0.40
-    warn_call_present: 0.15
-    log_has_session_ref: 0.10
-    log_has_error: 0.10
-    error_branch_handles: 0.05
+    F2P_OPENCODE_WARN_IN_READSESSION: 0.30
+    F2P_OPENCODE_LOG_RICH:            0.25
+    F2P_LOGGING_IMPORT_SPREAD:        0.15
+    F2P_UNMARSHAL_WARN_SPREAD:        0.20
+    F2P_GO_BUILD:                     0.10

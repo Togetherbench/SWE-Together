@@ -1,0 +1,28 @@
+{
+  "task": "pi-excel-init-hang-fix",
+  "started_at": "manual-curation",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "patch_noise_stripped"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [
+      "AGENTS.md",
+      "issue-13-close-note.md",
+      "start-pi-dev.sh"
+    ],
+    "validation_attempted": false,
+    "validation_result": null,
+    "notes": "Stripped 3 scratch/noise files from canonical_patch.json: AGENTS.md (5-line addition of 'For UI/bootstrap issues use agent-browser' developer notes — unrelated to the bug fix), issue-13-close-note.md (orphaned 10-line GitHub-issue-close note), start-pi-dev.sh (3-line user-machine-specific dev helper hard-coding /Users/thomasmustier/projects/excel). files_changed_count: 5→2; +135/-25 → +117/-25. Patch now scoped to src/taskpane/{bootstrap.ts,init.ts}.\n\nKnown remaining concerns (NOT fixed here, flagged for future audit): (a) the canonical patch RE-ADDS awaitWithTimeout() which upstream commit 0d5548c REMOVED (caused false-positive init-timeout fatal); the agent's session was a divergent fix path. (b) test.sh upstream gates check for 'ExtensionChannelBus' / 'NO_RUNTIME_REQUIRED_COMMANDS' symbols that are NOT in the canonical patch — these gates were already loosened in test.sh to accept ANY channel/bus pattern under src/extensions/ and ANY allowlist mechanism, but the canonical patch still doesn't introduce either, so those 0.20+0.20=0.40 of upstream weight will fail-by-design on a faithful replay of the canonical patch. Net: the 4 inner F2P gates (sidebar.onCreateTab error-handling, createRuntime action error-handling, /new no-runtime path, behavioral sim) total 0.60 weight and are achievable; the 0.40 upstream weight is essentially unreachable without the agent independently inventing the channel-bus + allowlist mechanism. This is a salvageable but ceiling-constrained task."
+  },
+  "diffs": {
+    "canonical_patch.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/data-pipeline/artifacts_dataclaw/canonical_patches/23c509f2-bafb-485b-b1ab-db05d6105d55.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": true
+}

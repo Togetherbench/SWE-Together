@@ -1,80 +1,95 @@
+# Verifier manifest for cli-task-dbd2bf (defer external agent discovery).
+# See test.sh for the actual gate logic. Σ F2P weights = 1.00 → inner_weight = 0,
+# reward = sum(passed gate weights). No P2P_REGRESSION gates: this is a refactor
+# whose original session traces don't supply a clean regression signal that won't
+# false-positive on plausible alt-fixes.
+
 version: "1.0"
 task_id: cli-task-dbd2bf
+description: |
+  Verify that external agent discovery (DiscoverAndRegister) is deferred from
+  CLI startup to hooks-execution time, via a Cobra RunE-fallback on the hooks
+  command, with the inline RunE logic refactored into a reusable
+  executeAgentHook helper.
 
 gates:
-  # --- GOLD: Behavioral core ---
-  - id: F2P_NO_EAGER_DISCOVERY
+  # ── F2P behavioral gates (Σ = 1.00) ─────────────────────────────────────
+
+  - id: g1_no_eager_discovery
+    kind: F2P
+    weight: 0.25
+    description: |
+      In hooks_cmd.go's newHooksCmd function, DiscoverAndRegister is no longer
+      called at the function-body top level. The base commit (febf309b) calls
+      it directly during command-tree construction (every CLI invocation pays
+      PATH-scan + process-spawn cost). The patch moves this call inside a RunE
+      closure, OR removes it entirely from this function.
+    command: |
+      # Implemented as Python brace-walker in test.sh — we extract the body of
+      # newHooksCmd and verify any DiscoverAndRegister call appears at depth ≥ 1
+      # (i.e. nested inside RunE/anonymous func) rather than at the function's
+      # top level.
+
+  - id: g2_hooks_runE
     kind: F2P
     weight: 0.20
     description: |
-      DiscoverAndRegister is NOT called eagerly in newHooksCmd's function body.
-      Pre-patch: DiscoverAndRegister(discoveryCtx) called directly in newHooksCmd(),
-      causing PATH scanning + process spawning on every CLI invocation.
-      Post-patch: the call must be deferred (inside a RunE closure, or removed from
-      the function body).
+      The hooks command in hooks_cmd.go declares both `Args: cobra.ArbitraryArgs`
+      and a `RunE: func(...)` handler on the cobra.Command literal. This is the
+      Cobra fallback mechanism that intercepts unrecognized subcommands (so
+      external agent hooks can be lazily resolved when actually invoked).
+    command: |
+      # Python regex inside the newHooksCmd body — see test.sh.
 
-  - id: F2P_HOOKS_CMD_RUNE
+  - id: g3_executeAgentHook_extracted
+    kind: F2P
+    weight: 0.20
+    description: |
+      A function named executeAgentHook (or a name containing that substring)
+      is defined at top level in hook_registry.go and contains the core hook
+      execution logic. Anti-stub: the body must reference at least 3 of
+      {WorktreeRoot, IsEnabled, ParseHookEvent, DispatchLifecycleEvent,
+      currentHookAgentName} so a 1-line placeholder doesn't earn credit.
+    command: |
+      # Python: locate the function via regex, brace-walk to find its body,
+      # count required marker-symbol references and substantive statements.
+
+  - id: g4_thin_verb_runE
+    kind: F2P
+    weight: 0.10
+    description: |
+      In hook_registry.go's newAgentHookVerbCmdWithLogging, the RunE closure
+      is now thin (≤ 8 substantive lines, excluding comments and braces) and
+      delegates to a helper rather than containing all hook logic inline.
+      The base commit has ~60 substantive lines inline.
+    command: |
+      # Python: brace-walk to find the inner RunE body, count substantive lines.
+
+  - id: g5_setup_imports_external
     kind: F2P
     weight: 0.15
     description: |
-      The hooks command in hooks_cmd.go has Args: cobra.ArbitraryArgs and a RunE
-      handler that intercepts unrecognized subcommands (external agent hooks).
-      This is the Cobra fallback mechanism that enables lazy discovery.
+      cmd/entire/cli/setup.go imports the agent/external package AND calls
+      external.DiscoverAndRegister somewhere in its body. The base commit
+      does neither — externals weren't discoverable during `entire enable`.
+    command: |
+      grep -qE '"github\.com/entireio/cli/cmd/entire/cli/agent/external"' cmd/entire/cli/setup.go
+      grep -qE '\bexternal\.DiscoverAndRegister\b' cmd/entire/cli/setup.go
 
-  - id: F2P_EXECUTE_AGENT_HOOK_FN
-    kind: F2P
-    weight: 0.15
-    description: |
-      An executeAgentHook function (or equivalent) exists in hook_registry.go
-      containing the core hook execution logic: git repo check, enabled check,
-      logging, event parsing, and lifecycle dispatch.
-      Anti-stub: function body must have >3 substantive statements.
-
-  # --- SILVER: Behavioral supporting ---
-  - id: F2P_LAZY_DISCOVERY_IN_RUNE
+  - id: g6_limitedwriter_err_check
     kind: F2P
     weight: 0.10
     description: |
-      If DiscoverAndRegister appears in hooks_cmd.go, it is inside the RunE
-      (lazy) path — called only when hooks are actually invoked for unknown agents.
-      If DiscoverAndRegister is not in hooks_cmd.go at all, that also passes
-      (the agent may place discovery elsewhere, e.g. only in setup.go).
+      In external.go, the limitedWriter.Write method propagates errors from
+      the inner buf.Write call (canonical: wraps with fmt.Errorf and returns
+      the error). The base commit does plain `return w.buf.Write(p)`.
+    command: |
+      # Python: locate limitedWriter.Write body, require buf.Write call AND
+      # an `err != nil` check AND a fmt.Errorf wrap.
 
-  - id: F2P_SETUP_DISCOVERY
-    kind: F2P
-    weight: 0.10
-    description: |
-      setup.go imports agent/external and calls DiscoverAndRegister during the
-      enable flow, so externally discovered agents appear in agent selection.
-
-  - id: F2P_DELEGATION
-    kind: F2P
-    weight: 0.10
-    description: |
-      newAgentHookVerbCmdWithLogging in hook_registry.go delegates to a shared
-      function rather than containing the full hook logic inline.
-      The pre-patch version had ~70 lines of logic in the RunE closure.
-      Post-patch: the RunE should be thin (< 8 substantive lines), delegating
-      to a reusable function.
-
-  # --- BRONZE: Structural quality ---
-  - id: F2P_BUILDS
-    kind: F2P
-    weight: 0.10
-    description: |
-      The Go project compiles successfully (go build ./...).
-
-  - id: F2P_TESTS_PASS
-    kind: F2P
-    weight: 0.10
-    description: |
-      Unit tests pass: go test ./cmd/entire/cli/...
-
-  # --- P2P_REGRESSION: Gating-only ---
-  - id: P2P_LINTER_SUPPRESSIONS
-    kind: P2P
-    weight: 0.0
-    description: |
-      Existing //nolint:ireturn comments in cmd/entire/cli/ are preserved.
-      Count must be >= 7 (baseline from febf309b commit).
-      Any removal zeroes the reward regardless of F2P scores.
+  # ── P2P_REGRESSION: none ─────────────────────────────────────────────────
+  # No regression gate is declared: the four touched files don't have unit
+  # tests in the buggy commit that would deterministically pass on the agent's
+  # alt-fix shapes (hook-registry tests in particular call newHooksCmd() and
+  # would need updating per the canonical-patch instruction). Rather than risk
+  # a false-zeroing P2P, we rely on the F2P gates to discriminate.

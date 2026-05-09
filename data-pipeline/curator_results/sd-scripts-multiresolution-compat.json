@@ -1,0 +1,15 @@
+{
+  "task": "sd-scripts-multiresolution-compat",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "tests/test.sh: trimmed run_v043_gate f2p_upstream_1bfda384 py_compile target list from 'library/strategy_base.py library/strategy_sd.py tests/library/test_strategy_sd_compat.py' down to just 'library/strategy_base.py'. The latter two files are NOT in the canonical patch (ses_3863f2d10ffeYja949H9XJGyyK.json modifies only library/strategy_base.py). The dropped paths would have caused the gate to either succeed for the wrong reason (compiling unmodified upstream files) or fail spuriously if a future upstream removed those files."
+  ],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [
+    "library/strategy_sd.py (referenced by f2p_upstream_1bfda384 gate but not modified in canonical patch)",
+    "tests/library/test_strategy_sd_compat.py (referenced by f2p_upstream_1bfda384 gate but not in canonical patch — this file may not exist at the base commit)"
+  ],
+  "validation_attempted": false,
+  "notes": "The bash-side F2P gates (t1_legacy_accepted, t1_legacy_load, t3_wrong_shape_rejected, t3_suffix_priority, t4_no_full_decompression, t4_truncated_body_ok) are well-targeted to the canonical patch's strategy_base.py changes — they exercise _default_is_disk_cached_latents_expected and _default_load_latents_from_disk via SdSdxlLatentsCachingStrategy and verify (a) legacy unsuffixed-key fallback works, (b) suffixed key takes priority when both present, (c) header-only metadata read (zip-stream count under 1024 bytes), (d) truncated-body npz still graded correctly. These match the patch behavior 1:1. The P2P_GATING gate p2p_suffixed_path_regression is the right kind of regression floor (capped to 0.0 on failure). Only defect was the upstream f2p gate's overreach into files outside the canonical patch — now fixed. (A concurrent e2b runner had also written a 'skip — no template' record at this path; replaced with curator verdict per task spec.)"
+}

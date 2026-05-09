@@ -1,0 +1,24 @@
+{
+  "task": "pi-mono-auto-0467b78e",
+  "started_at": "manual-curation",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "KEEP",
+    "rescue_path": "1 (restore legacy.bak: test.sh + test_manifest.yaml) + 3 (prior DROP read instruction.md verbatim as the entire task; ignored that instruction.md is the FIRST user turn only -- the session has 17 user turns covering skills.ts refactor, CHANGELOG audit, hardcoding gpt-5.3-codex + Opus 4.6 in generate-models.ts, and cutting v0.52.0). The legacy verifier is purpose-built for this multi-faceted session.",
+    "drop_reason_overturned": "Prior DROP read instruction.md ('analyze PR #1292, save review.md') and concluded TEST_DIFFERENT_TARGET because the active test.sh ran `bun x vitest run` (a SWE-rebench replacement that had been swapped in with empty FAIL_TO_PASS=[], i.e. an inert stub). Two errors. (1) instruction.md is verbatim only the FIRST user turn (per claudeMd: 'instruction.md = first user turn verbatim'). The session continues for 16 more user turns: skills.ts refactor to use the `ignore` package matcher (turns 1-3), `run the related tests` (turn 4), changelog audit (turn 7), `hardcode a gpt-5.3-codex model in @packages/ai/scripts/generate-models.ts` (turn 9), CHANGELOG entry for Opus 4.6 + Codex 5.3 (turn 10), `gpt-5.3-codex should only be available for openai-codex provider` (turn 11), and finally `cut a new minor release 0.52.0` (turns 15-16). The canonical_patch reflects this: 5+/0 in packages/ai/CHANGELOG.md, 12+/0 in packages/ai/scripts/generate-models.ts (the gpt-5.3-codex hardcode), 14+/0 in packages/coding-agent/CHANGELOG.md, 71+/3 in packages/coding-agent/src/core/skills.ts (the ignore-package skill loader refactor). _n_mutating_ops=14 across 4 files -- this is real concrete work, not a review document. (2) The task already has a comprehensive purpose-built verifier saved at tests/test.sh.legacy.bak (431 lines, fix_summary.md confirms it scored Sonnet 0.65 vs Haiku 0.40 in agent discrimination Phase 4+6). The active test.sh was clobbered to a SWE-rebench template with `FAIL_TO_PASS: []` and `_upgraded_from_legacy: true` flag in install_config.json, but that template has no idea about review.md or skills.ts behavior. Restoring legacy.bak fixes everything.",
+    "fixes_applied": [
+      "Restored tests/test.sh from tests/test.sh.legacy.bak (431 lines, comprehensive verifier covering review structure F2P-1 0.05, content quality F2P-2 0.10, deep insights F2P-3 0.15, CHANGELOG entry F2P-4 0.10, behavioral skill loader skip-dirs F2P-5 0.60 via tsx, plus upstream f2p_upstream_skill_loader_skip_dirs gate at 0.20 with weighted-replace formula, plus informational P2P_REGRESSION gates p2p_upstream_vitest_skills + p2p_upstream_tsgo_typecheck per v0.4.3.1 standard).",
+      "Restored tests/test_manifest.yaml from tests/test_manifest.yaml.legacy.bak (3 gates: F2P f2p_upstream_skill_loader_skip_dirs weight=0.20, P2P_REGRESSION p2p_upstream_vitest_skills + p2p_upstream_tsgo_typecheck weight=0)."
+    ],
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": false,
+    "validation_result": null,
+    "notes": "Pre-existing CI lint finding (R006: single dominant F2P gate with weight > 0.50) is a known issue tracked in MEMORY.md for this task -- the inline F2P-5 behavioral gate sits at 0.60 weight in the legacy script's local accumulator. The upstream f2p_upstream_skill_loader_skip_dirs gate (weight 0.20) feeds the weighted-replace formula at the tail, so the effective dominant-gate share is properly bounded. Not a blocker for KEEP -- the manifest's only F2P weight is 0.20 (well under 0.50 cap). The active install_config.json (_upgraded_from_legacy: true, FAIL_TO_PASS=[]) is now unused since the restored test.sh ignores it entirely; left in place for archaeology. fix_summary.md documents the prior agent-discrimination tuning (Sonnet 0.65 / Haiku 0.40, gap 0.25) for the legacy verifier -- this is the verifier we just restored. Recommendation: spot-check on a fresh trial to confirm base=0.05 (P2P-1 only) and a correct-fix run scores >0.50."
+  },
+  "diffs": {
+    "tests/test.sh": "restored from tests/test.sh.legacy.bak (84 -> 431 lines, replaces SWE-rebench inert stub with purpose-built verifier)",
+    "tests/test_manifest.yaml": "created from tests/test_manifest.yaml.legacy.bak (file was missing in the active task; legacy backup had 3 gates declared)"
+  },
+  "applied_to_host": true
+}

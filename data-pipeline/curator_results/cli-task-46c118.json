@@ -1,0 +1,29 @@
+{
+  "task": "cli-task-46c118",
+  "verdict": "FIX_APPLIED",
+  "baseline_score": 0.0,
+  "patched_score": 1.0,
+  "f2p_gates": [
+    {"id": "F2P_DROID_NO_BARE_SLEEP", "weight": 0.20, "description": "StartSession in e2e/agents/droid.go no longer contains a bare `time.Sleep(2 * time.Second)` statement (anti-pattern removed)."},
+    {"id": "F2P_DROID_CONTEXT_AWARE", "weight": 0.20, "description": "StartSession body uses a context-aware wait — `select` with `<-ctx.Done()` and a timer (`time.After`, `timer.C`, or `time.NewTimer`) (positive landmark)."},
+    {"id": "F2P_TMUX_DEAD_ON_ERROR", "weight": 0.20, "description": "IsPaneDead in e2e/agents/tmux.go no longer has `if err != nil { return false }`; instead returns true (or otherwise treats tmux failure as dead)."},
+    {"id": "F2P_REPO_JSON_MARSHAL", "weight": 0.20, "description": "e2e/testutil/repo.go uses json.Marshal(...) for the model setting and assigns json.RawMessage(<var>) to repoSettings[\"model\"] (implementation-agnostic on var name)."},
+    {"id": "F2P_REPO_NO_STRING_CONCAT", "weight": 0.10, "description": "Buggy backtick string-concat (json.RawMessage(`\"` + ...)) for the model key is gone (anti-pattern removed)."},
+    {"id": "F2P_REPO_ERR_HANDLED", "weight": 0.10, "description": "json.Marshal(...) call for the model setting is followed by an `if err != nil { return ... }` guard within ~8 lines (error-return discipline)."}
+  ],
+  "p2p_gates": [
+    {"id": "P2P_GO_BUILD", "kind": "P2P_REGRESSION", "description": "go build ./e2e/... succeeds (informational only per CLAUDE.md — never zeros reward; both buggy and canonical states pass build)."}
+  ],
+  "weight_sum": 1.00,
+  "partial_credit_validation": {
+    "buggy_baseline": 0.000,
+    "canonical_full": 1.000,
+    "droid_plus_tmux_only": 0.600,
+    "repo_only": 0.400
+  },
+  "previous_curator_log": {
+    "verdict": "KEEP",
+    "notes": "Patch implements exactly the 3 PR review fixes described in the instruction (context-aware sleep, tmux dead-pane on error, json.Marshal for model ID). No new tests were added, so empty FAIL_TO_PASS is correct; test.sh falls back to overall pass rate across the repo's unit test suite."
+  },
+  "notes": "Rewrote SWE-rebench stub (empty FAIL_TO_PASS → 'overall pass rate' fallback was scoring ≥0.99 as pure noise across all v0.4.3 trials — leaderboard ceiling collapse). New tests/test.sh + tests/test_manifest.yaml install 6 weighted F2P structural gates (sum=1.00) targeting the 3 PR #607 review fixes: (1) context-aware sleep in droid.go::StartSession, (2) tmux.go::IsPaneDead returning true on err, (3) json.Marshal + err-guard for model setting in testutil/repo.go. Validated locally: clone https://github.com/entireio/cli at parent commit 93f0dfb7, run test.sh against buggy baseline → reward 0.000; apply canonical patch (data-pipeline/artifacts_cli/canonical_patches/46c118bb-d5d8-4454-97cd-cd36a6be1955.json, fidelity=exact, 3 files / +14/-3) → reward 1.000. Partial credit: droid+tmux-only → 0.60; repo-only → 0.40 (graceful mid-credit on per-concern subsets). Anti-overfit: G2 accepts time.After OR timer.C OR time.NewTimer (multiple valid context-aware shapes); G3 accepts any return-true path post-tmux-error (not pinning to exact placement); G4 implementation-agnostic on variable name (modelJSON/b/raw/etc.). P2P_GO_BUILD is informational only per scoring_traps.md (p2p_failed=False always). Reward formula is weighted-replace per CLAUDE.md."
+}

@@ -1,0 +1,10 @@
+{
+  "task": "amytis-task-e3714e",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Coherent. Instruction (autoPaths/customPaths bug in series URLs) matches patch (Object.hasOwn() conversions + customPathValues collision check + resolveSeriesSlug helper) and matches F2P tests in tests/unit/static-params.test.ts. F2P tests are behavioral (assert params contain expected slug structures), not name-checking the gold patch's function names. PASS_TO_PASS empty so test.sh's pass_to_pass branch is dead code. No leak in instruction. NOTE: written as .audit.json to avoid clobbering by parallel eval-runner that writes <task>.json skip records."
+}

@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-2c3e30",
+  "started_at": "18:56:24",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\nTwo issues with `FAIL_TO_PASS`:\n\n1. **`TestFindCheckpointInHistory_MultipleCheckpoints`** \u2014 already exists at base and passes (`PASS` confirmed by running it). Moved to `PASS_TO_PASS`.\n\n2. **`TestResumeMultipleCheckpoints_SortsByCreatedAt`** \u2014 added by the patch, but directly calls `collectCheckpointsByAge()`, an internal helper that only the canonical patch's author extracted. Any agent who inlines the sort logic in `resumeMultipleCheckpoints` (or names the helper differently) would fail this gate. Dropped from F2P per the over-fit rule; F2P left empty.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "f2p_test_renamed"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": true,
+    "validation_result": "passed",
+    "notes": "TestFindCheckpointInHistory_MultipleCheckpoints already passes at base so moved to PASS_TO_PASS. TestResumeMultipleCheckpoints_SortsByCreatedAt is the only patch-added test but it directly calls the internal helper collectCheckpointsByAge() \u2014 over-fit to the canonical implementation; left F2P empty per guidelines rather than ship a narrow gate."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-2c3e30/tests/install_config.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 141.1
+}

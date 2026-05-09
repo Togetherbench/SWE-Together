@@ -1,0 +1,19 @@
+{
+  "task": "amytis-implement-3b6cb5",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "Restored tests/test.sh from tests/test.sh.legacy.bak (legacy AST-based behavioral gates orphaned during _upgraded_from_legacy migration)",
+    "Restored tests/test_manifest.yaml from tests/test_manifest.yaml.legacy.bak"
+  ],
+  "drop_reason": null,
+  "f2p_added": [
+    "F2P_I18N_ENABLED (weight 0.20) — site.config.ts siteConfig.i18n object has 'enabled' property",
+    "F2P_PROVIDER_GUARD (weight 0.25) — LanguageProvider.tsx has isI18nEnabled-like var (referencing enabled+locales) AND useEffect contains early-return guard checking enabled",
+    "F2P_LANGSWITCH_CHECK (weight 0.15) — LanguageSwitch.tsx has if-statement whose condition mentions 'enabled' and consequence returns null",
+    "F2P_CONFIG_DOC (weight 0.10) — site.config.ts i18n block contains documentation keywords (disable/single/plain)",
+    "F2P_EXAMPLE_FILE (weight 0.10) — site.config.example.ts exists with 'enabled' and 'false'"
+  ],
+  "files_stripped_from_patch": [],
+  "validation_attempted": true,
+  "notes": "Triple-check overturns DROP: same _upgraded_from_legacy pathology that the sibling agent flagged on pi-mono-auto-d8c68afc. Legacy AST gates (5 F2P, sum weights = 0.80) precisely target the 4 substantive files in the canonical patch (site.config.ts, site.config.example.ts, LanguageProvider.tsx, LanguageSwitch.tsx); the 5th touched file (books chapter page) and the introduction.mdx prose rewrite are uncovered by gates which is correct since both are post-feature work / unrelated noise. SMOKING-GUN VALIDATION PERFORMED: cloned hutusi/amytis at base commit 6429c69 to /tmp/amytis-check, ran legacy AST gate logic (tree-sitter) against (a) raw base state and (b) canonical-patched state. Base state: all 5 gates FAIL -> f2p_any_pass=false -> reward=0.0 (no-op agent gets 0). Canonical-patched state: all 5 gates PASS -> reward=0.80 (full credit minus the 0.20 'inner' slot which lacks a base_reward source — acceptable). Critically, the CURRENT (broken) test.sh would have given a no-op agent ~1.0 because empty FAIL_TO_PASS + 'fall back to overall pass rate' on a base commit where all 13 existing bun tests pass = 1.0. So DROP would have been merciful but the rescue is strictly better: the legacy gates make this a measurable multi-turn implementation task whose canonical solution scores 0.80 and a no-op scores 0.00. Original session has 5 Edits + 2 Writes touching exactly the 4 gated files plus the books page; user_simulation_prompt has 6 substantive turns of design dialog (the agent had to negotiate Option A vs separate template). This is a high-quality multi-turn task that the legacy migration silently neutered. Fix applied by restoring the .legacy.bak files in place."
+}

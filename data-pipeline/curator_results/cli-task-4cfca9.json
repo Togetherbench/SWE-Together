@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-4cfca9",
+  "started_at": "18:47:23",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\n**Fix applied:** Removed `TestOldIdleSession_BaseCommitNotUpdated` and `TestOldEndedSession_BaseCommitNotUpdated` from `FAIL_TO_PASS`.\n\n**Why:** Both tests live in `old_session_basecommit_test.go` which has a `//go:build integration` build tag. The `test_cmd` is `go test -v ./...` with no `-tags integration`, so those tests are never compiled or executed \u2014 they'd always register as \"not found\" by the parser, failing to contribute any reward. Attempting to add the flag also fails: the integration test package requires building the CLI binary and VCS stamping, which errors out in the sandbox.\n\n**What remains in F2P (3 tests, all in `phase_postcommit_test.go`, no build tag):**\n- `TestPostCommit_IdleSession_NoNewContent_PreservesBaseCommit` \u2014 renamed from `UpdatesBaseCommit`, assertion reversed; behavioral\n- `TestPostCommit_OldIdleSession_BaseCommitNotUpdated` \u2014 new behavioral test\n- `TestPostCommit_OldEndedSession_BaseCommitNotUpdated` \u2014 new behavioral test\n\nThese three cover the same bug (old sessions' `BaseCommit` incorrectly advanced) without being over-fit to internals.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "f2p_test_renamed"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": true,
+    "validation_result": "skipped",
+    "notes": "Removed TestOldIdleSession_BaseCommitNotUpdated and TestOldEndedSession_BaseCommitNotUpdated from FAIL_TO_PASS: these are in old_session_basecommit_test.go which has a '//go:build integration' tag and won't compile/run with 'go test -v ./...'; integration tests also fail to build due to VCS issues in the sandbox. The remaining three F2P tests (all in phase_postcommit_test.go, no build tag) are behavioral and cover the same bug \u2014 BaseCommit not updated for IDLE/ENDED sessions. The patch itself renames TestPostCommit_IdleSession_NoNewContent_UpdatesBaseCommit to TestPostCommit_IdleSession_NoNewContent_PreservesBaseCommit and reverses its assertion, consistent with the bug fix in manual_commit_hooks.go."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-4cfca9/tests/install_config.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 208.6
+}

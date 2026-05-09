@@ -1,0 +1,30 @@
+{
+  "session_id": "c3f74ad9-f358-40e5-bd43-7ffeec60f1e3",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "badlogic/pi-mono",
+  "is_agent_author": true,
+  "files_changed_count": 2,
+  "total_additions": 12,
+  "total_deletions": 0,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tpackages/coding-agent/CHANGELOG.md\nM\tpackages/coding-agent/src/modes/interactive/components/tool-execution.ts\n",
+  "numstat": "4\t0\tpackages/coding-agent/CHANGELOG.md\n8\t0\tpackages/coding-agent/src/modes/interactive/components/tool-execution.ts\n",
+  "patch": "diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md\nindex a4462a0..4e23c0b 100644\n--- a/packages/coding-agent/CHANGELOG.md\n+++ b/packages/coding-agent/CHANGELOG.md\n@@ -2,6 +2,10 @@\n \n ## [Unreleased]\n \n+### Fixed\n+\n+- Fixed `write` tool not displaying errors in the UI when execution fails ([#856](https://github.com/badlogic/pi-mono/issues/856))\n+\n ## [0.49.2] - 2026-01-19\n \n ### Added\ndiff --git a/packages/coding-agent/src/modes/interactive/components/tool-execution.ts b/packages/coding-agent/src/modes/interactive/components/tool-execution.ts\nindex cacd459..0df2f4d 100644\n--- a/packages/coding-agent/src/modes/interactive/components/tool-execution.ts\n+++ b/packages/coding-agent/src/modes/interactive/components/tool-execution.ts\n@@ -542,6 +542,14 @@ export class ToolExecutionComponent extends Container {\n \t\t\t\t\t\t` ${keyHint(\"expandTools\", \"to expand\")})`;\n \t\t\t\t}\n \t\t\t}\n+\n+\t\t\t// Show error if tool execution failed\n+\t\t\tif (this.result?.isError) {\n+\t\t\t\tconst errorText = this.getTextOutput();\n+\t\t\t\tif (errorText) {\n+\t\t\t\t\ttext += `\\n\\n${theme.fg(\"error\", errorText)}`;\n+\t\t\t\t}\n+\t\t\t}\n \t\t} else if (this.toolName === \"edit\") {\n \t\t\tconst rawPath = this.args?.file_path || this.args?.path || \"\";\n \t\t\tconst path = shortenPath(rawPath);\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "pi-mono",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "op[3] edit: old text not found in packages/coding-agent/src/modes/interactive/components/tool-execution.ts"
+  ],
+  "_base_commit": "d37b5a52d76942bd80b91fe3bb38263f09592758",
+  "_repo_url": "https://github.com/badlogic/pi-mono",
+  "_task_name": "pi-mono-tool-execution-write-error",
+  "_n_mutating_ops": 6,
+  "_curator_notes": [
+    "stripped scratch index.js, index.ts, and package.json gut from patch (top-level test scaffolding that destroyed pi-monorepo workspace config); kept CHANGELOG + tool-execution.ts (the real 8-line fix)"
+  ]
+}

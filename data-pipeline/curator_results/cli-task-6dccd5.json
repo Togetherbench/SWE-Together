@@ -1,0 +1,35 @@
+{
+  "task": "cli-task-6dccd5",
+  "started_at": "18:52:05",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\nFixes applied:\n\n1. **Patch noise stripped** \u2014 Removed `.entire/REVIEW.md` (empty placeholder, 0 additions) and `.entire/WINGMAN_PLAN.md` (204-line plan doc) from the patch. Both are agent-internal dir files. Updated `files_changed_count` 10\u21928, `total_additions` 1250\u21921045.\n\n2. **Instruction REDACTED leak stripped** \u2014 Removed the trailing line `\"read the full transcript at: <REDACTED_TRANSCRIPT_PATH>\"` from `instruction.md`.\n\n**Not touched:**\n- The `auth.go` block in the patch is a parsing artifact from the embedded diff literal (backtick string) in `TestBuildReviewPrompt_IncludesAllSections`. Stripping it would corrupt the `wingman_test.go` diff content, so it was left as-is.\n- F2P tests are kept as-is. The instruction is highly prescriptive (explicitly names `IsWingmanEnabled()`, `WingmanPayload`, dedup via SHA256, etc.), so most tests align with the spec rather than being arbitrary canonical choices.\n- `test.sh` uses the standard scoring pattern with no P2P_REGRESSION zero bug.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "patch_noise_stripped",
+      "instruction_redacted_leak_stripped"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [
+      ".entire/REVIEW.md",
+      ".entire/WINGMAN_PLAN.md"
+    ],
+    "validation_attempted": false,
+    "validation_result": "skipped",
+    "notes": "Stripped .entire/REVIEW.md (empty placeholder) and .entire/WINGMAN_PLAN.md (agent plan doc) as agent-internal dir noise; removed <REDACTED_TRANSCRIPT_PATH> line from instruction.md. The auth.go block in the patch is a parsing artifact from the embedded diff literal in TestBuildReviewPrompt_IncludesAllSections and was left intact as stripping it would corrupt wingman_test.go content. F2P tests are behavioral enough given the prescriptive instruction that names most function signatures explicitly."
+  },
+  "diffs": {
+    "instruction.md": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-6dccd5/instruction.md",
+      "changed": true
+    },
+    "canonical_patch.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/data-pipeline/artifacts_cli/canonical_patches/6dccd523-72ba-4cb2-b043-2422d5fa2cda.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 150.5
+}

@@ -1,0 +1,52 @@
+# Rescue rewrite — broadened gates accept canonical workaround OR alt-fix.
+# Sum of F2P weights = 1.00 (canonical weighted-replace).
+version: '1.0'
+task: pi-mono-parallel-tool-stall
+
+gates:
+- id: t1_f2p_fix_wired
+  turn: 11
+  kind: F2P
+  weight: 0.30
+  description: >-
+    Sequential-execution fix is wired. Implementation-agnostic: accepts
+    (a) toolExecution: "sequential" added to packages/coding-agent/src/core/sdk.ts
+    (canonical workaround), (b) a serialization primitive in interactive-mode.ts
+    or runner.ts wired into >=2 dialog methods, OR (c) a sequential branch in
+    packages/agent/src/agent-loop.ts.
+- id: t2_f2p_concurrency_test_exists
+  turn: 2
+  kind: F2P
+  weight: 0.20
+  description: >-
+    A new test file is added that exercises two concurrent interactive tool
+    calls (Promise.all, two toolCall objects, or two ctx.ui.* invocations).
+- id: t3_f2p_test_drives_both
+  turn: 16
+  kind: F2P
+  weight: 0.15
+  description: >-
+    The added test drives BOTH submissions, not just one. Accepts Promise.all,
+    two toolCall objects in a streamFn, ask_a/ask_b twin-tool pattern, or two
+    awaited ctx.ui.* calls.
+- id: t4_f2p_test_imports_real_code
+  turn: 15
+  kind: F2P
+  weight: 0.20
+  description: >-
+    The added test imports real production classes (createAgentSession,
+    InteractiveMode, ExtensionRunner, AgentLoop) from src — not local
+    re-implementations or heavy mocks.
+- id: t5_f2p_concept_coverage
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: >-
+    Added text (memo + tests + diff) covers >=3 of 4 concept groups:
+    parallel/concurrent, sequential/serialize/queue, interactive/dialog/ctx.ui,
+    stall/orphan/hang/timeout.
+- id: p2p_src_files_intact
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: Hotspot source files (sdk.ts, interactive-mode.ts, runner.ts, agent-loop.ts) not truncated.

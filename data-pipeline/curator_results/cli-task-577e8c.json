@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-577e8c",
+  "verdict": "REPAIR",
+  "fixes_applied": [
+    "Replaced SWE-rebench stub test.sh (FAIL_TO_PASS=[], PASS_TO_PASS=[], parse-log-gotest fallback giving every trial >=0.99 -- degenerate ceiling) with a hand-rolled v0.4.3-compliant verifier scoped to the canonical patch's 4 modified files.",
+    "Defined 5 weighted F2P gates summing to 1.00, weighted-replace formula with p2p_failed=False:\n  - F2P_OPENCODE_WARN_IN_READSESSION (0.30) -- check_ast.py warn_call_present scoped to ReadSession() body\n  - F2P_OPENCODE_LOG_RICH (0.25) -- conjunctive log_has_session_ref AND log_has_error AND error_branch_handles (anti-overfitting on minimal `logging.Warn(ctx, \"oops\")`)\n  - F2P_LOGGING_IMPORT_SPREAD (0.15) -- >=1 of 3 strategy/{common,manual_commit_logs,session}.go gains a logging package import\n  - F2P_UNMARSHAL_WARN_SPREAD (0.20) -- >=1 logging.{Info,Warn,Debug,Error}( call across the 3 strategy files (baseline 0; canonical 6)\n  - F2P_GO_BUILD (0.10) -- go build of touched packages succeeds (catches missing `context` import)",
+    "Rewrote tests/test_manifest.yaml with matching gate IDs/commands/weights for harness consistency; preserved tests/check_ast.py (the prior scaffold's AST helper -- its checks are reused via gates 1 and 2)."
+  ],
+  "drop_reason": null,
+  "f2p_added": [
+    "F2P_OPENCODE_WARN_IN_READSESSION",
+    "F2P_OPENCODE_LOG_RICH",
+    "F2P_LOGGING_IMPORT_SPREAD",
+    "F2P_UNMARSHAL_WARN_SPREAD",
+    "F2P_GO_BUILD"
+  ],
+  "files_stripped_from_patch": [],
+  "validation_attempted": true,
+  "validation_result": {
+    "baseline_reward": 0.10,
+    "canonical_reward": 1.00,
+    "partial_opencode_only_reward": 0.65,
+    "naive_warn_without_details_reward": 0.40,
+    "method": "Cloned entireio/cli @ 092146da477575eeaf5219df24e225c3777687d3, applied data-pipeline/artifacts_cli/canonical_patches/577e8c02-...json, ran tests/test.sh against each state."
+  },
+  "notes": "Cloned entireio/cli @ 092146da477575eeaf5219df24e225c3777687d3 into /tmp/cli-577e8c, ran the new verifier in four states:\n  - BASELINE (untouched repo): reward = 0.10 (only F2P_GO_BUILD passes -- within target 0-0.15)\n  - PARTIAL (opencode.go-only fix; matches the user's converged session state per user_simulation_prompt.md Turn 3): reward = 0.65 (G1+G2+G5 pass, G3+G4 fail -- graceful partial credit)\n  - CANONICAL (full data-pipeline patch with 4-file spread): reward = 1.00 (all 5 gates pass -- well above the >=0.7 target)\n  - NAIVE (bare `logging.Warn(ctx, \"oops\")` without session_ref/error details): reward = 0.40 -- anti-overfitting works; G2's conjunctive detail check correctly fails.\n\nWeighting rationale: the user's first message anchors the goal in opencode.go's ReadSession (Turn 1: \"if we catch any error unmarshaling session data we should, at least, log a warning message with the content\"). The canonical commit (4beb60c7) spread the same pattern across 3 strategy/ files, but the session converged on opencode.go alone (Turn 2 redirect, Turn 3 \"commit it\"). I therefore weighted opencode.go heavily (0.55 across G1+G2) so the user's converged state scores 0.65, while the broader canonical spread sails through to 1.00. This dual-anchor design follows the OpenAI SWE-bench Verified critique -- implementations that diverge from the gold patch's exact identifier/structure aren't penalized as long as the behavioral concept (warn on session-unmarshal failure with detail) is present.\n\nCanonical patch fidelity: data-pipeline/artifacts_cli/canonical_patches/577e8c02-5f1b-4f4d-ab6a-f1848ef0fd8e.json is `directional` reconstruction with 2 minor `edit_anchor_mismatch` warnings. The patch applies cleanly via `git apply` against the base commit and produces a clean `go build`. The file contracts (4 files: opencode.go, common.go, manual_commit_logs.go, session.go; numstat 4/0, 31/4, 9/0, 8/0) match the verifier's expectations exactly. No stripping needed.\n\nOther state: README.md gate table is now stale (lists the prior `compiles`/`tests_pass`/`warn_call_present`/etc. rows) -- left as-is per scope; it's documentation and the new gates are documented inline in test.sh and test_manifest.yaml. install_config.json is no longer consulted by the new test.sh but is left in place for backwards compatibility with any tooling that still reads it. tests/check_ast.py preserved unchanged (the new test.sh delegates to it for the opencode.go gates)."
+}

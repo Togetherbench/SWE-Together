@@ -1,39 +1,127 @@
-# Test manifest for cli-task-726de6
-# Canonical CI: .github/workflows/ci.yml -> mise run test:ci -> go test -tags=integration -race ./...
-# Go version: 1.26.0 (from go.mod and .mise.toml)
+# test_manifest.yaml — cli-task-726de6
+#
+# Verifier checks the Factory AI Droid welcome-message refactor on
+# entireio/cli (canonical commit 8118d5e, parent 7f1cdc8c). The bug:
+# `cmd/entire/cli/lifecycle.go::handleLifecycleSessionStart` unconditionally
+# called `outputHookResponse(message)`, JSON-encoding `{"systemMessage":"…"}`
+# to stdout — but Factory AI Droid does not parse that JSON, so users saw
+# the raw JSON in their terminal.
+#
+# Canonical fix shape:
+#   1. New `HookResponseWriter` interface in cmd/entire/cli/agent/agent.go
+#      with method `WriteHookResponse(message string) error`.
+#   2. `*ClaudeCodeAgent` implements it via JSON `{"systemMessage": …}`.
+#   3. `*FactoryAIDroidAgent` implements it via plain-text `fmt.Fprintln(os.Stdout, …)`.
+#   4. `cmd/entire/cli/lifecycle.go` switches to a type-assertion gate.
+#   5. `cmd/entire/cli/hooks.go` deletes the obsolete `outputHookResponse`
+#      helper and `hookResponse` struct.
+#
+# Gates here mirror the inline checks in tests/test.sh; the script evaluates
+# them with comment-stripped Python regex over the Go source and writes
+# verdicts to /logs/verifier/gates.json. Reward formula is weighted-replace
+# (CLAUDE.md canonical), F2P sum = 1.00. P2P_REGRESSION is informational
+# only (per CLAUDE.md scoring rules).
+version: "1.0"
+description: "Verify Factory AI Droid welcome-message refactor — HookResponseWriter interface + per-agent implementations"
+
 gates:
-  - id: "outputhook-gone"
-    kind: "F2P"
+  # ── F2P behavioral / structural gates (weight sum: 1.00) ──────────────────
+  - id: F2P_HRW_INTERFACE_DEFINED
+    kind: F2P
     weight: 0.25
-    command: "python3 -c \"import sys; content=open('/repo/cmd/entire/cli/hooks.go').read(); sys.exit(0 if 'func outputHookResponse' not in content and 'type hookResponse struct' not in content else 1)\""
-    description: "Verify hooks.go no longer defines outputHookResponse function or hookResponse struct"
-  - id: "lifecycle-agent-dispatch"
-    kind: "F2P"
-    weight: 0.25
-    command: "python3 -c \"import sys; content=open('/repo/cmd/entire/cli/lifecycle.go').read(); sys.exit(0 if 'outputHookResponse(' not in content else 1)\""
-    description: "Verify lifecycle.go does not directly call outputHookResponse"
-  - id: "factoryai-plaintext"
-    kind: "F2P"
+    description: "agent/agent.go defines a `HookResponseWriter` interface containing a `WriteHookResponse(message string) error` method (comments stripped before matching)."
+    command: |
+      bash -c 'cd /repo && python3 -c "
+      import re
+      src = open(\"cmd/entire/cli/agent/agent.go\").read()
+      src = re.sub(r\"/\*[\\s\\S]*?\*/\", \"\", src)
+      src = re.sub(r\"//[^\\n]*\", \"\", src)
+      m = re.search(r\"type\\s+HookResponseWriter\\s+interface\\s*\\{\", src)
+      ok = bool(m) and bool(re.search(r\"WriteHookResponse\\s*\\([^)]*\\bstring\\b[^)]*\\)\\s*error\\b\", src[m.end():] if m else \"\"))
+      print(\"PASS\" if ok else \"FAIL\")
+      "'
+
+  - id: F2P_OLD_HELPER_REMOVED
+    kind: F2P
     weight: 0.20
-    command: "python3 -c \"import sys,re; content=open('/repo/cmd/entire/cli/agent/factoryaidroid/lifecycle.go').read(); sys.exit(0 if re.search(r'fmt\\.Fprint|fmt\\.Println|fmt\\.Printf', content) else 1)\""
-    description: "Verify Factory AI Droid outputs plain text via fmt.Fprint*"
-  - id: "claude-json-response"
-    kind: "F2P"
+    description: "cmd/entire/cli/hooks.go no longer defines `outputHookResponse(...)` or `type hookResponse struct` (comments stripped)."
+    command: |
+      bash -c 'cd /repo && python3 -c "
+      import re
+      src = open(\"cmd/entire/cli/hooks.go\").read()
+      src = re.sub(r\"/\*[\\s\\S]*?\*/\", \"\", src)
+      src = re.sub(r\"//[^\\n]*\", \"\", src)
+      bad = bool(re.search(r\"\\bfunc\\s+outputHookResponse\\s*\\(\", src)) or bool(re.search(r\"\\btype\\s+hookResponse\\s+struct\\b\", src))
+      print(\"PASS\" if not bad else \"FAIL\")
+      "'
+
+  - id: F2P_LIFECYCLE_TYPE_ASSERT
+    kind: F2P
+    weight: 0.20
+    description: "cmd/entire/cli/lifecycle.go uses a `.(agent.HookResponseWriter)` (or bare `.(HookResponseWriter)`) type-assertion AND no longer calls `outputHookResponse(`."
+    command: |
+      bash -c 'cd /repo && python3 -c "
+      import re
+      src = open(\"cmd/entire/cli/lifecycle.go\").read()
+      src = re.sub(r\"/\*[\\s\\S]*?\*/\", \"\", src)
+      src = re.sub(r\"//[^\\n]*\", \"\", src)
+      ok = bool(re.search(r\"\\.\\(\\s*(?:agent\\.)?HookResponseWriter\\s*\\)\", src)) and bool(re.search(r\"\\bWriteHookResponse\\s*\\(\", src)) and not bool(re.search(r\"\\boutputHookResponse\\s*\\(\", src))
+      print(\"PASS\" if ok else \"FAIL\")
+      "'
+
+  - id: F2P_CC_IMPL_JSON
+    kind: F2P
     weight: 0.15
-    command: "python3 -c \"import sys,re; content=open('/repo/cmd/entire/cli/agent/claudecode/lifecycle.go').read(); sys.exit(0 if re.search(r'WriteHookResponse|HookResponse|systemMessage', content) else 1)\""
-    description: "Verify Claude Code implements hook response output mechanism"
-  - id: "compiles"
-    kind: "P2P_REGRESSION"
-    weight: 0.0
-    command: "cd /repo && go build ./..."
-    description: "Code must compile"
-  - id: "core-tests-pass"
-    kind: "P2P_REGRESSION"
-    weight: 0.0
-    command: "cd /repo && go test ./cmd/entire/cli/agent/... -count=1 -timeout=120s"
-    description: "Core agent package tests must pass"
-  - id: "go-vet-clean"
-    kind: "P2P_REGRESSION"
-    weight: 0.0
-    command: "cd /repo && go vet ./cmd/entire/cli/hooks.go"
-    description: "hooks.go must pass go vet (no unused imports)"
+    description: "claudecode/lifecycle.go defines a `WriteHookResponse` method receiver whose body JSON-encodes a payload mentioning `systemMessage`."
+    command: |
+      bash -c 'cd /repo && python3 -c "
+      import re
+      src = open(\"cmd/entire/cli/agent/claudecode/lifecycle.go\").read()
+      src = re.sub(r\"/\*[\\s\\S]*?\*/\", \"\", src)
+      src = re.sub(r\"//[^\\n]*\", \"\", src)
+      m = re.search(r\"func\\s+\\([^)]+\\)\\s+WriteHookResponse\\s*\\(\", src)
+      ok = False
+      if m:
+          brace = src.find(\"{\", m.end())
+          i = brace+1; depth = 1
+          while i < len(src) and depth > 0:
+              if src[i] == \"{\": depth += 1
+              elif src[i] == \"}\": depth -= 1
+              i += 1
+          body = src[brace+1:i-1]
+          ok = bool(re.search(r\"json\\.(NewEncoder|Marshal)\\s*\\(\", body)) and (\"systemMessage\" in body or \"SystemMessage\" in body)
+      print(\"PASS\" if ok else \"FAIL\")
+      "'
+
+  - id: F2P_FACTORY_IMPL_PLAINTEXT
+    kind: F2P
+    weight: 0.20
+    description: "factoryaidroid/lifecycle.go defines a `WriteHookResponse` method receiver whose body writes plain text (fmt.Fprint*/io.WriteString/os.Stdout.Write) and does NOT JSON-encode."
+    command: |
+      bash -c 'cd /repo && python3 -c "
+      import re
+      src = open(\"cmd/entire/cli/agent/factoryaidroid/lifecycle.go\").read()
+      src = re.sub(r\"/\*[\\s\\S]*?\*/\", \"\", src)
+      src = re.sub(r\"//[^\\n]*\", \"\", src)
+      m = re.search(r\"func\\s+\\([^)]+\\)\\s+WriteHookResponse\\s*\\(\", src)
+      ok = False
+      if m:
+          brace = src.find(\"{\", m.end())
+          i = brace+1; depth = 1
+          while i < len(src) and depth > 0:
+              if src[i] == \"{\": depth += 1
+              elif src[i] == \"}\": depth -= 1
+              i += 1
+          body = src[brace+1:i-1]
+          plain = bool(re.search(r\"fmt\\.Fprint(?:ln|f)?\\s*\\(\\s*os\\.Stdout|io\\.WriteString\\s*\\(\\s*os\\.Stdout|os\\.Stdout\\.Write(?:String)?\\s*\\(\", body))
+          uses_json = bool(re.search(r\"json\\.(NewEncoder|Marshal)\\s*\\(\", body))
+          ok = plain and not uses_json
+      print(\"PASS\" if ok else \"FAIL\")
+      "'
+
+  # ── P2P_REGRESSION (informational only — never positive or negative reward) ──
+  - id: P2P_GO_BUILD
+    kind: P2P_REGRESSION
+    description: "`go build ./cmd/entire/...` still succeeds — catches broken imports/syntax from the refactor."
+    command: |
+      bash -c 'cd /repo && go build ./cmd/entire/... && echo PASS || echo FAIL'

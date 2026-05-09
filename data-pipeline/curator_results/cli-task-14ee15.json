@@ -1,0 +1,18 @@
+{
+  "task": "cli-task-14ee15",
+  "verdict": "FIX_APPLIED",
+  "baseline_score": 0.0,
+  "patched_score": 1.0,
+  "f2p_gates": [
+    {"id": "F2P_FPRINTF_REMOVED_ALL", "weight": 0.30, "description": "All 9 agent-hook source files have zero fmt.Fprintf(os.Stderr calls remaining (97 in buggy → 0 in canonical)."},
+    {"id": "F2P_FPRINTF_REMOVED_LIFECYCLE", "weight": 0.20, "description": "lifecycle.go (largest target — 54 prints) has zero fmt.Fprintf(os.Stderr calls remaining."},
+    {"id": "F2P_LOGGING_IMPORT_ADDED", "weight": 0.25, "description": "≥3 of 4 newly-modified files (state.go, strategy/common.go, manual_commit_migration.go, push_common.go) gained a logging package import (3-of-4 threshold admits partial solutions)."},
+    {"id": "F2P_LOGGING_USAGE_LIFECYCLE", "weight": 0.15, "description": "lifecycle.go has ≥25 logging.{Info,Warn,Debug,Error}( call sites (buggy 7; canonical 49)."},
+    {"id": "F2P_LOGGING_USAGE_HOOKS", "weight": 0.10, "description": "manual_commit_hooks.go has ≥65 logging.* call sites (buggy 61; canonical 68); +N delta sanity check."}
+  ],
+  "p2p_gates": [
+    {"id": "P2P_GO_BUILD", "kind": "P2P_REGRESSION", "description": "go build ./cmd/entire/... succeeds (informational only per CLAUDE.md — never zeros reward)."}
+  ],
+  "weight_sum": 1.00,
+  "notes": "Replaces SWE-rebench stub (was scoring ≥0.99 as pure noise from 'overall test pass rate' fallback with empty FAIL_TO_PASS). New gates target the canonical fmt.Fprintf(os.Stderr) → structured-logging refactor across 9 hook-path Go files. Validated locally: clone https://github.com/entireio/cli at base commit 2ac27dd2e760a6ff8463b7d0fabe6c216c5eddfd, run test.sh against buggy baseline → reward 0.000; apply canonical patch (data-pipeline/artifacts_cli/canonical_patches/14ee15d2-fbee-40f3-b61a-fd98f0bbf18e.json, fidelity=exact, 9 files / +178/-211) → reward 1.000. Anti-overfit: F2P_LOGGING_IMPORT_ADDED uses 3-of-4 threshold; LIFECYCLE/HOOKS thresholds (≥25, ≥65) admit partial refactors without rewarding the no-op buggy state. P2P_GO_BUILD is informational only per scoring_traps.md."
+}

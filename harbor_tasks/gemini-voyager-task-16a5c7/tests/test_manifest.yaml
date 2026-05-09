@@ -1,44 +1,43 @@
 # Harbor Test Manifest — gemini-voyager-task-16a5c7
 #
-# Task: Rename "Gemini Voyager" → "Voyager" in user-facing extension strings.
-# Changes affect locale files, export service footers, and prompt manager title.
+# Task: rename Chrome-extension-facing strings from "Gemini Voyager" → "Voyager"
+# (or another non-trademark-infringing name). The user explicitly scoped the
+# change to user-visible extension strings — locale messages, export footers,
+# and the prompt manager title — and excluded the GitHub repo URL, internal
+# debug logs (console.error tags, code comments), and unrelated build scripts.
+#
+# Behavioral gates only: each gate verifies a user-visible surface no longer
+# contains "Gemini Voyager" and that something non-empty took its place. We
+# never enforce "must be exactly 'Voyager'" — the user themselves floated
+# alternatives ("Gem Voyager"), so any non-empty rename that drops "Gemini"
+# from the user-facing string is accepted.
 
 version: "1.0"
 
 gates:
-  # ── P2P_REGRESSION (gating only) ──
-  - id: P2P_1
-    description: "All 10 locale files exist and are valid JSON"
-    kind: P2P_REGRESSION
-    weight: 0.0
+  # ── F2P (weighted, sum = 1.00) ──
 
-  - id: P2P_2
-    description: "Key export service and prompt files exist (no deletions)"
-    kind: P2P_REGRESSION
-    weight: 0.0
-
-  # ── F2P (weighted) ──
-  - id: F2P_LOCALE_CLEAN
-    description: "No 'Gemini Voyager' in any locale JSON message values"
+  - id: F2P_LOCALE_EXTNAME
+    description: "extName (Chrome Web Store-displayed name) renamed in all 10 locales"
     kind: F2P
     weight: 0.30
 
-  - id: F2P_EXPORT_CLEAN
-    description: "No 'Gemini Voyager' in export service footer strings"
-    kind: F2P
-    weight: 0.25
-
-  - id: F2P_PROMPT_CLEAN
-    description: "No 'Gemini Voyager' in prompt manager title (prompt/index.ts)"
+  - id: F2P_LOCALE_PMTITLE
+    description: "pm_title (Prompt Manager UI heading) renamed in all 10 locales"
     kind: F2P
     weight: 0.20
 
-  - id: F2P_VOYAGER_PRESENT
-    description: "extName message is 'Voyager' in at least 5 locale files"
+  - id: F2P_EXPORT_FOOTERS
+    description: "Export-service footer strings (Markdown / PDF / Image / DeepResearch) no longer say 'Gemini Voyager'"
+    kind: F2P
+    weight: 0.25
+
+  - id: F2P_PROMPT_TITLE_RUNTIME
+    description: "Prompt Manager runtime titleText (prompt/index.ts) renamed in BOTH initial render and refreshUITexts()"
     kind: F2P
     weight: 0.15
 
   - id: F2P_TEST_UPDATED
-    description: "Test file expects 'Voyager' not 'Gemini Voyager'"
+    description: "MarkdownFormatter.test.ts footer assertion no longer hard-codes 'Gemini Voyager' AND vitest still runs cleanly on the rename path"
     kind: F2P
     weight: 0.10

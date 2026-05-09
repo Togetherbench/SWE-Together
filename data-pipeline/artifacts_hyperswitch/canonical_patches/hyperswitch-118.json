@@ -1,0 +1,30 @@
+{
+  "session_id": "hyperswitch-118",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 0,
+  "commit_sha": null,
+  "repo_id": "juspay/hyperswitch",
+  "is_agent_author": false,
+  "files_changed_count": 0,
+  "total_additions": 0,
+  "total_deletions": 0,
+  "commit_message": "[no upstream PR for issue #118: issue has no closing PR]",
+  "files_changed": "",
+  "numstat": "",
+  "patch": "",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "hyperswitch",
+  "_reconstruction": "github_pr_diff",
+  "_fidelity": "lossy",
+  "_reconstruction_warnings": [
+    "issue has no closing PR"
+  ],
+  "_base_commit": "260df2836cea8f9aa7448888d3b61e942eda313b",
+  "_repo_url": "https://github.com/juspay/hyperswitch",
+  "_task_name": "hyperswitch-118",
+  "_n_mutating_ops": 0,
+  "_upstream_issue": 118,
+  "_upstream_pr": null,
+  "_pr_lookup_status": "issue has no closing PR"
+}

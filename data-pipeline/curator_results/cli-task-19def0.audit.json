@@ -1,0 +1,12 @@
+{
+  "task": "cli-task-19def0",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "patch_repaired_from_upstream"
+  ],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Original canonical patch was incomplete (lossy reconstruction): missing test files (cmd/entire/cli/session/state_test.go and cmd/entire/cli/strategy/session_state_test.go) and missing IsStale impl + StaleSessionThreshold constant in state.go. Replaced patch with git diff between _base_commit (7f6c5bd) and target (4fc9356) restricted to 4 task-relevant files. New patch contains all 4 F2P tests (TestState_IsStale, TestStateStore_Load_DeletesStaleSession, TestStateStore_List_DeletesStaleSession, TestLoadSessionState_DeletesStaleSession) which are behavioral (assert nil return + file deletion side effects). Updated files_changed_count=4, total_additions=206, total_deletions=27, files_changed/numstat fields. Set _curator_repaired note in JSON."
+}

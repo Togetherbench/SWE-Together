@@ -1,0 +1,10 @@
+{
+  "task": "agent-swarm-task-ea4bd8",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Dockerfile/entrypoint refactor task. instruction.md is a detailed multi-phase plan. test.sh is a custom structural verifier scoring 5 weighted F2P gates (apt consolidation, npm pinning, mcp jq, marketplace build-time, lazy use-agents) — appropriate for this kind of refactor where there are no behavioral unit tests. P2P_REGRESSION gates are explicitly informational only (per CLAUDE.md). Reward formula uses correct weighted-replace shape. test_cmd is 'true' because all logic lives in the embedded Python — install_config has a clear _note explaining this. Coherent."
+}

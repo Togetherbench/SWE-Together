@@ -1,0 +1,14 @@
+{
+  "task": "pi-mono-auto-cbb62cbe",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "Stripped .pi/extensions/daxnuts.ts diff section from canonical patch (agent-internal user dotfile path, not actual source)",
+    "Removed corresponding files_changed entry",
+    "Recomputed numstat and total_additions/total_deletions from remaining 5 files"
+  ],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [".pi/extensions/daxnuts.ts"],
+  "validation_attempted": false,
+  "notes": "Daxnuts easter egg task (opencode + kimi-k2.5 thanks component). Original patch had 6 files, 11 reconstruction warnings, and shipped a stray .pi/extensions/daxnuts.ts (an agent-internal user dotfile path, not part of the codebase deliverable). After strip: 5 files, all under packages/coding-agent/. The 11 reconstruction warnings remain (op old-text-not-found in interactive-mode.ts, components/index.ts, daxnuts.ts) — but the canonical patch text is preserved. Task structure (overall-pass-rate fallback via FAIL_TO_PASS=[]) is fragile but unchanged. Did NOT add F2P: instruction is open-ended ('make it over the top and hilarious'), so behavioral test names are unpredictable; structural greps would over-fit the agent's exact component path."
+}

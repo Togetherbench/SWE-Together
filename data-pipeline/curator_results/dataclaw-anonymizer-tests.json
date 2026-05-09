@@ -1,0 +1,10 @@
+{
+  "task": "dataclaw-anonymizer-tests",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Canonical patch is clean post-prior-audit: only modifies dataclaw/anonymizer.py (numstat 57/51, 1 file). The 8 scratch/bench files (bench_early_exit.py, benchmark.py, benchmark_realistic.py, dataclaw/anonymizer_test.py, test_boundary.py, test_regex.py, test_users.py, test_wsl.py) are recorded in _curator_stripped and absent from the diff. test.sh path resolution uses /workspace/repo (matches Dockerfile clone target) with fallback discovery. P2P_REGRESSION enforcement block (v043 manual) is present and correctly caps reward to 0.0000 on regression. F2P alignment verified: patch implements lookarounds (F2P-1/2), (?![a-zA-Z0-9]) substring safety (F2P-3), re.IGNORECASE (F2P-4), [/\\\\-]+ Windows backslash (F2P-5), custom home param (F2P-6), Anonymizer extras (F2P-7), and functools.lru_cache (F2P-8); inline weights sum to 1.00. test_manifest.yaml declares 2 F2P gates (case_insensitive 0.50, substring_safety 0.50) which are a behavioral subset of the inline test.sh F2P set - no name-greps. No REDACTED leaks. No additional fixes needed."
+}

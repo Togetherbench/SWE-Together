@@ -1,0 +1,15 @@
+{
+  "task": "pi-mono-auto-6f8288bb",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "f2p_populated_from_canonical_test"
+  ],
+  "drop_reason": null,
+  "f2p_added": [
+    "maps groq qwen3 reasoning levels to default reasoning_effort",
+    "keeps normal reasoning_effort for groq models without compat mapping"
+  ],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Issue #1745 (OpenAI tool-choice / Groq qwen3 reasoning_effort). Canonical patch adds 2 new behavioral `it()` blocks in packages/ai/test/openai-completions-tool-choice.test.ts: one asserts groq qwen3-32b maps all reasoning levels to 'default', the other asserts groq openai/gpt-oss-20b passes through 'medium' unchanged. Both are pure input/output payload assertions — implementation-agnostic, behavioral. Replaced FAIL_TO_PASS=[] (vitest-pass-rate fallback) with these two targeted gates. _fidelity: exact, no warnings. Patch also updates types.ts (ThinkingLevel-keyed reasoningEffortMap), openai-completions.ts (mapReasoningEffort helper, Groq detection), and custom-provider.md docs."
+}

@@ -1,54 +1,61 @@
+# test_manifest.yaml — gemini-voyager-task-c5c01d
+# Verifier checks that the agent added the toggleable Snow Effect feature to
+# Nagi-ovo/gemini-voyager (canonical commit 495f0805 on parent 4e9d9169).
+# Gates declared here mirror the inline regex checks in tests/test.sh.
 version: "1.0"
-task: gemini-voyager-task-c5c01d
+description: "Verify the Snow Effect feature (storage key + module + popup toggle + registration + lifecycle + tests) is implemented per the canonical patch."
 
 gates:
-  - id: f2p_module_behavior
+  # ── F2P behavioral gates (weight sum: 1.00) ──────────────────────────────
+  - id: F2P_STORAGE_KEY
+    kind: F2P
+    weight: 0.15
+    description: >
+      src/core/types/common.ts adds a snow-effect entry to the StorageKeys
+      object — accepts either the canonical literal 'gvSnowEffect' or any
+      GV_SNOW_* key with a snow-flavored string value.
+
+  - id: F2P_MODULE_EXISTS
+    kind: F2P
+    weight: 0.25
+    description: >
+      src/pages/content/snowEffect/index.{ts,tsx} exists, exports
+      startSnowEffect, creates a <canvas> element, sets pointer-events:none
+      and position:fixed, runs a requestAnimationFrame loop, and reads the
+      snow-effect storage key via chrome.storage. Rejects empty/stub modules.
+
+  - id: F2P_REGISTRATION
+    kind: F2P
+    weight: 0.15
+    description: >
+      src/pages/content/index.tsx imports startSnowEffect from the
+      snowEffect module and invokes it inside the feature-init pipeline (any
+      call site outside the import line counts).
+
+  - id: F2P_POPUP_TOGGLE
     kind: F2P
     weight: 0.20
     description: >
-      Snow effect module (src/pages/content/snowEffect/index.ts) exists and has
-      correct structure: exports startSnowEffect, creates a canvas element with
-      position:fixed and pointer-events:none, has non-trivial enable() and
-      disable() functions. Rejects stub implementations with empty bodies.
+      src/pages/popup/Popup.tsx wires the new toggle: a useState hook for a
+      snow-effect boolean, a payload mapping that writes gvSnowEffect to
+      chrome.storage, and a UI Switch/Checkbox bound to the new state.
 
-  - id: f2p_snowflake_variety
+  - id: F2P_LIFECYCLE
     kind: F2P
     weight: 0.15
     description: >
-      Snowflake rendering has varied visual properties — at least 3 of: random
-      or multiple distinct sizes, opacity/alpha variation between particles,
-      varied fall speeds (random or multiple values), and reasonable particle
-      count (>= 50). Verifies the effect is visually interesting, not uniform.
+      The snow module manages enable/disable cleanly: appendChild attaches
+      the canvas, .remove()/removeChild detaches it, cancelAnimationFrame
+      stops the rAF loop, and a chrome.storage.onChanged listener reacts to
+      toggle changes. Rejects half-implementations missing teardown.
 
-  - id: f2p_lifecycle
-    kind: F2P
-    weight: 0.15
-    description: >
-      enable() appends canvas to DOM, disable() removes canvas AND calls
-      cancelAnimationFrame, module listens to chrome.storage changes for
-      gvSnowEffect/SNOW_EFFECT key. Verifies proper lifecycle management
-      and storage reactivity pattern (sidebarAutoHide pattern).
-
-  - id: f2p_registration
+  - id: F2P_TESTS_EXIST
     kind: F2P
     weight: 0.10
     description: >
-      Content script (index.tsx) imports startSnowEffect from ./snowEffect/index
-      and calls it after startSidebarAutoHide with appropriate delay
-      (LIGHT_FEATURE_INIT_DELAY). Verifies integration follows the established
-      staggered initialization pattern.
+      Test file at src/pages/content/snowEffect/__tests__/ exists with at
+      least 2 it()/test() blocks, ≥3 expect() assertions, and references
+      both canvas (DOM-level assertion) and chrome.storage / gvSnowEffect
+      (the simulated-storage fixture pattern). Rejects empty stubs.
 
-  - id: f2p_tests_exist
-    kind: F2P
-    weight: 0.10
-    description: >
-      Test file exists at snowEffect/__tests__/snowEffect.test.ts with at least
-      2 test blocks and 3 assertions. Tests reference snow effect concepts
-      (enable/disable/canvas/snowflake). Rejects empty or stub test files.
-
-p2p_gates:
-  - id: p2p_typecheck
-    description: "TypeScript type checking (tsc --noEmit) passes with zero errors"
-
-  - id: p2p_vitest
-    description: "All vitest tests pass, including pre-existing tests"
+# P2P_REGRESSION: none — feature is purely additive; no prior behavior to gate.

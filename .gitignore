@@ -6,6 +6,7 @@ jobs/
 trials/
 trials-*/
 trials_*/        # underscore-suffixed eval-result dirs (kimi25, glm51, mm25, mm27, etc.) — protect from `git clean -fd`
+_swechat_revalidate_*/   # bulk revalidation runs (133MB+ trial dirs)
 __pycache__/
 session_collection/
 .claude/worktrees/

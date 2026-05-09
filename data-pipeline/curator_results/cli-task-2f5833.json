@@ -1,0 +1,50 @@
+{
+  "task": "cli-task-2f5833",
+  "started_at": "2026-05-08T23:25:00",
+  "claude_exit": 0,
+  "claude_log_tail": "Triple-check verdict: REVISE TO KEEP. Prior DROP was correct that the canonical patch was broken (strings import removed but strings.Join still used at lifecycle.go:280, plus tool_replay reconstruction warnings showed op[16] and op[20] failed to apply). Both rescue paths applied: (1) replaced canonical patch with the full upstream commit ade9120be74ccc4f75942ed8fe06637b80e93b30 fetched from github.com/entireio/cli; (2) replaced go-test-based test.sh with a behavioral grep/AST verifier matching the existing test_manifest.yaml gates. Smoking-gun validation against base commit 1d76de91: buggy=0.0, patched=1.0, stub-gaming<=0.25.",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "REVISE_TO_KEEP",
+    "fixes_applied": [
+      "Replaced canonical_patches/2f5833ec-423b-47b4-9535-556896507b53.json patch with full upstream commit ade9120be74ccc4f75942ed8fe06637b80e93b30 (53690 bytes, 20 files) fetched from github.com/entireio/cli — the original tool_replay reconstruction had only 4 files and dropped 2 critical ops",
+      "Rewrote tests/test.sh as behavioral grep/AST verifier consuming the existing test_manifest.yaml gates (G1-G3 gold @ 0.45, S1-S4 silver @ 0.35, B1-B4 bronze @ 0.20)",
+      "Updated test_manifest.yaml: removed unimplemented P2P2_unit_tests gate; tagged P2P1_build as informational-only per CLAUDE.md convention"
+    ],
+    "drop_reason": null,
+    "f2p_added": [
+      "G1_gold_no_extract_prompts",
+      "G2_gold_shadow_filesystem_fallback",
+      "G3_gold_no_prompt_overwrite",
+      "S1_silver_no_extract_summary",
+      "S2_silver_no_summary_filename",
+      "S3_silver_last_prompt_field",
+      "S4_silver_lifecycle_commit_msg",
+      "B1_bronze_max_last_prompt_runes",
+      "B2_bronze_turn_start_append",
+      "B3_bronze_agent_summary_removed",
+      "B4_bronze_simulate_prompt_helpers"
+    ],
+    "files_stripped_from_patch": [],
+    "validation_attempted": true,
+    "validation_result": "passed",
+    "validation_evidence": {
+      "base_commit": "1d76de9144b44be1219b4862d1161a25a03d5a8c",
+      "upstream_commit": "ade9120be74ccc4f75942ed8fe06637b80e93b30",
+      "buggy_baseline_reward": 0.0,
+      "patched_reward": 1.0,
+      "stub_only_field_rename_reward": 0.05,
+      "stub_only_bronze_layer_reward": 0.25,
+      "patch_apply_check": "git apply --check returns 0 against base commit 1d76de91",
+      "lifecycle_strings_join_after_patch": "no occurrences (clean removal of both import and usage)"
+    },
+    "notes": "Original verdict was correct on the symptom — applying the previous canonical patch produced a Go compile error because tool_replay's regex-based reconstruction failed to match the multi-line strings.Join block (recorded as 'op[16] edit: old text not found' in _reconstruction_warnings) and similarly missed an op in manual_commit_hooks.go. The clean rescue is to fetch the actual upstream commit (ade9120b, parent matches our _base_commit 1d76de91 exactly) which contains 20 file changes vs the 4 captured by tool_replay — including the full lifecycle.go rewrite with the strings.Join removal. The test_manifest.yaml gates were already well-designed but unconnected to the existing test.sh (which used install_config.json with empty FAIL_TO_PASS); the new test.sh wires them in via grep/AST checks against the source tree. Each gate maps to a real, observable change in the upstream diff. Verified gaming resistance: a partial-stub solution that only renames FirstPrompt->LastPrompt scores 0.05; a stub that does all four bronze structural changes without the behavioral gold/silver work scores 0.25 — well below the 0.7 fix threshold."
+  },
+  "diffs": {
+    "data-pipeline/artifacts_cli/canonical_patches/2f5833ec-423b-47b4-9535-556896507b53.json": "Replaced 4006-byte tool_replay patch with 52686-byte upstream commit diff",
+    "harbor_tasks/cli-task-2f5833/tests/test.sh": "Rewrote: behavioral grep/AST verifier consuming test_manifest.yaml gates; weighted-replace formula; P2P1_build informational",
+    "harbor_tasks/cli-task-2f5833/tests/test_manifest.yaml": "Dropped unimplemented P2P2_unit_tests; clarified P2P1_build as informational"
+  },
+  "applied_to_host": true,
+  "elapsed_sec": null
+}

@@ -1,38 +1,49 @@
-manifest_version: "1.0"
+version: "1.0"
+task: cli-task-4a9dde
+
+# Verifier checks the agent fixed `mise run test:e2e:gemini` hangs by:
+#   1. Switching the GeminiCLIRunner to --approval-mode yolo + non-interactive
+#      stdin/env (e2e_test/agent_runner.go).
+#   2. Adding a GEMINI_CLI env-var short-circuit to hasTTY/askConfirmTTY in
+#      strategy/manual_commit_hooks.go.
+#   3. Skipping carry-forward for files already in HEAD with matching shadow
+#      content in strategy/content_overlap.go.
+# F2P weights sum to 1.00 (inner_share = 0). P2P_REGRESSION gates are
+# informational only — never zero the reward (CLAUDE.md scoring rules).
+
 gates:
-  # P2P_REGRESSION: gating only, any failure → reward = 0.0
-  - id: p2p_compile
-    kind: P2P_REGRESSION
-    weight: 0.0
-    description: "Project compiles without errors"
-
-  - id: p2p_existing_tests
-    kind: P2P_REGRESSION
-    weight: 0.0
-    description: "Existing strategy package unit tests still pass"
-
-  # F2P: weighted behavioral gates (60%+) and structural gates (≤40%)
-  - id: gemini_has_tty
+  - id: F2P_GEMINI_YOLO_MODE
     kind: F2P
-    weight: 0.30
-    description: "Behavioral: hasTTY() returns false when GEMINI_CLI=1"
+    weight: 0.20
+    description: "GeminiCLIRunner.RunPromptWithTools selects --approval-mode yolo and drops the auto_edit literal."
 
-  - id: gemini_confirm_default
+  - id: F2P_GEMINI_RUNNER_TTY_GUARDS
     kind: F2P
-    weight: 0.30
-    description: "Behavioral: askConfirmTTY() returns default answer when GEMINI_CLI=1 (no TTY read)"
+    weight: 0.20
+    description: "Gemini runner adds ≥2 of 3 hang-prevention guards (ENTIRE_TEST_TTY=1 in subprocess env, /dev/null on stdin, explicit cmd.Env=)."
 
-  - id: gemini_no_hang
+  - id: F2P_HASTTY_GEMINI_GUARD
     kind: F2P
-    weight: 0.25
-    description: "Behavioral: both functions return promptly (< 5s) when GEMINI_CLI=1"
+    weight: 0.20
+    description: "manual_commit_hooks.go::hasTTY references GEMINI_CLI env var (treats Gemini subprocesses as no-TTY)."
 
-  - id: gemini_env_detect
+  - id: F2P_ASKCONFIRM_GEMINI_GUARD
+    kind: F2P
+    weight: 0.15
+    description: "manual_commit_hooks.go::askConfirmTTY references GEMINI_CLI env var (returns default instead of reading /dev/tty)."
+
+  - id: F2P_OVERLAP_HEAD_HASH_CHECK
+    kind: F2P
+    weight: 0.15
+    description: "filesWithRemainingAgentChanges checks commitTree+shadowTree hashes (≥3 of: commitTree.File, shadowTree.File, .Hash compare, continue in !wasCommitted branch)."
+
+  - id: F2P_NO_HARDCODED_GIT_TOOLS
     kind: F2P
     weight: 0.10
-    description: "Structural: GEMINI_CLI env var referenced in strategy package Go files"
+    description: "GeminiCLIRunner.RunPromptWithTools no longer hard-codes ShellTool(git …) literals (the source of the --allowed-tools mismatch)."
 
-  - id: file_mod
-    kind: F2P
-    weight: 0.05
-    description: "Structural: manual_commit_hooks.go contains GEMINI_CLI check"
+  # ── P2P_REGRESSION: informational only — never positive or negative reward ──
+  - id: P2P_SOURCE_FILES_EXIST
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "agent_runner.go, manual_commit_hooks.go, content_overlap.go still exist."

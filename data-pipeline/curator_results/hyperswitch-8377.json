@@ -1,0 +1,12 @@
+{
+  "task": "hyperswitch-8377",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "test_widened_for_gold_naming"
+  ],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Pre-flag was correct AND understated. Verified upstream merge commit 7943fb4bf (PR #8368, the renumbered/squashed merge of session task #8377 in juspay/hyperswitch, found via `git log origin/main` after a full unshallow). Gold patch uses `PaymentAttemptListResponse` / `PaymentAttemptListRequest` / fn `payments_list_attempts_using_payment_intent_id` + `payments_attempt_operation_core` / Flow variant `PaymentAttemptsList` / response field `payment_attempt_list: Vec<...>`, while the test was written for session-style names: `PaymentListAttemptsResponse` / `list_payment_attempts` / `PaymentsListAttempts|PaymentsAttemptList` / field `payment_attempts: Vec<...>`. Against gold the test as-written only scored Gate 2 (0.09) + Gate 4 (0.06) + Gate 6 (0.24) = 0.39, with five gates failing for cosmetic naming reasons (Gate 1 field name, Gate 3 fn name, Gate 5 Flow variant + ApiEventMetric impl, both upstream openapi gates). 0.61 ceiling loss exceeds the 0.20 anti-overfit threshold, so this is FIX not KEEP. Applied changes to tests/test.sh: (1) Gate 1 field regex now accepts `payment_attempts|payment_attempt_list|attempts`; (2) Gate 3 restructured as a file-level 4-condition check (HAS_FN + HAS_TYPE + HAS_QUERY + HAS_GLOBAL_ID) accepting either session fn name `list_payment_attempts` OR gold helpers `payments_attempt_operation_core` / `payments_list_attempts_using_payment_intent_id`, plus references to `PaymentAttemptListData` / `PaymentGetListAttempts` for the type/query conditions; (3) Gate 5 Flow + lock_utils regexes widened to include `PaymentAttemptsList|PaymentAttemptList`; (4) Gate 5 ApiEventMetric impl regex widened to include `PaymentAttemptListRequest|PaymentListAttemptsRequest`; (5) upstream openapi_v2_schema gate accepts `PaymentAttemptListResponse|PaymentListAttemptsResponse|PaymentAttemptsListResponse`; (6) upstream openapi_route gate falls back to checking `crates/openapi/src/openapi_v2.rs` for the request schema (gold doesn't touch `crates/openapi/src/routes/payments.rs` at all). All existing session-style solutions still pass. P2P_REGRESSION tail already correct (p2p_failed=False hard-coded, existing<=0 guard present, weighted-replace formula intact). bash -n passes."
+}

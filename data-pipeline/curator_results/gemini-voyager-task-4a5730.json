@@ -1,0 +1,16 @@
+{
+  "task": "gemini-voyager-task-4a5730",
+  "verdict": "FIX",
+  "fixes_applied": [
+    "F2P_TRIMMED_TO_ACTUAL_TESTS"
+  ],
+  "drop_reason": null,
+  "f2p_added": [
+    "preserves inline math LaTeX syntax in quoted text",
+    "preserves block math LaTeX syntax in quoted text",
+    "preserves standalone data-math elements without container"
+  ],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Instruction points to a real GitHub issue (#421) \u2014 quote-reply strips LaTeX delimiters when quoting math equations. Patch (+147/-1) adds extractTextWithLatex() helper + replaceMathWithLatex() + 3 vitest test cases in quoteReply.test.ts. Original install_config.json declared 17 F2P entries \u2014 14 of those names do not exist anywhere in the canonical patch (likely scaffold hallucination). Trimmed FAIL_TO_PASS down to the 3 actual it(...) names from the patch. Names are bare it() text since parse_log_vitest captures only the test description (verbose reporter format \u2713 <name> <duration>). Tests are behavioral (DOM-level: assert input.textContent contains LaTeX delimiters) \u2014 implementation-agnostic, low over-fit risk. Repo_dir=/workspace/repo aligns with Dockerfile."
+}

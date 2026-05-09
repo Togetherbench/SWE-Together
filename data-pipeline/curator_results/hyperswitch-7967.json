@@ -1,0 +1,10 @@
+{
+  "task": "hyperswitch-7967",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Pre-flagged TEST_NARROW (2 grep gates @ 0.5 each cover only 2 of 14 files in the +716/-17 PR). However, the test.sh inline scoring is much richer: 7 weighted gates totaling 1.0 covering v2-gated request type, v2-gated RefundListConstraints in domain models, refunds_list handler under refunds_v2+olap cfg, /list route wiring in app.rs v2 scope, storage/db plumbing, multi-file completeness check, and a full cargo check -p router with v2,refunds_v2,olap,oltp features (worth 0.25 with partial credit). The python tail with WEIGHTS f2p_upstream_refund_list_fn=0.5 + f2p_upstream_v2_list_api=0.5 then runs weighted-replace correctly (already has the fixed tail with p2p_failed=False and existing<=0 guard). The two narrow upstream gates use weighted-replace to scale-and-replace the rich inner reward, so the inner reward fully drives the score when the narrow gates pass. P2P_REGRESSION tail is already correct ('# v043 fix' comment present, p2p_failed = False hard-coded). NO fixes needed."
+}

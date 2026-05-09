@@ -1,19 +1,89 @@
+# test_manifest.yaml — cli-task-2026-0
+#
+# Verifier checks that the agent fixed the telemetry detached-subprocess
+# stdout/stderr leak in cmd/entire/cli/telemetry/detached_unix.go.
+#
+# The bug: `cmd.Stdout = nil` / `cmd.Stderr = nil` does not redirect to
+# /dev/null — Go's os/exec inherits the parent's descriptors when these are
+# nil. Panics or stray writes from the analytics subprocess therefore leak
+# to the user's CLI. The canonical fix (entireio/cli @ 732e342) imports
+# "io" and assigns both fields to io.Discard.
+#
+# Buggy baseline (commit 65fa5640) → reward 0.0 across all F2P gates.
+# Canonical patch applied         → reward 1.0.
+#
+# Gates declared here mirror the inline checks in tests/test.sh; the script
+# evaluates them with grep + Python regex and writes verdicts to
+# /logs/verifier/gates.json. Reward is weighted-replace, F2P sum = 1.00.
+# P2P_REGRESSION gates are informational only (per CLAUDE.md scoring rules).
+version: "1.0"
+description: "Verify cmd.Stdout/Stderr nil → discard-sink fix in telemetry detached subprocess"
+
 gates:
-  - id: detached_unix_exists
-    kind: P2P_REGRESSION
-    command: "test -f /repo/cmd/entire/cli/telemetry/detached_unix.go"
-  - id: spawn_func_exists
-    kind: P2P_REGRESSION
-    command: "grep -q 'func spawnDetachedAnalytics' /repo/cmd/entire/cli/telemetry/detached_unix.go"
-  - id: unit_tests_pass
+  # ── F2P behavioral / structural gates (weight sum: 1.00) ──────────────────
+  - id: F2P_NIL_REMOVED
     kind: F2P
-    command: "cd /repo && go test -count=1 -timeout 120s ./..."
+    weight: 0.20
+    description: "The buggy `cmd.Stdout = nil` and `cmd.Stderr = nil` lines are removed (anti-pattern)."
+    command: |
+      bash -c '! grep -qE "^\s*cmd\.(Stdout|Stderr)\s*=\s*nil\s*(//.*)?$" /repo/cmd/entire/cli/telemetry/detached_unix.go && echo PASS || echo FAIL'
+
+  - id: F2P_STDOUT_DISCARD
+    kind: F2P
+    weight: 0.25
+    description: "cmd.Stdout is assigned to a non-nil discard target (io.Discard, ioutil.Discard, or *os.File)."
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import re, pathlib
+      s = pathlib.Path("/repo/cmd/entire/cli/telemetry/detached_unix.go").read_text()
+      r = re.compile(r"^\s*cmd\.Stdout\s*=\s*(io\.Discard|ioutil\.Discard|[A-Za-z_][A-Za-z_0-9.]*)\b", re.MULTILINE)
+      ts = [m.group(1) for m in r.finditer(s) if m.group(1) != "nil"]
+      print("PASS" if ts else "FAIL")
+      PYEOF'
+
+  - id: F2P_STDERR_DISCARD
+    kind: F2P
+    weight: 0.25
+    description: "cmd.Stderr is assigned to a non-nil discard target (io.Discard, ioutil.Discard, or *os.File)."
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import re, pathlib
+      s = pathlib.Path("/repo/cmd/entire/cli/telemetry/detached_unix.go").read_text()
+      r = re.compile(r"^\s*cmd\.Stderr\s*=\s*(io\.Discard|ioutil\.Discard|[A-Za-z_][A-Za-z_0-9.]*)\b", re.MULTILINE)
+      ts = [m.group(1) for m in r.finditer(s) if m.group(1) != "nil"]
+      print("PASS" if ts else "FAIL")
+      PYEOF'
+
+  - id: F2P_DISCARD_CONCEPT_COVERED
+    kind: F2P
     weight: 0.30
-  - id: no_nil_stdout_stderr
-    kind: F2P
-    command: "cd /repo && python3 tests/check_no_nil_fds.py"
-    weight: 0.20
-  - id: discard_sink_used
-    kind: F2P
-    command: "cd /repo && python3 tests/check_discard_sink.py"
-    weight: 0.20
+    description: "≥1 of {io.Discard wired up, ioutil.Discard wired up, *os.File from /dev/null} is materially used."
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import re, pathlib, sys
+      s = pathlib.Path("/repo/cmd/entire/cli/telemetry/detached_unix.go").read_text()
+      m = re.search(r"import\s*\(([^)]*)\)", s, re.DOTALL)
+      imports = m.group(1) if m else ""
+      has_io = bool(re.search(r"^\s*\"io\"\s*$", imports, re.MULTILINE))
+      has_ioutil = bool(re.search(r"^\s*\"io/ioutil\"\s*$", imports, re.MULTILINE))
+      has_os = bool(re.search(r"^\s*\"os\"\s*$", imports, re.MULTILINE))
+      ok = (has_io and "io.Discard" in s) or (has_ioutil and "ioutil.Discard" in s) or ("/dev/null" in s and ("os.OpenFile" in s or "os.Open" in s) and has_os)
+      print("PASS" if ok else "FAIL")
+      PYEOF'
+
+  # ── P2P_REGRESSION (informational only — never positive or negative reward) ──
+  # The buggy baseline ALREADY builds and the existing tests ALREADY pass, so
+  # these are not discriminative as F2P gates. They remain here as audit-log
+  # regression checks: verifies the agent's edit didn't break compilation or
+  # the existing telemetry unit tests.
+  - id: P2P_BUILD_OK
+    kind: P2P_REGRESSION
+    description: "`go build ./cmd/entire/cli/telemetry/...` still succeeds after agent's edit."
+    command: |
+      bash -c 'cd /repo && GOFLAGS=-mod=mod go build ./cmd/entire/cli/telemetry/... && echo PASS || echo FAIL'
+
+  - id: P2P_TESTS_PASS
+    kind: P2P_REGRESSION
+    description: "Existing telemetry unit tests still pass after agent's edit."
+    command: |
+      bash -c 'cd /repo && GOFLAGS=-mod=mod go test -count=1 -timeout 60s ./cmd/entire/cli/telemetry/... && echo PASS || echo FAIL'

@@ -1,25 +1,48 @@
+# test_manifest.yaml — cli-task-aa4038
+#
+# Verifier checks that the agent persisted a per-session transcript path into
+# checkpoint metadata and used it on restore (canonical patch on entireio/cli
+# @ ef4d2e38, parent 1b69ae14).
+#
+# Six F2P behavioral/structural gates (sum 1.00) + 1 informational
+# P2P_REGRESSION gate. Reward is weighted-replace per CLAUDE.md scoring rules;
+# P2P_REGRESSION is informational only and never affects reward.
+version: "1.0"
+description: "Verify transcript_path persisted in checkpoint metadata + used on restore"
+
 gates:
-  - id: build_compiles
+  # ── F2P behavioral / structural gates (weight sum: 1.00) ──────────────────
+  - id: F2P_METADATA_TRANSCRIPT_FIELD
     kind: F2P
-    weight: 0.18
-    description: "go build ./... succeeds"
-  - id: existing_tests_pass
+    weight: 0.20
+    description: "CommittedMetadata struct gains a field with json tag `transcript_path` (Go field name implementation-agnostic)."
+
+  - id: F2P_OPTIONS_SESSION_TRANSCRIPT
     kind: F2P
-    weight: 0.18
-    description: "Existing unit tests in cmd/entire/cli still pass"
-  - id: go_vet_clean
+    weight: 0.20
+    description: "WriteCommittedOptions gains a NEW string field whose Go name contains both `Transcript` and `Path` (beyond the pre-existing TranscriptPath / SubagentTranscriptPath)."
+
+  - id: F2P_HOME_RELATIVE_HELPER
     kind: F2P
-    weight: 0.12
-    description: "go vet reports no issues in the CLI package"
-  - id: metadata_has_location_field
-    kind: F2P
-    weight: 0.10
-    description: "CommittedMetadata stores transcript location info (TranscriptPath field or per-session agent info)"
-  - id: write_passes_location
-    kind: F2P
-    weight: 0.10
-    description: "Checkpoint write path passes transcript location to metadata (SessionTranscriptPath or equivalent)"
-  - id: restore_uses_location
+    weight: 0.20
+    description: "strategy/common.go gains a function that calls os.UserHomeDir() (the home-relative path helper)."
+
+  - id: F2P_COMMITTED_WRITES_TRANSCRIPT
     kind: F2P
     weight: 0.10
-    description: "Restore logic uses per-session transcript location (resolveTranscriptPathFromMetadata or per-session agent dirs)"
+    description: "checkpoint/committed.go writeSessionToSubdirectory references the new opts.<Transcript*Path*> field on a `:`-separated assignment line."
+
+  - id: F2P_CONDENSE_PASSES_TRANSCRIPT
+    kind: F2P
+    weight: 0.15
+    description: "manual_commit_condensation.go references the new options field as a struct-literal key `<Name>:` (or inlines a UserHomeDir/TrimPrefix call on state.TranscriptPath)."
+
+  - id: F2P_REWIND_USES_METADATA_PATH
+    kind: F2P
+    weight: 0.15
+    description: "manual_commit_rewind.go reads `<…>Metadata<…>.TranscriptPath` (any container shape) when classifying / restoring sessions."
+
+  # ── P2P_REGRESSION (informational only — never positive or negative reward) ──
+  - id: P2P_GO_BUILD
+    kind: P2P_REGRESSION
+    description: "`go build ./cmd/entire/cli/checkpoint/... ./cmd/entire/cli/strategy/...` succeeds — catches broken imports/syntax from the edit."

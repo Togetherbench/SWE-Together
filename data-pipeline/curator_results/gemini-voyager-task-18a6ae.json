@@ -1,0 +1,33 @@
+{
+  "task": "gemini-voyager-task-18a6ae",
+  "verdict": "RESCUE",
+  "prior_verdict": "DROP",
+  "prior_drop_reason": "Vague instruction (turn 2: '好呀，就这么干吧。' + i18n cross-browser side-question). FAIL_TO_PASS=[] and test_files=[] in install_config.json caused test.sh to fall back to overall vitest pass-rate (gameable).",
+  "rescue_rationale": "Per CLAUDE.md, instruction.md is the first user turn verbatim; user_simulation_prompt.md provides the multi-turn context (5 turns: analysis → green-light → size proof → cross-platform check → build proof). Canonical patch is concrete: 35 add / 8 del across 2 files (custom-vite-plugins.ts, vite.config.base.ts), implementing a real `stripI18nDescriptions` Vite plugin via the `transform` hook and adding a `stripDescriptions` option to `crxI18n`. `bun run build:chrome` + `bun run typecheck` are runnable in the repo (verified in original_session.json msgs 41, 71).",
+  "fixes_applied": [
+    "Replaced SWE-rebench fallback test.sh with custom verifier running `bun run typecheck` and `bun run build:chrome`, then asserting behavioral + structural F2P gates.",
+    "Rebalanced test_manifest.yaml weights to sum to 1.0 (was 0.75); every gate ≤ 0.30 (R006-clean).",
+    "Behavioral gates (70%): build_succeeds 0.30, locales_no_description 0.25, typecheck_passes 0.15.",
+    "Structural gates (30%): plugin_exported 0.10, plugin_wired 0.10, crxI18n_has_option 0.05, not_stub 0.05.",
+    "locales_no_description asserts every dist_chrome/_locales/*/messages.json has zero `description` fields and at least one locale exists (no trivial empty-dir pass).",
+    "Implementation-agnostic structural checks accept Object.fromEntries OR delete OR rest-destructure OR JSON.stringify-of-mapped-object.",
+    "Weighted-replace reward formula per CLAUDE.md; P2P gates informational only; f2p_any_pass guard with existing<=0."
+  ],
+  "f2p_added": [
+    "build_succeeds (0.30, gold)",
+    "locales_no_description (0.25, gold)",
+    "typecheck_passes (0.15, silver)",
+    "plugin_exported (0.10, bronze)",
+    "plugin_wired (0.10, bronze)",
+    "crxI18n_has_option (0.05, bronze)",
+    "not_stub (0.05, bronze)"
+  ],
+  "files_stripped_from_patch": [],
+  "expected_baseline_reward": 0.45,
+  "expected_baseline_breakdown": "build_succeeds + typecheck_passes pass on clean base commit (0.30 + 0.15 = 0.45); locales_no_description fails (descriptions still present); all 4 structural gates fail.",
+  "expected_patched_reward": 1.0,
+  "discriminator_spread": 0.55,
+  "validation_attempted": false,
+  "validation_notes": "Did not run E2B baseline/alt-fix in this pass. Confidence basis: (a) build:chrome + typecheck both runnable per session msgs 41/71, (b) patch diff syntactically valid TS, (c) structural gates verbatim from canonical patch's API surface. Recommend /validate-task confirms baseline dist_chrome/_locales/en/messages.json contains `description` so locales_no_description fails on baseline as expected.",
+  "notes": "Rescue follows the same pattern as 6 prior rescues — vague instruction is fine when the canonical patch is concrete. Multi-turn dynamics (size verification, cross-platform proof, build success) remain in user_simulation_prompt.md and are the benchmark signal."
+}

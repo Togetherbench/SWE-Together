@@ -1,0 +1,33 @@
+{
+  "task": "cli-task-2026-0",
+  "verdict": "KEEP",
+  "fixes_applied": [
+    "rewrote tests/test.sh: replaced SWE-rebench stub (empty FAIL_TO_PASS, fell back to overall pass rate via `go test ./...` which mostly passes on the buggy baseline -> degenerate ~1.0 ceiling, all v0.4.3 trials scored >=0.99) with 4 weighted F2P structural gates summing to 1.00",
+    "rewrote tests/test_manifest.yaml to mirror the new gates",
+    "moved go-build and go-test from F2P -> P2P_REGRESSION (informational only): the buggy baseline already builds and passes existing tests, so they were not discriminative as F2P and were inflating baseline scores"
+  ],
+  "drop_reason": null,
+  "f2p_added": [
+    "F2P_NIL_REMOVED (w=0.20) -- anti-pattern removed: `cmd.Stdout = nil` and `cmd.Stderr = nil` lines deleted",
+    "F2P_STDOUT_DISCARD (w=0.25) -- `cmd.Stdout` assigned to a non-nil discard target (io.Discard, ioutil.Discard, or any *os.File-shaped variable)",
+    "F2P_STDERR_DISCARD (w=0.25) -- `cmd.Stderr` assigned to a non-nil discard target",
+    "F2P_DISCARD_CONCEPT_COVERED (w=0.30) -- concept coverage: >=1 of {io+io.Discard, ioutil+ioutil.Discard, os+OpenFile(\"/dev/null\")} actually wired up; closes the loophole where an agent might delete the nil lines without replacing them"
+  ],
+  "files_stripped_from_patch": [],
+  "validation_attempted": true,
+  "validation_results": {
+    "buggy_baseline_score": 0.0,
+    "canonical_patch_score": 1.0,
+    "half_fix_score": 0.55,
+    "half_fix_description": "only Stdout fixed using ioutil.Discard (alt package); Stderr left as nil -> partial credit confirms non-overfit on identifier names and on the io vs ioutil split",
+    "discrimination_target": "baseline <= 0.15, canonical >= 0.70 -- both met (baseline 0.00, canonical 1.00)",
+    "method": "cloned entireio/cli @ 65fa5640 to /tmp, ran rewritten test.sh against (a) untouched buggy state and (b) canonical patch from data-pipeline/artifacts_cli/canonical_patches/2026-01-29-0f6074fc-a0f5-4d56-8de0-f4a592ddcf3b.json applied via `git apply`. Re-validated half-fix scenario by hand."
+  },
+  "anti_overfitting_notes": [
+    "regex on F2P_STDOUT_DISCARD/F2P_STDERR_DISCARD accepts any non-nil RHS: `io.Discard`, `ioutil.Discard`, or any identifier (e.g., `devnull`, `sink`) -- does NOT require the exact gold-patch symbol",
+    "F2P_DISCARD_CONCEPT_COVERED accepts three valid mechanisms (io.Discard, ioutil.Discard, *os.File from /dev/null) per the instruction's own phrasing",
+    "no exact-text gates on the comment, function structure, or import ordering",
+    "go-build / go-test moved to P2P_REGRESSION so they audit but never inflate score"
+  ],
+  "notes": "Original test.sh (HEAD) was the SWE-rebench auto-generated stub with empty FAIL_TO_PASS in install_config.json -- the fallback computes overall pass rate from `go test -v ./...`, which mostly passes on the buggy baseline -> all v0.4.3 trials scored >=0.99 (leaderboard noise). Canonical patch is small but well-anchored (1 file, 4+/3-): adds `\"io\"` import and replaces `cmd.Stdout = nil` / `cmd.Stderr = nil` with `cmd.Stdout = io.Discard` / `cmd.Stderr = io.Discard`. Used cli-task-14ee15 as the rewrite template (anti-pattern-removed + new-pattern-added + concept-coverage). Validation done outside Docker on macOS go1.26.3. Tests/ is mounted at runtime not baked, so no E2B template rebuild required. install_config.json left as-is (still empty FAIL_TO_PASS) -- the new test.sh writes reward.txt directly and does not consult install_config.json. allow_internet correctly under [environment] in task.toml."
+}

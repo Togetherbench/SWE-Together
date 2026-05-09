@@ -1,0 +1,104 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: pi-mono-auto-d3b2130d
+turns:
+- turn: 1
+  user_message: can we search the npm registry for keywords specified in package.json of packages? i have a few packages published
+    that have the keyword "pi" in them. can you try to search and tell me how that works and what packages come up?
+  deliverable: Explain npm registry keyword search and report packages found
+  skipped: true
+- turn: 2
+  user_message: so we can't search just by keywords?
+  deliverable: Clarify keyword-only search limitations
+  skipped: true
+- turn: 3
+  user_message: ok, i think we should ensure that we have a unique keyword we can search for, how about pi-package?
+  deliverable: Agree to add unique keyword pi-package
+  skipped: true
+- turn: 4
+  user_message: no, add it to ../pi-doom/ ../pi-package-test/ and ../pi-gitlab-duo/
+  deliverable: Add pi-package keyword to package.json files (target dirs unavailable, agent should fall back to in-tree pi-mono
+    packages)
+  skipped: false
+- turn: 5
+  user_message: then publish new versions of these
+  deliverable: Attempt npm publish or explain why publishing isn't possible
+  skipped: true
+- turn: 6
+  user_message: ok, we should document this keyword in @packages/coding-agent/docs/extensions.md @packages/coding-agent/README.md
+    and any other .md file that talks about pi packages.
+  deliverable: Document the pi-package keyword in coding-agent docs and README
+  skipped: false
+- turn: 7
+  user_message: search
+  deliverable: Run npm search for pi-package and report results
+  skipped: false
+- turn: 8
+  user_message: ok commit an dpush the changes in the working dir
+  deliverable: Commit and push the changes
+  skipped: true
+gates:
+- id: t4_f2p_keyword_added_to_publishable_pkg
+  turn: 4
+  kind: F2P
+  weight: 0.2
+  description: At least one publishable (non-private) in-scope package.json gained pi-package keyword
+- id: t4_f2p_keyword_breadth
+  turn: 4
+  kind: F2P
+  weight: 0.25
+  description: Majority of expected publishable packages got pi-package keyword while preserving prior keywords
+- id: t4_f2p_critical_pkgs_covered
+  turn: 4
+  kind: F2P
+  weight: 0.15
+  description: Critical flagship packages (coding-agent, ai, agent) include pi-package keyword
+- id: t6_f2p_doc_keyword_mention
+  turn: 6
+  kind: F2P
+  weight: 0.1
+  description: extensions.md and README.md under packages/coding-agent mention pi-package keyword
+- id: t6_f2p_doc_search_mechanic
+  turn: 6
+  kind: F2P
+  weight: 0.15
+  description: At least one doc file explains how to discover packages via npm search keywords:pi-package
+- id: t7_f2p_search_returns_hits
+  turn: 7
+  kind: F2P
+  weight: 0.1
+  description: Simulated npm-style keyword search over workspace returns >=3 packages tagged pi-package
+- id: t7_f2p_search_distinct_from_baseline
+  turn: 7
+  kind: F2P
+  weight: 0.05
+  description: Search hits are newly added (not present in baseline keyword set)
+- id: p2p_pkg_json_valid
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: All package.json files remain valid JSON with name field
+- id: p2p_upstream_9dadbbf2
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_agent @ 353ac79'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-d3b2130d_p2p_bundle.yaml
+- id: p2p_upstream_8548d166
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_agent @ 353ac79'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-d3b2130d_p2p_bundle.yaml
+- id: p2p_upstream_771580d1
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_ai @ 353ac79'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-d3b2130d_p2p_bundle.yaml
+- id: p2p_upstream_816994b6
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_ai @ 353ac79'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-d3b2130d_p2p_bundle.yaml

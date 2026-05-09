@@ -1,0 +1,18 @@
+{
+  "task": "cli-task-b3d2dd",
+  "verdict": "FIX_APPLIED",
+  "baseline_score": 0.10,
+  "patched_score": 1.00,
+  "f2p_gates": [
+    {"id": "F2P_FALLBACK_LATEST_NO_PROMPT", "weight": 0.30, "description": "Falls back from latest session (no prompt.txt) to an earlier session that has prompt.txt — the headline bug fix. Verified by injected Go test exercising a 2-session checkpoint where session 1 has only metadata.json."},
+    {"id": "F2P_FALLBACK_THROUGH_MULTIPLE_EMPTY", "weight": 0.25, "description": "Falls back through multiple consecutive empty sessions (sessions 2 and 1 empty, session 0 has prompt). Confirms the iterative loop, not a single static fallback to session 0."},
+    {"id": "F2P_FALLBACK_EMPTY_PROMPT_FILE", "weight": 0.20, "description": "Falls back when latest session has prompt.txt but its content is empty — i.e. ExtractFirstPrompt returning empty must trigger continuation, not return. Distinguishes the loop+empty-check fix from a loop-only fix."},
+    {"id": "F2P_REGRESSION_EXISTING", "weight": 0.10, "description": "All 7 existing TestReadLatestSessionPromptFromCommittedTree subtests still pass (no regressions). Modest weight because these subtests were designed for the buggy state, so the gate also passes on baseline; main value is catching breakages."},
+    {"id": "F2P_NOT_STUB", "weight": 0.15, "description": "ReadLatestSessionPromptFromCommittedTree body is non-trivial: contains a `for` loop, accesses sessionCount or strconv.Itoa or cpTree.Tree, and has ≥8 non-blank lines (Go single-line comments stripped). The buggy code lacks the loop, so this is a true differentiator."}
+  ],
+  "p2p_gates": [
+    {"id": "P2P_GO_BUILD", "kind": "P2P_REGRESSION", "description": "go build ./cmd/entire/... succeeds (informational only per CLAUDE.md — never zeros reward)."}
+  ],
+  "weight_sum": 1.00,
+  "notes": "Replaces SWE-rebench stub (empty FAIL_TO_PASS made the previous test.sh score ≥0.99 via the 'overall test pass rate' fallback — degenerate ceiling on every v0.4.3 trial). The canonical patch (data-pipeline/artifacts_cli/canonical_patches/b3d2dd85-97f1-4a42-bb85-d5ddb6f44882.json, fidelity=exact, 2 files / +82/-21) transforms ReadLatestSessionPromptFromCommittedTree from a single-shot lookup (latestIndex with one fallback to session 0) into a `for i := latestIndex; i >= 0; i--` loop that `continue`s on missing tree/file/empty content and returns the first non-empty extracted prompt. Verifier strategy: inject a verifier-only test file (zzz_b3d2dd_verifier_test.go) into the same Go package at evaluation time so it can use the package-internal `buildCommittedTree` helper from common_test.go. The injected test runs 4 canonical subtest scenarios; we then parse `--- PASS: TestB3d2ddCanonical/<leaf>` lines for individual gate verdicts. Validated locally against entireio/cli @ 56cdda51 (buggy parent) and f7a13512 (canonical): buggy → 0.10 (only G4_REGRESSION_EXISTING passes), partial fix (loop without empty-content check) → 0.80 (G3_FALLBACK_EMPTY_PROMPT_FILE fails, others pass), stub `return \"\"` → 0.00 (build also breaks but is informational; gates correctly cascade), canonical → 1.00. Anti-overfit: behavioral tests on observable function output, no identifier-name checks. F2P weight sum = 1.00. P2P_GO_BUILD is informational only per scoring_traps.md."
+}

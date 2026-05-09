@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-cd4662",
+  "started_at": "18:45:58",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\nThe F2P list had 6 entries but only 1 was valid:\n\n| Test | Status |\n|---|---|\n| `TestPrepareCommitMsg_ConsecutiveCommits_UniqueCheckpointIDs` | **VALID** \u2014 patch renames from old name + inverts assertion |\n| `TestPrepareCommitMsg_ConsecutiveCommitsGetDifferentIDs` | **DROPPED** \u2014 doesn't exist anywhere |\n| `TestTwoConsecutiveCommits_GetDifferentCheckpointIDs` | **DROPPED** \u2014 doesn't exist anywhere |\n| `TestPrepareCommitMsg_NormalCommitGeneratesNewCheckpointID` | **DROPPED** \u2014 doesn't exist anywhere |\n| `TestPrepareCommitMsg_NormalCommitUsesPendingCheckpointID` | **DROPPED** \u2014 exists at base (PASSES), removed by patch (P2F, not F2P) |\n| `TestPrepareCommitMsg_NewContentGeneratesFreshID` | **DROPPED** \u2014 doesn't exist anywhere |\n\nThe kept test is behavioral: it sets up a session with a `PendingCheckpointID` and asserts a subsequent commit gets a *different* ID \u2014 black-box verification of the bug fix, not tied to any internal function name.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "f2p_test_renamed"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": true,
+    "validation_result": "passed",
+    "notes": "F2P had 6 entries: 4 non-existent test names, 1 base-passing test removed by the patch (TestPrepareCommitMsg_NormalCommitUsesPendingCheckpointID \u2014 renamed to the new name), and 1 valid new test. Trimmed F2P to the single real patch-added behavioral test (TestPrepareCommitMsg_ConsecutiveCommits_UniqueCheckpointIDs). Confirmed at base: old test PASSES, new test doesn't exist; patch renames and inverts the assertion, which is correct behavioral coverage."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-cd4662/tests/install_config.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 110.6
+}

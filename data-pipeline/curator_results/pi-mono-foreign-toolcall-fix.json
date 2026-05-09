@@ -1,0 +1,10 @@
+{
+  "task": "pi-mono-foreign-toolcall-fix",
+  "verdict": "KEEP",
+  "fixes_applied": [],
+  "drop_reason": null,
+  "f2p_added": [],
+  "files_stripped_from_patch": [],
+  "validation_attempted": false,
+  "notes": "Custom test.sh with 5 F2P gates totaling 1.00 weight, all behavioral: drives convertResponsesMessages from openai-responses-shared.ts via a bun -e harness on four scenarios (foreign Copilot pipe-id onto github-copilot, foreign Copilot pipe-id onto openai-codex, bare 63-char fc_ id onto codex, sanity short-id round-trip) and asserts shape constraints (call_id <=64 chars, no '|' leakage, no '_cHXKTw3' substitution signature, fc/fco call_id pairing). Two TypeScript compilation P2P gates are gating-only and warn-don't-zero (correct post-v0.4.3 pattern). Gates 4 and 5 are conditioned on 1 or 2 also passing, which is the right anti-no-op design. test_manifest.yaml weights match the inline test.sh weights. instruction.md is the original analytical first turn ('locate the failing tool call'); user_simulation_prompt drives the agent to turn 12's 'fix it' deliverable. This task is exemplary - keep as-is."
+}

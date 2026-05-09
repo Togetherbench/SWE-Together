@@ -1,0 +1,43 @@
+{
+  "task": "rudel-task-e44e88",
+  "status": "drop",
+  "decision": "DROP",
+  "prior_batch_decision": "DROP",
+  "prior_batch_rationale": "3-way divergence: instruction (Turn 1 plan saying DON'T touch DimensionAnalysisChart.tsx), commit_message ('stable chart colors'), patch (DOES modify DimensionAnalysisChart.tsx)",
+  "verification": {
+    "verified": true,
+    "verdict_unchanged": true,
+    "rationale_correction": "Prior batch's framing is partially incorrect. (1) instruction.md is Turn 1 verbatim per the project design rule (CLAUDE.md: 'instruction.md = first user turn verbatim (no editing)'); the 'DON'T touch DimensionAnalysisChart' line is from the user's initial plan. (2) Turns 3 and 4 in user_simulation_prompt.md explicitly expand scope to DimensionAnalysisChart and add stable colors — so the patch modifying that file is the EXPECTED multi-turn outcome, not a divergence. (3) The canonical patch's commit_message field is literally '[reconstructed from session messages]' — there is no 'stable chart colors' commit message; that quote in the prior batch reasoning is fabricated.",
+    "real_drop_reasons": [
+      "Patch _fidelity = 'directional' (not 'high' or 'exact')",
+      "3 reconstruction warnings: 'old text not found' for op[20] and op[23] in ModelTokensChart.tsx and op[59] in DimensionAnalysisChart.tsx — the reconstructed patch is incomplete/unreliable for those files",
+      "commit_message is a placeholder ('[reconstructed from session messages]'), so we cannot independently cross-check commit intent against the patch content",
+      "The patch (206 additions / 173 deletions across 8 files) is what the test gates were designed against, but with directional fidelity we cannot guarantee the patch faithfully reproduces the agent's final state — risk of test gates rewarding the wrong code shape"
+    ]
+  },
+  "evidence": {
+    "instruction_excerpt": "Do NOT touch: - DimensionAnalysisChart.tsx — already uses a custom `content` component (different design)",
+    "patch_files_modified": [
+      "A\tapps/web/src/components/charts/ChartTooltip.tsx",
+      "M\tapps/web/src/components/charts/DeveloperTrendChart.tsx",
+      "M\tapps/web/src/components/charts/DimensionAnalysisChart.tsx",
+      "M\tapps/web/src/components/charts/ErrorTrendChart.tsx",
+      "M\tapps/web/src/components/charts/LearningsTrendChart.tsx",
+      "M\tapps/web/src/components/charts/ModelTokensChart.tsx",
+      "M\tapps/web/src/components/charts/ProjectTrendChart.tsx",
+      "M\tapps/web/src/components/charts/UsageTrendChart.tsx"
+    ],
+    "user_simulation_turns": 4,
+    "turn_3_expands_to_DimensionAnalysisChart": true,
+    "turn_4_adds_stable_colors": true,
+    "canonical_patch_fidelity": "directional",
+    "reconstruction_warnings": [
+      "op[20] edit: old text not found in apps/web/src/components/charts/ModelTokensChart.tsx",
+      "op[23] edit: old text not found in apps/web/src/components/charts/ModelTokensChart.tsx",
+      "op[59] edit: old text not found in apps/web/src/components/charts/DimensionAnalysisChart.tsx"
+    ],
+    "commit_message_actual": "[reconstructed from session messages]"
+  },
+  "final_decision": "DROP",
+  "drop_reason_summary": "Patch reconstruction is directional-fidelity with 3 failed ops; commit_message is a placeholder. Prior batch's 'instruction vs patch' divergence framing was incorrect (it's expected multi-turn scope expansion), but the underlying patch-quality concern still justifies DROP."
+}

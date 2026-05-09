@@ -1,0 +1,27 @@
+{
+  "task": "cli-task-6f1563",
+  "started_at": "18:52:24",
+  "claude_exit": 0,
+  "claude_log_tail": "**Verdict: FIX**\n\n**Issue found:** `FAIL_TO_PASS` listed `TestStateStore_Load_DeletesStaleSession` but this test doesn't exist \u2014 not in the patch and not in the base repo. The patch adds exactly 3 tests:\n- `TestState_IsStale` \u2713\n- `TestStateStore_List_DeletesStaleSession` \u2713 \n- `TestLoadSessionState_DeletesStaleSession` \u2713\n\nThe plan mentioned testing `StateStore.Load()` but the implementation only modified `StateStore.List()` \u2014 the ghost test was likely a plan artifact that never materialized.\n\n**Fix applied:** Removed `TestStateStore_Load_DeletesStaleSession` from `FAIL_TO_PASS`. The remaining 3 gates are behavioral black-box tests (create files \u2192 call public API \u2192 verify output + disk state), so they're not over-fit to the canonical implementation.\n",
+  "status": "ok",
+  "curator_log": {
+    "verdict": "FIX",
+    "fixes_applied": [
+      "f2p_test_renamed"
+    ],
+    "drop_reason": null,
+    "f2p_added": [],
+    "files_stripped_from_patch": [],
+    "validation_attempted": false,
+    "validation_result": "skipped",
+    "notes": "Removed ghost F2P entry 'TestStateStore_Load_DeletesStaleSession' \u2014 it exists neither in the canonical patch nor in the base repo (the plan mentioned testing StateStore.Load() but the patch only adds a List() test; the Load() test was likely renamed or never written). The other 3 F2P tests (TestState_IsStale, TestStateStore_List_DeletesStaleSession, TestLoadSessionState_DeletesStaleSession) are present in the patch and are behavioral black-box tests. No patch noise, no P2P_REGRESSION bug, no instruction leaks found."
+  },
+  "diffs": {
+    "install_config.json": {
+      "host_path": "/Users/alexanderli/Downloads/multi-user-turn-codebench/harbor_tasks/cli-task-6f1563/tests/install_config.json",
+      "changed": true
+    }
+  },
+  "applied_to_host": false,
+  "elapsed_sec": 108.9
+}
