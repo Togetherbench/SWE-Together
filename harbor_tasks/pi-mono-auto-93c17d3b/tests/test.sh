@@ -22,16 +22,24 @@ run_upstream_gates() {
     mkdir -p /logs/verifier
 
     # F2P: Extension file exists and is non-empty
-    if test -s /workspace/pi-mono/.pi/extensions/message-signal.ts; then
-        echo '{"id": "f2p_upstream_file_exists", "passed": true, "detail": "message-signal.ts exists and is non-empty"}' >> /logs/verifier/gates.json
-        echo "UPSTREAM f2p_upstream_file_exists PASS"
+    # Accept either the runtime install path (instruction-canonical) OR the
+    # source-tree examples path (upstream-canonical patch location).
+    UPSTREAM_FILE=""
+    for cand in \
+        /workspace/pi-mono/.pi/extensions/message-signal.ts \
+        /workspace/pi-mono/packages/coding-agent/examples/extensions/message-signal.ts; do
+        if test -s "$cand"; then UPSTREAM_FILE="$cand"; break; fi
+    done
+    if [ -n "$UPSTREAM_FILE" ]; then
+        echo "{\"id\": \"f2p_upstream_file_exists\", \"passed\": true, \"detail\": \"message-signal.ts found at $UPSTREAM_FILE\"}" >> /logs/verifier/gates.json
+        echo "UPSTREAM f2p_upstream_file_exists PASS ($UPSTREAM_FILE)"
     else
-        echo '{"id": "f2p_upstream_file_exists", "passed": false, "detail": "message-signal.ts missing or empty"}' >> /logs/verifier/gates.json
+        echo '{"id": "f2p_upstream_file_exists", "passed": false, "detail": "message-signal.ts missing or empty in both .pi/extensions and packages/coding-agent/examples/extensions"}' >> /logs/verifier/gates.json
         echo "UPSTREAM f2p_upstream_file_exists FAIL"
     fi
 
     # F2P: Extension loads via bun and exports a function
-    if cd /workspace/pi-mono && bun -e "try { const m = await import('/workspace/pi-mono/.pi/extensions/message-signal.ts'); if (typeof m.default !== 'function') process.exit(1); } catch { process.exit(1); }" 2>/dev/null; then
+    if [ -n "$UPSTREAM_FILE" ] && cd /workspace/pi-mono && bun -e "try { const m = await import('$UPSTREAM_FILE'); if (typeof m.default !== 'function') process.exit(1); } catch { process.exit(1); }" 2>/dev/null; then
         echo '{"id": "f2p_upstream_ext_loadable", "passed": true, "detail": "Extension imports and exports default function"}' >> /logs/verifier/gates.json
         echo "UPSTREAM f2p_upstream_ext_loadable PASS"
     else
@@ -134,25 +142,35 @@ fi
 
 # ============================================================
 # Locate new (agent-created) extension file
+# Search both the runtime install path (.pi/extensions/, what the instruction
+# tells the agent to use) and the source-tree examples path (where the
+# upstream canonical patch lives — the maintainer-rejected example dir).
 # ============================================================
 EXT_ABS=""
-for f in /workspace/pi-mono/.pi/extensions/*.ts; do
-    [ -f "$f" ] || continue
-    BN=$(basename "$f")
-    SKIP=0
-    for b in $BASELINE_EXTENSIONS; do
-        [ "$BN" = "$b" ] && SKIP=1 && break
+SEARCH_DIRS=(
+    /workspace/pi-mono/.pi/extensions
+    /workspace/pi-mono/packages/coding-agent/examples/extensions
+)
+for d in "${SEARCH_DIRS[@]}"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*.ts; do
+        [ -f "$f" ] || continue
+        BN=$(basename "$f")
+        SKIP=0
+        for b in $BASELINE_EXTENSIONS; do
+            [ "$BN" = "$b" ] && SKIP=1 && break
+        done
+        [ $SKIP -eq 1 ] && continue
+        if ! git -C /workspace/pi-mono ls-files --error-unmatch "${f#/workspace/pi-mono/}" >/dev/null 2>&1; then
+            EXT_ABS="$f"
+            break 2
+        fi
+        # also accept modified
+        if git -C /workspace/pi-mono diff --name-only HEAD -- "${f#/workspace/pi-mono/}" 2>/dev/null | grep -q .; then
+            EXT_ABS="$f"
+            break 2
+        fi
     done
-    [ $SKIP -eq 1 ] && continue
-    if ! git -C /workspace/pi-mono ls-files --error-unmatch "${f#/workspace/pi-mono/}" >/dev/null 2>&1; then
-        EXT_ABS="$f"
-        break
-    fi
-    # also accept modified
-    if git -C /workspace/pi-mono diff --name-only HEAD -- "${f#/workspace/pi-mono/}" 2>/dev/null | grep -q .; then
-        EXT_ABS="$f"
-        break
-    fi
 done
 
 echo "Extension: ${EXT_ABS:-<none>}"
@@ -214,6 +232,7 @@ const ctxMock: any = {
     ui: uiMock,
     session: { id: "test-session", messages: sessionMessages },
     addMessage: (m: any) => { sessionMessages.push(m); },
+    isIdle: () => false,
 };
 
 const piMock: any = new Proxy({}, {
@@ -223,6 +242,11 @@ const piMock: any = new Proxy({}, {
             handlers[e].push(h);
         };
         if (p === "registerCommand") return (n: string, o: any) => { commands[n] = o; };
+        // Capture pi.sendMessage(...) (canonical path) into sessionMessages so
+        // the activation-injects-protocol gate can detect injected hidden
+        // protocol instructions regardless of whether the extension uses
+        // ctx.addMessage (runtime path) or pi.sendMessage (canonical path).
+        if (p === "sendMessage") return (m: any, _opts?: any) => { sessionMessages.push(m); };
         if (p === "events") return {
             emit: (e: string, d: any) => events.push({ e, d }),
             on: (e: string, h: Function) => {

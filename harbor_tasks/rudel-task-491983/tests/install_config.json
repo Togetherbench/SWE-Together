@@ -13,5 +13,6 @@
   "test_files": [],
   "commit_sha": "d1854890724696774c308a867cb7ccdae22497c9",
   "commit_message_first_line": "fix(api): resolve 500 errors on open-source project details",
-  "agent_percentage": 100.0
+  "agent_percentage": 100.0,
+  "_legacy_restored": true
 }

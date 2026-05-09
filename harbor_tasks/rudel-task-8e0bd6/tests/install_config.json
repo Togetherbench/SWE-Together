@@ -25,5 +25,6 @@
   "test_files": [],
   "commit_sha": "9f5a1633e80abb372099f4a51b0e6742850396e6",
   "commit_message_first_line": "feat: add export/share buttons with watermark to dashboard charts",
-  "agent_percentage": 96.79715302491103
+  "agent_percentage": 96.79715302491103,
+  "_legacy_restored": true
 }
