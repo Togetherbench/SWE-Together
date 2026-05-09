@@ -5,10 +5,11 @@
   "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
   "repo_dir": "/workspace/repo",
   "FAIL_TO_PASS": [
-    "preserves inline math LaTeX syntax in quoted text",
-    "preserves block math LaTeX syntax in quoted text",
-    "preserves standalone data-math elements without container"
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts > quote reply > preserves inline math LaTeX syntax in quoted text",
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts > quote reply > preserves block math LaTeX syntax in quoted text",
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts > quote reply > preserves standalone data-math elements without container"
   ],
+  "apply_test_patch": "gold_test.patch",
   "PASS_TO_PASS": [],
   "source_files": [
     "src/pages/content/quoteReply/index.ts"

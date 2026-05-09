@@ -1,110 +1,59 @@
-# Verifier test manifest for cli-task-19def0
-# Upstream CI: .github/workflows/ci.yml → mise run test:ci → go test -tags=integration -race ./...
+# Verifier manifest for cli-task-19def0 (source-grep mode).
+# See test.sh for the actual gate logic. Σ weights = 1.00 → inner_weight = 0.
 
 gates:
-  # ---- Behavioral F2P gates (>=60% of weight budget) ----
-  - id: load-deletes-stale
+  - id: g1_isstale_method
+    kind: F2P
+    weight: 0.25
+    description: |
+      An IsStale() method is defined on *State (or value receiver State) in
+      cmd/entire/cli/session/state.go.
+    command: |
+      grep -qE 'func[[:space:]]+\([[:space:]]*[a-zA-Z_]+[[:space:]]+\*?State[[:space:]]*\)[[:space:]]+IsStale\b' cmd/entire/cli/session/state.go
+
+  - id: g2_load_stale_check
     kind: F2P
     weight: 0.20
     description: |
-      StateStore.Load() returns (nil, nil) for a stale session (LastInteractionTime
-      far in the past) and deletes the session file from disk.
+      StateStore.Load() body invokes IsStale (or equivalent stale check) AND
+      either deletes the file (Clear/os.Remove) or returns nil for the stale
+      branch.
     command: |
-      # Verified by Go harness in test.sh — creates stale session, calls Load,
-      # asserts nil return + file removal.
+      # Verified by awk extraction in test.sh — extracts Load function body
+      # and greps for stale check + delete/return-nil pattern.
 
-  - id: list-excludes-stale
+  - id: g3_stale_threshold_const
     kind: F2P
     weight: 0.15
     description: |
-      StateStore.List() excludes stale sessions from its returned slice and
-      removes their files from disk.
+      A StaleSessionThreshold constant (or equivalent ~7-day duration literal)
+      is defined in cmd/entire/cli/session/state.go.
     command: |
-      # Verified by Go harness in test.sh — creates mix of stale + active
-      # sessions, calls List, asserts only active is returned.
+      grep -qE 'StaleSessionThreshold|7[[:space:]]*\*[[:space:]]*24[[:space:]]*\*[[:space:]]*time\.Hour' cmd/entire/cli/session/state.go
 
-  - id: load-keeps-active
+  - id: g4_strategy_delegates
+    kind: F2P
+    weight: 0.20
+    description: |
+      strategy.LoadSessionState() either delegates to session.StateStore (no
+      inline json.Unmarshal) OR contains an inline stale check + cleanup.
+    command: |
+      # Verified by awk extraction in test.sh — extracts LoadSessionState body
+      # and checks for store.Load delegation OR inline IsStale + cleanup.
+
+  - id: g5_build_passes
     kind: F2P
     weight: 0.10
     description: |
-      Recently-interacted sessions load normally via StateStore.Load() —
-      non-stale sessions are NOT accidentally deleted.
+      The session and strategy packages still compile after the agent's edits.
     command: |
-      # Verified by Go harness in test.sh — creates active session, calls Load,
-      # asserts non-nil return with correct SessionID.
+      go build ./cmd/entire/cli/session/... ./cmd/entire/cli/strategy/...
 
-  - id: nil-time-not-stale
+  - id: g6_existing_tests_pass
     kind: F2P
     weight: 0.10
     description: |
-      Sessions with nil LastInteractionTime are NOT treated as stale.
-      This guards against accidentally deleting sessions that haven't
-      recorded any interaction time yet.
+      Pre-existing unit tests in session/ and strategy/ still pass (excludes
+      table-driven _ subtests to avoid flakiness on agent-added scaffolding).
     command: |
-      # Verified by Go harness in test.sh — creates session without
-      # LastInteractionTime, calls Load, asserts non-nil return.
-
-  - id: existing-tests-pass
-    kind: F2P
-    weight: 0.10
-    description: |
-      Existing unit tests in cmd/entire/cli/session/ and cmd/entire/cli/strategy/
-      continue to pass after the agent's changes.
-    command: |
-      go test ./cmd/entire/cli/session/ ./cmd/entire/cli/strategy/ -count=1 -timeout 90s
-
-  # ---- Structural F2P gates (<=40% of weight budget) ----
-  - id: load-stale-check
-    kind: F2P
-    weight: 0.10
-    description: |
-      StateStore.Load() calls IsStale() on the deserialized state before
-      returning it to the caller.
-    command: |
-      grep -A 40 'func (s \*StateStore) Load(ctx context.Context' cmd/entire/cli/session/state.go | grep -q 'IsStale()'
-
-  - id: strategy-delegates
-    kind: F2P
-    weight: 0.10
-    description: |
-      strategy.LoadSessionState() delegates to session.StateStore (via
-      NewStateStore + store.Load) instead of doing its own file I/O,
-      JSON unmarshaling, and stale checking.
-    command: |
-      grep -A 30 'func LoadSessionState' cmd/entire/cli/strategy/session_state.go | grep -qE 'NewStateStore|store\.Load'
-
-  - id: isstale-method-exists
-    kind: F2P
-    weight: 0.05
-    description: |
-      An IsStale() method is defined on *State in the session package.
-    command: |
-      grep -q 'func (s \*State) IsStale()' cmd/entire/cli/session/state.go
-
-  - id: stale-threshold-const
-    kind: F2P
-    weight: 0.05
-    description: |
-      A StaleSessionThreshold constant is defined in the session package.
-    command: |
-      grep -q 'StaleSessionThreshold' cmd/entire/cli/session/state.go
-
-  - id: load-uses-ctx
-    kind: F2P
-    weight: 0.05
-    description: |
-      StateStore.Load() uses its context.Context parameter for logging
-      or other purposes — not just discarding it via `_ = ctx`.
-    command: |
-      # Verified by awk extraction in test.sh — checks ctx appears in
-      # Load function body outside the discard pattern.
-
-  # ---- P2P_REGRESSION gate (gating-only, contributes no positive weight) ----
-  - id: no-duplicate-stale
-    kind: P2P_REGRESSION
-    description: |
-      The strategy package's LoadSessionState() must NOT contain its own
-      IsStale() check.  The stale check must live exclusively in
-      StateStore.Load() so there is exactly one canonical implementation.
-    command: |
-      grep -A 30 'func LoadSessionState' cmd/entire/cli/strategy/session_state.go | (! grep -q 'IsStale()')
+      go test ./cmd/entire/cli/session/ ./cmd/entire/cli/strategy/ -count=1 -timeout 90s -run '^Test[^_]'

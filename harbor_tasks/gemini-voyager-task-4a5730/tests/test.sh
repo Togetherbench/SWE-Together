@@ -34,6 +34,17 @@ TEST_CMD=$(python3 -c "import json; print(json.load(open('$CONFIG'))['test_cmd']
 cd "$REPO_DIR" || { echo "ERROR: cd $REPO_DIR" >&2; echo 0.0 > "$LOGS_DIR/reward.txt"; exit 1; }
 
 LOG="$LOGS_DIR/test_run.log"
+
+# Apply gold test patch (planted FAIL_TO_PASS tests from the canonical PR diff).
+# The buggy base image lacks these tests; without them FAIL_TO_PASS can never score.
+TEST_PATCH=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('apply_test_patch',''))")
+if [ -n "$TEST_PATCH" ] && [ -f "$TASK_DIR/tests/$TEST_PATCH" ]; then
+    echo "[eval] applying gold test patch: $TEST_PATCH" | tee -a "$LOG"
+    git apply --reject --whitespace=fix "$TASK_DIR/tests/$TEST_PATCH" 2>&1 | tee -a "$LOG" || \
+        patch -p1 --forward < "$TASK_DIR/tests/$TEST_PATCH" 2>&1 | tee -a "$LOG" || \
+        echo "[eval] WARN: gold test patch failed to apply cleanly" | tee -a "$LOG"
+fi
+
 echo "[eval] running: $TEST_CMD" | tee -a "$LOG"
 eval "$TEST_CMD" 2>&1 | tee -a "$LOG"
 

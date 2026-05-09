@@ -27,14 +27,6 @@ RUN git clone https://github.com/entireio/cli.git /workspace/repo && \
     cd /workspace/repo && \
     git checkout 7f6c5bd3ce5d041269a2619c66f352607a06d6b2
 
-# Inject gold tests so agents know exactly which signatures the verifier expects.
-# Without this, agents must hallucinate exact Go test names/signatures matching
-# the gold patch — which never works (see SWE-bench Verified critique on test
-# narrowness). The injected tests reference symbols like State.IsStale() and
-# StaleSessionThreshold that the agent must implement to make them pass.
-COPY inject_tests/gold_tests.patch /tmp/gold_tests.patch
-RUN cd /workspace/repo && git apply /tmp/gold_tests.patch && rm /tmp/gold_tests.patch
-
 # Warm the Go module cache
 RUN cd /workspace/repo && go mod download 2>/dev/null || true
 
