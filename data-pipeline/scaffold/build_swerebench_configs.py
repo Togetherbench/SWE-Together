@@ -39,6 +39,23 @@ HARBOR_TASKS = ROOT / "harbor_tasks"
 SC_CANONICAL_PATCHES = ROOT / "data-pipeline" / "artifacts_swechat" / "canonical_patches"
 LOG_PARSERS_DIR = ROOT / "data-pipeline" / "scaffold" / "log_parsers"
 
+
+def _find_canonical(sid: str) -> Path | None:
+    """Locate `<sid>.json` across SWE-chat + every non-SWE-chat source dir
+    (artifacts_dataclaw/, artifacts_hyperswitch/, artifacts_pi-mono/, ...)."""
+    if SC_CANONICAL_PATCHES / f"{sid}.json" in (p for p in (SC_CANONICAL_PATCHES,)):
+        pass  # silence linter
+    p = SC_CANONICAL_PATCHES / f"{sid}.json"
+    if p.exists():
+        return p
+    for d in sorted((ROOT / "data-pipeline").glob("artifacts_*/canonical_patches")):
+        if d == SC_CANONICAL_PATCHES:
+            continue
+        q = d / f"{sid}.json"
+        if q.exists():
+            return q
+    return None
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Language + framework detection
 # ──────────────────────────────────────────────────────────────────────────────
@@ -335,8 +352,8 @@ def main() -> int:
             stats["no_dockerfile"] += 1
             continue
         sid = task_session_id(t)
-        canonical_path = SC_CANONICAL_PATCHES / f"{sid}.json" if sid else None
-        if not sid or not canonical_path.exists():
+        canonical_path = _find_canonical(sid) if sid else None
+        if not sid or canonical_path is None:
             stats["no_canonical"] += 1
             continue
         canonical = json.load(open(canonical_path))

@@ -235,12 +235,15 @@ else
     echo "UPSTREAM FAIL: f2p_upstream_checkout_processing_struct"
 fi
 
-# F2P gate: get_optional_l2_l3_data is called
-if grep -q 'get_optional_l2_l3_data' "$CHECKOUT_TRANSFORMERS" 2>/dev/null; then
-    echo '{"id": "f2p_upstream_l2l3_data_usage", "passed": true, "detail": "get_optional_l2_l3_data call found"}' >> "$GATES_FILE"
+# F2P gate: L2/L3 data is consumed (behavioral check — accept any of the canonical
+# accessor patterns: `.l2_l3_data` field access, `get_optional_l2_l3_data` helper
+# (older session shape), or an `L2L3Data` type reference). Upstream PR #9446
+# uses `&item.router_data.l2_l3_data`, so the field-access form is the gold path.
+if grep -qE 'get_optional_l2_l3_data|\.l2_l3_data\b|L2L3Data' "$CHECKOUT_TRANSFORMERS" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_l2l3_data_usage", "passed": true, "detail": "l2_l3_data accessor / L2L3Data type found"}' >> "$GATES_FILE"
     echo "UPSTREAM PASS: f2p_upstream_l2l3_data_usage"
 else
-    echo '{"id": "f2p_upstream_l2l3_data_usage", "passed": false, "detail": "get_optional_l2_l3_data call not found"}' >> "$GATES_FILE"
+    echo '{"id": "f2p_upstream_l2l3_data_usage", "passed": false, "detail": "no l2_l3_data accessor / L2L3Data type found"}' >> "$GATES_FILE"
     echo "UPSTREAM FAIL: f2p_upstream_l2l3_data_usage"
 fi
 

@@ -175,13 +175,17 @@ run_v043_gate() {
         emit "$id" false "rc=$rc; $tail"
     fi
 }
-run_v043_gate f2p_upstream_54b5536e 'py_compile_changed_generic' 'cd /workspace/hyperswitch && cd /workspace && python3 -m py_compile /workspace/hyperswitch/transform_script.py /workspace/hyperswitch/transform_connect_script.py'
+# v043.1 fix: removed bogus f2p_upstream_54b5536e (py_compile transform_script.py;
+# files do not exist in upstream PR 8007 — they were agent scratch artifacts).
+# Weight redistributed 0.20 -> 0.05 each across the 4 valid stripe-relocation gates.
 run_v043_gate p2p_upstream_7a8254b6 'cargo_metadata_workspace' 'cd /workspace/hyperswitch && export PATH=/usr/local/cargo/bin:$PATH && cargo metadata --no-deps --format-version=1 >/dev/null && echo OK'
 
 # Recompute reward using v043 weights.
+# v043.1 fix: P2P_REGRESSION is informational only (never zero reward).
+# Only P2P_GATING ids may hard-zero. f2p_any_pass guard preserves inner reward.
 python3 - <<"V043_PY"
 import json, os
-WEIGHTS = {"f2p_upstream_54b5536e": 0.2, "t1_f2p_hc_declares_stripe_mod": 0.2, "t1_f2p_hc_reexports_stripe": 0.2, "t1_f2p_router_mod_removed": 0.2, "t1_f2p_router_reexports_from_hc": 0.2}
+WEIGHTS = {"t1_f2p_hc_declares_stripe_mod": 0.25, "t1_f2p_hc_reexports_stripe": 0.25, "t1_f2p_router_mod_removed": 0.25, "t1_f2p_router_reexports_from_hc": 0.25}
 P2P_GATING = []
 P2P_REGRESSION = ["p2p_upstream_7a8254b6"]
 verdicts = {}
@@ -196,16 +200,25 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+p2p_failed = False
+for gid in P2P_GATING:
     if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
+        p2p_failed = True; break
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
+if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
+else:
+    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+    reward = existing * inner_weight
     for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+        if verdicts.get(gid, False): reward += float(w)
+reward = max(0.0, min(1.0, reward))
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

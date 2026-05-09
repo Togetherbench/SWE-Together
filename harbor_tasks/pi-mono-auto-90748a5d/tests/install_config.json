@@ -4,7 +4,10 @@
   "log_parser": "parse_log_vitest",
   "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
   "repo_dir": "/workspace/pi-mono",
-  "FAIL_TO_PASS": [],
+  "FAIL_TO_PASS": [
+    "converts BMP to PNG on Wayland/WSLg"
+  ],
   "PASS_TO_PASS": [],
-  "_upgraded_from_legacy": true
+  "_upgraded_from_legacy": true,
+  "_curated": "f2p_populated_from_canonical_patch"
 }

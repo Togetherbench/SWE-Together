@@ -32,17 +32,13 @@ else
     emit_gate "p2p_file_exists" "fail"
 fi
 
-# P2P_2: Agent must have made changes to the file
-cd "$REPO"
-if git diff --name-only HEAD | grep -q "mise-tasks/lint/mise"; then
+# P2P_2: Agent must have made changes to the file (informational)
+if [ -d "$REPO/.git" ] && git -C "$REPO" diff --name-only HEAD 2>/dev/null | grep -q "mise-tasks/lint/mise"; then
+    emit_gate "p2p_agent_modified" "pass"
+elif [ -d "$REPO/.git" ] && git -C "$REPO" diff --cached --name-only 2>/dev/null | grep -q "mise-tasks/lint/mise"; then
     emit_gate "p2p_agent_modified" "pass"
 else
-    # Also check staged changes
-    if git diff --cached --name-only | grep -q "mise-tasks/lint/mise"; then
-        emit_gate "p2p_agent_modified" "pass"
-    else
-        emit_gate "p2p_agent_modified" "fail"
-    fi
+    emit_gate "p2p_agent_modified" "fail"
 fi
 
 # P2P_3: The script is syntactically valid shell (check with sh -n)
@@ -184,49 +180,8 @@ else
 fi
 
 # ---- COMPUTE REWARD ----
-
-# Check P2P gates: any failure => reward = 0.0
-P2P_FAILED=false
-for gid in p2p_file_exists p2p_agent_modified p2p_valid_shell; do
-    if grep -q "\"id\":\"$gid\",\"verdict\":\"fail\"" "$GATES_FILE" 2>/dev/null; then
-        P2P_FAILED=true
-        break
-    fi
-done
-
-if $P2P_FAILED; then
-    echo "0.0" > "$REWARD_FILE"
-    echo "P2P gate failure — reward set to 0.0"
-    rm -rf "$TMPDIR"
-    exit 0
-fi
-
-# Weighted-replace reward formula
-WEIGHTS='{"g1_indented_detection":0.20,"g2_short_no_fp":0.15,"g3_single_quote_syntax":0.15,"g4_non_indented_still_works":0.10,"g5_line_count_excludes_delimiter":0.10}'
-
-# Determine which F2P gates passed
-F2P_ANY_PASS=false
-declare -A VERDICTS
-while IFS= read -r line; do
-    gid=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['id'])")
-    verdict=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['verdict'])")
-    VERDICTS["$gid"]="$verdict"
-done < "$GATES_FILE"
-
-# Check if any F2P gate passed
-for gid in g1_indented_detection g2_short_no_fp g3_single_quote_syntax g4_non_indented_still_works g5_line_count_excludes_delimiter; do
-    if [ "${VERDICTS[$gid]}" = "pass" ]; then
-        F2P_ANY_PASS=true
-        break
-    fi
-done
-
-if ! $F2P_ANY_PASS; then
-    echo "0.0" > "$REWARD_FILE"
-    echo "No F2P gates passed — reward set to 0.0"
-    rm -rf "$TMPDIR"
-    exit 0
-fi
+# P2P_REGRESSION gates are INFORMATIONAL ONLY — never zero the reward.
+# (Per CLAUDE.md golden rule + scoring_traps.md.)
 
 # Compute reward with weighted-replace
 python3 << 'PYEOF'
@@ -239,11 +194,11 @@ verdicts = {d["id"]: d["verdict"] for d in lines}
 
 weights = json.loads('''{"g1_indented_detection":0.20,"g2_short_no_fp":0.15,"g3_single_quote_syntax":0.15,"g4_non_indented_still_works":0.10,"g5_line_count_excludes_delimiter":0.10}''')
 
-# Check P2P gates
-p2p_failed = any(
-    verdicts.get(gid) == "fail"
-    for gid in ["p2p_file_exists", "p2p_agent_modified", "p2p_valid_shell"]
-)
+# P2P_REGRESSION gates are informational only — do NOT zero reward
+p2p_failed = False
+
+# No external "existing" reward stream for this task; legacy inner = 0
+existing = 0.0
 
 # Check if any F2P gate passed
 f2p_any_pass = any(
@@ -255,13 +210,16 @@ if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
 else:
     inner_weight = max(0.0, 1.0 - sum(weights.values()))
-    reward = 0.0 * inner_weight  # existing = 0.0 initially
+    reward = existing * inner_weight
     for gid, w in weights.items():
         if verdicts.get(gid) == "pass":
             reward += float(w)
 
+# Bound to [0, 1]
+reward = max(0.0, min(1.0, reward))
+
 with open("/logs/verifier/reward.txt", "w") as f:
-    f.write(str(reward))
+    f.write(f"{reward:.4f}")
 PYEOF
 
 rm -rf "$TMPDIR"

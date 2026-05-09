@@ -2,9 +2,16 @@
   "task_name": "light-protocol-implement-7adad1",
   "language": "rust",
   "log_parser": "parse_log_cargo",
-  "test_cmd": "cargo test --release 2>&1",
+  "test_cmd": "cargo test -p light-sdk-macros --lib 2>&1",
   "repo_dir": "/home/user/light-protocol",
-  "FAIL_TO_PASS": [],
+  "FAIL_TO_PASS": [
+    "light_pdas::light_account_keywords::tests::test_boolean_flag_keys",
+    "light_pdas::light_account_keywords::tests::test_associated_token_namespace_keys",
+    "light_pdas::accounts::light_account::tests::test_parse_associated_token_idempotent_absent_is_false",
+    "light_pdas::accounts::light_account::tests::test_parse_associated_token_idempotent_flag_is_true",
+    "light_pdas::accounts::light_account::tests::test_parse_associated_token_idempotent_with_value_fails"
+  ],
   "PASS_TO_PASS": [],
-  "_upgraded_from_legacy": true
+  "_upgraded_from_legacy": true,
+  "_curator_notes": "Curated 2026-05-07: populated FAIL_TO_PASS with the 5 new/updated unit tests inside the macros crate (light_pdas::light_account_keywords + light_pdas::accounts::light_account modules) that the canonical patch adds. These run inside `cargo test -p light-sdk-macros --lib` and exercise the parser-level boolean-flag behaviour described in the instruction. The 2 integration tests in d10_ata_idempotent_test.rs need solana-test-validator + clang-linked builds and were intentionally excluded — same reasoning as the sibling task-a3ba62 fix. Switched to --lib to avoid pulling in slow integration-test compile."
 }

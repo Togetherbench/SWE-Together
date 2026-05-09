@@ -384,7 +384,9 @@ try:
             except Exception: pass
 except FileNotFoundError: pass
 hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
+# v0.4.3.1 fix: P2P_REGRESSION gates are informational only, never zero reward.
+# Only P2P_GATING (a different kind, used rarely) may zero the reward.
+for gid in P2P_GATING:
     if not verdicts.get(gid, False):
         hard_zero = True; break
 if hard_zero: reward = 0.0

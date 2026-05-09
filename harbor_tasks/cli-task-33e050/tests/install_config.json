@@ -5,6 +5,7 @@
   "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/workspace/cli",
   "FAIL_TO_PASS": [
+    "TestWaitForTranscriptFlush_NonexistentFile_SkipsWait",
     "TestWaitForTranscriptFlush_NonexistentFile_ReturnsImmediately"
   ],
   "PASS_TO_PASS": [],

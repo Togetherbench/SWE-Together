@@ -45,7 +45,7 @@ gates:
     kind: F2P
     turn: null
     weight: 0.20
-    description: "get_optional_l2_l3_data is called in checkout transformers"
+    description: "l2_l3_data accessor / L2L3Data type referenced in checkout transformers (any of: get_optional_l2_l3_data, .l2_l3_data field, L2L3Data type)"
   # --- P2P regression gates ---
   - id: p2p_upstream_payments_request_regression
     kind: P2P_REGRESSION

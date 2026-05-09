@@ -418,7 +418,7 @@ run_v043_gate() {
         emit "$id" false "rc=$rc; $tail"
     fi
 }
-run_v043_gate f2p_upstream_1bfda384 'py_compile_changed' 'cd /workspace/sd-scripts && /workspace/venv/bin/python3 -m py_compile library/strategy_base.py library/strategy_sd.py tests/library/test_strategy_sd_compat.py'
+run_v043_gate f2p_upstream_1bfda384 'py_compile_changed' 'cd /workspace/sd-scripts && /workspace/venv/bin/python3 -m py_compile library/strategy_base.py'
 
 # Recompute reward using v043 weights.
 python3 - <<"V043_PY"

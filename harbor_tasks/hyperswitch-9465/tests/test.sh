@@ -312,7 +312,9 @@ fi
 echo ""
 echo "=== F2P Gate 5 [0.10]: migration files ==="
 G5_OK=0
-MIG_UPS=$(find migrations -mindepth 2 -maxdepth 2 -name 'up.sql' 2>/dev/null)
+# Upstream PR #9466 places its migration under v2_compatible_migrations/ (not
+# the top-level migrations/ dir). Search both so we credit either layout.
+MIG_UPS=$(find migrations v2_compatible_migrations -mindepth 2 -maxdepth 2 -name 'up.sql' 2>/dev/null)
 HIT_AAGI=0
 HIT_AAIT=0
 HIT_AGI=0
@@ -462,9 +464,11 @@ fi
 # F2P upstream gate: Migration file completeness
 echo ""
 echo "=== Upstream F2P: Migration file completeness ==="
-if grep -rq 'active_attempts_group_id' migrations/ 2>/dev/null && \
-   grep -rq 'active_attempt_id_type' migrations/ 2>/dev/null && \
-   grep -rq 'attempts_group_id' migrations/ 2>/dev/null; then
+# Search both migrations/ and v2_compatible_migrations/ — upstream PR #9466
+# places the migration under v2_compatible_migrations/.
+if (grep -rq 'active_attempts_group_id' migrations/ v2_compatible_migrations/ 2>/dev/null) && \
+   (grep -rq 'active_attempt_id_type' migrations/ v2_compatible_migrations/ 2>/dev/null) && \
+   (grep -rq 'attempts_group_id' migrations/ v2_compatible_migrations/ 2>/dev/null); then
     echo '{"id": "f2p_upstream_migration_completeness", "passed": true, "detail": "All 3 new columns found in migration files"}' >> /logs/verifier/gates.json
     echo "PASS"
 else

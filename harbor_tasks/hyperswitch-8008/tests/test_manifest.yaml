@@ -11,29 +11,23 @@ gates:
 - id: t1_f2p_hc_declares_stripe_mod
   turn: 1
   kind: F2P
-  weight: 0.2
+  weight: 0.25
   description: hyperswitch_connectors/src/connectors.rs declares pub mod stripe;
 - id: t1_f2p_hc_reexports_stripe
   turn: 1
   kind: F2P
-  weight: 0.2
+  weight: 0.25
   description: hyperswitch_connectors re-exports stripe::Stripe symbol
 - id: t1_f2p_router_mod_removed
   turn: 1
   kind: F2P
-  weight: 0.2
+  weight: 0.25
   description: router/src/connector.rs no longer declares local pub mod stripe;
 - id: t1_f2p_router_reexports_from_hc
   turn: 1
   kind: F2P
-  weight: 0.2
+  weight: 0.25
   description: router re-exports stripe::Stripe from hyperswitch_connectors
-- id: f2p_upstream_54b5536e
-  turn: null
-  kind: F2P
-  weight: 0.2
-  description: 'upstream(F2P): py_compile_changed_generic @ 9d78c58'
-  notes: v043 F2P; reason=fail_on_buggy (rc_base=1) -> pass_on_fix; bundle=staging/ci_inventory/hyperswitch-8008_p2p_bundle.yaml
 - id: p2p_upstream_7a8254b6
   turn: null
   kind: P2P_REGRESSION

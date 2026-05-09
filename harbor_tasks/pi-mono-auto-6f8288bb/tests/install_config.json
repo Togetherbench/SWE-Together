@@ -4,7 +4,11 @@
   "log_parser": "parse_log_vitest",
   "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
   "repo_dir": "/workspace/pi-mono",
-  "FAIL_TO_PASS": [],
+  "FAIL_TO_PASS": [
+    "maps groq qwen3 reasoning levels to default reasoning_effort",
+    "keeps normal reasoning_effort for groq models without compat mapping"
+  ],
   "PASS_TO_PASS": [],
-  "_upgraded_from_legacy": true
+  "_upgraded_from_legacy": true,
+  "_curated": "f2p_populated_from_canonical_patch"
 }

@@ -59,6 +59,8 @@ run_v043_gate p2p_upstream_7a8254b6 'cargo_metadata_workspace' 'cd /workspace/hy
 run_v043_gate p2p_upstream_d59414f2 'rust_files_nonempty' 'cd /workspace/hyperswitch && ok=1; for f in crates/router/src/routes/routing.rs; do if [ ! -s "$f" ]; then ok=0; break; fi; head -c 4 "$f" | grep -q '\''^//'\'' && head -c 4 "$f" >/dev/null; done; [ $ok = 1 ] && echo OK || exit 1'
 
 # Recompute reward using v043 weights.
+# v043.1 fix: P2P_REGRESSION is informational only (never zero reward).
+# Only P2P_GATING ids may hard-zero. f2p_any_pass guard preserves inner reward.
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_api_key_path_preserved": 0.2, "t1_f2p_no_jwt_only_handler_auth": 0.25, "t1_f2p_not_release_cfg_eliminated": 0.3, "t1_f2p_release_cfg_eliminated": 0.25}
@@ -76,16 +78,27 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
+existing = 0.0
+try:
+    with open('/logs/verifier/reward.txt') as f:
+        existing = float(f.read().strip() or 0)
+except Exception:
+    pass
+# Only P2P_GATING (a separate kind) may hard-zero reward. P2P_REGRESSION is
+# informational and is logged to gates.json but never zeroes the reward.
+p2p_failed = False
+for gid in P2P_GATING:
     if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
+        p2p_failed = True; break
+f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
+if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0
+else:
+    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+    reward = existing * inner_weight
     for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+        if verdicts.get(gid, False): reward += float(w)
+reward = max(0.0, min(1.0, reward))
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)
