@@ -29,7 +29,15 @@ function sourceFile(): ts.SourceFile {
   return ts.createSourceFile("manager.ts", src, ts.ScriptTarget.Latest, true);
 }
 
-/** Find a method by name; returns its function body node or null. */
+/** Find a method or arrow-function property by name; returns its body Block or null.
+ *
+ * Handles BOTH conventional method syntax (`foo() { ... }`) and the arrow-function
+ * class-property syntax used heavily in this codebase (`foo = (): void => { ... }`).
+ * The original v1 verifier only matched `ts.isMethodDeclaration`, which silently
+ * skipped every arrow-function member — including `recalculateAndRenderMarkers`
+ * (line 495 in buggy / 1246 in gold) — and crashed every trial with
+ * "FATAL: Could not find …".
+ */
 function findMethodBody(
   sf: ts.SourceFile,
   className: string,
@@ -43,6 +51,7 @@ function findMethodBody(
       node.name?.text === className
     ) {
       for (const member of node.members) {
+        // Conventional method:  private foo(): void { ... }
         if (
           ts.isMethodDeclaration(member) &&
           member.name &&
@@ -51,6 +60,20 @@ function findMethodBody(
           member.body
         ) {
           result = member.body;
+          return;
+        }
+        // Arrow-function property:  private foo = (): void => { ... }
+        if (
+          ts.isPropertyDeclaration(member) &&
+          member.name &&
+          ts.isIdentifier(member.name) &&
+          member.name.text === methodName &&
+          member.initializer &&
+          ts.isArrowFunction(member.initializer) &&
+          member.initializer.body &&
+          ts.isBlock(member.initializer.body)
+        ) {
+          result = member.initializer.body;
           return;
         }
       }

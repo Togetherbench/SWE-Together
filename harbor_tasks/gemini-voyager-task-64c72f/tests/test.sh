@@ -100,6 +100,19 @@ if typecheck_rc != 0:
     open(reward_path, "w").write("0.000000\n")
     sys.exit(0)
 
+# aria_label_update fires whenever setAttribute('aria-label', …) appears anywhere
+# in updateVirtualRangeAndRender — but the buggy state also calls it (on new dot
+# creation, line ~1232 in manager.ts). The gate is only meaningful evidence of
+# the reuse refactor when paired with at least one structural reuse signal.
+# Without this guard buggy state scores 0.10 (single false-positive gate).
+if verdicts.get("aria_label_update") and not (
+    verdicts.get("dot_reuse_map")
+    or verdicts.get("orphan_cleanup")
+    or verdicts.get("no_blanket_removal_in_recalc")
+):
+    print("[eval] aria_label_update suppressed (no reuse refactor evidence)")
+    verdicts["aria_label_update"] = False
+
 reward = 0.0
 passed_gates = []
 for gid, w in WEIGHTS.items():

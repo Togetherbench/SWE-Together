@@ -4,13 +4,7 @@
   "log_parser": "parse_log_vitest",
   "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
   "repo_dir": "/workspace/repo",
-  "FAIL_TO_PASS": [
-    "creates canvas when enabled via storage",
-    "does not create canvas when disabled",
-    "removes canvas when disabled via storage change",
-    "creates canvas when enabled via storage change",
-    "cleans up on beforeunload"
-  ],
+  "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],
   "source_files": [
     "src/core/types/common.ts",
