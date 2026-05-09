@@ -1,7 +1,7 @@
 gates:
   - id: "F2P_TYPECHECK"
     kind: "F2P"
-    weight: 0.15
+    weight: 0.10
     command: |
       cd /workspace/repo && bun run typecheck > /tmp/typecheck.log 2>&1
       test $? -eq 0
@@ -35,8 +35,8 @@ gates:
       print(1 if found else 0)
       " 2>/dev/null | grep -q '^1$'
 
-  - id: "P2P_REORDER_UI"
-    kind: "P2P"
+  - id: "F2P_REORDER_UI"
+    kind: "F2P"
     weight: 0.20
     command: |
       python3 -c "
@@ -48,16 +48,14 @@ gates:
       s = 0
       if re.search(r'<(?:button|div)[^>]*onClick.*?<svg.*?</svg>', cleaned, re.DOTALL) and re.search(r'<polyline[^>]*points=', cleaned):
           s += 1
-      if re.search(r'disabled\s*=\s*\{', cleaned):
-          s += 1
       if re.search(r'(?:aria-label|title)\s*=\s*\{[^}]*?(?:move|Move|up|down|Up|Down|上|下)', cleaned):
           s += 1
       print(1 if s >= 2 else 0)
       " 2>/dev/null | grep -q '^1$'
 
-  - id: "P2P_MOVE_LOGIC"
-    kind: "P2P"
-    weight: 0.15
+  - id: "F2P_MOVE_LOGIC"
+    kind: "F2P"
+    weight: 0.20
     command: |
       python3 -c "
       import re
@@ -70,14 +68,14 @@ gates:
           s += 1
       if re.search(r'const\s+\w+\s*=\s*\[\.\.\.\w+\]', cleaned) or re.search(r'\[\w+\]\s*=\s*\[\w+\]\s*,\s*\[\w+\]\s*=\s*\[\w+\]', cleaned):
           s += 1
-      if re.search(r'set\w*(?:Section|Order|Reorder)\w*', cleaned):
+      if re.search(r'set\w*(?:Section|Order|Reorder)\w*\s*\(', cleaned):
           s += 1
       print(1 if s >= 2 else 0)
       " 2>/dev/null | grep -q '^1$'
 
-  - id: "P2P_STORAGE_SAVE"
-    kind: "P2P"
-    weight: 0.10
+  - id: "F2P_STORAGE_SAVE"
+    kind: "F2P"
+    weight: 0.15
     command: |
       python3 -c "
       import re
@@ -85,12 +83,19 @@ gates:
           text = f.read()
       cleaned = re.sub(r'//.*', '', text)
       cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
-      found = bool(re.search(r'(?:chrome\.storage\.sync\.set|setSyncStorage)\s*\(', cleaned))
+      found = False
+      for m in re.finditer(r'(?:chrome\.storage\.sync\.set|setSyncStorage)\s*\(', cleaned):
+          start = max(0, m.start() - 200)
+          end = min(len(cleaned), m.end() + 300)
+          window = cleaned[start:end]
+          if re.search(r'(?:SECTION|Section|section|ORDER|Order|order|REORDER|Reorder|reorder)', window):
+              found = True
+              break
       print(1 if found else 0)
       " 2>/dev/null | grep -q '^1$'
 
-  - id: "P2P_I18N"
-    kind: "P2P"
+  - id: "F2P_I18N"
+    kind: "F2P"
     weight: 0.05
     command: |
       python3 -c "

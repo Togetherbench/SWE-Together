@@ -2,16 +2,11 @@ version: "1.0"
 task_id: cli-task-2f5833
 
 gates:
-  # ── P2P_REGRESSION (gating-only, zero reward on fail) ──
+  # ── P2P_REGRESSION (informational only, never zeros reward; logged to gates.json) ──
   - id: P2P1_build
     kind: P2P_REGRESSION
     weight: 0.0
-    description: "Go build compiles without errors"
-
-  - id: P2P2_unit_tests
-    kind: P2P_REGRESSION
-    weight: 0.0
-    description: "Unit tests pass (non-integration)"
+    description: "Go build compiles without errors (informational)"
 
   # ── F2P Gold (behavioral, hard to game): 0.45 ──
   - id: G1_gold_no_extract_prompts

@@ -21,8 +21,8 @@ gates:
   weight: 0.5
   label: Migration file completeness
   command: cd /workspace/hyperswitch && grep -rq 'active_attempts_group_id' migrations/
-    && grep -rq 'active_attempt_id_type' migrations/ && grep -rq 'attempts_group_id'
-    migrations/
+    v2_compatible_migrations/ && grep -rq 'active_attempt_id_type' migrations/ v2_compatible_migrations/
+    && grep -rq 'attempts_group_id' migrations/ v2_compatible_migrations/
   description: Verifies SQL migration files exist with all 3 new column ALTER TABLE
     statements
 - id: p2p_upstream_cargo_metadata

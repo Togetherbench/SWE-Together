@@ -122,7 +122,7 @@ TYPE_NAME=$(awk '
         if(c=="{") brace++;
         if(c=="}") { brace--; if(brace<=0 && inside==1){inside=0; break} }
       }
-      if(/payment_attempts[[:space:]]*:[[:space:]]*Vec[[:space:]]*</){
+      if(/(payment_attempts|payment_attempt_list|attempts)[[:space:]]*:[[:space:]]*Vec[[:space:]]*</){
           if(current ~ /[Aa]ttempt/ && (current ~ /[Ll]ist/ || current ~ /[Rr]esponse/)){
             print current; exit
           }
@@ -173,32 +173,30 @@ fi
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 3: Core list_payment_attempts function ==="
-CORE_FN=$(grep -oE "pub async fn list_payment_attempts" "$CORE_FILE" | head -1 | awk '{print $4}')
+# Accept either the session-style name `list_payment_attempts` or the upstream
+# gold-style names (`payments_list_attempts_using_payment_intent_id`,
+# `payments_attempt_operation_core`, etc.). Behavioral requirements:
+#   1. A pub async fn dedicated to listing attempts exists in core (name
+#      contains both `list` and `attempt`, OR matches the gold helper
+#      `payments_attempt_operation_core`).
+#   2. Anywhere in the file, the list-attempts type/data is referenced
+#      (response type or domain data wrapper).
+#   3. Anywhere in the file, GlobalPaymentId / payment_id appears (sanity).
 CORE_OK=0
-if [ -n "$CORE_FN" ]; then
-    awk -v fn="$CORE_FN" '
-      $0 ~ "pub async fn "fn"\\(" {found=1; brace=0; started=0}
-      found {
-          print;
-          for(i=1;i<=length($0);i++){
-            c=substr($0,i,1);
-            if(c=="{") {brace++; started=1}
-            else if(c=="}") { brace--; if(started && brace==0){exit} }
-          }
-      }
-    ' "$CORE_FILE" > /tmp/core_body.txt
+if grep -qE "pub async fn ([a-zA-Z0-9_]*list[a-zA-Z0-9_]*attempt[a-zA-Z0-9_]*|[a-zA-Z0-9_]*attempt[a-zA-Z0-9_]*list[a-zA-Z0-9_]*|payments_attempt_operation_core)" "$CORE_FILE"; then
+    HAS_FN=1
+else
+    HAS_FN=0
+fi
+HAS_TYPE=0
+HAS_QUERY=0
+HAS_GLOBAL_ID=0
+grep -qE "PaymentAttemptListResponse|PaymentAttemptsListResponse|PaymentListAttemptsResponse|PaymentAttemptListData|PaymentGetListAttempts|list_payments_attempts" "$CORE_FILE" && HAS_TYPE=1
+grep -qE "find_payment_attempts_by_payment_intent_id|find_attempts_by_payment_intent|payment_attempts_by_payment_intent|PaymentAttemptListData|PaymentGetListAttempts|payments_attempt_operation_core|payment_attempt_list" "$CORE_FILE" && HAS_QUERY=1
+grep -qE "GlobalPaymentId|payment_id" "$CORE_FILE" && HAS_GLOBAL_ID=1
 
-    HAS_QUERY=0
-    HAS_TYPE=0
-    HAS_GLOBAL_ID=0
-    grep -qE "find_payment_attempts_by_payment_intent_id|find_attempts_by_payment_intent|payment_attempts_by_payment_intent" /tmp/core_body.txt && HAS_QUERY=1
-    grep -qE "PaymentAttemptListResponse|PaymentAttemptsListResponse|PaymentListAttemptsResponse" /tmp/core_body.txt && HAS_TYPE=1
-    grep -qE "GlobalPaymentId|payment_id" /tmp/core_body.txt && HAS_GLOBAL_ID=1
-
-    if [ $HAS_QUERY -eq 1 ] && [ $HAS_TYPE -eq 1 ] && [ $HAS_GLOBAL_ID -eq 1 ]; then
-        CORE_OK=1
-    fi
-    rm -f /tmp/core_body.txt
+if [ $HAS_FN -eq 1 ] && [ $HAS_TYPE -eq 1 ] && [ $HAS_QUERY -eq 1 ] && [ $HAS_GLOBAL_ID -eq 1 ]; then
+    CORE_OK=1
 fi
 if [ $CORE_OK -eq 1 ]; then
     REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.09}')
@@ -239,20 +237,20 @@ echo ""
 echo "=== F2P Gate 5: Auxiliary plumbing (Flow + lock_utils + ApiEventMetric) ==="
 AUX_SCORE=0
 FLOW_VARIANT=""
-if grep -qE "PaymentsListAttempts|PaymentsAttemptList" "$TYPES_FILE"; then
+if grep -qE "PaymentsListAttempts|PaymentsAttemptList|PaymentAttemptsList|PaymentAttemptList" "$TYPES_FILE"; then
     AUX_SCORE=$((AUX_SCORE+1))
-    FLOW_VARIANT=$(grep -oE "PaymentsListAttempts|PaymentsAttemptList" "$TYPES_FILE" | head -1)
+    FLOW_VARIANT=$(grep -oE "PaymentsListAttempts|PaymentsAttemptList|PaymentAttemptsList|PaymentAttemptList" "$TYPES_FILE" | head -1)
     echo "  + Flow variant '$FLOW_VARIANT' added"
 else
     echo "  - Flow variant missing"
 fi
-if grep -qE "PaymentsListAttempts|PaymentsAttemptList" "$LOCK_FILE"; then
+if grep -qE "PaymentsListAttempts|PaymentsAttemptList|PaymentAttemptsList|PaymentAttemptList" "$LOCK_FILE"; then
     AUX_SCORE=$((AUX_SCORE+1))
     echo "  + lock_utils mapping added"
 else
     echo "  - lock_utils mapping missing"
 fi
-if grep -qE "impl ApiEventMetric for (api_models::payments::|payments::)?(PaymentAttemptListResponse|PaymentAttemptsListResponse|PaymentListAttemptsResponse)" "$EVENTS_FILE"; then
+if grep -qE "impl ApiEventMetric for (api_models::payments::|payments::)?(PaymentAttemptListResponse|PaymentAttemptsListResponse|PaymentListAttemptsResponse|PaymentAttemptListRequest|PaymentListAttemptsRequest)" "$EVENTS_FILE"; then
     AUX_SCORE=$((AUX_SCORE+1))
     echo "  + ApiEventMetric impl added"
 else
@@ -299,21 +297,39 @@ mkdir -p /logs/verifier
 
 echo ""
 echo "=== Upstream Gate: f2p_upstream_openapi_route ==="
-if cd /workspace/hyperswitch && grep -q 'list_payment_attempts' crates/openapi/src/routes/payments.rs; then
-    echo '{"id": "f2p_upstream_openapi_route", "passed": true, "detail": "list_payment_attempts found in openapi routes"}' >> /logs/verifier/gates.json
+# Pass if the agent registered the list-attempts endpoint in OpenAPI metadata.
+# Two valid surfaces:
+#   1. session-style: a route fn `list_payment_attempts` in
+#      `crates/openapi/src/routes/payments.rs`
+#   2. gold-style: the request schema `PaymentAttemptListRequest` (or
+#      `PaymentListAttemptsRequest`) registered in
+#      `crates/openapi/src/openapi_v2.rs`
+OPENAPI_OK=0
+if cd /workspace/hyperswitch; then
+    if grep -q 'list_payment_attempts\|payments_list_attempts' crates/openapi/src/routes/payments.rs 2>/dev/null; then
+        OPENAPI_OK=1
+    elif grep -qE 'PaymentAttemptListRequest|PaymentListAttemptsRequest|PaymentAttemptsListRequest' crates/openapi/src/openapi_v2.rs 2>/dev/null; then
+        OPENAPI_OK=1
+    fi
+fi
+if [ $OPENAPI_OK -eq 1 ]; then
+    echo '{"id": "f2p_upstream_openapi_route", "passed": true, "detail": "list-attempts registered in openapi routes or schemas"}' >> /logs/verifier/gates.json
     echo "PASS"
 else
-    echo '{"id": "f2p_upstream_openapi_route", "passed": false, "detail": "list_payment_attempts not found in openapi routes"}' >> /logs/verifier/gates.json
+    echo '{"id": "f2p_upstream_openapi_route", "passed": false, "detail": "list-attempts not registered in openapi routes or schemas"}' >> /logs/verifier/gates.json
     echo "FAIL"
 fi
 
 echo ""
 echo "=== Upstream Gate: f2p_upstream_openapi_v2_schema ==="
-if cd /workspace/hyperswitch && grep -q 'PaymentListAttemptsResponse' crates/openapi/src/openapi_v2.rs; then
-    echo '{"id": "f2p_upstream_openapi_v2_schema", "passed": true, "detail": "PaymentListAttemptsResponse found in openapi_v2.rs"}' >> /logs/verifier/gates.json
+# Accept both the session-style name (PaymentListAttemptsResponse) and the
+# upstream gold-style name (PaymentAttemptListResponse). Either is a valid
+# response schema name for the list-attempts endpoint.
+if cd /workspace/hyperswitch && grep -qE 'PaymentListAttemptsResponse|PaymentAttemptListResponse|PaymentAttemptsListResponse' crates/openapi/src/openapi_v2.rs; then
+    echo '{"id": "f2p_upstream_openapi_v2_schema", "passed": true, "detail": "list-attempts response schema found in openapi_v2.rs"}' >> /logs/verifier/gates.json
     echo "PASS"
 else
-    echo '{"id": "f2p_upstream_openapi_v2_schema", "passed": false, "detail": "PaymentListAttemptsResponse not found in openapi_v2.rs"}' >> /logs/verifier/gates.json
+    echo '{"id": "f2p_upstream_openapi_v2_schema", "passed": false, "detail": "list-attempts response schema not found in openapi_v2.rs"}' >> /logs/verifier/gates.json
     echo "FAIL"
 fi
 

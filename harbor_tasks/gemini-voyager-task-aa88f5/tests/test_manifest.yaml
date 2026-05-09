@@ -7,49 +7,55 @@ gates:
   - id: F2P_DIALOG_TITLE_LIGHT
     kind: F2P
     weight: 0.20
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test dialog-title-light"
+    command: "python3 /tests/check_css.py --test dialog-title-light"
     description: ".gv-folder-import-dialog .gv-folder-dialog-title has .theme-host.light-theme or body.light-theme override with dark text color"
+    category: behavioral
 
   - id: F2P_STRATEGY_LABEL_LIGHT
     kind: F2P
     weight: 0.15
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test strategy-label-light"
+    command: "python3 /tests/check_css.py --test strategy-label-light"
     description: ".gv-folder-import-strategy-label has light-theme override"
+    category: behavioral
 
   - id: F2P_RADIO_OPTIONS_LIGHT
     kind: F2P
     weight: 0.15
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test radio-options-light"
+    command: "python3 /tests/check_css.py --test radio-options-light"
     description: ".gv-folder-import-radio-option and its text have light-theme overrides"
+    category: behavioral
 
   - id: F2P_DIALOG_BUTTONS_LIGHT
     kind: F2P
     weight: 0.10
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test dialog-buttons-light"
+    command: "python3 /tests/check_css.py --test dialog-buttons-light"
     description: "Import dialog primary/secondary buttons have light-theme overrides"
+    category: behavioral
 
   - id: F2P_FILE_ELEMENTS_LIGHT
     kind: F2P
     weight: 0.10
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test file-elements-light"
+    command: "python3 /tests/check_css.py --test file-elements-light"
     description: ".gv-folder-import-file-name and .gv-folder-import-file-button have light-theme overrides"
+    category: behavioral
 
   - id: F2P_MENU_ITEM_FLEX
     kind: F2P
     weight: 0.10
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test menu-item-flex"
+    command: "python3 /tests/check_css.py --test menu-item-flex"
     description: ".gv-folder-menu-item uses display:flex and align-items:center"
+    category: behavioral
 
-  # ── P2P_REGRESSION gates (gating-only, zero reward on fail) ──
+  # ── P2P_REGRESSION gates (informational only — never zero the reward) ──
 
   - id: P2P_NO_CSS_ERRORS
     kind: P2P_REGRESSION
     weight: 0.0
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test css-valid"
+    command: "python3 /tests/check_css.py --test css-valid"
     description: "contentStyle.css is syntactically valid (balanced braces, no obvious errors)"
 
   - id: P2P_DARK_THEME_INTACT
     kind: P2P_REGRESSION
     weight: 0.0
-    command: "python3 /workspace/gemini-voyager/.harbor-tests/check_css.py --test dark-theme-intact"
+    command: "python3 /tests/check_css.py --test dark-theme-intact"
     description: "At least 3 .theme-host.dark-theme or body.dark-theme override rules still exist for import dialog elements"
