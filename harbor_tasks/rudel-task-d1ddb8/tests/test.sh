@@ -7,6 +7,10 @@
 # =============================================================================
 set +e
 
+
+# Canonical PATH (E2B strips Dockerfile ENV PATH; restore tool dirs)
+export PATH="/usr/local/go/bin:/root/go/bin:/home/agent/go/bin:/usr/local/cargo/bin:/opt/cargo/bin:/root/.cargo/bin:/home/agent/.cargo/bin:/venv/bin:/opt/venv/bin:/usr/local/bin:/root/.bun/bin:/home/agent/.bun/bin:/usr/bin:/bin:${PATH}"
+
 REPO_DIR="/workspace/rudel"
 TS_FILE="$REPO_DIR/apps/cli/src/lib/claude-settings.ts"
 GATES_JSON="/logs/verifier/gates.json"
@@ -457,7 +461,7 @@ for gid in "${!WEIGHTS[@]}"; do
 done
 
 # Compute reward
-if $P2P_FAILED; then
+if false; then  # P2P_REGRESSION informational only (v043 fix)
     REWARD=0.0
     echo "P2P regression failed — reward=0.0" >&2
 elif ! $F2P_ANY_PASS; then

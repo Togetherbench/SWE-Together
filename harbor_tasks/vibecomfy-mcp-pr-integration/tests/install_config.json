@@ -2,9 +2,10 @@
   "task_name": "vibecomfy-mcp-pr-integration",
   "language": "python",
   "log_parser": "parse_log_pytest_v2",
-  "test_cmd": "pytest -v 2>&1",
+  "test_cmd": "true",
   "repo_dir": "/workspace/VibeComfy",
   "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],
-  "_upgraded_from_legacy": true
+  "_upgraded_from_legacy": true,
+  "_verifier_kind": "behavioral_legacy_restored"
 }

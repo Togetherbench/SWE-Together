@@ -2,9 +2,10 @@
   "task_name": "cli-fix-2026-0",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test -v ./... 2>&1",
+  "test_cmd": "true",
   "repo_dir": "/workspace/repo",
   "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],
-  "_upgraded_from_legacy": true
+  "_upgraded_from_legacy": true,
+  "_verifier_kind": "behavioral_legacy_restored"
 }

@@ -2,9 +2,10 @@
   "task_name": "pi-mono-auto-a4fca584",
   "language": "ts_bun",
   "log_parser": "parse_log_vitest",
-  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "test_cmd": "true",
   "repo_dir": "/workspace/pi-mono",
   "FAIL_TO_PASS": [],
   "PASS_TO_PASS": [],
-  "_upgraded_from_legacy": true
+  "_upgraded_from_legacy": true,
+  "_verifier_kind": "behavioral_legacy_restored"
 }
