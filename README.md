@@ -26,7 +26,7 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**176 tasks** under `harbor_tasks/` (post-v0.4.3 trunk), all derived from **real recorded coding sessions** across four sourcing waves:
+**173 tasks** under `harbor_tasks/` (`v0.4.4.3` trunk), all derived from **real recorded coding sessions** across four sourcing waves:
 
 - **SWE-chat** (Stanford `SALT-NLP/SWE-chat`) — **154 tasks**, scaffolded via the SWE-chat path in `data-pipeline/`. Largest wave, added post-v0.4.3.
 - **DataClaw** (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) — 46 tasks.
@@ -40,44 +40,60 @@ No synthetic tasks. Each task has a Docker environment, a natural-language instr
 
 The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
 
-### Results — v0.4.3 (5 cohorts × ~100 tasks)
+### Results — `togetherbench@0.4.4.3` (6 models, 932 unique (model, task) pairs)
 
-> **Benchmark version:** `togetherbench@0.4.3` (101 tasks on `v0.4.3-prep`, user sim v0.6.0). Full numbers in `analysis/V043_REPORT.md`.
+> **Benchmark version:** `togetherbench@0.4.4.3` (173 tasks, user sim v0.6.0, CC v2.1.108). Full numbers + audit notes in `analysis/V044_RELEASE_NOTES.md`.
 >
 > Results are tied to a specific benchmark version. The task set, user simulator, and test scripts all change between versions; always reference the version when citing results.
 
-**Clean mean** (broken trials excluded):
+**Headline** — per-(model, task) deduped, latest trial wins, audit-excluded trials filtered (162 DeepSeek HTTP 402 billing failures + 38 rate-limit-corrupted; see "Audit findings" below):
 
-| rank | cohort | model | clean_mean | n |
-|---|---|---|---|---|
-| 1 | opus46_high      | `anthropic/claude-opus-4-6` (effort=high)    | **0.4961** | 91 |
-| 2 | deepseek_v4_flash | `deepseek/deepseek-v4-flash`                 | **0.4728** | 93 |
-| 3 | deepseek_v4_pro   | `deepseek/deepseek-v4-pro`                   | **0.4465** | 93 |
-| 4 | minimax27        | `minimaxd/MiniMax-M2.7`                       | **0.4084** | 96 |
-| 5 | minimax25        | `minimaxd/MiniMax-M2.5`                       | **0.3333** | 97 |
+| rank | model              | provider                                | mean       | n_tasks | nonzero |
+|------|--------------------|-----------------------------------------|------------|---------|---------|
+| 1    | **DeepSeek V4 Pro**   | `deepseek/deepseek-v4-pro`           | **0.4013** | 169     | 120     |
+| 2    | **Opus 4.6**          | `anthropic/claude-opus-4-6` (subscription) | **0.3922** | 167  | 112     |
+| 3    | MiniMax M2.7          | `minimaxd/MiniMax-M2.7`               | 0.3690     | 169     | 114     |
+| 4    | **DeepSeek V4 Flash** | `deepseek/deepseek-v4-flash`          | **0.3660** | 170     | 112     |
+| 5    | MiniMax M2.5          | `minimaxd/MiniMax-M2.5`               | 0.3426     | 167     | 109     |
+| 6    | GLM 5.1               | `glmd/glm-5.1` (z.ai direct)          | 0.3408     | 79      | 47      |
 
-**Shared-task fair comparison** (n=89 tasks attempted by every cohort):
+**Apples-to-apples — 166 tasks attempted by ≥5 of 6 models**:
 
-| rank | cohort | mean |
+| rank | model              | mean       | n_tasks |
+|------|--------------------|------------|---------|
+| 1    | DeepSeek V4 Pro    | **0.3917** | 166     |
+| 2    | Opus 4.6           | **0.3888** | 165     |
+| 3    | DeepSeek V4 Flash  | 0.3610     | 166     |
+| 4    | MiniMax M2.7       | 0.3592     | 166     |
+| 5    | MiniMax M2.5       | 0.3361     | 165     |
+| 6    | GLM 5.1            | 0.3313     | 76      |
+
+**Strict 6/6 — 74 tasks all 6 models attempted**:
+
+| rank | model              | mean       |
+|------|--------------------|------------|
+| 1    | DeepSeek V4 Pro    | **0.4111** |
+| 2    | Opus 4.6           | 0.4089     |
+| 3    | DeepSeek V4 Flash  | 0.4003     |
+| 4    | MiniMax M2.7       | 0.3795     |
+| 5    | MiniMax M2.5       | 0.3734     |
+| 6    | GLM 5.1            | 0.3267     |
+
+Top three (DS Pro, Opus, DS Flash) are within **0.011** on the strict 6/6 set — statistical tie within bootstrap noise.
+
+### Audit findings (v0.4.4.3 vs v0.4.4.2)
+
+A systematic audit of all 13 cohort dirs uncovered two systematic biases:
+
+| issue | trials excluded | impact |
 |---|---|---|
-| 1 | opus46_high       | 0.4858 |
-| 2 | deepseek_v4_flash | 0.4506 |
-| 3 | deepseek_v4_pro   | 0.4449 |
-| 4 | minimax27         | 0.3916 |
-| 5 | minimax25         | 0.3367 |
+| **DeepSeek HTTP 402 "Payment Required"** (DS Pro/Flash swerb runs hit during a billing window) | **162** (84 DS Pro + 81 DS Flash, 35% of swerb each, both `_v043` cohorts unaffected) | DS means lifted +0.07–0.10; DS Pro now leads, DS Flash jumps from #6 → #4 |
+| **Rate-limit corruption** (≥10 `api_retry` events + reward 0; CC fabricates after 10 retries per CLAUDE.md) | 38 (GLM 35, MM 2.5 2, MM 2.7 1) | GLM was the obvious case (#6 → #4 vs the original v0.4.4.1 numbers); MM cohorts barely moved |
 
-**User-turn behaviour** (all cohorts run through the same v0.6.0 sim):
+Pre-fix, DS was systematically depressed by silent billing failures. The v0.4.4.3 leaderboard above already has these exclusions baked in — see `analysis/V044_RELEASE_NOTES.md` for the full per-cohort audit table.
 
-| cohort | avg turns | intervene% | no-op% |
-|---|---|---|---|
-| deepseek_v4_flash | 9.46 | 43.4% | 45.1% |
-| deepseek_v4_pro   | 7.74 | 41.4% | 44.1% |
-| minimax25         | 10.17 | 47.8% | 41.4% |
-| minimax27         | 9.67 | 42.0% | 45.9% |
-
-DeepSeek runs the longest sessions with the most no-ops (agent mostly on-track); MiniMax cohorts intervene more (agent outputs need correction more often).
-
-> Opus 4.7 was tested but excluded from the leaderboard: CC v2.1.108 sends `thinking.type=enabled`, while Opus 4.7 only accepts `thinking.type=adaptive` → all trials 400'd. Opus 4.6 with `effort=high` is the canonical Anthropic baseline for v0.4.3.
+> **Anthropic OAuth path (subscription billing, free under Claude Pro/Max plan):**
+> Opus 4.6 trials in this release used `claude setup-token` to generate a long-lived `sk-ant-oat01-...` token, exported as `CLAUDE_CODE_OAUTH_TOKEN`. The patched `src/run_eval.py:build_agent_env` detects the `oat01` prefix and routes via `Authorization: Bearer` (the Anthropic API rejects OAuth tokens via the `x-api-key` header). It also pops `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` from `os.environ` so Harbor's `claude_code` adapter doesn't leak them into the sandbox. See "Anthropic subscription billing" in `analysis/V044_RELEASE_NOTES.md` for the full mechanic.
 
 ---
 
@@ -93,36 +109,45 @@ cd SWE-Replay
 uv sync
 ```
 
-Pin to a release tag (`git checkout v0.4.3-…`) when reproducing published numbers — the task set, user simulator, and test scripts evolve.
+Pin to a release tag (`git checkout v0.4.4.3`) when reproducing published numbers — the task set, user simulator, and test scripts evolve.
 
 ### Running the full eval (production path)
 
-`src/run_eval.py` is the production async evaluator. It drives Harbor's `LocalOrchestrator` across N concurrent E2B sandboxes (default 25 workers), launches the in-sandbox LiteLLM proxy per trial, and writes per-cohort `trials_<cohort>_v043/<task>__<id>/` directories.
+`src/run_eval.py` is the production async evaluator. It drives Harbor's `LocalOrchestrator` across N concurrent E2B sandboxes (default 20 workers), launches the in-sandbox LiteLLM proxy per trial, and writes per-cohort `trials_<tag>/<task>__<id>/` directories.
 
 ```bash
-# Anthropic (no proxy needed)
+# Anthropic — pay-per-token API key (sk-ant-api03-...)
 ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
-    --model anthropic/claude-opus-4-6 --effort high \
-    --cohort opus46_high
+    --model anthropic/claude-opus-4-6 \
+    --tag opus46 --workers 10
 
-# DeepSeek (Anthropic-compat via proxy)
-DEEPSEEK_API_KEY=<key> ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
-    --model deepseek/deepseek-v4-flash --cohort deepseek_v4_flash
+# Anthropic — subscription billing via OAuth setup-token (FREE under Pro/Max plan)
+#   First: claude setup-token   → prints sk-ant-oat01-... long-lived token
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... uv run python src/run_eval.py \
+    --model anthropic/claude-opus-4-6 \
+    --tag opus46_oauth --workers 10
+# (the script auto-detects oat01 prefix; pops ANTHROPIC_API_KEY/BASE_URL
+#  from os.environ so Harbor doesn't leak them into the sandbox)
 
-# MiniMax direct (Anthropic-compat via proxy)
-MINIMAX_API_KEY=<key> ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
-    --model minimaxd/MiniMax-M2.7 --cohort minimax27
+# DeepSeek (direct Anthropic-compat via in-sandbox proxy, WORKERS=10 OK)
+DEEPSEEK_API_KEY=<key> uv run python src/run_eval.py \
+    --model deepseek/deepseek-v4-flash --tag ds_flash --workers 10
 
-# z.ai GLM direct (Anthropic-compat via proxy)
-ZAI_API_KEY=<key> ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
-    --model glmd/glm-5.1 --cohort glmd
+# MiniMax direct (api.minimax.io/anthropic, WORKERS=1 — minimaxd needs serial)
+MINIMAX_API_KEY=<key> uv run python src/run_eval.py \
+    --model minimaxd/MiniMax-M2.7 --tag mm27 --workers 1
 
-# ARK (Volcengine — Bearer auth)
-ARK_API_KEY=<key> ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
-    --model ark/kimi-k2.6 --cohort ark_kimi
+# z.ai GLM direct (Anthropic-compat via proxy, WORKERS=2 — Beijing peak hours
+# can throttle even at single concurrency; see CLAUDE.md "glm51 (z.ai) concurrency")
+GLM_API_KEY=<key> uv run python src/run_eval.py \
+    --model glmd/glm-5.1 --tag glm51 --workers 2
+
+# ARK (Volcengine — Bearer auth, 5h quota window resetting at 12:32 +0800)
+ARK_API_KEY=<key> uv run python src/run_eval.py \
+    --model ark/kimi-k2.6 --tag ark_kimi --workers 1
 ```
 
-Default user-sim model: `openrouter/google/gemini-3.1-pro-preview`. See `src/run_eval.py:build_agent_env` for every supported provider prefix.
+Default user-sim model: `openrouter/google/gemini-3.1-pro-preview` (uses `OPENROUTER_API_KEY` from `.env`). See `src/run_eval.py:build_agent_env` for every supported provider prefix.
 
 ### Running a single task (debugging)
 
@@ -134,7 +159,27 @@ ANTHROPIC_API_KEY=<key> uv run python src/runner.py \
 
 Trial output: `trials/<task>__<id>/verifier/reward.txt`.
 
-### Building the leaderboard
+### Building / updating the leaderboard
+
+The v0.4.4.x leaderboard is built by `scripts/finalize_v044.sh`, which:
+1. Replays every captured agent patch against the current `harbor_tasks/*/tests/test.sh` in fresh E2B sandboxes (no model re-runs)
+2. Per-(model, task) deduplicates using the latest trial by `result.json::started_at`
+3. Excludes rate-limit-corrupted trials (≥10 `api_retry` events + reward 0) and DeepSeek HTTP 402 billing failures
+4. Writes `analysis/v044_leaderboard.json` with `headline_latest` + `apples_to_apples_5_of_6` + `apples_to_apples_6_of_6`
+5. Optionally tarballs each cohort dir and uploads to GitHub release
+
+```bash
+# Full pipeline (replay + leaderboard rebuild + tarball + GitHub upload)
+bash scripts/finalize_v044.sh
+
+# Skip the replay (use on-disk reward.txt as-is) — useful when integrating new fill cohorts
+bash scripts/finalize_v044.sh --no-replay
+
+# Local rebuild only, no GitHub release
+bash scripts/finalize_v044.sh --no-upload
+```
+
+The legacy `v0.4.3` builder still works for reproducing v0.4.3 numbers:
 
 ```bash
 uv run python scripts/build_leaderboard.py \
@@ -142,8 +187,6 @@ uv run python scripts/build_leaderboard.py \
               trials_deepseek_v4_pro_v043 trials_minimax27_v043 trials_minimax25_v043 \
     --out analysis/v043_leaderboard
 ```
-
-Produces `v043_leaderboard.{json,md}` with clean-mean, shared-task, and discriminating-task tables.
 
 ### Viewing traces
 
@@ -246,11 +289,15 @@ trials/<task>__<id>/
     ↓ build_swerebench_configs.py [optional]: migrate test.sh to install_config.json
                               + vendored SWE-rebench log parsers (68 tasks so far)
 176 Harbor benchmark tasks  (post-v0.4.3 trunk: 154 SWE-chat + 36 legacy waves)
-    ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, 20-25 concurrent E2B sandboxes)
-    ↓ scripts/finalize_v043.sh (user_sim_stats → build_leaderboard → per_turn_replay
-                                 → generate_v043_report → tar.zst → gh release upload)
+    ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, concurrent E2B sandboxes;
+                        per-provider concurrency caps: anthropic/deepseek=10, glm=2, mm=1)
+    ↓ scripts/finalize_v044.sh (replay all captured patches against latest test.sh →
+                                 per-(model, task) latest-trial dedup → exclude rate-limit
+                                 corrupted + DS 402 billing → tar.zst → gh release upload)
 v0.4.3 release: 5 cohorts, ~490 trials, 99 unique tasks scored (101-task suite at the time)
-post-v0.4.3 expansion: 89 net-new tasks (PR #119), 68 with SWE-rebench-style scoring
+v0.4.4.x consolidation: 13 cohort dirs, 6 models, 932 unique (model,task) pairs across
+                         168 audit-corrected tasks; v0.4.4.3 added Opus subscription-OAuth
+                         + GLM fill cohorts and DeepSeek HTTP 402 / rate-limit exclusions
 ```
 
 A task ships only when (a) its buggy state scores in `(0, 1)` on the verifier (not all-zero, not all-perfect), (b) an alternative valid fix scores ≥0.7 (verifier accepts diverse approaches per the [SWE-bench Verified critique](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)), and (c) a stub solution scores ≤0.3 (verifier doesn't reward shape-only output). See `system_overview.md` for the full author iteration loop.
@@ -275,16 +322,22 @@ Benchmark results are only meaningful when tied to a specific version. Five thin
 ### Release format
 
 ```
-togetherbench@0.4.3
-  Tasks: 101 (99 unique scored)
-  Commit: e4469d88…
+togetherbench@0.4.4.3
+  Tasks: 173 (168 unique scored after audit exclusions)
+  Commit: a24b94b1a
   User sim: v0.6.0
-  Cohorts: opus46_high, deepseek_v4_flash, deepseek_v4_pro, minimax27, minimax25
+  CC binary: 2.1.108 (pinned in image)
+  Cohorts: 13 trial dirs across 6 models
+    Opus 4.6:           opus46_v043 + opus46_or_swerb + opus46_v044_fill
+    DeepSeek V4 Pro:    deepseek_v4_pro_{v043,swerb}
+    DeepSeek V4 Flash:  deepseek_v4_flash_{v043,swerb}
+    MiniMax M2.5/M2.7:  minimax{25,27}_v043 + minimax_m{25,27}_swerb
+    GLM 5.1:            glm51_swerb + glm51_v044_fill
 ```
 
 When citing results, always include the benchmark version:
 
-> "Opus 4.6 (effort=high) scored 0.4858 avg reward on togetherbench@0.4.3 shared-89 (101 tasks, user sim v0.6.0)"
+> "DeepSeek V4 Pro scored 0.4013 avg reward on togetherbench@0.4.4.3 (n=169 tasks, user sim v0.6.0, audit-corrected)"
 
 ### Version history
 
@@ -295,10 +348,14 @@ When citing results, always include the benchmark version:
 | `@0.3.0–0.3.2` | 2026-04-24 | 40  | v0.5.2 | Coverage-audit pipeline + session-resolution metadata; 25% of tasks tagged low-fidelity. |
 | `@0.4.0` | 2026-04-29 | 127 | v0.6.0 | 140-task expansion (TS/Rust/Py/C). 5 cluster base images, GHCR pipeline. CC pin to 2.1.108. |
 | `@0.4.1–0.4.2` | 2026-04-30 | 127 | v0.6.0 | F2P weight normalization, Rust toolchain symlinks, REBUILD_TOKEN cache-bust, OR proxy SSE streaming, prompt-cache restored, sanitize-traces secret-leak fix. |
-| **`@0.4.3`** | **2026-05-01** | **101** | **v0.6.0** | **5 cohorts (Opus 4.6, DeepSeek×2, MiniMax×2). Score-formula fix (additive→weighted-replace). P2P_REGRESSION semantics split (Option 1 enforce / Option 2 drop). `allow_internet` placement enforcement. ARK Bearer auth. DeepSeek direct.** |
-| `@0.4.3.1` *(post)* | 2026-05-07 | **190** | v0.6.0 | **SWE-chat expansion via single-stage scaffolder**: 89 new tasks (PR #119), all from `SALT-NLP/SWE-chat`. **SWE-rebench-style scoring** introduced (68 tasks): vendored 76 log parsers from SWE-rebench-V2 (MIT), `install_config.json` per task, `FAIL_TO_PASS`-driven scoring. New screening steps 4 (canonical-patch extraction) + 5 (Gemini patch-aware viability judge). |
+| `@0.4.3` | 2026-05-01 | 101 | v0.6.0 | 5 cohorts (Opus 4.6, DeepSeek×2, MiniMax×2). Score-formula fix (additive→weighted-replace). P2P_REGRESSION semantics split. ARK Bearer auth. DeepSeek direct. |
+| `@0.4.3.1`–`@0.4.3.3` | 2026-05-07–09 | 190→172 | v0.6.0 | SWE-chat expansion (89 new tasks, PR #119); SWE-rebench scoring introduced (68 tasks); degenerate-ceiling rescue (88 verifier-touches); 9 final DROPs after curator pass. |
+| **`@0.4.4`–`@0.4.4.3`** | **2026-05-10–11** | **173** | **v0.6.0** | **Replay-only consolidation + audit corrections.** Single coherent leaderboard across 13 cohort dirs; per-(model, task) latest-trial dedup; auditor's preserved-pre-rescue bug closed (202 trials drop honestly instead of inheriting inflated scores); strict-fresh policy (every committed reward from a v17 latest-test.sh execution). v0.4.4.2 added Opus + GLM **fill runs** (Opus 30 new tasks via `claude setup-token` subscription billing; GLM 21 new tasks via z.ai direct). v0.4.4.3 added two systematic-bias exclusions: **DeepSeek HTTP 402 billing failures (162 trials)** + **rate-limit-corruption trials (38)** — DS Pro then took #1. |
 
-**Roadmap (per `analysis/V043_IMPROVEMENT_PLAN.md`)**: prune to ~60-task suite by deleting 26 all-zero / 3 all-perfect / 8 tight-cluster tasks; widens cohort spread from 0.16 → 0.24 (+50%). Re-pin `hyperswitch-8338` and `pi-mono-auto-41636ae5` (both currently pinned to post-fix commits, giving free credit). Finish per-turn replay sweep for `minimax25 / minimax27 / opus46_high` (~750 patches, 8–16h E2B).
+**Roadmap to v0.4.5**:
+1. **Re-run DeepSeek swerb with valid billing** to recover the 162 excluded trials (replaces exclusions with real data).
+2. **GLM 5.1 fill remaining 71 tasks** when z.ai's account-level throttling eases (lifts GLM n=79 → ~150).
+3. **Verifier-quality pass** for the 34 all-zero tasks (likely too-strict gates) and 6 all-one tasks (degenerate ceiling). See `analysis/V044_RELEASE_NOTES.md` "Harness audit" section.
 
 ---
 
