@@ -26,12 +26,16 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**173 tasks** under `harbor_tasks/` (`v0.4.4.3` trunk), all derived from **real recorded coding sessions** across four sourcing waves:
+**173 tasks** under `harbor_tasks/` (`v0.4.4.3` trunk), all derived from **real recorded coding sessions** across four sourcing waves. Current per-family breakdown (after curator drops + audit):
 
-- **SWE-chat** (Stanford `SALT-NLP/SWE-chat`) — **154 tasks**, scaffolded via the SWE-chat path in `data-pipeline/`. Largest wave, added post-v0.4.3.
-- **DataClaw** (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) — 46 tasks.
-- **Pi-staging** (`badlogic/pi-share-hf` exports) — 32 tasks (31 `pi-mono-*` + 1 `pi-excel-*`).
-- **Hyperswitch** (`archit11/claude_traces_hs`) — 23 tasks.
+| family | count | source wave |
+|---|---|---|
+| cli-* | 45 | SWE-chat (Stanford `SALT-NLP/SWE-chat`) |
+| pi-mono-*, pi-excel-* | 29 | Pi-staging (`badlogic/pi-share-hf`) |
+| hyperswitch-* | 17 | Hyperswitch (`archit11/claude_traces_hs`) |
+| reigh-*, gemini-voyager-*, comfyui-*, rudel-*, marin-*, moltis-*, agent-swarm-*, amytis-*, dataclaw-*, etc. | 82 | DataClaw (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) + misc |
+
+Original wave contributions before drops were larger (~255 candidate tasks); the current 173 reflect the post-curator (88 verifier-touches in v0.4.3.x) and post-DROP-9 (v0.4.3.2) suite.
 
 No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two scoring tiers coexist:
 
@@ -190,9 +194,11 @@ uv run python scripts/build_leaderboard.py \
 
 ### Viewing traces
 
-**Hosted:** [traces.togetherbench.com](https://traces.togetherbench.com/jobs/trials) — includes Trajectory, User Simulation Prompt, and Agent Logs tabs.
+**Hosted:** [traces.togetherbench.com](https://traces.togetherbench.com/jobs/trials) — includes Trajectory, User Simulation Prompt, and Agent Logs tabs. All 13 v0.4.4.3 cohort dirs are uploaded (sanitized for API key leaks via `scripts/sanitize_traces.py`); browse by trial name (e.g., `cli-task-14ee15__abcd123`).
 
 Each trace shows a sim version badge (e.g., `User Sim v0.6.0 · 5/11 msgs`) indicating which simulator version produced the trial and how many messages it sent.
+
+`src/run_eval.py` auto-uploads after each cohort run (set `BUCKET_ENDPOINT` / `BUCKET_NAME` / `BUCKET_ACCESS_KEY` / `BUCKET_SECRET_KEY` in `.env`). For batch re-uploads (e.g., after a credential rotation), see `scripts/upload_traces.py` or use the inline pattern in `src/run_eval.py:_sanitize_and_upload`.
 
 **Local:**
 ```bash
@@ -288,7 +294,7 @@ trials/<task>__<id>/
                               (10-step inline prompt: screen → scaffold → tests → audit)
     ↓ build_swerebench_configs.py [optional]: migrate test.sh to install_config.json
                               + vendored SWE-rebench log parsers (68 tasks so far)
-176 Harbor benchmark tasks  (post-v0.4.3 trunk: 154 SWE-chat + 36 legacy waves)
+173 Harbor benchmark tasks  (v0.4.4.3 trunk: post curator + DROP-9 + audit drops)
     ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, concurrent E2B sandboxes;
                         per-provider concurrency caps: anthropic/deepseek=10, glm=2, mm=1)
     ↓ scripts/finalize_v044.sh (replay all captured patches against latest test.sh →
