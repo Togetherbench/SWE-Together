@@ -3,6 +3,41 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.7.0 — 2026-05-11
+
+**Per-turn incremental git diff fed to user sim.**
+
+The sim previously saw only the agent's self-narration (`thinking` / `text` /
+`result` blocks) plus tool-call signatures (file paths and command prefixes).
+Tool results — including Bash stdout, file contents, and the actual code
+written by Edit/Write — were dropped by `_parse_stream_json`. The sim had no
+independent channel to verify "I added X to Y" claims.
+
+`UserEnabledClaudeCode._capture_git_diff` now:
+- Tags the workspace state at the end of every turn (`harbor-turn-<N>`).
+- Computes an incremental diff between the prior turn's tag and the
+  current HEAD (vs `harbor-base` for turn 0).
+- Writes `patches/turn-<N>.incremental.patch` alongside the existing
+  cumulative `patches/turn-<N>.patch` (per-turn-replay infrastructure is
+  unchanged).
+- Stashes the incremental diff on `self._last_turn_diff` so the next
+  `_consult_user` call passes it to `UserAgent.process(code_changes_diff=…)`.
+
+`UserAgent._build_turn_summary` renders a new
+`## Code changes (this turn)` section as a ```diff``` block when the
+diff is non-empty. Not truncated by design — per-turn deltas are
+naturally bounded by the agent's single-turn work; the dedup property of
+`git diff` collapses redundant Edits on the same lines, so even busy
+turns rarely exceed a few KB.
+
+Implementation notes:
+- The marker-commit dance (`git add -A && commit --allow-empty &&
+  tag -f`) means agent commits get sandwiched between `harbor-turn-<N>`
+  commits; the agent's own `git log` will show extra entries. Acceptable
+  because the agent rarely inspects `git log` in coding tasks and our
+  Dockerfiles pre-commit the workspace state under `harbor-base` already.
+- Empty turns produce empty diffs, suppressed in the sim prompt.
+
 ## v0.6.0 — 2026-04-07
 
 **Turn quality overhaul: dedup, timing, reasoning, tool_choice.**

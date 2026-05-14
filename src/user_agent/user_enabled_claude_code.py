@@ -78,6 +78,10 @@ class UserEnabledClaudeCode(BaseAgent):
         self._turn_start_time: float = 0.0  # set before each agent turn
         # Global step counter so step IDs don't restart across turns
         self._global_step_id: int = 0
+        # Per-turn incremental git diff captured at end of the prior turn;
+        # fed to user sim so it has an independent view of what the agent
+        # actually wrote (vs the agent's self-narration).
+        self._last_turn_diff: str = ""
 
     @staticmethod
     def name() -> str:
@@ -384,10 +388,10 @@ server.serve_forever()
             'for d in */; do\n'
             '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
             '    (cd "$d" && \\\n'
-            '       git add -A 2>/dev/null && \\\n'
-            '       git -c user.email=harbor@base -c user.name=harbor \\\n'
+            '       git -c safe.directory="$PWD" add -A 2>/dev/null && \\\n'
+            '       git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
             '         commit --allow-empty -m "harbor-base" --quiet 2>/dev/null && \\\n'
-            '       git tag -f harbor-base HEAD 2>/dev/null) || true\n'
+            '       git -c safe.directory="$PWD" tag -f harbor-base HEAD 2>/dev/null) || true\n'
             '  fi\n'
             'done\n'
         )
@@ -604,6 +608,7 @@ server.serve_forever()
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
+            code_changes_diff=self._last_turn_diff,
         )
         if decision.has_message:
             self._sim_user.advance_original_index(1)
@@ -615,54 +620,80 @@ server.serve_forever()
         return decision
 
     async def _capture_git_diff(self, environment, turn: int) -> None:
-        """Snapshot `git diff HEAD` for every git repo under /workspace.
+        """Snapshot per-turn git state for every repo under /workspace.
 
-        Writes to <logs_dir>/patches/turn-<N>.patch. The final turn's patch is
-        also copied to <logs_dir>/final.patch for easy access. Best-effort —
-        silently no-ops if /workspace has no git repos or exec fails.
+        Produces two artifacts per turn:
+          - <logs_dir>/patches/turn-<N>.patch — cumulative diff vs
+            `harbor-base` (unchanged semantics; consumed by per_turn_replay).
+          - <logs_dir>/patches/turn-<N>.incremental.patch — diff between
+            `harbor-turn-<N-1>` (or `harbor-base` for N=0) and HEAD. Also
+            stashed in `self._last_turn_diff` so the next user-sim
+            consultation can present the just-completed turn's net changes
+            independently of the agent's self-narration.
 
-        Failure mode this guards against: in v0.4.3 ~65% of trials silently
-        wrote git's "Not a git repository" warning + `git diff -h` usage text
-        to the patch file because the original cmd used `2>&1` (mixed
-        stderr in) and didn't check the exit code.  Downstream replay then
-        treated the help text as the agent's diff and applied a "garbage"
-        patch.  Fix: capture stdout separately, check exit code, mark
-        capture failures explicitly.
+        Mechanism: at the end of each turn we `git add -A && commit
+        --allow-empty -m harbor-turn-N && git tag -f harbor-turn-N HEAD`.
+        That marker commit captures any uncommitted working-tree edits,
+        and the tag gives the next turn a stable baseline for the
+        incremental diff. Empty turns produce empty diffs (the marker
+        commit is empty), which the sim ignores.
+
+        Failure mode this guards against (v0.4.3): ~65% of trials silently
+        wrote git's "Not a git repository" warning + `git diff -h` usage
+        text to the patch file because the original cmd used `2>&1` (mixed
+        stderr in) and didn't check the exit code. We split stdout/stderr
+        and mark capture failures explicitly.
         """
-        # v0.4.3 fix E: prefer `git diff harbor-base` over `git diff HEAD`.
-        # The `harbor-base` tag is set in `setup` to point at the pre-agent
-        # commit; using it means we capture cumulative agent work even after
-        # `git commit` (under HEAD this would have returned empty post-commit
-        # and silently lost the rest of the trial's edits).  Falls back to
-        # `git diff HEAD` if the tag doesn't exist (older trials, third-party
-        # workspace setups).
+        prev_turn = turn - 1
         cmd = (
             'set +e\n'
             'cd /workspace 2>/dev/null || exit 0\n'
+            f'TURN={turn}\n'
+            f'PREV_TURN={prev_turn}\n'
+            ': > /tmp/harbor_cum.diff\n'
+            ': > /tmp/harbor_inc.diff\n'
             'for d in */; do\n'
             '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
-            '    BASE_REF=HEAD\n'
-            '    if (cd "$d" && git rev-parse --verify harbor-base >/dev/null 2>&1); then\n'
-            '      BASE_REF=harbor-base\n'
-            '    fi\n'
-            '    DIFF_OUT=$(cd "$d" && git --no-pager diff $BASE_REF 2>/dev/null)\n'
-            '    DIFF_RC=$?\n'
-            '    echo "=== $d ==="\n'
-            '    if [ $DIFF_RC -eq 0 ]; then\n'
-            '      printf %s "$DIFF_OUT"\n'
-            '      echo ""\n'
+            '    cd "$d" || continue\n'
+            '    HEAD_BEFORE=$(git -c safe.directory="$PWD" rev-parse --verify HEAD 2>/dev/null)\n'
+            '    if [ "$PREV_TURN" -ge 0 ] && git -c safe.directory="$PWD" rev-parse --verify "harbor-turn-$PREV_TURN" >/dev/null 2>&1; then\n'
+            '      PREV_REF="harbor-turn-$PREV_TURN"\n'
+            '    elif git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
+            '      PREV_REF=harbor-base\n'
+            '    elif [ -n "$HEAD_BEFORE" ]; then\n'
+            '      PREV_REF="$HEAD_BEFORE"\n'
             '    else\n'
-            '      echo "# capture-failed: git diff $BASE_REF exit=$DIFF_RC"\n'
+            '      PREV_REF=HEAD\n'
             '    fi\n'
+            '    git -c safe.directory="$PWD" add -A 2>/dev/null\n'
+            '    git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
+            '      commit --allow-empty -m "harbor-turn-$TURN" --quiet 2>/dev/null\n'
+            '    git -c safe.directory="$PWD" tag -f "harbor-turn-$TURN" HEAD 2>/dev/null\n'
+            '    if git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
+            '      printf "=== %s (cumulative vs harbor-base) ===\\n" "$d" >> /tmp/harbor_cum.diff\n'
+            '      git -c safe.directory="$PWD" --no-pager diff harbor-base HEAD 2>/dev/null >> /tmp/harbor_cum.diff\n'
+            '      printf "\\n" >> /tmp/harbor_cum.diff\n'
+            '    fi\n'
+            '    printf "=== %s (incremental vs %s) ===\\n" "$d" "$PREV_REF" >> /tmp/harbor_inc.diff\n'
+            '    git -c safe.directory="$PWD" --no-pager diff "$PREV_REF" HEAD 2>/dev/null >> /tmp/harbor_inc.diff\n'
+            '    printf "\\n" >> /tmp/harbor_inc.diff\n'
+            '    cd - >/dev/null\n'
             '  fi\n'
             'done\n'
+            'echo "===HARBOR_DIFF_BEGIN_CUM==="\n'
+            'cat /tmp/harbor_cum.diff 2>/dev/null\n'
+            'echo "===HARBOR_DIFF_END_CUM==="\n'
+            'echo "===HARBOR_DIFF_BEGIN_INC==="\n'
+            'cat /tmp/harbor_inc.diff 2>/dev/null\n'
+            'echo "===HARBOR_DIFF_END_INC==="\n'
+            'rm -f /tmp/harbor_cum.diff /tmp/harbor_inc.diff\n'
         )
         try:
             result = await environment.exec(
                 command=cmd,
                 cwd="/workspace",
                 env={},
-                timeout_sec=60,
+                timeout_sec=90,
             )
         except Exception as e:
             log.debug("git diff capture failed at turn %d: %s", turn, e)
@@ -671,13 +702,48 @@ server.serve_forever()
         if not result.stdout:
             return
 
-        patches_dir = self.logs_dir / "patches"
-        patches_dir.mkdir(parents=True, exist_ok=True)
-        patch_path = patches_dir / f"turn-{turn}.patch"
-        patch_path.write_text(result.stdout)
-        # Mirror to final.patch — overwritten each turn so it always reflects
-        # the most recent state (== the agent's final candidate at trial end).
-        (self.logs_dir / "final.patch").write_text(result.stdout)
+        cumulative, incremental = self._split_diff_output(result.stdout)
+
+        if cumulative:
+            patches_dir = self.logs_dir / "patches"
+            patches_dir.mkdir(parents=True, exist_ok=True)
+            (patches_dir / f"turn-{turn}.patch").write_text(cumulative + "\n")
+            # Mirror to final.patch — overwritten each turn so it always
+            # reflects the most recent state.
+            (self.logs_dir / "final.patch").write_text(cumulative + "\n")
+
+        if incremental:
+            patches_dir = self.logs_dir / "patches"
+            patches_dir.mkdir(parents=True, exist_ok=True)
+            (patches_dir / f"turn-{turn}.incremental.patch").write_text(incremental + "\n")
+        # Always set — empty string means "nothing changed this turn",
+        # which suppresses the diff section in the sim prompt.
+        self._last_turn_diff = incremental
+
+    @staticmethod
+    def _split_diff_output(raw: str) -> tuple[str, str]:
+        """Split the dual-section _capture_git_diff stdout into (cum, inc)."""
+        cum_lines, inc_lines = [], []
+        mode = None
+        for line in raw.split("\n"):
+            stripped = line.rstrip("\r")
+            if stripped == "===HARBOR_DIFF_BEGIN_CUM===":
+                mode = "cum"
+                continue
+            if stripped == "===HARBOR_DIFF_END_CUM===":
+                mode = None
+                continue
+            if stripped == "===HARBOR_DIFF_BEGIN_INC===":
+                mode = "inc"
+                continue
+            if stripped == "===HARBOR_DIFF_END_INC===":
+                mode = None
+                continue
+            if mode == "cum":
+                cum_lines.append(line)
+            elif mode == "inc":
+                inc_lines.append(line)
+        return "\n".join(cum_lines).strip(), "\n".join(inc_lines).strip()
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,

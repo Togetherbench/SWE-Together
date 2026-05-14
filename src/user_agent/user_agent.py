@@ -205,7 +205,7 @@ class UserAgent:
     can see what it already said. Each call produces exactly one UserDecision.
     """
 
-    VERSION = "0.6.0"  # see CHANGELOG.md
+    VERSION = "0.7.0"  # see CHANGELOG.md
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None):
@@ -243,6 +243,7 @@ class UserAgent:
         total_steps_so_far: int = 0,
         elapsed_sec: float = 0.0,
         turn_duration_sec: float = 0.0,
+        code_changes_diff: str = "",
     ) -> UserDecision:
         self.total_calls += 1
 
@@ -259,7 +260,7 @@ class UserAgent:
         turn_content = self._build_turn_summary(
             task_description, recent_trajectory, latest_observation,
             latest_analysis, step_count, is_completion_attempt,
-            elapsed_sec, turn_duration_sec,
+            elapsed_sec, turn_duration_sec, code_changes_diff,
         )
 
         # Prepend system message in-band (as a "system" role message) so
@@ -337,6 +338,7 @@ class UserAgent:
         self, task, trajectory, observation, analysis,
         step, is_completion,
         elapsed_sec=0.0, turn_duration_sec=0.0,
+        code_changes_diff: str = "",
     ) -> str:
         sections = [f"## Turn {step}"]
 
@@ -356,6 +358,16 @@ class UserAgent:
 
         sections.append(f"\n## Agent activity (this turn)\n{trajectory}")
         sections.append(f"\n## Agent output\n{observation}")
+
+        # Per-turn incremental git diff — what actually changed on disk this
+        # turn (vs end of prior turn). This is the sim's independent channel
+        # to verify the agent's self-narration. Not truncated by design: the
+        # consumer (UserEnabledClaudeCode._capture_git_diff) already produces
+        # a per-turn delta, so even a busy turn rarely exceeds a few KB.
+        if code_changes_diff:
+            sections.append(
+                f"\n## Code changes (this turn)\n```diff\n{code_changes_diff}\n```"
+            )
 
         if analysis:
             sections.append(f"\n## Agent's thinking\n{analysis[:300]}")
