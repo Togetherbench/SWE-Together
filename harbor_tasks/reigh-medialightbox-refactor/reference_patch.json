@@ -1,0 +1,24 @@
+{
+  "_task_name": "reigh-medialightbox-refactor",
+  "_status": "no_canonical",
+  "_category": "stripped_export",
+  "_reason": "tool_use inputs are bare strings; no diffable content survives",
+  "_extraction": {
+    "method": "none",
+    "source": "n/a",
+    "fidelity": "n/a",
+    "verified": false,
+    "note": "tool_use inputs are bare strings; no diffable content survives"
+  },
+  "_sync_note": "No canonical patch could be extracted for this task. See _reason. Stub written by sync_reference_patches.py for schema uniformity. If session content becomes available (re-export, hand curation), produce a canonical at data-pipeline/artifacts_<source>/canonical_patches/<sid>.json then re-run this sync.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ah",
+    "date": "2026-05-14",
+    "note": "Stub correct: pi-share export has tool_uses with bare-string inputs (path only, no content).",
+    "checks_passed": [
+      "category_matches_session",
+      "no_phantom_patch"
+    ]
+  }
+}

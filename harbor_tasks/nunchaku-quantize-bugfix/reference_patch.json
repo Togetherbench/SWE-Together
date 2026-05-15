@@ -1,0 +1,50 @@
+{
+  "session_id": "a136a85d-1020-41b9-ad43-cf68ff21c103",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "mit-han-lab/nunchaku",
+  "is_agent_author": true,
+  "files_changed_count": 3,
+  "total_additions": 145,
+  "total_deletions": 0,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "A\treproduce_issue.py\nA\ttest_pack_awq.py\nA\tverify_simplification.py\n",
+  "numstat": "23\t0\treproduce_issue.py\n61\t0\ttest_pack_awq.py\n61\t0\tverify_simplification.py\n",
+  "patch": "diff --git a/reproduce_issue.py b/reproduce_issue.py\nnew file mode 100644\nindex 0000000..bb6919a\n--- /dev/null\n+++ b/reproduce_issue.py\n@@ -0,0 +1,23 @@\n+\n+import torch\n+\n+def test_max_min_return():\n+    t = torch.randn(3, 3)\n+    try:\n+        res = t.max(dim=-1, keepdim=True)\n+        print(f\"t.max(dim=-1) type: {type(res)}\")\n+        if isinstance(res, tuple) or hasattr(res, 'values'):\n+             print(f\"t.max(dim=-1) returns tuple-like: {res}\")\n+             try:\n+                 _ = res / 7\n+                 print(\"Division works on result\")\n+             except Exception as e:\n+                 print(f\"Division failed: {e}\")\n+        else:\n+             print(\"t.max(dim=-1) returns tensor\")\n+\n+    except Exception as e:\n+        print(f\"t.max failed: {e}\")\n+\n+if __name__ == \"__main__\":\n+    test_max_min_return()\ndiff --git a/test_pack_awq.py b/test_pack_awq.py\nnew file mode 100644\nindex 0000000..f216ac7\n--- /dev/null\n+++ b/test_pack_awq.py\n@@ -0,0 +1,61 @@\n+\n+import torch\n+\n+def pack_awq_qweight_loop(weight):\n+    N, K = weight.shape\n+    device = weight.device\n+    \n+    weight = weight.view(N, K // 32, 32)\n+    packed = torch.zeros((N, K // 32, 4), device=device, dtype=torch.int32)\n+    for g in range(4):\n+        shift_low = 4 * g\n+        shift_high = 16 + 4 * g\n+        for j in range(4):\n+            idx_even = 8 * g + 2 * j\n+            idx_odd = 8 * g + 2 * j + 1\n+            w_even = weight[:, :, idx_even]\n+            w_odd = weight[:, :, idx_odd]\n+            packed[:, :, j] |= w_even << shift_low\n+            packed[:, :, j] |= w_odd << shift_high\n+\n+    packed = packed.view(N // 4, K // 2)\n+    return packed\n+\n+def pack_awq_qweight_vectorized(weight):\n+    N, K = weight.shape\n+    device = weight.device\n+    \n+    # (N, K//32, 32) -> (N, K//32, 4 groups, 4 j, 2 k)\n+    weight = weight.view(N, K // 32, 4, 4, 2)\n+    \n+    # shifts for g (0..3) and k (0..1)\n+    # shift = 4*g + 16*k\n+    g_idx = torch.arange(4, device=device).view(1, 1, 4, 1, 1)\n+    k_idx = torch.arange(2, device=device).view(1, 1, 1, 1, 2)\n+    shifts = 4 * g_idx + 16 * k_idx\n+    \n+    # Sum over g (dim 2) and k (dim 4)\n+    packed = (weight << shifts).sum(dim=(2, 4))\n+    \n+    packed = packed.view(N // 4, K // 2)\n+    return packed\n+\n+def test():\n+    N = 4\n+    K = 128\n+    # Random int32 weights in range [0, 15]\n+    weight = torch.randint(0, 16, (N, K), dtype=torch.int32)\n+    \n+    res_loop = pack_awq_qweight_loop(weight.clone())\n+    res_vec = pack_awq_qweight_vectorized(weight.clone())\n+    \n+    if torch.equal(res_loop, res_vec):\n+        print(\"Verification PASSED!\")\n+    else:\n+        print(\"Verification FAILED!\")\n+        print(\"Loop result shape:\", res_loop.shape)\n+        print(\"Vec result shape:\", res_vec.shape)\n+        print(\"Difference:\", (res_loop != res_vec).sum())\n+\n+if __name__ == \"__main__\":\n+    test()\ndiff --git a/verify_simplification.py b/verify_simplification.py\nnew file mode 100644\nindex 0000000..215359a\n--- /dev/null\n+++ b/verify_simplification.py\n@@ -0,0 +1,61 @@\n+\n+import torch\n+\n+def pack_awq_qweight_original(weight):\n+    N, K = weight.shape\n+    device = weight.device\n+    \n+    weight = weight.view(N, K // 32, 32)\n+    packed = torch.zeros((N, K // 32, 4), device=device, dtype=torch.int32)\n+    for g in range(4):\n+        shift_low = 4 * g\n+        shift_high = 16 + 4 * g\n+        for j in range(4):\n+            idx_even = 8 * g + 2 * j\n+            idx_odd = 8 * g + 2 * j + 1\n+            w_even = weight[:, :, idx_even]\n+            w_odd = weight[:, :, idx_odd]\n+            packed[:, :, j] |= w_even << shift_low\n+            packed[:, :, j] |= w_odd << shift_high\n+\n+    packed = packed.view(N // 4, K // 2)\n+    return packed\n+\n+def pack_awq_qweight_simplified(weight):\n+    N, K = weight.shape\n+    device = weight.device\n+    \n+    # Reshape to (N, K//32, 4, 4, 2) corresponding to (..., g, j, k)\n+    weight = weight.view(N, K // 32, 4, 4, 2)\n+    \n+    packed = torch.zeros((N, K // 32, 4), device=device, dtype=torch.int32)\n+    \n+    for g in range(4):\n+        # k=0 (even) -> shift 4*g\n+        packed |= weight[:, :, g, :, 0] << (4 * g)\n+        # k=1 (odd) -> shift 16 + 4*g\n+        packed |= weight[:, :, g, :, 1] << (16 + 4 * g)\n+        \n+    packed = packed.view(N // 4, K // 2)\n+    return packed\n+\n+def test():\n+    N = 4\n+    K = 128\n+    torch.manual_seed(0)\n+    # Random int32 weights in range [0, 15]\n+    weight = torch.randint(0, 16, (N, K), dtype=torch.int32)\n+    \n+    res_orig = pack_awq_qweight_original(weight.clone())\n+    res_simp = pack_awq_qweight_simplified(weight.clone())\n+    \n+    if torch.equal(res_orig, res_simp):\n+        print(\"Verification PASSED!\")\n+    else:\n+        print(\"Verification FAILED!\")\n+        print(\"Original shape:\", res_orig.shape)\n+        print(\"Simplified shape:\", res_simp.shape)\n+        print(\"Difference:\", (res_orig != res_simp).sum())\n+\n+if __name__ == \"__main__\":\n+    test()\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "unknown",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "op[24] edit: file not found: nunchaku/quantize.py"
+  ],
+  "_base_commit": "f86ad47001de7b7f48e0ff592a19ac5d3a2d7f09",
+  "_repo_url": "https://github.com/mit-han-lab/nunchaku",
+  "_task_name": "nunchaku-quantize-bugfix",
+  "_n_mutating_ops": 5,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json (post Fix-B WRITE/EDIT tool aliases)",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "Post-review verification (Fix-B recovery + batch AF, 2026-05-15): 1 file_not_found warning on nunchaku/quantize.py; remaining 4 ops produced a 3-file/+145/-0 diff matching the bugfix scope. Acceptable as directional reference."
+  },
+  "_canonical_source_path": "data-pipeline/artifacts_unknown/canonical_patches/a136a85d-1020-41b9-ad43-cf68ff21c103.json",
+  "_sync_note": "Auto-synced 2026-05-14 after Fix B (WRITE/EDIT tool aliases) recovered this canonical. Edit source, not this copy.",
+  "_review": {
+    "status": "FLAGGED",
+    "reviewer": "subagent-batch-af",
+    "date": "2026-05-14",
+    "note": "_fidelity:directional but neither _fidelity_verified nor _curation_method set; 1 file-not-found warning (nunchaku/quantize.py). Either tag the verification or add curation note.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "no_phantom_files"
+    ]
+  },
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-15",
+  "_verification_note": "Post-review verification (Fix-B recovery + batch AF, 2026-05-15): 1 file_not_found warning on nunchaku/quantize.py; remaining 4 ops produced a 3-file/+145/-0 diff matching the bugfix scope. Acceptable as directional reference."
+}

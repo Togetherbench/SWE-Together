@@ -1,0 +1,40 @@
+{
+  "session_id": "2026-01-29-0f6074fc-a0f5-4d56-8de0-f4a592ddcf3b",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "entireio/cli",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 4,
+  "total_deletions": 3,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tcmd/entire/cli/telemetry/detached_unix.go\n",
+  "numstat": "4\t3\tcmd/entire/cli/telemetry/detached_unix.go\n",
+  "patch": "diff --git a/cmd/entire/cli/telemetry/detached_unix.go b/cmd/entire/cli/telemetry/detached_unix.go\nindex 4b7e3a2..d4fc0c9 100644\n--- a/cmd/entire/cli/telemetry/detached_unix.go\n+++ b/cmd/entire/cli/telemetry/detached_unix.go\n@@ -4,6 +4,7 @@ package telemetry\n \n import (\n \t\"context\"\n+\t\"io\"\n \t\"os\"\n \t\"os/exec\"\n \t\"syscall\"\n@@ -32,9 +33,9 @@ func spawnDetachedAnalytics(payloadJSON string) {\n \t// Inherit environment (may be needed for network config)\n \tcmd.Env = os.Environ()\n \n-\t// Don't capture stdout/stderr - let it go to /dev/null\n-\tcmd.Stdout = nil\n-\tcmd.Stderr = nil\n+\t// Discard stdout/stderr to prevent output leaking to parent's terminal\n+\tcmd.Stdout = io.Discard\n+\tcmd.Stderr = io.Discard\n \n \t// Start the process (non-blocking)\n \tif err := cmd.Start(); err != nil {\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "cli",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "exact",
+  "_reconstruction_warnings": [],
+  "_base_commit": "65fa5640",
+  "_repo_url": "https://github.com/entireio/cli",
+  "_task_name": "cli-task-2026-0",
+  "_n_mutating_ops": 3,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  },
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-aa",
+    "date": "2026-05-14",
+    "note": "Exact tool_replay, 0 warnings; trivial 1-file patch (telemetry/detached_unix.go, +4/-3) matches metadata; file referenced in test.sh.",
+    "checks_passed": ["schema", "diff_coherence", "test_sh_alignment", "no_phantom_files", "fidelity_exact"]
+  },
+  "_canonical_source_path": "data-pipeline/artifacts_cli/canonical_patches/2026-01-29-0f6074fc-a0f5-4d56-8de0-f4a592ddcf3b.json",
+  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit."
+}

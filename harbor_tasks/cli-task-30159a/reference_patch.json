@@ -1,0 +1,47 @@
+{
+  "session_id": "30159aa1-626d-4de8-923a-317a4859bbc4",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "entireio/cli",
+  "is_agent_author": true,
+  "files_changed_count": 2,
+  "total_additions": 63,
+  "total_deletions": 12,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tcmd/entire/cli/versioncheck/versioncheck.go\nM\tcmd/entire/cli/versioncheck/versioncheck_test.go\n",
+  "numstat": "7\t3\tcmd/entire/cli/versioncheck/versioncheck.go\n56\t9\tcmd/entire/cli/versioncheck/versioncheck_test.go\n",
+  "patch": "diff --git a/cmd/entire/cli/versioncheck/versioncheck.go b/cmd/entire/cli/versioncheck/versioncheck.go\nindex be971d4..a705499 100644\n--- a/cmd/entire/cli/versioncheck/versioncheck.go\n+++ b/cmd/entire/cli/versioncheck/versioncheck.go\n@@ -243,9 +243,13 @@ func isOutdated(current, latest string) bool {\n \treturn semver.Compare(current, latest) < 0\n }\n \n+// executablePath is the function used to get the current executable path.\n+// It's a variable so tests can override it.\n+var executablePath = os.Executable\n+\n // updateCommand returns the appropriate update instruction based on how the binary was installed.\n func updateCommand() string {\n-\texecPath, err := os.Executable()\n+\texecPath, err := executablePath()\n \tif err != nil {\n \t\treturn \"curl -fsSL https://entire.io/install.sh | bash\"\n \t}\n@@ -256,11 +260,11 @@ func updateCommand() string {\n \t\trealPath = execPath\n \t}\n \n-\tif strings.Contains(realPath, \"/Cellar/\") || strings.Contains(realPath, \"/homebrew/\") {\n+\tif strings.Contains(realPath, \"/Cellar/\") || strings.Contains(realPath, \"/opt/homebrew/\") || strings.Contains(realPath, \"/linuxbrew/\") {\n \t\treturn \"brew upgrade entire\"\n \t}\n \n-\tif strings.Contains(realPath, \"/mise/\") {\n+\tif strings.Contains(realPath, \"/mise/installs/\") {\n \t\treturn \"mise upgrade entire\"\n \t}\n \ndiff --git a/cmd/entire/cli/versioncheck/versioncheck_test.go b/cmd/entire/cli/versioncheck/versioncheck_test.go\nindex 5a1378f..7fa8613 100644\n--- a/cmd/entire/cli/versioncheck/versioncheck_test.go\n+++ b/cmd/entire/cli/versioncheck/versioncheck_test.go\n@@ -4,6 +4,7 @@ import (\n \t\"bytes\"\n \t\"context\"\n \t\"encoding/json\"\n+\t\"fmt\"\n \t\"net/http\"\n \t\"net/http/httptest\"\n \t\"os\"\n@@ -233,17 +234,63 @@ func TestParseGitHubRelease(t *testing.T) {\n }\n \n func TestUpdateCommand(t *testing.T) {\n-\t// updateCommand should return one of the two valid update commands\n-\tcmd := updateCommand()\n-\n-\tvalidCommands := map[string]bool{\n-\t\t\"brew upgrade entire\":                            true,\n-\t\t\"mise upgrade entire\":                            true,\n-\t\t\"curl -fsSL https://entire.io/install.sh | bash\": true,\n+\ttests := []struct {\n+\t\tname       string\n+\t\texecPath   func() (string, error)\n+\t\twant       string\n+\t}{\n+\t\t{\n+\t\t\tname:     \"homebrew cellar path\",\n+\t\t\texecPath: func() (string, error) { return \"/opt/homebrew/Cellar/entire/1.0.0/bin/entire\", nil },\n+\t\t\twant:     \"brew upgrade entire\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"homebrew opt path\",\n+\t\t\texecPath: func() (string, error) { return \"/opt/homebrew/bin/entire\", nil },\n+\t\t\twant:     \"brew upgrade entire\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"linuxbrew path\",\n+\t\t\texecPath: func() (string, error) { return \"/home/linuxbrew/.linuxbrew/bin/entire\", nil },\n+\t\t\twant:     \"brew upgrade entire\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"mise path\",\n+\t\t\texecPath: func() (string, error) { return \"/home/user/.local/share/mise/installs/entire/1.0.0/bin/entire\", nil },\n+\t\t\twant:     \"mise upgrade entire\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"username mise not detected as mise install\",\n+\t\t\texecPath: func() (string, error) { return \"/home/mise/bin/entire\", nil },\n+\t\t\twant:     \"curl -fsSL https://entire.io/install.sh | bash\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"username homebrew not detected as brew install\",\n+\t\t\texecPath: func() (string, error) { return \"/home/homebrew/bin/entire\", nil },\n+\t\t\twant:     \"curl -fsSL https://entire.io/install.sh | bash\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"unknown path falls back to curl\",\n+\t\t\texecPath: func() (string, error) { return \"/usr/local/bin/entire\", nil },\n+\t\t\twant:     \"curl -fsSL https://entire.io/install.sh | bash\",\n+\t\t},\n+\t\t{\n+\t\t\tname:     \"executable error falls back to curl\",\n+\t\t\texecPath: func() (string, error) { return \"\", fmt.Errorf(\"not found\") },\n+\t\t\twant:     \"curl -fsSL https://entire.io/install.sh | bash\",\n+\t\t},\n \t}\n \n-\tif !validCommands[cmd] {\n-\t\tt.Errorf(\"updateCommand() = %q, want one of %v\", cmd, validCommands)\n+\tfor _, tt := range tests {\n+\t\tt.Run(tt.name, func(t *testing.T) {\n+\t\t\toriginal := executablePath\n+\t\t\texecutablePath = tt.execPath\n+\t\t\tt.Cleanup(func() { executablePath = original })\n+\n+\t\t\tif got := updateCommand(); got != tt.want {\n+\t\t\t\tt.Errorf(\"updateCommand() = %q, want %q\", got, tt.want)\n+\t\t\t}\n+\t\t})\n \t}\n }\n \n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "cli",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "exact",
+  "_reconstruction_warnings": [],
+  "_base_commit": "1278f43b5de25e177d089f9a1dc0b67592c2fc16",
+  "_repo_url": "https://github.com/entireio/cli",
+  "_task_name": "cli-task-30159a",
+  "_n_mutating_ops": 8,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  },
+  "_canonical_source_path": "data-pipeline/artifacts_cli/canonical_patches/30159aa1-626d-4de8-923a-317a4859bbc4.json",
+  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ab",
+    "date": "2026-05-14",
+    "note": "exact via tool_replay (8 ops, 0 warnings); 2 files, headers and line counts match; install_config F2P empty (overall pass-rate fallback).",
+    "checks_passed": [
+      "schema_keys_present",
+      "diff_headers_match_files_changed_count",
+      "line_counts_match_totals",
+      "no_phantom_files",
+      "fidelity_provenance_consistent",
+      "test_gate_alignment"
+    ]
+  }
+}

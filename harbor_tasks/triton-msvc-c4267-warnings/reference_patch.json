@@ -1,0 +1,53 @@
+{
+  "session_id": "ses_39b369a20ffeoyUaF7gHwXXq4h",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": "9a6af86c948375496f2d79d8a58e9f54ab65a955",
+  "repo_id": "triton-lang/triton",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 2,
+  "total_deletions": 2,
+  "commit_message": "Add static_cast<unsigned>(idx) / static_cast<unsigned>(i) narrowing casts in WarpSpecializeUtility.cpp to silence MSVC C4267 size_t->unsigned warnings",
+  "files_changed": "lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp",
+  "numstat": "2\t2\tlib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp",
+  "patch": "diff --git a/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp b/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp\nindex 10ad41057..cc9677d38 100644\n--- a/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp\n+++ b/lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp\n@@ -94,7 +94,7 @@ lowerKernelBarriers(LLVM::LLVMFuncOp func,\n   for (WarpSpecializeOp op : wsOps) {\n     for (auto [idx, partition] : llvm::enumerate(op.getPartitionRegions())) {\n       unsigned numWarps = op.getPartitionNumWarps()[idx];\n-      WalkResult result = partition->walk([&, idx = idx](Operation *op) {\n+      WalkResult result = partition->walk([&, idx = static_cast<unsigned>(idx)](Operation *op) {\n         if (barrierHelper.isBarrierOp(op)) {\n           return WalkResult(lowerBarrier(op, numWarps, idx, barrierHelper));\n         }\n@@ -246,7 +246,7 @@ void mlir::triton::convertOpTypes(Operation *op,\n   for (auto [i, result, type] :\n        llvm::enumerate(newOp->getResults(), op->getResultTypes())) {\n     auto cast = UnrealizedConversionCastOp::create(b, type, result);\n-    op->getResult(i).replaceAllUsesWith(cast.getResult(0));\n+    op->getResult(static_cast<unsigned>(i)).replaceAllUsesWith(cast.getResult(0));\n   }\n   op->erase();\n }\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "hand_curated",
+  "_reconstruction": "session_edit_ops_direct_replay",
+  "_fidelity": "high",
+  "_reconstruction_warnings": [],
+  "_base_commit": "9a6af86c948375496f2d79d8a58e9f54ab65a955",
+  "_repo_url": "https://github.com/triton-lang/triton.git",
+  "_task_name": "triton-msvc-c4267-warnings",
+  "_n_mutating_ops": 2,
+  "_curation_method": "hand_curate_from_session",
+  "_curation_source": "original_session.json 2 Edit tool_uses on lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp; both oldString anchors found verbatim in base 9a6af86 (lines 97, 249); replayed cleanly.",
+  "_curation_notes": "Auto-extractor flagged anchor mismatch but in fact both anchors apply cleanly at base 9a6af86. Likely the extractor was checking the wrong file (relative-vs-absolute path) or stale workspace. After fresh clone + sparse checkout, edits apply on first try with no fuzz.",
+  "_curation_verified_against_test_sh": true,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-15",
+  "_verification_note": "test.sh F2P gates compile-probe for static_cast<unsigned> narrowing in lowerBarrier/lowerCallOp (f2p_upstream_narrowing_barrier_callop, 0.20) and replaceAllUsesWith / getResult area (f2p_upstream_narrowing_secondary, 0.20). Patch adds those two casts.",
+  "_extraction": {
+    "method": "hand_curate_from_session",
+    "source": "2 Edit tool_uses replayed on fresh sparse-checkout of triton-lang/triton@9a6af86c, file lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp",
+    "fidelity": "high",
+    "verified": true,
+    "note": "Anchor mismatch reported by auto-extractor is spurious \u2014 both session oldString anchors match the base file verbatim. Cleanly replayed, 22-line unified diff produced.",
+    "dated": "2026-05-15"
+  },
+  "_canonical_source_path": "data-pipeline/artifacts_hand_curated/canonical_patches/ses_39b369a20ffeoyUaF7gHwXXq4h.json",
+  "_sync_note": "Synced 2026-05-15 after hand-curate-B promotion (was previously a stub).",
+  "_review_pre_promote": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ai",
+    "date": "2026-05-14",
+    "note": "Stub schema ok. 11 tool_uses, 0 Edit ops; replay_no_diff category fits.",
+    "checks_passed": [
+      "stub_schema_ok",
+      "category_plausible",
+      "no_source_canonical"
+    ]
+  }
+}
