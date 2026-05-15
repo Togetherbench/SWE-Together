@@ -1,0 +1,72 @@
+version: 1.0
+turns:
+  - turn: 1
+    message: "legacy"
+    deliverable: "see instruction.md"
+
+gates:
+  # --- Existing inline F2P gates (from test.sh body) ---
+  - id: existing_gate1_phase_config_basic
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    label: "phase_config flows through in basic+preset mode"
+    description: "buildTaskParams returns non-undefined phase_config when motionMode=basic and a user preset is selected"
+
+  - id: existing_gate2_advanced_preserves
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    label: "advanced mode preserves phaseConfig"
+    description: "buildTaskParams keeps phaseConfig in advanced mode (regression check)"
+
+  - id: existing_gate3_basic_no_preset
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "basic+no-preset evaluates cleanly"
+    description: "buildTaskParams expression evaluates without error for basic+no-preset"
+
+  - id: existing_gate4_its_writes
+    kind: F2P
+    turn: 1
+    weight: 0.18
+    label: "ITS writes selected_phase_preset_id"
+    description: "individualTravelSegment.ts writes preset id into output objects"
+
+  - id: existing_gate5_its_reads_params
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "ITS reads preset id from params"
+    description: "individualTravelSegment.ts reads selected_phase_preset_id from params"
+
+  - id: existing_gate6_roundtrip
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "phase_config and preset_id both reach task layer"
+    description: "Both phase_config and selected_phase_preset_id coexist in ITS output"
+
+  # --- Upstream F2P gates ---
+  - id: f2p_upstream_phase_config_eval
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "Upstream: phase_config eval in basic+preset mode"
+    description: "Evaluates buildTaskParams phase_config expression; must return phaseConfig object in basic mode"
+
+  - id: f2p_upstream_preset_id_propagation
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "Upstream: selected_phase_preset_id propagated in ITS"
+    description: "individualTravelSegment.ts must spread/assign selected_phase_preset_id into output objects"
+
+  # --- Upstream P2P gates ---
+  - id: p2p_upstream_eslint
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "Upstream: eslint on changed files"
+    description: "eslint passes on segmentSettingsUtils.ts and individualTravelSegment.ts"

@@ -11,5 +11,8 @@
   ],
   "PASS_TO_PASS": [],
   "_upgraded_from_legacy": true,
-  "_curated": "f2p_populated_from_canonical_patch"
+  "_curated": "f2p_populated_from_canonical_patch",
+  "_legacy_restored": true,
+  "_legacy_restored_date": "2026-05-14",
+  "_legacy_restored_reason": "tests/test_manifest.yaml restored from .legacy.bak (harbor health audit)"
 }

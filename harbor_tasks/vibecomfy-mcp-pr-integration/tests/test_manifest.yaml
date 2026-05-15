@@ -1,0 +1,76 @@
+version: '1.0'
+turns:
+- turn: 1
+  message: legacy
+  deliverable: see instruction.md
+gates:
+- id: p2p_core_imports
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  description: Core imports cli_tools.{analysis,registry.knowledge,registry.mcp_server,descriptions}
+    still resolve.
+- id: p2p_search_nodes_smoke
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  description: ComfyKnowledge.search_nodes still callable on a minimal cache.
+- id: f2p_shared_alias_module
+  kind: F2P
+  turn: null
+  weight: 0.06
+  description: Shared TASK_ALIASES module exists outside knowledge.py and is imported
+    by it.
+- id: f2p_expand_query_behavior
+  kind: F2P
+  turn: null
+  weight: 0.07
+  description: expand_query function preserves input, expands aliases, and is wired
+    into ComfyKnowledge.search_nodes.
+- id: f2p_mcp_exposes_analysis
+  kind: F2P
+  turn: null
+  weight: 0.11
+  description: MCP server imports analysis module and adds analysis-flavored tools
+    (upstream/downstream/path/etc.).
+- id: f2p_analysis_callable
+  kind: F2P
+  turn: null
+  weight: 0.07
+  description: analyze_workflow / find_upstream / find_downstream / find_path callable
+    end-to-end.
+- id: f2p_mcp_autodiscovery
+  kind: F2P
+  turn: null
+  weight: 0.06
+  description: .mcp.json present + mcp listed as dependency in pyproject.toml or requirements.
+- id: f2p_skills_focused
+  kind: F2P
+  turn: null
+  weight: 0.08
+  description: Skills broken into multiple focused SKILL.md files with frontmatter
+    triggers.
+- id: f2p_test_coverage
+  kind: F2P
+  turn: null
+  weight: 0.06
+  description: tests/ exists, references shared search/analysis fns, and pytest collects
+    without error.
+- id: f2p_upstream_pytest
+  kind: F2P
+  turn: null
+  weight: 0.25
+  description: "pytest tests/ runs to completion with rc=0 \u2014 exercises the agent's\
+    \ added test coverage."
+- id: f2p_upstream_aliases
+  kind: F2P
+  turn: null
+  weight: 0.24
+  description: Shared task_aliases module exists with TASK_ALIASES dict (>=25 entries)
+    + working expand_query that maps 'upscale' to upscaler synonyms.
+- id: p2p_upstream_imports
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  description: cli_tools.analysis, cli_tools.registry.knowledge, cli_tools.registry.mcp_server
+    all import cleanly post-fix.

@@ -1,0 +1,80 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: pi-mono-auto-95de1efe
+turns:
+- turn: 1
+  user_message: 'Fix GitHub issue: https://github.com/badlogic/pi-mono/issues/2431 ...'
+  deliverable: Analyze issue 2431 and propose a fix.
+  skipped: false
+- turn: 2
+  user_message: "- validate models require baseUrl\n     - validate models require apiKey or oauth\n\ndo they?\n\n2. and 3.\
+    \ look good to me"
+  deliverable: Pushback on baseUrl/apiKey validation; analysis refinement.
+  skipped: true
+- turn: 3
+  user_message: streamSimple requires api any other such things we need to validate?
+  deliverable: Discussion of further validation requirements.
+  skipped: true
+- turn: 4
+  user_message: ok, implement the fix and add tests if possible
+  deliverable: Implement the fix in code and add tests.
+  skipped: false
+- turn: 5
+  user_message: 'ok, ignore footer-data-provider.ts, commit with closes # and push'
+  deliverable: Discard footer-data-provider changes; commit and push.
+  skipped: true
+- turn: 6
+  user_message: 'ok, should work now, commit with closes #, push'
+  deliverable: Commit and push fix.
+  skipped: true
+- turn: 7
+  user_message: another clanker was modifying other files
+  deliverable: Conversational explanation.
+  skipped: true
+- turn: 8
+  user_message: push anyway
+  deliverable: Push regardless.
+  skipped: true
+gates:
+- id: p2p_existing_tests_pass
+  turn: null
+  kind: P2P_GATING
+  weight: 0.0
+  description: Existing model-registry and extensions-runner tests still pass
+- id: t1_f2p_invalid_registration_safe
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: Invalid provider registration does not crash; subsequent valid registration still works
+- id: t1_f2p_refresh_safe_after_failure
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: modelRegistry.refresh() works correctly after a failed registration
+- id: t4_f2p_runtime_invalid_no_throw
+  turn: 4
+  kind: F2P
+  weight: 0.25
+  description: Calling runtime.registerProvider with an invalid config does not throw; runner reports an error
+- id: t4_f2p_runtime_valid_works
+  turn: 4
+  kind: F2P
+  weight: 0.2
+  description: Calling runtime.registerProvider with a valid config still registers the provider successfully
+- id: t4_f2p_no_partial_state
+  turn: 4
+  kind: F2P
+  weight: 0.2
+  description: After a failed invalid registration, no partial provider state is left behind
+- id: p2p_upstream_e395cbc7
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_coding-agent @ dc1ceb4'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-95de1efe_p2p_bundle.yaml
+- id: p2p_upstream_522628b0
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_coding-agent @ dc1ceb4'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/pi-mono-auto-95de1efe_p2p_bundle.yaml

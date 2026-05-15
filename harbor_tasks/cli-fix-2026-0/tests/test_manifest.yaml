@@ -1,0 +1,58 @@
+version: "1.0"
+task: cli-fix-2026-0
+
+gates:
+  # --- F2P (Fail to Pass) gates ---
+  # These gates must ALL pass for the task to be considered solved.
+  # Weights are applied via the weighted-replace formula in test.sh.
+
+  - id: F2P_BUILDS
+    kind: F2P
+    weight: 0.12
+    description: "Code compiles without errors (go build ./...)"
+    command: "go build ./cmd/entire/cli/strategy/..."
+
+  - id: F2P_TESTS_PASS
+    kind: F2P
+    weight: 0.18
+    description: "All tests pass (go test ./...)"
+    command: "go test ./cmd/entire/cli/strategy/..."
+
+  - id: F2P_DEBUG_LOGS_EXIST
+    kind: F2P
+    weight: 0.20
+    description: "calculatePromptAttributionAtStart has logging.Debug calls (AST check)"
+    command: "go run /tmp/ast_check_runner.go manual_commit_hooks.go debug_logs"
+
+  - id: F2P_HASH_BASED_DIFF
+    kind: F2P
+    weight: 0.10
+    description: "getAllChangedFilesBetweenTrees uses hash comparison, not getFileContent"
+    command: "go run /tmp/ast_check_runner.go manual_commit_attribution.go no_getfilecontent_in_diff"
+
+  - id: F2P_CP_GUARD_REMOVED
+    kind: F2P
+    weight: 0.08
+    description: "CheckpointCount guard removed from PrePromptHook; attribution runs for first checkpoint"
+    command: "go run /tmp/ast_check_runner.go manual_commit_hooks.go checkpoint_guard_removed"
+
+  - id: F2P_NEW_TESTS_EXIST
+    kind: F2P
+    weight: 0.07
+    description: "New test functions added for modified code (anti-regression)"
+    command: "grep -c 'func Test' manual_commit_attribution_test.go manual_commit_staging_test.go"
+
+  # --- P2P (Pass to Pass) regression gates ---
+  # These must stay passing. Failure = zero total reward.
+
+  - id: P2P_GETFILECONTENT_EXISTS
+    kind: P2P
+    weight: 0.0
+    description: "getFileContent function still exists (used elsewhere, must not be deleted)"
+    command: "grep -q 'func getFileContent' manual_commit_attribution.go"
+
+  - id: P2P_GETALLCHANGED_EXISTS
+    kind: P2P
+    weight: 0.0
+    description: "getAllChangedFilesBetweenTrees function still exists"
+    command: "grep -q 'func getAllChangedFilesBetweenTrees' manual_commit_attribution.go"

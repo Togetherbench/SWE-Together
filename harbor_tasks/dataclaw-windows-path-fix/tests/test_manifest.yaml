@@ -1,0 +1,42 @@
+version: 1.0
+turns:
+- turn: 1
+  message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_upstream_anonymize_path_win
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: anonymize_path handles Windows backslash paths
+  command: cd /workspace/repo && python3 -c "import sys; sys.path.insert(0,'.'); from
+    dataclaw.anonymizer import anonymize_path; r = anonymize_path('C:\\\\Users\\\\alice\\\\Documents\\\\myproject\\\\file.py',
+    'alice', 'user_abc12345', 'C:\\\\Users\\\\alice'); assert 'alice' not in r and
+    'myproject' in r, f'Got {repr(r)}'"
+  description: Verifies anonymize_path strips Windows backslash Documents prefix
+- id: f2p_upstream_parser_win_drive
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: _build_project_name handles Windows drive-letter prefix
+  command: cd /workspace/repo && python3 -c "import sys; sys.path.insert(0,'.'); from
+    dataclaw.parser import _build_project_name; r = _build_project_name('-C:-Users-alice-Documents-myproject');
+    assert r == 'myproject', f'Got {repr(r)}'"
+  description: 'Verifies _build_project_name skips C: drive prefix to find project
+    name'
+- id: p2p_upstream_py_compile
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: py_compile changed source files
+  command: cd /workspace/repo && python3 -m py_compile dataclaw/anonymizer.py && python3
+    -m py_compile dataclaw/parser.py && python3 -m py_compile dataclaw/cli.py
+  description: Verifies changed Python source files compile without syntax errors
+- id: p2p_upstream_import
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Import dataclaw modules
+  command: cd /workspace/repo && python3 -c "from dataclaw.anonymizer import anonymize_path,
+    anonymize_text; from dataclaw.parser import _build_project_name"
+  description: Verifies core dataclaw modules import successfully

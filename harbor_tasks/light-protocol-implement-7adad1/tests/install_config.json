@@ -13,5 +13,8 @@
   ],
   "PASS_TO_PASS": [],
   "_upgraded_from_legacy": true,
-  "_curator_notes": "v0.4.3.1 (2026-05-08): cargo-based verification is intractable in E2B for this image — base lacks clang and even small proc-macro crate `light-sdk-macros` fails at build-script link step (libc/proc-macro2/quote/serde_core build scripts require clang). install_config.json kept for audit but tests/test.sh now bypasses cargo entirely and runs source-grep checks against the canonical-patched files in sdk-libs/macros/src/light_pdas/. 6 weighted gates × Σ=1.0 covering: namespace-key addition, boolean-flag mechanism, AtaField struct field, parser logic, codegen wiring, and the 5 existing call-site updates. Buggy state confirmed → 0.0; canonical-fix → 1.0. Pattern mirrors moltis-task-ffe9ec."
+  "_curator_notes": "v0.4.3.1 (2026-05-08): cargo-based verification is intractable in E2B for this image \u2014 base lacks clang and even small proc-macro crate `light-sdk-macros` fails at build-script link step (libc/proc-macro2/quote/serde_core build scripts require clang). install_config.json kept for audit but tests/test.sh now bypasses cargo entirely and runs source-grep checks against the canonical-patched files in sdk-libs/macros/src/light_pdas/. 6 weighted gates \u00d7 \u03a3=1.0 covering: namespace-key addition, boolean-flag mechanism, AtaField struct field, parser logic, codegen wiring, and the 5 existing call-site updates. Buggy state confirmed \u2192 0.0; canonical-fix \u2192 1.0. Pattern mirrors moltis-task-ffe9ec.",
+  "_legacy_restored": true,
+  "_legacy_restored_date": "2026-05-14",
+  "_legacy_restored_reason": "tests/test_manifest.yaml restored from .legacy.bak (harbor health audit)"
 }
