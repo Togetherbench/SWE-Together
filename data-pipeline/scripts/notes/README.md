@@ -1,84 +1,69 @@
 # Canonical patch extraction
 
 Extracts the canonical (human-shipped) patch for every harbor task into
-`data-pipeline/artifacts_<source>/canonical_patches/<sid>.json`, in the same
-schema as the SWE-chat extractor's output.
+`data-pipeline/artifacts_<source>/canonical_patches/<sid>.json`, in the SWE-chat
+15-field schema plus `_*` extras.
 
-## Three scripts, one schema
+## One unified extractor (consolidated 2026-05-14)
 
-| Script | What it does | When to use |
-|---|---|---|
-| `step4_extract_canonical_patches.py` (existing) | Joins `SALT-NLP/SWE-chat` `sessions.parquet` → `commits.parquet` via `canonical_checkpoint_pk`; pulls the user's eventual commit patch | SWE-chat sessions only |
-| `step4_extract_canonical_patches_messages.py` | Replays Edit / Write / MultiEdit / `apply_patch` / `sed -i` ops against a clone of the repo at the task's base commit | Any session with structured tool calls (DataClaw, pi-mono, amytis, cli, cc-backend, …) |
-| `step4_extract_canonical_patches_hyperswitch.py` | Pulls the gold patch directly from `archit11/claude_traces_hs` parquet's `gitdiff` column | Hyperswitch tasks specifically. Run AFTER message-replay so it overrides |
+| Script | Role |
+|---|---|
+| `data-pipeline/scripts/step4_extract_canonical_patches.py` | **Active** — single entry point for all non-SWE-chat sources |
+| `data-pipeline/scripts/_legacy/step4_extract_canonical_patches_hyperswitch.py` | Deprecated; logic absorbed into the active script |
+| `data-pipeline/scripts/_legacy/step4_extract_canonical_patches_swechat.py` | Deprecated; SWE-chat parquet flow is currently unused (no active SWE-chat-sourced harbor tasks) |
 
-Output schema is identical across all three (15 SWE-chat fields + a few
-underscore-prefixed extras). Downstream consumers don't need to know which
-script produced a record.
+## Strategy waterfall (per task)
 
-## Run order
+The unified script tries these in order; first match wins:
+
+1. **Hyperswitch issue → PR → `gh pr diff`** — `hyperswitch-<N>` task names
+   resolve N → earliest merged closing PR → its full diff. Gold-standard
+   when available. (Was the standalone hyperswitch script.)
+2. **`install_config.json` `commit_sha` → `gh api commits/<sha>.diff`** —
+   when the task records an upstream commit SHA, the exact upstream diff
+   is fetched. Adds `_install_config_commit_sha` for traceability.
+   (New 2026-05-14, "Fix A".)
+3. **Tool-replay** — clone repo at `_base_commit`, replay structured
+   `tool_use` ops (Write / Edit / MultiEdit / NotebookEdit / apply_patch)
+   against the working tree, then `git diff HEAD`. Fidelity bucketed
+   `exact | directional | lossy` based on warning/op ratio.
+
+## Run
 
 ```bash
-python3 data-pipeline/scripts/step4_extract_canonical_patches.py            # SWE-chat
-python3 data-pipeline/scripts/step4_extract_canonical_patches_messages.py   # everything else (default + sub-glob)
-python3 data-pipeline/scripts/step4_extract_canonical_patches_hyperswitch.py  # overrides hyperswitch with gold patches
+python3 data-pipeline/scripts/step4_extract_canonical_patches.py            # all tasks
+python3 data-pipeline/scripts/step4_extract_canonical_patches.py --tasks 'hyperswitch-*'
+python3 data-pipeline/scripts/step4_extract_canonical_patches.py --tasks 'pi-mono-*' --limit 5
+python3 data-pipeline/scripts/step4_extract_canonical_patches.py --force        # re-extract cached
 ```
 
-The third script overwrites the second's hyperswitch output because gold
-patches from the parquet are strictly better than message replay (the
-hyperswitch dataset hard-caps assistant turns at 1000 chars, so replay
-loses ~50% of edits to mid-string truncation).
+Default behavior is non-destructive: existing canonicals are not overwritten
+unless `--force` is passed. Promoted manual curations (with `_curation_method`
+or `_fidelity_verified` set) survive normal re-runs.
 
 ## `_fidelity` field
 
-Every record carries `_fidelity` ∈ {`exact`, `directional`, `lossy`} so
-consumers can decide what to trust:
+| Value | Meaning |
+|---|---|
+| `exact` | Patch byte-matches an upstream commit/PR diff (via hyperswitch path or Fix A); or message-replay with ≤2 warnings AND ≤15% warning/op ratio |
+| `directional` | Right file set, but some Edit ops missed anchor match (formatter ran between edits, etc.). Use as "did the agent touch the right files" oracle, not as byte-exact ground truth |
+| `lossy` | Many ops failed; patch may misrepresent the real fix. Triggers smell-test failure unless `_fidelity_verified = true` is set |
+| `verifier_aligned` | Hand-reconstructed to match `tests/test.sh` ground truth (used when the session diverged from what the task author normalized for the verifier) |
+| `clean`, `high`, `curated` | Curator-set after manual verification; treat same as `exact` |
 
-- **`exact`**: the patch reproduces the upstream human-shipped fix
-  byte-for-byte (verified by cross-validation against PRs, see
-  `source_research.md`). Safe to use as a gold-patch verifier oracle.
-  - All `parquet_gold_patch` records (hyperswitch).
-  - Message-replay records with ≤2 warnings AND ≤15% warning/op ratio.
-- **`directional`**: right file set, but typically ~50% of deletions are
-  missing because some Edit ops failed anchor match. Use as "did the agent
-  touch the right files" gate, NOT as exact textual match.
-  - Message-replay records with 16-50% warning/op ratio.
-- **`lossy`**: most ops failed; patch may misrepresent the real fix or be
-  near-empty. Manual review needed.
-  - Message-replay records with >50% warning/op ratio.
-  - Records with `_n_mutating_ops == 0`.
-
-## Why no fuzzy matching
-
-Earlier prototypes added whitespace-tolerant Edit-anchor matching to recover
-from formatter-between-edits warnings (`gofmt`/`prettier` ran between two
-agent Edits, leaving the second's `old_string` non-byte-equal to the file).
-Cross-validation against upstream PRs showed fuzzy matching can synthesize
-patches that don't reflect what the human actually shipped. We deliberately
-keep exact-match-only: real warnings are surfaced, not swept under fuzzy
-recovery.
-
-## Source-by-source fidelity expectations
-
-See `source_research.md` for full notes. Summary:
-
-| Source | Ground-truth source | Best achievable fidelity | Notes |
-|---|---|---|---|
-| SWE-chat | Native `commits.parquet.patch` | exact | First-party; original SWE-chat extractor handles this |
-| Hyperswitch | `archit11/claude_traces_hs.gitdiff` parquet column | exact | Use the dedicated parquet-pull script |
-| DataClaw (newer exports, dict inputs) | Message replay against base commit | exact when warnings ≤2 | No upstream PR linkage; replay is the only ground truth |
-| DataClaw (older exports, string inputs — reigh, banodoco, etc.) | Cannot recover | n/a (skipped) | Old DataClaw exporter dropped Edit content; not recoverable from messages |
-| pi-mono (classic + multi-edit shapes) | Message replay | exact when warnings ≤2 | Most pi-mono sessions |
-| pi-mono (Hashline / oh-my-pi anchor shape) | Cannot recover from messages alone | n/a (skipped) | Anchors are content hashes; old text never recorded |
-| amytis, cli, cc-backend, agent-swarm, etc. | Message replay | exact when warnings ≤2 | Standard Anthropic Edit/Write field names |
+A separate `_fidelity_verified: true` flag means the original `_fidelity`
+label was over-conservative and a human audit confirmed the patch is safe to
+use. See `_verification_note` for the audit rationale.
 
 ## What this is NOT
 
-- **Not an oracle for "the agent did the right thing"**: faithful replay is
-  faithful even when the agent did the wrong fix (see hyperswitch-9063's
-  message-replay version vs the parquet gold patch). For verifier oracles
-  you want `_fidelity == "exact"` AND ideally the parquet ground truth
-  when available.
-- **Not a complete bench corpus**: ~50 of 179 tasks skip cleanly because
-  their source dataset stripped Edit content (older DataClaw, hashline
-  pi-mono). Skip reasons are recorded in the run log.
+- **Not an oracle for "the agent did the right thing"** — even an `exact`
+  upstream-PR canonical only tells you what the human shipped, not whether
+  the agent's session arrived there. Cross-reference with `tests/test.sh`.
+- **Not a complete bench corpus** — ~43 tasks skip cleanly because their
+  source dataset stripped Edit content (older Reigh/DataClaw exports, certain
+  pi-mono Hashline shapes). Skip reasons are recorded in the run log; the
+  smell test does not flag these because there's no canonical to evaluate.
+- **NEVER use `archit11/claude_traces_hs.gitdiff`** for hyperswitch.
+  That parquet column is the agent session trace, not the gold patch. The
+  unified extractor uses `gh pr diff <closing_PR>` exclusively.

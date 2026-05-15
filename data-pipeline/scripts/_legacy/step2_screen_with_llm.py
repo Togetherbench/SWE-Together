@@ -1,3 +1,8 @@
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ by dead-code audit.
+# Targets data-pipeline/screening/ which does not exist; never run from this path.
+# Keep for git history / archaeology only.
+
 """Step 2: LLM-based viability judge with Gemini 3.1 Pro.
 
 Asks: "Is the coding work in this session reproducible in a clean Harbor task,

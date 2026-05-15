@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ by dead-code audit.
+# Targets data-pipeline/screening/ which does not exist; never run from this path.
+# Keep for git history / archaeology only.
+
 """Step 1: deterministic fetch + Stage-0 filter for the screening pipeline.
 
 Single entry point covering both upstream sources. Both paths emit the SAME

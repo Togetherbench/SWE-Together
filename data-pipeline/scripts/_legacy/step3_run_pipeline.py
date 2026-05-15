@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ by dead-code audit.
+# Targets data-pipeline/screening/ which does not exist; never run from this path.
+# Keep for git history / archaeology only.
+
 """Single-stage SWE-chat → Harbor task scaffolder (E2B + DeepSeek-v4-pro).
 
 Reads pre-fetched session JSONs from sessions_raw/ (populated by

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ by dead-code audit.
+# Targets data-pipeline/screening/ which does not exist; never run from this path.
+# Keep for git history / archaeology only.
+
 """Step 3 — serial prefetch of every VIABLE session's transcript into local JSON.
 
 Run this ONCE after step1+step2. After it completes, scaffold workers (in

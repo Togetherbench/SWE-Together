@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ by dead-code audit.
+# Targets data-pipeline/screening/ which does not exist; never run from this path.
+# Keep for git history / archaeology only.
+
 """Run step5 (Gemini patch screen) on sessions that step2 rejected, to test
 whether step2's session-only Gemini judge was over-strict relative to step5's
 session+patch judge.

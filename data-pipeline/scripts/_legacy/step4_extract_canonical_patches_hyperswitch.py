@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ during step4 consolidation.
+# Functionality merged into data-pipeline/scripts/step4_extract_canonical_patches.py.
+# Kept here for git history and one-off bisection. Do NOT run from this path.
+
 """Step 4 (Hyperswitch variant) — pull canonical patches as the actual
 upstream PR diff via `gh pr diff`.
 
@@ -83,7 +88,7 @@ def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Targeting {len(tasks)} hyperswitch tasks; output → {OUTPUT_DIR}")
 
-    counts = {"ok": 0, "skip": 0, "error": 0, "lossy": 0}
+    counts = {"ok": 0, "ok_via_fallback": 0, "skip": 0, "error": 0, "lossy": 0}
     t0 = time.time()
     for task_dir in tasks:
         result = extract_one(task_dir, args.force, args.skip_missing)
@@ -92,6 +97,10 @@ def main() -> int:
         if st == "ok":
             print(f"  {task_dir.name:42s} ok  PR#{result['pr_num']} "
                   f"({result['files']} files, +{result['additions']}/-{result['deletions']})")
+        elif st == "ok_via_fallback":
+            print(f"  {task_dir.name:42s} ok (messages_replay fallback) "
+                  f"({result['files']} files, +{result['additions']}/-{result['deletions']}) — "
+                  f"{result['reason']}")
         elif st == "lossy":
             print(f"  {task_dir.name:42s} lossy stub: {result['reason']}")
         elif st == "skip":
@@ -128,6 +137,17 @@ def extract_one(task_dir: Path, force: bool, skip_missing: bool) -> dict:
     if pr_num is None:
         if skip_missing:
             return {"status": "skip", "reason": pr_status}
+        # Fix B (2026-05-14): before giving up, try messages_replay against
+        # original_session.json. Some hyperswitch tasks have no closing PR
+        # (issue still open / closed without PR) but the agent session
+        # still contains useful Edit ops. Result is _fidelity = directional
+        # (lower-bound oracle, NOT gold). Caller decides whether to promote.
+        fb = try_messages_replay_fallback(task_dir, ROOT / "data-pipeline")
+        if fb.get("status") == "ok" and fb.get("files", 0) > 0:
+            return {"status": "ok_via_fallback", "files": fb.get("files", 0),
+                    "additions": fb.get("additions", 0),
+                    "deletions": fb.get("deletions", 0),
+                    "reason": f"no closing PR; messages_replay fallback ({pr_status})"}
         write_lossy_stub(out_path, sid, name, issue_num, pr_status, repo_url, base_commit)
         return {"status": "lossy", "reason": pr_status}
 
@@ -292,6 +312,35 @@ def write_lossy_stub(out_path: Path, sid: str, name: str, issue_num: int,
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     json.dump(out, open(out_path, "w"), indent=2)
+
+
+# Fix B (2026-05-14): lazy-imported messages_replay fallback. Used when no
+# closing PR exists for an issue — agent session may still contain useful Edit
+# ops. Loaded once per process so repeated calls are cheap.
+_messages_extractor = None
+
+
+def try_messages_replay_fallback(task_dir: Path, output_root: Path) -> dict:
+    """Invoke step4_extract_canonical_patches_messages.extract_one() to
+    produce a messages-replay canonical for a task whose upstream issue
+    has no closing PR. Writes to the same artifacts_hyperswitch/canonical_patches/
+    path the hyperswitch script targets, with _fidelity = "directional"
+    (replay quality) instead of "exact" (PR diff quality).
+    """
+    global _messages_extractor
+    if _messages_extractor is None:
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location(
+            "messages_extractor",
+            Path(__file__).parent / "step4_extract_canonical_patches_messages.py",
+        )
+        mod = module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _messages_extractor = mod
+    try:
+        return _messages_extractor.extract_one(task_dir, output_root, force=True)
+    except Exception as e:
+        return {"status": "error", "reason": f"messages_replay fallback raised: {e!r}"}
 
 
 def read_session(task_dir: Path) -> dict | None:

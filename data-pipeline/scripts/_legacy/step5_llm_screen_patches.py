@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# ⚠️  DEPRECATED 2026-05-14 — moved to _legacy/ by dead-code audit.
+# Targets data-pipeline/screening/ which does not exist; never run from this path.
+# Keep for git history / archaeology only.
+
 """Step 5 — LLM (Gemini 3 Pro) screen of canonical patches + sessions for
 benchmark viability, applied BEFORE we burn E2B sandboxes scaffolding tasks.
 
