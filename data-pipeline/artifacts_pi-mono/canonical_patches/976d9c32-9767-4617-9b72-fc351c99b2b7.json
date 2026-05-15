@@ -24,5 +24,11 @@
   "_base_commit": "05c17cfbfeedd8099dad88b342457bfeb261b458",
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-parallel-tool-stall",
-  "_n_mutating_ops": 15
+  "_n_mutating_ops": 15,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

@@ -1,0 +1,27 @@
+{
+  "session_id": "8897bd54-16f4-4a28-8e23-cb187c639e40",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "entireio/cli",
+  "is_agent_author": true,
+  "files_changed_count": 3,
+  "total_additions": 9,
+  "total_deletions": 3,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tcmd/entire/cli/hooks.go\nM\tcmd/entire/cli/hooks_claudecode_handlers.go\nM\tcmd/entire/cli/hooks_test.go\n",
+  "numstat": "1\t0\tcmd/entire/cli/hooks.go\n4\t0\tcmd/entire/cli/hooks_claudecode_handlers.go\n4\t3\tcmd/entire/cli/hooks_test.go\n",
+  "patch": "diff --git a/cmd/entire/cli/hooks.go b/cmd/entire/cli/hooks.go\nindex 806f70d..8914a2e 100644\n--- a/cmd/entire/cli/hooks.go\n+++ b/cmd/entire/cli/hooks.go\n@@ -319,6 +319,7 @@ type hookResponse struct {\n // SessionStart hooks. The context is injected into the agent's conversation.\n func outputHookResponse(context string) error {\n \tresp := hookResponse{\n+\t\tSystemMessage: context,\n \t\tHookSpecificOutput: &hookSpecificOutput{\n \t\t\tHookEventName:     \"SessionStart\",\n \t\t\tAdditionalContext: context,\ndiff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex aa4f225..8f63d92 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -93,6 +93,10 @@ func captureInitialState() error {\n \t\t\t\t\t\"[Wingman] A code review is pending and will be addressed before your request.\",\n \t\t\t\t); err != nil {\n \t\t\t\t\tfmt.Fprintf(os.Stderr, \"[wingman] Warning: failed to inject review instruction: %v\\n\", err)\n+\t\t\t\t} else {\n+\t\t\t\t\t// Hook response written to stdout \u2014 must return immediately\n+\t\t\t\t\t// to avoid corrupting the JSON with additional output.\n+\t\t\t\t\treturn nil\n \t\t\t\t}\n \t\t\t}\n \ndiff --git a/cmd/entire/cli/hooks_test.go b/cmd/entire/cli/hooks_test.go\nindex fe57353..bcb9e2a 100644\n--- a/cmd/entire/cli/hooks_test.go\n+++ b/cmd/entire/cli/hooks_test.go\n@@ -545,6 +545,7 @@ func TestHookResponse_SessionStart(t *testing.T) {\n \tt.Parallel()\n \n \tresp := hookResponse{\n+\t\tSystemMessage: \"Powered by Entire\",\n \t\tHookSpecificOutput: &hookSpecificOutput{\n \t\t\tHookEventName:     \"SessionStart\",\n \t\t\tAdditionalContext: \"Powered by Entire\",\n@@ -562,9 +563,9 @@ func TestHookResponse_SessionStart(t *testing.T) {\n \t\tt.Fatalf(\"failed to unmarshal: %v\", err)\n \t}\n \n-\t// systemMessage should be absent (omitempty)\n-\tif _, ok := raw[\"systemMessage\"]; ok {\n-\t\tt.Error(\"systemMessage should be omitted when empty\")\n+\t// systemMessage should be present (same as additionalContext for user visibility)\n+\tif _, ok := raw[\"systemMessage\"]; !ok {\n+\t\tt.Error(\"systemMessage should be present for SessionStart\")\n \t}\n \n \t// hookSpecificOutput should be present\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "cli",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "op[15] edit: old text not found in cmd/entire/cli/hooks_claudecode_handlers.go"
+  ],
+  "_base_commit": "5fddc49ce59e8deeaa0100aa4e2dc0989ba4c6f5",
+  "_repo_url": "https://github.com/entireio/cli",
+  "_task_name": "cli-task-8897bd",
+  "_n_mutating_ops": 4
+}

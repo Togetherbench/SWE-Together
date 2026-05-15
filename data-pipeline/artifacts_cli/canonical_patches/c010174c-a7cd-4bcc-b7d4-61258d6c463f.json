@@ -24,5 +24,11 @@
   "_base_commit": "380a9451b5d268fcc230bfb217b9df7ba4def8c6",
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-c01017",
-  "_n_mutating_ops": 20
+  "_n_mutating_ops": 20,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

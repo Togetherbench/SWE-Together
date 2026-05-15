@@ -24,5 +24,16 @@
   "_base_commit": "092146da477575eeaf5219df24e225c3777687d3",
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-577e8c",
-  "_n_mutating_ops": 12
+  "_n_mutating_ops": 12,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "Cross-checked against upstream commit 4beb60c7 on entireio/cli: upstream commit only touches opencode/opencode.go, but canonical patch covers 4 files (opencode.go plus strategy/common.go, manual_commit_logs.go, session.go). Session went broader than the merged PR \u2014 canonical is a superset of upstream, not a subset. Both warnings are 'old text not found' anchor mismatches (formatter noise). Trust session over narrow upstream.",
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "Cross-checked against upstream commit 4beb60c7 on entireio/cli: upstream commit only touches opencode/opencode.go, but canonical patch covers 4 files (opencode.go plus strategy/common.go, manual_commit_logs.go, session.go). Session went broader than the merged PR \u2014 canonical is a superset of upstream, not a subset. Both warnings are 'old text not found' anchor mismatches (formatter noise). Trust session over narrow upstream.",
+    "dated": "2026-05-14"
+  }
 }

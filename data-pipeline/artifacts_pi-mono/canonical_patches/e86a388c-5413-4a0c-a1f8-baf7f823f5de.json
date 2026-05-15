@@ -34,5 +34,16 @@
   "_base_commit": "b7cef51f3f5068f61f144bd5c5130a295a3e0c16",
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-auto-e86a388c",
-  "_n_mutating_ops": 30
+  "_n_mutating_ops": 30,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "Highest warn/mut ratio of the batch (0.40, 12/30), but all 12 warnings concentrate on two files heavily reworked during the session: openai-responses.ts (23+/1-) and openai-responses-reasoning-replay-e2e.test.ts (141+/2-). Large test-file builds produce many anchor mismatches as the file grows \u2014 each new test reshapes prior anchors. All warnings are pure 'edit: old text not found' (formatter-noise signature); zero file-not-found. The 168-line addition is consistent with files_changed numstat.",
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "Highest warn/mut ratio of the batch (0.40, 12/30), but all 12 warnings concentrate on two files heavily reworked during the session: openai-responses.ts (23+/1-) and openai-responses-reasoning-replay-e2e.test.ts (141+/2-). Large test-file builds produce many anchor mismatches as the file grows \u2014 each new test reshapes prior anchors. All warnings are pure 'edit: old text not found' (formatter-noise signature); zero file-not-found. The 168-line addition is consistent with files_changed numstat.",
+    "dated": "2026-05-14"
+  }
 }

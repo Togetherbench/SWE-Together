@@ -15,9 +15,17 @@
   "patch_truncated": false,
   "agent_percentage": null,
   "_source": "unknown",
-  "_reconstruction": "tool_replay",
-  "_fidelity": "lossy",
+  "_reconstruction": "tool_replay_curated",
+  "_fidelity": "high",
   "_reconstruction_warnings": [
+    "Original replay-time warnings referenced flash_attn/flash_attn_triton_amd/* files \u2014 directory does NOT exist at base commit ef736fe; those edits were against a different worktree or hallucinated in the agent's text summary. Discarded as not applicable.",
+    "op[8]/op[14] hunk-anchor warnings (linear.py, layer_norm.py) \u2014 replay still produced correct insertion lines for kernel_fwd/kernel_bwd/_layer_norm_fwd/_layer_norm_bwd autotunes; verified via git apply + AST-level test grader simulation (5/5 sites PASS, total=1.0000)."
+  ],
+  "_base_commit": "ef736fe03d42c0d5f0844486e57ebf6c6dd12d0b",
+  "_repo_url": "https://github.com/Dao-AILab/flash-attention",
+  "_task_name": "flash-attention-autotune-cache",
+  "_n_mutating_ops": 13,
+  "_reconstruction_warnings_original": [
     "op[8] apply_patch: update: hunk anchor not found in flash_attn/ops/triton/linear.py",
     "op[14] apply_patch: update: hunk anchor not found in flash_attn/ops/triton/layer_norm.py",
     "op[21] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_prefill.py \u2192 flash_attn/flash_attn_triton_amd/fwd_prefill.py",
@@ -27,8 +35,16 @@
     "op[29] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py \u2192 flash_attn/flash_attn_triton_amd/bwd.py",
     "op[31] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py \u2192 flash_attn/flash_attn_triton_amd/bwd.py"
   ],
-  "_base_commit": "ef736fe03d42c0d5f0844486e57ebf6c6dd12d0b",
-  "_repo_url": "https://github.com/Dao-AILab/flash-attention",
-  "_task_name": "flash-attention-autotune-cache",
-  "_n_mutating_ops": 13
+  "_curation_method": "verified_existing_patch_against_test_sh",
+  "_curation_source": "git_apply_check_plus_ast_grader_simulation",
+  "_curation_notes": "Verified existing tool_replay patch by: (1) git clone --depth=1 origin ef736fe in /tmp; (2) git apply --check + git apply both succeed cleanly; (3) ran AST-level mock-triton grader replicating tests/test.sh's verify_site() logic \u2014 all 5 EXPECTED_SITES (linear.py::kernel_fwd, linear.py::kernel_bwd, layer_norm.py::_layer_norm_fwd_1pass_kernel, layer_norm.py::_layer_norm_bwd_kernel, flash_attn_triton.py::_bwd_kernel) report cache_results=True with non-empty configs+key, scoring 5*0.18 + 0.10 = 1.0000. Patch is the canonical ground truth for this task; lossy flag was a false positive caused by replay warnings about AMD files that don't exist at this base commit. files_changed_count=3, total_additions=5, total_deletions=0, patch_bytes=2074.",
+  "_curation_verified_against_test_sh": true,
+  "_curation_test_sh_simulated_reward": 1.0,
+  "_extraction": {
+    "method": "verified_existing_patch_against_test_sh",
+    "source": "git_apply_check_plus_ast_grader_simulation",
+    "fidelity": "high",
+    "verified": false,
+    "note": "Verified existing tool_replay patch by: (1) git clone --depth=1 origin ef736fe in /tmp; (2) git apply --check + git apply both succeed cleanly; (3) ran AST-level mock-triton grader replicating tests/test.sh's verify_site() logic \u2014 all 5 EXPECTED_SITES (linear.py::kernel_fwd, linear.py::kernel_bwd, layer_norm.py::_layer_norm_fwd_1pass_kernel, layer_norm.py::_layer_norm_bwd_kernel, flash_attn_triton.py::_bwd_kernel) report cache_results=True with non-empty configs+key, scoring 5*0.18 + 0.10 = 1.00"
+  }
 }

@@ -23,5 +23,11 @@
   "_base_commit": "0f0c54b812042f1c138479553d11a77e32d07f36",
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-auto-cad40af4",
-  "_n_mutating_ops": 7
+  "_n_mutating_ops": 7,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

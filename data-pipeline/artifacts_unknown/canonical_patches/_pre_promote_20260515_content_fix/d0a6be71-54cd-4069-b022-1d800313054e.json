@@ -1,0 +1,34 @@
+{
+  "session_id": "d0a6be71-54cd-4069-b022-1d800313054e",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "thu-ml/SageAttention",
+  "is_agent_author": true,
+  "files_changed_count": 2,
+  "total_additions": 8,
+  "total_deletions": 1,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tcsrc/dispatch_utils.h\nM\tsageattention/core.py\n",
+  "numstat": "3\t0\tcsrc/dispatch_utils.h\n5\t1\tsageattention/core.py\n",
+  "patch": "diff --git a/csrc/dispatch_utils.h b/csrc/dispatch_utils.h\nindex 6d798e6..7eca3bc 100644\n--- a/csrc/dispatch_utils.h\n+++ b/csrc/dispatch_utils.h\n@@ -27,6 +27,9 @@\n   } else if (head_dim == 128) {                                 \\\n     constexpr int HEAD_DIM = 128;                               \\\n     __VA_ARGS__                                                 \\\n+  } else if (head_dim == 256) {                                 \\\n+    constexpr int HEAD_DIM = 256;                               \\\n+    __VA_ARGS__                                                 \\\n   } else {                                                      \\\n     std::ostringstream err_msg;                                 \\\n     err_msg << \"Unsupported head dim: \" << int(head_dim);       \\\ndiff --git a/sageattention/core.py b/sageattention/core.py\nindex 4fc2509..4e4730b 100644\n--- a/sageattention/core.py\n+++ b/sageattention/core.py\n@@ -262,7 +262,11 @@ def sageattn_qk_int8_pv_fp16_triton(\n         q = torch.nn.functional.pad(q, (0, 128 - head_dim_og))\n         k = torch.nn.functional.pad(k, (0, 128 - head_dim_og))\n         v = torch.nn.functional.pad(v, (0, 128 - head_dim_og))\n-    elif head_dim_og > 128:\n+    elif head_dim_og > 128 and head_dim_og < 256:\n+        q = torch.nn.functional.pad(q, (0, 256 - head_dim_og))\n+        k = torch.nn.functional.pad(k, (0, 256 - head_dim_og))\n+        v = torch.nn.functional.pad(v, (0, 256 - head_dim_og))\n+    elif head_dim_og > 256:\n         raise ValueError(f\"Unsupported head_dim: {head_dim_og}\")\n \n     # assert last dim is contiguous\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "unknown",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "op[12] edit: old text not found in csrc/fused/fused.cu"
+  ],
+  "_base_commit": "c9f4cd715db1e180aa313bdac136b07013dfeb07",
+  "_repo_url": "https://github.com/thu-ml/SageAttention",
+  "_task_name": "sageattention-headdim-256",
+  "_n_mutating_ops": 3,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json (post Fix-B WRITE/EDIT tool aliases)",
+    "fidelity": "directional",
+    "verified": false,
+    "note": "Recovered 2026-05-14 after adding 'replace'/'write_file' to extractor's mutating-tool set."
+  }
+}

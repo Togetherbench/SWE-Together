@@ -24,5 +24,15 @@
   "_base_commit": "348c72f16b0287232fa799f7798fd5bbb4fdc26a",
   "_repo_url": "https://github.com/moltis-org/moltis",
   "_task_name": "moltis-task-108d2f",
-  "_n_mutating_ops": 48
+  "_n_mutating_ops": 48,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": true,
+    "note": "Post-review verification (batch AF, 2026-05-15): 2 edit_anchor_mismatch warnings on .github/workflows/{release,homebrew}.yml \u2014 formatter-noise per MEMORY rule. Underlying diff is coherent."
+  },
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-15",
+  "_verification_note": "Post-review verification (batch AF, 2026-05-15): 2 edit_anchor_mismatch warnings on .github/workflows/{release,homebrew}.yml \u2014 formatter-noise per MEMORY rule. Underlying diff is coherent."
 }

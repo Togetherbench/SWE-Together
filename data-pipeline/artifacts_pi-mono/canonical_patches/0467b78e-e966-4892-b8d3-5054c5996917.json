@@ -21,5 +21,11 @@
   "_base_commit": "1614e95eca691db0292f3773952c31d6422ad45e",
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-auto-0467b78e",
-  "_n_mutating_ops": 14
+  "_n_mutating_ops": 14,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

@@ -23,5 +23,11 @@
   "_base_commit": "78bd0e3d",
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-cf32cb",
-  "_n_mutating_ops": 17
+  "_n_mutating_ops": 17,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

@@ -23,5 +23,11 @@
   "_base_commit": "84fda9c8",
   "_repo_url": "https://github.com/ClusterCockpit/cc-backend",
   "_task_name": "cc-backend-task-ceb685",
-  "_n_mutating_ops": 13
+  "_n_mutating_ops": 13,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

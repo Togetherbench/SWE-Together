@@ -26,5 +26,11 @@
   "_n_mutating_ops": 22,
   "_curator_notes": [
     "stripped test.sh env-var hunk (out-of-scope to fix; would have unset KIMI_API_KEY / HF_TOKEN in repo test runner)"
-  ]
+  ],
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

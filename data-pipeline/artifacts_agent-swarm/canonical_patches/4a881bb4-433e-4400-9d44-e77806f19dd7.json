@@ -28,5 +28,16 @@
   "_base_commit": "cc8c7f5",
   "_repo_url": "https://github.com/desplega-ai/agent-swarm",
   "_task_name": "agent-swarm-task-4a881b",
-  "_n_mutating_ops": 50
+  "_n_mutating_ops": 50,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "The _reconstruction_warnings are dominated by 4 file-not-found entries for thoughts/taras/plans/2026-03-06-one-time-scheduled-tasks.md (a plan artifact, not exercised by test.sh), plus 2 anchor mismatches in code files. The remaining patch (613+/90-, 16 files) implements the full one-time-scheduled-tasks feature: scheduleType column + migration 002, http+scheduler+MCP-tool wiring, ScheduledTaskSchema refine, integration tests. Patch implements the intended code behavior despite the missing plan-markdown.",
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "The _reconstruction_warnings are dominated by 4 file-not-found entries for thoughts/taras/plans/2026-03-06-one-time-scheduled-tasks.md (a plan artifact, not exercised by test.sh), plus 2 anchor mismatches in code files. The remaining patch (613+/90-, 16 files) implements the full one-time-scheduled-tasks feature: scheduleType column + migration 002, http+scheduler+MCP-tool wiring, ScheduledTaskSchema refine, integration tests. Patch implements the intended code behavior despite the missing plan-",
+    "dated": "2026-05-14"
+  }
 }

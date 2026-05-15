@@ -28,5 +28,16 @@
   "_base_commit": "5c59caee4e2906e467081cb7c48c212b77e59707",
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-auto-fcb17499",
-  "_n_mutating_ops": 25
+  "_n_mutating_ops": 25,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "Six warnings all of kind 'edit: old text not found' across CHANGELOG.md (x2), interactive-mode.ts (x2), editor.ts, and tui/CHANGELOG.md. 25 mutating ops on 6 files (mut/file=4.2, warn/mut=0.24) \u2014 within expected range for a multi-file iterative session where formatters ran between edits. No file-not-found warnings; all warnings target files that ARE in files_changed. Base 5c59cae resolves upstream.",
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "Six warnings all of kind 'edit: old text not found' across CHANGELOG.md (x2), interactive-mode.ts (x2), editor.ts, and tui/CHANGELOG.md. 25 mutating ops on 6 files (mut/file=4.2, warn/mut=0.24) \u2014 within expected range for a multi-file iterative session where formatters ran between edits. No file-not-found warnings; all warnings target files that ARE in files_changed. Base 5c59cae resolves upstream.",
+    "dated": "2026-05-14"
+  }
 }

@@ -1,0 +1,51 @@
+{
+  "session_id": "50b2b10a-1be0-441f-aafb-3c5828f0fcc9",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "ClusterCockpit/cc-backend",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 85,
+  "total_deletions": 0,
+  "commit_message": "[reconstructed from session messages \u2014 post-revert end state]",
+  "files_changed": "M\tREADME.md\n",
+  "numstat": "85\t0\tREADME.md\n",
+  "patch": "diff --git a/README.md b/README.md\nindex 3306f83..0000000 100644\n--- a/README.md\n+++ b/README.md\n@@ -133,6 +133,91 @@ ln -s <your-existing-job-archive> ./var/job-archive\n ./cc-backend -help\n ```\n \n+## Database Configuration\n+\n+cc-backend uses SQLite as its database. For large installations, SQLite memory\n+usage can be tuned via the optional `db-config` section in config.json under\n+`main`:\n+\n+```json\n+{\n+  \"main\": {\n+    \"db\": \"./var/job.db\",\n+    \"db-config\": {\n+      \"cache-size-mb\": 2048,\n+      \"soft-heap-limit-mb\": 16384,\n+      \"max-open-connections\": 4,\n+      \"max-idle-connections\": 4,\n+      \"max-idle-time-minutes\": 10\n+    }\n+  }\n+}\n+```\n+\n+All fields are optional. If `db-config` is omitted entirely, built-in defaults\n+are used.\n+\n+### Options\n+\n+| Option | Default | Description |\n+|--------|---------|-------------|\n+| `cache-size-mb` | 2048 | SQLite page cache size per connection in MB. Maps to `PRAGMA cache_size`. Total cache memory is up to `cache-size-mb \u00d7 max-open-connections`. |\n+| `soft-heap-limit-mb` | 16384 | Process-wide SQLite soft heap limit in MB. SQLite will try to release cache pages to stay under this limit. Queries won't fail if exceeded, but cache eviction becomes more aggressive. |\n+| `max-open-connections` | 4 | Maximum number of open database connections. |\n+| `max-idle-connections` | 4 | Maximum number of idle database connections kept in the pool. |\n+| `max-idle-time-minutes` | 10 | Maximum time in minutes a connection can sit idle before being closed. |\n+\n+### Sizing Guidelines\n+\n+SQLite's `cache_size` is a **per-connection** setting \u2014 each connection\n+maintains its own independent page cache. With multiple connections, the total\n+memory available for caching is the sum across all connections.\n+\n+In practice, different connections tend to cache **different pages** (e.g., one\n+handles a job listing query while another runs a statistics aggregation), so\n+their caches naturally spread across the database. The formula\n+`DB_size / max-open-connections` gives enough per-connection cache that the\n+combined caches can cover the entire database.\n+\n+However, this is a best-case estimate. Connections running similar queries will\n+cache the same pages redundantly. In the worst case (all connections caching\n+identical pages), only `cache-size-mb` worth of unique data is cached rather\n+than `cache-size-mb \u00d7 max-open-connections`. For workloads with diverse\n+concurrent queries, cache overlap is typically low.\n+\n+**Rules of thumb:**\n+\n+- **cache-size-mb**: Set to `DB_size_in_MB / max-open-connections` to allow the\n+  entire database to be cached in memory. For example, an 80GB database with 8\n+  connections needs at least 10240 MB (10GB) per connection. If your workload\n+  has many similar concurrent queries, consider setting it higher to account for\n+  cache overlap between connections.\n+- **soft-heap-limit-mb**: Should be >= `cache-size-mb \u00d7 max-open-connections` to\n+  avoid cache thrashing. This is the total SQLite memory budget for the process.\n+- On small installations the defaults work well. On servers with large databases\n+  (tens of GB) and plenty of RAM, increasing these values significantly improves\n+  query performance by reducing disk I/O.\n+\n+### Example: Large Server (512GB RAM, 80GB database)\n+\n+```json\n+{\n+  \"main\": {\n+    \"db-config\": {\n+      \"cache-size-mb\": 16384,\n+      \"soft-heap-limit-mb\": 131072,\n+      \"max-open-connections\": 8,\n+      \"max-idle-time-minutes\": 30\n+    }\n+  }\n+}\n+```\n+\n+This allows the entire 80GB database to be cached (8 \u00d7 16GB = 128GB page cache)\n+with a 128GB soft heap limit, using about 25% of available RAM.\n+\n+The effective configuration is logged at startup for verification.\n+\n ## Project file structure\n \n - [`.github/`](https://github.com/ClusterCockpit/cc-backend/tree/master/.github)\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "cc-backend",
+  "_reconstruction": "session_message_curation",
+  "_fidelity": "curated",
+  "_reconstruction_warnings": [
+    "Original tool_replay produced duplicate README sections by re-applying both Edit ops (idx 51 and idx 84) that shared the same old_string '## Project file structure'. In the actual session, msg 64-83 show the user manually reverted ALL prior agent changes (config.go, dbConnection.go, main.go, schema.go, README.md); msg 84 then re-applied ONLY the README change with the expanded 'Sizing Guidelines' subsection. Session ended without re-applying the Go code changes \u2014 they should NOT appear in canonical.",
+    "Curation kept ONLY the README diff using msg 84's new_string verbatim. Removed: cmd/cc-backend/main.go, internal/config/config.go, internal/config/schema.go, internal/repository/config.go, internal/repository/dbConnection.go (all reverted by user mid-session)."
+  ],
+  "_base_commit": "5c726641629df4c51077d24d58065d04ded8e9f4",
+  "_repo_url": "https://github.com/ClusterCockpit/cc-backend",
+  "_task_name": "cc-backend-implement-50b2b1",
+  "_n_mutating_ops": 1,
+  "_curation_strategy": "session_revert_reconciliation",
+  "_curation_evidence": {
+    "user_revert_signal_msgs": [
+      64,
+      67,
+      73,
+      83
+    ],
+    "user_revert_signal_text": "msg 64: 'The user must have reverted the README changes.'; msg 73: 'The user reverted the DbCacheSizeMB/DbSoftHeapLimitMB fields from config.go, the setupSqlite signature change, the schema.go db-config block, and the main.go initDatabase logic'; msg 83: 'All my previous changes were reverted by the user.'",
+    "post_revert_reads_verified_clean": {
+      "config.go (msg 72)": "no DbConfig/DbCache",
+      "main.go (msg 77)": "initDatabase has only repository.Connect call",
+      "schema.go (msg 81)": "no db-config block"
+    },
+    "final_action": "msg 84 Edit README.md only (replace_all=False, old='## Project file structure', new=expanded Database Configuration section + heading)"
+  },
+  "_original_canonical_path": "data-pipeline/artifacts_cc-backend/canonical_patches/50b2b10a-1be0-441f-aafb-3c5828f0fcc9.json",
+  "_extraction": {
+    "method": "session_message_curation",
+    "source": "session_message_curation",
+    "fidelity": "curated",
+    "verified": false
+  }
+}

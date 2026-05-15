@@ -24,5 +24,11 @@
   "_base_commit": "609d1292f6e262b27a8c5b2849e7bf0df2ecd7a8",
   "_repo_url": "https://github.com/kohya-ss/sd-scripts",
   "_task_name": "sd-scripts-sdxl-multires-dedup",
-  "_n_mutating_ops": 16
+  "_n_mutating_ops": 16,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

@@ -21,5 +21,11 @@
   "_base_commit": "e2cc3da",
   "_repo_url": "https://github.com/obsessiondb/rudel",
   "_task_name": "rudel-task-e44a25",
-  "_n_mutating_ops": 3
+  "_n_mutating_ops": 3,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

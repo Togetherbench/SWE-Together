@@ -26,5 +26,14 @@
   "_n_mutating_ops": 0,
   "_upstream_issue": 118,
   "_upstream_pr": null,
-  "_pr_lookup_status": "issue has no closing PR"
+  "_pr_lookup_status": "issue has no closing PR",
+  "_audit_note": "Issue #118 has no closing PR. Empty patch is intentional. A messages-replay lower-bound oracle is available at hyperswitch-118.json.candidate (covers 2/4 verifier files; session structurally incomplete). Do NOT promote the candidate to canonical \u2014 use only as 'did agent touch right files' signal.",
+  "_audit_date": "2026-05-14",
+  "_extraction": {
+    "method": "github_pr_diff",
+    "source": "github_pr_diff",
+    "fidelity": "lossy",
+    "verified": false,
+    "audit_note": "Issue #118 has no closing PR. Empty patch is intentional. A messages-replay lower-bound oracle is available at hyperswitch-118.json.candidate (covers 2/4 verifier files; session structurally incomplete). Do NOT promote the candidate to canonical \u2014 use only as 'did agent touch right files' signal."
+  }
 }

@@ -21,5 +21,11 @@
   "_base_commit": "c3a5e1a4c0eeadd87057629db2baa0d0abe1575e",
   "_repo_url": "https://github.com/desplega-ai/agent-swarm",
   "_task_name": "agent-swarm-task-ea4bd8",
-  "_n_mutating_ops": 8
+  "_n_mutating_ops": 8,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

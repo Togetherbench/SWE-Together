@@ -29,5 +29,11 @@
     ".gitignore",
     "mise-tasks/completions",
     "mise.toml"
-  ]
+  ],
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

@@ -21,5 +21,11 @@
   "_base_commit": "6429c69",
   "_repo_url": "https://github.com/hutusi/amytis",
   "_task_name": "amytis-implement-3b6cb5",
-  "_n_mutating_ops": 7
+  "_n_mutating_ops": 7,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": false
+  }
 }

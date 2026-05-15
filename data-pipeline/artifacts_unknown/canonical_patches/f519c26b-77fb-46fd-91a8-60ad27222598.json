@@ -21,5 +21,15 @@
   "_base_commit": "1f42255",
   "_repo_url": "https://github.com/Nagi-ovo/gemini-voyager",
   "_task_name": "gemini-voyager-task-f519c2",
-  "_n_mutating_ops": 6
+  "_n_mutating_ops": 6,
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "exact",
+    "verified": true,
+    "note": "Post-review verification (batch AE, 2026-05-15): tool_replay produced single-file +82/-6 patch. test.sh covers manager.ts directly. Warnings are formatter-noise."
+  },
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-15",
+  "_verification_note": "Post-review verification (batch AE, 2026-05-15): tool_replay produced single-file +82/-6 patch. test.sh covers manager.ts directly. Warnings are formatter-noise."
 }

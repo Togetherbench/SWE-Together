@@ -27,5 +27,16 @@
   "_base_commit": "988ed897ce0f5474125ffa1ba7442489be7c75c2",
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-0ec2e9",
-  "_n_mutating_ops": 12
+  "_n_mutating_ops": 12,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "Cross-checked against upstream commit c941affb on entireio/cli: canonical patch covers all 4 upstream-modified files (transcript.go, lifecycle.go, state.go, state_test.go) and adds a session-captured transcript_test.go. All 5 reconstruction warnings are 'old text not found' anchor mismatches in transcript.go, consistent with formatter normalization between Edit ops. No missing-file warnings; patch coverage within 20% of upstream.",
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "Cross-checked against upstream commit c941affb on entireio/cli: canonical patch covers all 4 upstream-modified files (transcript.go, lifecycle.go, state.go, state_test.go) and adds a session-captured transcript_test.go. All 5 reconstruction warnings are 'old text not found' anchor mismatches in transcript.go, consistent with formatter normalization between Edit ops. No missing-file warnings; patch coverage within 20% of upstream.",
+    "dated": "2026-05-14"
+  }
 }

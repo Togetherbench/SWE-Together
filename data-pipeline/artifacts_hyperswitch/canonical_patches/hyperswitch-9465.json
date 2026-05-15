@@ -24,5 +24,11 @@
   "_n_mutating_ops": 0,
   "_upstream_issue": 9465,
   "_upstream_pr": 9466,
-  "_pr_lookup_status": "earliest of 1 merged closing PRs"
+  "_pr_lookup_status": "earliest of 1 merged closing PRs",
+  "_extraction": {
+    "method": "github_pr_diff",
+    "source": "gh pr diff 9466 --repo juspay/hyperswitch",
+    "fidelity": "exact",
+    "verified": false
+  }
 }
