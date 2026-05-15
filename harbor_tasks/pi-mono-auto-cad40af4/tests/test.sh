@@ -62,11 +62,11 @@ else
 fi
 
 # ---------------------------------------------------------------
-# Build behavioral harness for editor gating logic.
+# Build behavioral harness for editor diagnostic logic.
 # Strategy: extract relevant methods (isAtStartOfMessage,
 # isSlashMenuAllowed, isInSlashCommandContext, getText) from the
 # class body and call them with synthesized state. Combine the two
-# gating booleans (start-of-message AND in-slash-context) the same
+# diagnostic booleans (start-of-message AND in-slash-context) the same
 # way the editor's keypress handler does.
 # ---------------------------------------------------------------
 cat > /tmp/verifier/harness.js << 'JSEOF'
@@ -331,10 +331,10 @@ else
     fail_reward 0.06 "changelog: [Unreleased] ### Fixed entry referencing #904"
 fi
 
-# F2P 8 (0.06): isSlashMenuAllowed (or one of the gating fns) changed
+# F2P 8 (0.06): isSlashMenuAllowed (or one of the diagnostic fns) changed
 # beyond the trivial buggy body. Detect that the editor source no longer
 # contains ONLY `return this.state.cursorLine === 0;` as the body of
-# isSlashMenuAllowed AND that at least one of the gating methods now
+# isSlashMenuAllowed AND that at least one of the diagnostic methods now
 # checks for additional content (lines.length, lines.slice, every, etc.).
 GATING_OK=0
 node -e '
@@ -357,9 +357,9 @@ process.exit(0);
 ' "$EDITOR_FILE"
 if [ $? -eq 0 ]; then GATING_OK=1; fi
 if [ "$GATING_OK" = "1" ]; then
-    add_reward 0.06 "structure: gating logic checks editor emptiness (not just cursorLine)"
+    add_reward 0.06 "structure: diagnostic logic checks editor emptiness (not just cursorLine)"
 else
-    fail_reward 0.06 "structure: gating logic checks editor emptiness (not just cursorLine)"
+    fail_reward 0.06 "structure: diagnostic logic checks editor emptiness (not just cursorLine)"
 fi
 
 echo "=== FINAL REWARD (pre-upstream) ==="
@@ -435,7 +435,7 @@ WEIGHTS = {
     "f2p_regression_mid_content": 0.06,
     "f2p_regression_later_line": 0.06,
     "f2p_changelog": 0.06,
-    "f2p_structural_gating": 0.06,
+    "f2p_structural_diagnostic": 0.06,
     "f2p_upstream_changelog_904": 0.2,
     "f2p_upstream_structural_emptiness": 0.2
 }

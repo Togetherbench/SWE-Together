@@ -628,10 +628,10 @@ else
     emit t4_f2p_make_mask_lengths false "$out"
 fi
 
-# ---------- Apply P2P gating ----------
+# ---------- Apply P2P diagnostic ----------
 if [ "$P2P_OK" != "1" ]; then
     write_reward 0.0
-    echo "P2P gating failed; reward=0.0"
+    echo "P2P diagnostic failed; reward=0.0"
     exit 0
 fi
 
@@ -666,7 +666,7 @@ run_v043_gate f2p_upstream_bd8a7d6f 'py_compile_changed_generic' 'cd /workspace/
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"f2p_upstream_bd8a7d6f": 0.2, "t2_f2p_arrayscache_merge_extract": 0.128, "t2_f2p_cachelist_merge_extract": 0.104, "t2_f2p_merge_caches_arrayscache": 0.144, "t2_f2p_merge_caches_cachelist_hybrid": 0.144, "t2_f2p_test_file_present_passes": 0.08, "t4_f2p_lengths_right_padding": 0.12, "t4_f2p_make_mask_lengths": 0.08}
-P2P_GATING = ["p2p_cache_module_loads"]
+P2P_REGRESSION = ["p2p_cache_module_loads"]
 P2P_REGRESSION = []
 verdicts = {}
 try:
@@ -680,16 +680,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

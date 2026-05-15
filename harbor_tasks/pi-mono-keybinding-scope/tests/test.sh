@@ -289,7 +289,7 @@ run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /w
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t11_f2p_global_editor_scope_keys_present": 0.15, "t11_f2p_picker_scope_keys_count": 0.2, "t13_f2p_runner_tests_pass": 0.15, "t6_f2p_keybindings_have_scope_tags": 0.3, "t6_f2p_runner_consults_scope": 0.2}
-P2P_GATING = ["p2p_src_files_exist"]
+P2P_REGRESSION = ["p2p_src_files_exist"]
 P2P_REGRESSION = ["p2p_upstream_c09e61c3", "p2p_upstream_047e9a81", "p2p_upstream_e395cbc7", "p2p_upstream_522628b0"]
 verdicts = {}
 try:
@@ -303,16 +303,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

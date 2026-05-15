@@ -424,7 +424,7 @@ run_v043_gate f2p_upstream_1bfda384 'py_compile_changed' 'cd /workspace/sd-scrip
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"f2p_upstream_1bfda384": 0.2, "t1_f2p_legacy_accepted": 0.12, "t1_f2p_legacy_load": 0.12, "t3_f2p_suffix_priority": 0.12, "t3_f2p_wrong_shape_rejected": 0.08, "t4_f2p_no_full_decompression": 0.2, "t4_f2p_truncated_body_ok": 0.16}
-P2P_GATING = ["p2p_suffixed_path_regression"]
+P2P_REGRESSION = ["p2p_suffixed_path_regression"]
 P2P_REGRESSION = []
 verdicts = {}
 try:
@@ -438,16 +438,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

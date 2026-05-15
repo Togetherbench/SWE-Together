@@ -28,6 +28,6 @@ The user reports that `rudel enable` doesn't add hooks to `.claude/settings.json
 
 ## Verifier
 - 8 F2P gates (5 structural, 3 behavioral) totaling weight 1.00
-- 6 P2P regression gates (gating-only)
+- 6 P2P regression gates (diagnostic-only)
 - CI test source: `.github/workflows/ci.yml` uses `bunx turbo run lint check-types test build`
 - CLI tests: `bun test` (Bun native test runner)

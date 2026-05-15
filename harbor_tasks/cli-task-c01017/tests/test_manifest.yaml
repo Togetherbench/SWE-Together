@@ -61,7 +61,7 @@ gates:
       Parses a transcript where user messages use array content and gemini
       messages have write_file/edit_file tool calls. Verifies 2 files found.
 
-  # ── P2P regression gates (gating-only, zero on fail) ────────────────────
+  # ── P2P regression gates (diagnostic-only, zero on fail) ────────────────────
   - id: upstream_tests_pass
     kind: P2P_REGRESSION
     description: >
@@ -78,5 +78,5 @@ reward_formula:
   inner_weight: 0.25
   baseline: 1.0
   note: >
-    P2P gates are gating-only: if upstream_tests_pass fails, reward = 0.0
+    P2P gates are diagnostic-only: if upstream_tests_pass fails, reward = 0.0
     regardless of F2P scores. If no F2P gate passes, reward = 0.0.

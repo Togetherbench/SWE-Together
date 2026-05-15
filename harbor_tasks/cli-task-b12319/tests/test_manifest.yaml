@@ -2,7 +2,7 @@ version: "1.0"
 task: cli-task-b12319
 
 gates:
-  # ── P2P REGRESSION: gating only, zero reward on any failure ──────────
+  # ── P2P REGRESSION: diagnostic/penalty only ──────────
   - id: p2p-go-build
     kind: P2P_REGRESSION
     description: "go build ./cmd/entire/cli/... compiles without errors"

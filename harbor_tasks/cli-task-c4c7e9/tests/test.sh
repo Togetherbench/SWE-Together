@@ -15,7 +15,7 @@
 #   * F2P_GENERATE_TITLE_FUNC_GONE      — public GenerateTrailTitle removed
 #   * F2P_TRAIL_PACKAGE_PRESERVED       — `trail` package still imported (P2P-style anti-regression)
 # Plus an informational P2P_GO_BUILD gate that runs `go build ./cmd/entire/...`
-# but never zeroes the reward (per scoring_traps.md).
+# but never feeds bounded penalty/diagnostics (per scoring_traps.md).
 #
 # Reward is computed via the canonical weighted-replace formula in [0, 1]
 # (CLAUDE.md / scoring_traps.md). Sum of F2P weights = 1.00.
@@ -195,7 +195,7 @@ if [ -f "$LOGS_DIR/base_reward.txt" ]; then
     existing=$(cat "$LOGS_DIR/base_reward.txt" 2>/dev/null || echo "0.0")
 fi
 
-# P2P_REGRESSION: informational only — never zero reward
+# P2P_REGRESSION: informational only — diagnostic/penalty only
 p2p_failed=false
 
 # F2P: at least one gate must pass for non-zero reward (or existing > 0)

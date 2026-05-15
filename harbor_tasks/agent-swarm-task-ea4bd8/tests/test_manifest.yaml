@@ -40,7 +40,7 @@ gates:
     category: behavioral
 
   # === P2P (Prevent-to-Prevent regression) gates ===
-  # These are gating-only — no positive weight, must all pass to get any reward.
+  # These are diagnostic-only — no positive weight, must all pass to get any reward.
   - id: p2p_entrypoint_no_marketplace
     kind: P2P_REGRESSION
     weight: 0.0

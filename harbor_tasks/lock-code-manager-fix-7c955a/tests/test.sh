@@ -241,7 +241,7 @@ exit(1)
 " 2>/dev/null && v_b2=1
 
 # ===========================================================================
-# P2P_REGRESSION GATES (gating only, zero on fail)
+# P2P_REGRESSION GATES (diagnostic/penalty only, zero on fail)
 # ===========================================================================
 p2p_failed=0
 

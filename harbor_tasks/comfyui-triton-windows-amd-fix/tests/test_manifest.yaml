@@ -24,7 +24,7 @@ turns:
 gates:
 - id: p2p_structure_intact
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Target file still parses and retains required functions with non-stub bodies.
 - id: t1_f2p_target_remediated

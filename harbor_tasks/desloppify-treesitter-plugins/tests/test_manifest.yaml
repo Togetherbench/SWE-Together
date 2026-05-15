@@ -12,7 +12,7 @@ turns:
 gates:
 - id: p2p_base_imports
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Base modules import successfully
 - id: t1_f2p_register_detector

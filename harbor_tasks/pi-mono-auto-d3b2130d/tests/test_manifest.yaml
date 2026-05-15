@@ -75,7 +75,7 @@ gates:
   description: Search hits are newly added (not present in baseline keyword set)
 - id: p2p_pkg_json_valid
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: All package.json files remain valid JSON with name field
 - id: p2p_upstream_9dadbbf2

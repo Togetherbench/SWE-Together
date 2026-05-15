@@ -49,7 +49,7 @@ gates:
     description: "writeClaudeSettings creates .claude/ directory and writes correct content"
     command: "bun run behavioral test: call writeClaudeSettings in dir without .claude/, verify creation"
 
-  # --- P2P Regression gates (gating-only, no positive weight) ---
+  # --- P2P Regression gates (diagnostic-only, no positive weight) ---
   - id: p2p_typescript_ok
     kind: P2P_REGRESSION
     description: "TypeScript compilation succeeds (bun run check-types)"

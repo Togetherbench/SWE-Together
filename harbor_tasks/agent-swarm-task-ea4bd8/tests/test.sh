@@ -130,7 +130,7 @@ print(f"  fetchAgent(id, false) present: {lazy_call}")
 verdicts["use_agents_lazy"] = lazy_call
 print(f"  verdict: {'PASS' if verdicts['use_agents_lazy'] else 'FAIL'}")
 
-# === P2P_REGRESSION (informational only — never zero reward) ===
+# === P2P_REGRESSION (informational only — diagnostic/penalty only) ===
 print("=== P2P (informational only) ===")
 p2p = {}
 p2p["p2p_entrypoint_no_marketplace"] = ("claude plugin marketplace add" not in ep

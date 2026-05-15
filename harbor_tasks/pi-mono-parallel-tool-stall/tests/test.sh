@@ -50,7 +50,7 @@ RUNNER_TS="$REPO/packages/coding-agent/src/core/extensions/runner.ts"
 AGENT_LOOP_TS="$REPO/packages/agent/src/agent-loop.ts"
 
 # ============================================================
-# P2P_GATING: source files intact (not nuked by agent)
+# P2P_REGRESSION: source files intact (not nuked by agent)
 # ============================================================
 P2P_OK=true
 for f in "$SDK_TS" "$INTERACTIVE_TS" "$RUNNER_TS" "$AGENT_LOOP_TS"; do
@@ -355,7 +355,7 @@ WEIGHTS = {
     "t4_f2p_test_imports_real_code":  0.20,
     "t5_f2p_concept_coverage":        0.15,
 }
-P2P_GATING = ["p2p_src_files_intact"]
+P2P_REGRESSION = ["p2p_src_files_intact"]
 P2P_REGRESSION = []  # informational only; no upstream regression gates wired here
 
 verdicts = {}
@@ -374,8 +374,7 @@ try:
 except FileNotFoundError:
     pass
 
-# Hard-zero only on P2P_GATING failures
-hard_zero = any(not verdicts.get(gid, False) for gid in P2P_GATING)
+# P2P failures are diagnostics/penalty inputs only.
 
 # Read existing reward (none here, but keep the pattern)
 existing = 0.0
@@ -387,7 +386,7 @@ except Exception:
 
 f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
 
-if hard_zero or (not f2p_any_pass and existing <= 0):
+if (not f2p_any_pass and existing <= 0):
     reward = 0.0
 else:
     inner_share = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))

@@ -99,7 +99,7 @@ if [ "$g3" = "1" ]; then emit_gate "g3_stale_threshold_const" "pass"; else emit_
 # function reads the file + json.Unmarshal directly. Accept either:
 #   (a) LoadSessionState body contains store.Load(   AND no json.Unmarshal, OR
 #   (b) LoadSessionState body contains IsStale check inline (alt-fix that
-#       puts the stale check in strategy package without delegating).
+#       puts the stale check in strategy package without delediagnostic).
 g4=0
 load_session_body=$(awk '
     /func[[:space:]]+LoadSessionState[[:space:]]*\(/ { in_fn=1; depth=0 }
@@ -172,7 +172,7 @@ weights = {
 }
 # Σ = 1.00 → inner_weight = 0, reward = sum(passed weights)
 
-# P2P_REGRESSION: none here. Never zero reward on informational gates.
+# P2P_REGRESSION: none here. P2P diagnostics do not affect reward directly.
 p2p_failed = False
 existing = 0.0
 

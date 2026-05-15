@@ -52,21 +52,21 @@ if [ ! -f "$SRC_FILE" ]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2P GATE (gating only, no reward): TypeScript still compiles.
+# P2P GATE (diagnostic/penalty only, no reward): TypeScript still compiles.
 # This guards against destructive edits but DOES NOT award reward — it passes
 # on the unmodified buggy base.
 # ─────────────────────────────────────────────────────────────────────────────
-echo "=== P2P Gate: TypeScript compilation (gating, no reward) ==="
+echo "=== P2P Gate: TypeScript compilation (diagnostic, no reward) ==="
 TSC_OUT=$(cd "$REPO_ROOT" && npx --no-install tsc --noEmit --project packages/ai/tsconfig.build.json 2>&1)
 TSC_EXIT=$?
 if [ $TSC_EXIT -ne 0 ]; then
     echo "REGRESSION: TypeScript compilation broken — refusing to award reward."
     echo "WARNING: P2P gate failed (informational only, continuing)"
 fi
-echo "PASS (gating): tsc clean."
+echo "PASS (diagnostic): tsc clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2P GATE (gating only): convertResponsesMessages still exists and is exported.
+# P2P GATE (diagnostic/penalty only): convertResponsesMessages still exists and is exported.
 # ─────────────────────────────────────────────────────────────────────────────
 if ! grep -q "convertResponsesMessages" "$SRC_FILE"; then
     echo "REGRESSION: convertResponsesMessages missing from source."

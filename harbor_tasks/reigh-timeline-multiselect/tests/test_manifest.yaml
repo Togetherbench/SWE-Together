@@ -53,7 +53,7 @@ turns:
 gates:
 - id: p2p_instruction_unmodified
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: instruction.md must not be modified by agent
 - id: t1_f2p_selection_hook_runtime_toggle

@@ -7,7 +7,7 @@
 #
 #   reward = sum(weight_i)  for each F2P gate i that passes
 # All gates are independent boolean checks. P2P_REGRESSION (vitest suite) is
-# informational only — never zeroes the reward (per CLAUDE.md guidance).
+# informational only — never feeds bounded penalty/diagnostics (per CLAUDE.md guidance).
 set +e
 
 # E2B's commands.run(envs=None) strips Dockerfile ENV PATH — hardcode every install location
@@ -160,13 +160,13 @@ PYEOF
 echo "  result: $F2P_I18N_PASS" | tee -a "$LOG"
 
 # ── P2P_REGRESSION_TESTS (informational) ──────────────────────────────────────
-# Per CLAUDE.md: P2P_REGRESSION is informational only — never zeroes the reward.
+# Per CLAUDE.md: P2P_REGRESSION is informational only — never feeds bounded penalty/diagnostics.
 # Run vitest, log result, but don't gate.
 echo "[gate] P2P_REGRESSION_TESTS (informational)" | tee -a "$LOG"
 bun run test > /tmp/vitest.log 2>&1
 P2P_REGRESSION_RC=$?
 [ $P2P_REGRESSION_RC -eq 0 ] && P2P_REGRESSION_PASS=1 || P2P_REGRESSION_PASS=0
-echo "  result: $P2P_REGRESSION_PASS (informational, not gating)" | tee -a "$LOG"
+echo "  result: $P2P_REGRESSION_PASS (informational, not diagnostic)" | tee -a "$LOG"
 
 # ── compute reward (weighted-replace, per CLAUDE.md) ───────────────────────────
 python3 - "$LOGS_DIR" \

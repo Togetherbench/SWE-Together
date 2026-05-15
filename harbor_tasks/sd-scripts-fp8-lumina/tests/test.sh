@@ -69,7 +69,7 @@ sys.path.insert(0, "/workspace/sd-scripts")
 MOCKINIT
 
 # ═══════════════════════════════════════════════════════════════════
-# P2P_GATING: fp8_optimization_utils must be importable
+# P2P_REGRESSION: fp8_optimization_utils must be importable
 # ═══════════════════════════════════════════════════════════════════
 P2P=$(python3 << 'PYEOF' 2>&1 | tail -1
 exec(open("/tmp/_vfp8mock.py").read())
@@ -607,7 +607,7 @@ with open("$GATES_FILE") as f:
         try: gates.append(json.loads(line))
         except: pass
 
-# P2P_GATING failures zero the reward
+# P2P_REGRESSION failures zero the reward
 weights = {
     "t1_f2p_target_keys_behavioral": 0.15,
     "t1_f2p_apply_monkey_patch_wired": 0.15,
@@ -670,7 +670,7 @@ run_v043_gate p2p_upstream_bad711cf 'py_compile_changed' 'cd /workspace/sd-scrip
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_apply_monkey_patch_wired": 0.15, "t1_f2p_cli_flag_parses": 0.1, "t1_f2p_target_keys_behavioral": 0.15, "t1_f2p_train_network_wires_fp8": 0.1, "t2_f2p_exclude_keys_norm": 0.1, "t2_f2p_target_keys_match_real_modules": 0.15, "t3_f2p_modulation_excluded": 0.15, "t3_f2p_modulation_not_quantized_behavior": 0.1}
-P2P_GATING = ["p2p_fp8_utils_importable"]
+P2P_REGRESSION = ["p2p_fp8_utils_importable"]
 P2P_REGRESSION = ["p2p_upstream_62650655", "p2p_upstream_bad711cf"]
 verdicts = {}
 try:
@@ -684,16 +684,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

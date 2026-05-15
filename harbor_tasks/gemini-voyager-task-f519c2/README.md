@@ -35,7 +35,7 @@ The fix involves two changes to `src/pages/content/folder/manager.ts`:
 - `drop_preinsert` — drop handlers call ensureConversationsInFolder before reorder
 - `method_depth` — ensureConversationsInFolder has non-trivial body (>3 statements)
 
-2 P2P_REGRESSION gates (gating only):
+2 P2P_REGRESSION gates (diagnostic/penalty only):
 - `typecheck` — tsc --noEmit passes
 - `existing_tests` — vitest run passes
 

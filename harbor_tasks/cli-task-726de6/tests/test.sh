@@ -262,7 +262,7 @@ PYEOF
 # ── Weighted-replace reward formula (CLAUDE.md canonical) ────────────────────
 # F2P weight sum = 1.00 (full replacement; legacy reward fully subsumed).
 # P2P_REGRESSION is informational only (scoring_traps.md / CLAUDE.md):
-# `p2p_failed = False` ALWAYS — never zero reward on P2P.
+# `p2p_failed = False` ALWAYS — diagnostic/penalty only on P2P.
 existing="0.0"
 if [ -f "$LOGS_DIR/base_reward.txt" ]; then
     existing=$(cat "$LOGS_DIR/base_reward.txt" 2>/dev/null || echo "0.0")

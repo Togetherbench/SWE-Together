@@ -2,7 +2,7 @@
 # CI/CD source: .github/workflows/verify.yml (Mathews-Tom/no-magic)
 
 gates:
-  # -- P2P_REGRESSION gates (gating only, no positive weight) --
+  # -- P2P_REGRESSION gates (diagnostic/penalty only, no positive weight) --
   - id: p2p_file_exists
     kind: P2P_REGRESSION
     weight: 0.0

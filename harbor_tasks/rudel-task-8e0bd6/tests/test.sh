@@ -44,20 +44,19 @@ with open('$RESULTS','w') as f:
 }
 
 # ===========================================================================
-# P2P REGRESSION GATES (any failure → reward = 0.0)
+# P2P REGRESSION GATES (diagnostic/penalty inputs only)
 # ===========================================================================
-p2p_failed=false
 
 # p2p_regression_1: AnalyticsCard.tsx must still exist
 if [ ! -f "$SRC/components/analytics/AnalyticsCard.tsx" ]; then
     echo "P2P REGRESSION FAIL: AnalyticsCard.tsx was deleted — it is used by StatCard and other non-chart cards"
-    p2p_failed=true
+    : # P2P diagnostic failed
 fi
 
 # p2p_regression_2: package.json must be valid JSON
 if ! python3 -c "import json; json.load(open('$WEB/package.json'))" 2>/dev/null; then
     echo "P2P REGRESSION FAIL: package.json is not valid JSON"
-    p2p_failed=true
+    : # P2P diagnostic failed
 fi
 
 # p2p_regression_3: No obvious broken import paths in key files
@@ -97,7 +96,7 @@ else:
     print("P2P regression check passed")
 PYEOF
 if [ $? -ne 0 ]; then
-    p2p_failed=true
+    : # P2P diagnostic failed
 fi
 
 # ===========================================================================
@@ -404,12 +403,7 @@ emit_verdict "f2p_toaster" "${VERDICTS[f2p_toaster]}" "Verifies Toaster integrat
 # REWARD COMPUTATION (weighted-replace formula)
 # ===========================================================================
 
-# P2P regression gate: if any failed, reward = 0
-if [ "$p2p_failed" = "true" ]; then
-    echo "0.0" > "$REWARD"
-    echo "VERIFIER_RESULT: p2p_regression_failed" >> "$REWARD"
-    exit 0
-fi
+# P2P regression failures are diagnostics/penalty inputs; continue to F2P coverage.
 
 # Check if any F2P passed
 any_f2p=false

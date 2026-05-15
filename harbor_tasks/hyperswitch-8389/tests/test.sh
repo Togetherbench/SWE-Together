@@ -369,7 +369,7 @@ run_v043_gate p2p_upstream_27c5f56d 'rust_files_nonempty' 'cd /workspace/hypersw
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_global_payment_id_partition": 0.05, "t1_f2p_insert_pi_v2_kv_branch": 0.15, "t1_f2p_kv_imports_ungated": 0.1, "t1_f2p_pa_apply_changeset_v2": 0.18, "t1_f2p_pi_apply_changeset_v2": 0.18, "t1_f2p_unique_constraints_pa_v2": 0.14, "t1_f2p_update_pi_v2_kv_branch": 0.1, "t1_f2p_v2_kv_route_registered": 0.1}
-P2P_GATING = []
+P2P_REGRESSION = []
 P2P_REGRESSION = ["p2p_upstream_7a8254b6", "p2p_upstream_27c5f56d"]
 verdicts = {}
 try:
@@ -383,18 +383,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-# v0.4.3.1 fix: P2P_REGRESSION gates are informational only, never zero reward.
-# Only P2P_GATING (a different kind, used rarely) may zero the reward.
-for gid in P2P_GATING:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

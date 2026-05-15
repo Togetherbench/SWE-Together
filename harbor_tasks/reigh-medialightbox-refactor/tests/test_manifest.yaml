@@ -24,12 +24,12 @@ turns:
 gates:
 - id: p2p_instruction_unmodified
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: instruction.md not modified
 - id: p2p_no_component_tsc_regression
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: No new TS errors inside MediaLightbox component dir
 - id: t1_f2p_main_file_shrunk_real

@@ -31,7 +31,7 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 ###############################################################################
-# P2P GATE: Production build must succeed (gating only, no reward)
+# P2P GATE: Production build must succeed (diagnostic/penalty only, no reward)
 ###############################################################################
 echo "=== P2P GATE: Production build ==="
 BUILD_OUT=$(timeout 300 npm run build 2>&1)
@@ -332,7 +332,7 @@ const hasVirtualization = hasIO || hasScrollWindow;
 const hasVisState = /useState\s*(?:<[^>]+>)?\s*\(\s*(false|true|index\s*<\s*\d+|\d+)\s*\)/.test(src) &&
                    /useRef|useEffect/.test(src);
 
-// Signal C: video element gating — either conditional src, preload="none", or conditional render
+// Signal C: video element diagnostic — either conditional src, preload="none", or conditional render
 const condSrc = /src\s*=\s*\{[^}]*\?\s*[^:]+:\s*(undefined|""|null|"")\s*\}/.test(src) ||
                 /\{\s*is(Loaded|Visible|Active|InView)\s*&&\s*<video/i.test(src) ||
                 /\{\s*is(Loaded|Visible|Active|InView)\s*\?\s*\(?\s*<video/i.test(src);

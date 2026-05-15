@@ -28,7 +28,7 @@ Add an `associated_token::idempotent` boolean flag to the `#[light_account]` pro
 | 3 | "revert these changes" with specific file lists | Ensure reverts are comprehensive |
 | 4 | "do all integration tests pass?" | Checking agent's work after test run |
 | 5 | Pasted test error output | Sharing debug context |
-| 6 | "is that previous test or did you add it?" | Investigating test failure origin |
+| 6 | "is that previous test or did you add it?" | Investidiagnostic test failure origin |
 | 7 | "ok what test did you add what asserts does it have?" | Understanding test landscape before deciding fix |
 | 8 | "ok then add the idempotent flag to the other one that asserts idempotent behavior" | Targeted fix — add flag to specific test site only |
 

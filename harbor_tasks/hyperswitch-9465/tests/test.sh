@@ -100,10 +100,10 @@ fi
 
 ###############################################################################
 # P2P regression gate: default-features build of diesel_models must still work.
-# This is gating-only (zero reward weight). If broken, agent regressed.
+# This is diagnostic-only (zero reward weight). If broken, agent regressed.
 ###############################################################################
 echo ""
-echo "=== P2P [gating]: cargo check -p diesel_models (default features) ==="
+echo "=== P2P [diagnostic]: cargo check -p diesel_models (default features) ==="
 timeout 600 cargo check -p diesel_models 2>/tmp/cargo_default.log
 RC_DEFAULT=$?
 tail -15 /tmp/cargo_default.log

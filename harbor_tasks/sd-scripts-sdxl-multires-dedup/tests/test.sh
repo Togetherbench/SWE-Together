@@ -23,7 +23,7 @@ run_py() {
 python3 -c "import numpy" 2>/dev/null || pip install -q numpy 2>/dev/null || pip3 install -q numpy 2>/dev/null || true
 
 # ════════════════════════════════════════════════════════════════════
-# P2P GATE: base imports must still work (gating only, no reward)
+# P2P GATE: base imports must still work (diagnostic/penalty only, no reward)
 # ════════════════════════════════════════════════════════════════════
 GATE=$(run_py '
 import sys

@@ -824,7 +824,7 @@ else
     echo "  FAIL ($detail)"
 fi
 
-# Reward calc tail: hard-zero on P2P fail OR no F2P pass; otherwise add F2P weights.
+# Reward calc tail: P2P is diagnostic; no F2P pass still leaves no positive coverage.
 python3 - <<'REWARDPY'
 import json, os
 WEIGHTS = {"f2p_upstream_pytest": 0.20, "f2p_upstream_aliases": 0.20}
@@ -848,9 +848,8 @@ try:
         existing = float(f.read().strip() or 0)
 except Exception:
     pass
-p2p_failed = False  # P2P_REGRESSION gates are informational only (v043 fix)
 f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS)
-if p2p_failed or (not f2p_any_pass and existing <= 0):
+if not f2p_any_pass and existing <= 0:
     reward = 0.0
 else:
     # weighted-replace formula (c8bc168a standard, replaces additive)
@@ -862,7 +861,7 @@ else:
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)
-print('UPSTREAM_REWARD=%.4f (existing=%.4f, p2p_failed=%s, f2p_any_pass=%s)' % (reward, existing, p2p_failed, f2p_any_pass))
+print('UPSTREAM_REWARD=%.4f (existing=%.4f, f2p_any_pass=%s)' % (reward, existing, f2p_any_pass))
 REWARDPY
 # ---- end inner-claude upstream gates ----
 

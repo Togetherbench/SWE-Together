@@ -182,7 +182,7 @@ if [ -z "$EXT_ABS" ] || [ ! -s "$EXT_ABS" ]; then
 fi
 
 # ============================================================
-# P2P GATE: Extension compiles (gating only)
+# P2P GATE: Extension compiles (diagnostic/penalty only)
 # ============================================================
 rm -rf /tmp/ext-compile && mkdir -p /tmp/ext-compile
 COMPILE_OUT=$(cd /workspace/pi-mono && bun build --no-bundle "$EXT_ABS" --outdir /tmp/ext-compile 2>&1)

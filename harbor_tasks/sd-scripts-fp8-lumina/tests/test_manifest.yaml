@@ -63,7 +63,7 @@ gates:
     for that path.'
 - id: p2p_fp8_utils_importable
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: library.fp8_optimization_utils must remain importable (its API is the contract).
 - id: p2p_upstream_62650655

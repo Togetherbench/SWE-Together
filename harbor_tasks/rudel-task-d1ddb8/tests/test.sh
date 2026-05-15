@@ -183,7 +183,7 @@ else
 fi
 
 # =============================================================================
-# P2P REGRESSION GATES (gating-only — any failure zeros reward)
+# P2P REGRESSION GATES (diagnostic-only — any failure zeros reward)
 # =============================================================================
 
 P2P_FAILED=false

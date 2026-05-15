@@ -38,7 +38,7 @@ TASKSPANE_DIR="src/shared/components/TasksPane"
 SLOT_HOOK="src/tools/travel-between-images/components/ShotImagesEditor/hooks/useSegmentSlotMode.ts"
 
 ###############################################################################
-# P2P regression gates (no reward, gating only)
+# P2P regression gates (no reward, diagnostic/penalty only)
 ###############################################################################
 
 # P2P: SegmentOutputStrip still exists and references shotId

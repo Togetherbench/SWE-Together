@@ -24,7 +24,7 @@ gates:
     command: cd /opt/gemini-voyager && bun run /harbor/tests/verify_fix.ts method_depth
     description: ensureConversationsInFolder has non-trivial body (>3 meaningful statements)
 
-  # ---- P2P_REGRESSION gates (pay-to-play: anti-regression, gating only) ----
+  # ---- P2P_REGRESSION gates (pay-to-play: anti-regression, diagnostic/penalty only) ----
   - id: typecheck
     kind: P2P_REGRESSION
     weight: 0.0

@@ -194,7 +194,7 @@ verdicts = {d["id"]: d["verdict"] for d in lines}
 
 weights = json.loads('''{"g1_indented_detection":0.20,"g2_short_no_fp":0.15,"g3_single_quote_syntax":0.15,"g4_non_indented_still_works":0.10,"g5_line_count_excludes_delimiter":0.10}''')
 
-# P2P_REGRESSION gates are informational only — do NOT zero reward
+# P2P_REGRESSION gates are informational only — diagnostic/penalty only
 p2p_failed = False
 
 # No external "existing" reward stream for this task; legacy inner = 0

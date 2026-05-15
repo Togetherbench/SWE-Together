@@ -84,6 +84,6 @@ gates:
   description: Termux branch (TERMUX_VERSION env) still loads/handles clipboard without crashing.
 - id: p2p_no_instruction_modified
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: instruction.md is unchanged.

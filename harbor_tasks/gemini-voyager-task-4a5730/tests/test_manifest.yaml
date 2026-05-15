@@ -17,4 +17,4 @@ gates:
   - id: "no-regressions"
     kind: "P2P_REGRESSION"
     weight: 0.0
-    description: "Zero failures in pre-existing non-math tests (gate only — zero reward on fail)"
+    description: "Zero failures in pre-existing non-math tests (diagnostic/penalty only)"

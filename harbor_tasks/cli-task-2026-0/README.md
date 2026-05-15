@@ -20,7 +20,7 @@ In `cmd/entire/cli/telemetry/detached_unix.go`, the `spawnDetachedAnalytics` fun
 - Longest silence: 19 agent turns between Turn 1 and Turn 2
 
 ## Verifier Gates
-- **P2P_REGRESSION**: File exists, function exists (gating only)
+- **P2P_REGRESSION**: File exists, function exists (diagnostic/penalty only)
 - **F2P (Gold)**: Unit tests pass (0.20), integration tests pass (0.10)
 - **F2P (Silver)**: No nil stdout/stderr (0.20), discard sink used (0.20)
 - Reward formula: weighted-replace (inner_weight = 0.30)

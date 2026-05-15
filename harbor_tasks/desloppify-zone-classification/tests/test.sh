@@ -548,7 +548,7 @@ esac
 
 # ===================================================================
 # Optional: run any existing pytest tests for zones (bonus discrimination,
-# no extra weight — zero-weight gating skipped if no tests exist).
+# no extra weight — zero-weight diagnostic skipped if no tests exist).
 # ===================================================================
 if command -v pytest >/dev/null 2>&1; then
     if compgen -G "tests/test_zones*.py" >/dev/null 2>&1 || \

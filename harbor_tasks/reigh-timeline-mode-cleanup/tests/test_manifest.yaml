@@ -23,7 +23,7 @@ turns:
 gates:
 - id: p2p_essential_files_present
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Pre-existing files (ShotImagesEditor.tsx, Timeline.tsx, TimelineContainer) still exist.
 - id: t1_f2p_tmc_deleted

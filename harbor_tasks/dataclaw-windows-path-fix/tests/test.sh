@@ -24,7 +24,7 @@ import sys, os, re, subprocess
 
 total = 0.0
 
-# ── P2P GATES (must pass on base; fail → reward 0) ──
+# ── P2P diagnostics (must pass on base; failures are diagnostic) ──
 try:
     import dataclaw
     from dataclaw.parser import _build_project_name
@@ -410,11 +410,8 @@ try:
         existing = float(f.read().strip() or 0)
 except Exception:
     pass
-hard_zero = False  # P2P_REGRESSION gates are informational only (v043 fix)
 f2p_any_pass = any(verdicts.get(gid) for gid in WEIGHTS)
-if hard_zero:
-    reward = 0.0
-elif (not f2p_any_pass and existing <= 0):
+if (not f2p_any_pass and existing <= 0):
     # No upstream F2P gate passed → fundamental Windows fix is missing → zero
     reward = 0.0
 else:

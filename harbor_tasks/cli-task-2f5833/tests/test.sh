@@ -193,7 +193,7 @@ WEIGHTS = {
 
 # ── P2P Regression (informational) ──
 # Try `go build ./...`. If build is broken, log a warning but do NOT
-# zero the reward — keep gating informational per repo convention
+# zero the reward — keep diagnostic informational per repo convention
 # (see CLAUDE.md: P2P_REGRESSION gates are informational only).
 gates_log = {"verdicts": dict(verdicts)}
 build_ok = None
@@ -240,7 +240,7 @@ for gid, w in WEIGHTS.items():
     mark = "PASS" if verdicts.get(gid) else "FAIL"
     print(f"  {mark}  {gid:40s}  weight={w:.2f}")
 if build_ok is False:
-    print("[eval] WARNING: go build failed (informational, not gating)")
+    print("[eval] WARNING: go build failed (informational, not diagnostic)")
 PYEOF
 
 cat "$LOGS_DIR/reward.txt"

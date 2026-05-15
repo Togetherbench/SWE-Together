@@ -5,13 +5,13 @@ turns:
 - turn: 1
   user_message: Add api-key auth for all routing APIs by removing the feature-flag-based distinction; refactor auth so all
     routing endpoints use (api-key + JWT) for both default and release builds.
-  deliverable: 'Remove #[cfg(not(feature = "release"))] / #[cfg(feature = "release")] gating around routing endpoint auth
+  deliverable: 'Remove #[cfg(not(feature = "release"))] / #[cfg(feature = "release")] diagnostic around routing endpoint auth
     in crates/router/src/routes/routing.rs and keep the unified auth::auth_type(ApiKeyAuth, JWTAuth, headers) call.'
   skipped: false
 gates:
 - id: p2p_file_present
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: routing.rs file exists and is syntactically intact
 - id: t1_f2p_not_release_cfg_eliminated

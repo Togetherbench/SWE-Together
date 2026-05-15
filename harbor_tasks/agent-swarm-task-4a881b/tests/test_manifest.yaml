@@ -84,7 +84,7 @@ gates:
     category: structural
 
   # ===================
-  # P2P REGRESSION: Gating only (zero reward on fail)
+  # P2P REGRESSION: Diagnostic/penalty only
   # ===================
   - id: P2P_TESTS_PASS
     kind: P2P

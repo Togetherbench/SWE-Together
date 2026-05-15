@@ -31,7 +31,7 @@ if [ ! -f "$QF" ]; then
     exit 0
 fi
 
-# ── Gate (P2P): file parses & functions defined (passes on base; gating only) ──
+# ── Gate (P2P): file parses & functions defined (passes on base; diagnostic/penalty only) ──
 python3 -c "
 import ast, sys
 with open('$QF') as f:

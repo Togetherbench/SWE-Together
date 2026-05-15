@@ -47,6 +47,6 @@ gates:
     stall/orphan/hang/timeout.
 - id: p2p_src_files_intact
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Hotspot source files (sdk.ts, interactive-mode.ts, runner.ts, agent-loop.ts) not truncated.

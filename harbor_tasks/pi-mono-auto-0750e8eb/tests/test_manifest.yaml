@@ -51,7 +51,7 @@ gates:
     turn: null
     weight: 0.20
     label: "containsImage method exists in TUI class (runtime check)"
-  # P2P gates (gating, weight 0)
+  # P2P gates (diagnostic, weight 0)
   - id: p2p_no_merge_conflicts
     kind: P2P_REGRESSION
     turn: 1

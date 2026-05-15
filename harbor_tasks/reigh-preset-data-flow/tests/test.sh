@@ -58,10 +58,10 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 #######################################
-# P2P gate (gating only): TypeScript still compiles (best effort)
+# P2P gate (diagnostic/penalty only): TypeScript still compiles (best effort)
 #######################################
 if [ -f tsconfig.json ] && command -v npx >/dev/null 2>&1; then
-  echo "=== P2P Gate: tsc --noEmit (gating only) ==="
+  echo "=== P2P Gate: tsc --noEmit (diagnostic/penalty only) ==="
   TSC_OUT=$(timeout 120 npx --no-install tsc --noEmit 2>&1)
   TSC_EXIT=$?
   echo "$TSC_OUT" | tail -20
@@ -355,7 +355,7 @@ echo "Gate 6: $GATE6"
 [[ "$GATE6" == PASS* ]] && add_reward 0.10
 
 #######################################
-# Run any existing unit tests that touch these files (best effort, gating only —
+# Run any existing unit tests that touch these files (best effort, diagnostic/penalty only —
 # do not award; just penalize regression).
 #######################################
 if [ -f package.json ] && command -v npx >/dev/null 2>&1; then
@@ -369,7 +369,7 @@ if [ -f package.json ] && command -v npx >/dev/null 2>&1; then
       [ -f "$tp" ] && TESTS="$TESTS $tp"
     done
     if [ -n "$TESTS" ]; then
-      echo "=== Running vitest on $TESTS (gating only) ==="
+      echo "=== Running vitest on $TESTS (diagnostic/penalty only) ==="
       VOUT=$(timeout 120 npx --no-install vitest run $TESTS --reporter=basic 2>&1)
       echo "$VOUT" | tail -30
       if echo "$VOUT" | grep -qE "FAIL|failed"; then

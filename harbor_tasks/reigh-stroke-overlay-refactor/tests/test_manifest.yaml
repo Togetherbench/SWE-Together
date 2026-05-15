@@ -56,6 +56,6 @@ gates:
     symbols and adopt the new callback shape.
 - id: p2p_src_unmodified
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
-  description: "(advisory only \u2014 not gating since this task DOES modify source)"
+  description: "(advisory only \u2014 not diagnostic since this task DOES modify source)"

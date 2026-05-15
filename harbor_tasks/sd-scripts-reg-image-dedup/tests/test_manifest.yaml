@@ -35,7 +35,7 @@ turns:
 gates:
 - id: p2p_module_imports
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: library.train_util imports cleanly with DreamBoothDataset and BaseDataset present.
 - id: t1_f2p_helper_balances_repeats

@@ -37,7 +37,7 @@ Add section reordering to the Chrome extension popup. Each settings section card
 - **P2P_STORAGE_SAVE** (0.10): Section order persisted to `chrome.storage.sync`
 - **P2P_I18N** (0.05): `moveSectionUp` / `moveSectionDown` keys in `en/messages.json`
 
-### P2P_REGRESSION (gating — zero reward on failure)
+### P2P_REGRESSION (diagnostic/penalty only)
 - **P2P_REGRESSION_TESTS**: Existing Vitest test suite passes
 
 ## Project Setup

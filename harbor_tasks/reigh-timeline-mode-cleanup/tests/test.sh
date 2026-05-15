@@ -62,8 +62,6 @@ if [ "$P2P_OK" = "1" ]; then
     emit p2p_essential_files_present true ""
 else
     emit p2p_essential_files_present false "core file missing"
-    printf "%.4f\n" 0.0 > "$REWARD_FILE"
-    exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -317,7 +315,6 @@ weights = {
     't2_f2p_enhancedprompts_purged': 0.15,
     't2_f2p_propHookData_removed': 0.10,
 }
-p2p_failed = False
 with open('$GATES_FILE') as f:
     for line in f:
         line=line.strip()
@@ -326,12 +323,8 @@ with open('$GATES_FILE') as f:
             g = json.loads(line)
         except: continue
         gid = g['id']
-        if gid.startswith('p2p_') and not g['passed']:
-            p2p_failed = True
         if g['passed'] and gid in weights:
             total += weights[gid]
-if p2p_failed:
-    total = 0.0
 print(f'{total:.4f}')
 ")
 
@@ -368,7 +361,7 @@ run_v043_gate p2p_upstream_cdf050a5 'npm_run_build' 'cd /workspace/repo && cd /w
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_barrel_cleaned": 0.1, "t1_f2p_prop_remap_complete": 0.15, "t1_f2p_timeline_rendered_directly": 0.15, "t1_f2p_tmc_deleted": 0.15, "t1_f2p_unpositioned_helper_inlined": 0.1, "t2_f2p_dead_constant_removed": 0.1, "t2_f2p_enhancedprompts_purged": 0.15, "t2_f2p_propHookData_removed": 0.1}
-P2P_GATING = ["p2p_essential_files_present"]
+P2P_REGRESSION = ["p2p_essential_files_present"]
 P2P_REGRESSION = ["p2p_upstream_523760b1", "p2p_upstream_cdf050a5"]
 verdicts = {}
 try:
@@ -382,17 +375,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-# P2P_REGRESSION is informational only — never zero reward (v0.4.3.1 fix)
-for gid in P2P_GATING:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they diagnostic/penalty only.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

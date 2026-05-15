@@ -181,12 +181,12 @@ run_v043_gate() {
 run_v043_gate p2p_upstream_7a8254b6 'cargo_metadata_workspace' 'cd /workspace/hyperswitch && export PATH=/usr/local/cargo/bin:$PATH && cargo metadata --no-deps --format-version=1 >/dev/null && echo OK'
 
 # Recompute reward using v043 weights.
-# v043.1 fix: P2P_REGRESSION is informational only (never zero reward).
-# Only P2P_GATING ids may hard-zero. f2p_any_pass guard preserves inner reward.
+# v043.1 fix: P2P_REGRESSION is informational only (diagnostic/penalty only).
+# Only P2P_REGRESSION ids may feed bounded penalty/diagnostics; f2p_any_pass guard preserves inner reward.
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_hc_declares_stripe_mod": 0.25, "t1_f2p_hc_reexports_stripe": 0.25, "t1_f2p_router_mod_removed": 0.25, "t1_f2p_router_reexports_from_hc": 0.25}
-P2P_GATING = []
+P2P_REGRESSION = []
 P2P_REGRESSION = ["p2p_upstream_7a8254b6"]
 verdicts = {}
 try:
@@ -206,10 +206,7 @@ try:
         existing = float(f.read().strip() or 0)
 except Exception:
     pass
-p2p_failed = False
-for gid in P2P_GATING:
-    if not verdicts.get(gid, False):
-        p2p_failed = True; break
+p2p_failed = False  # P2P failures feed bounded penalty/diagnostics only.
 f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
 if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0

@@ -40,11 +40,11 @@ gates:
     turn: 1
     weight: 0.06
     label: "changelog: [Unreleased] ### Fixed entry referencing #904"
-  - id: f2p_structural_gating
+  - id: f2p_structural_diagnostic
     kind: F2P
     turn: 1
     weight: 0.06
-    label: "structure: gating logic checks editor emptiness"
+    label: "structure: diagnostic logic checks editor emptiness"
   # --- upstream F2P gates ---
   - id: f2p_upstream_changelog_904
     kind: F2P

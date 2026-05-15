@@ -334,7 +334,7 @@ weights = {
 }
 # Σ = 1.00 → inner_weight = 0, reward = sum(passed weights)
 
-# P2P_REGRESSION: none. Never zero reward on informational gates.
+# P2P_REGRESSION: none. P2P diagnostics do not affect reward directly.
 p2p_failed = False
 existing = 0.0
 

@@ -25,7 +25,7 @@ turns:
 gates:
 - id: p2p_tsc_clean
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: TypeScript still compiles after the fix
 - id: t12_f2p_pipe_id_extracts_clean_call_prefix

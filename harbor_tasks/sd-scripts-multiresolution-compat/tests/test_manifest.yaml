@@ -59,7 +59,7 @@ gates:
     check'
 - id: p2p_suffixed_path_regression
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Suffixed-key (multi-resolution) path still works for is_disk_cached_latents_expected and load_latents_from_disk
 - id: f2p_upstream_1bfda384

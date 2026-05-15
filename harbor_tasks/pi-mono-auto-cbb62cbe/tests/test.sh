@@ -24,7 +24,7 @@ EXAMPLE_EXT_DIR="$PKG_DIR/examples/extensions"
 
 echo "REPO=$REPO"
 
-# ---- P2P gating ----------------------------------------------------
+# ---- P2P diagnostic ----------------------------------------------------
 if [ ! -f "$ARMIN_PATH" ]; then
   echo "P2P FAIL: armin.ts missing"; echo "0.0" > "$REWARD_FILE"; exit 0
 fi

@@ -367,7 +367,7 @@ else
 fi
 
 # ------------------------------------------------------------------
-# P2P Regression gates (zero weight — fail any = zero reward)
+# P2P Regression gates (zero weight — record failures as diagnostics/penalty inputs)
 # ------------------------------------------------------------------
 echo "=== GATE: P2P_GETFILECONTENT_EXISTS ==="
 if grep -q "func getFileContent" "$STRATEGY_DIR/manual_commit_attribution.go"; then
@@ -413,7 +413,7 @@ WEIGHTS = {
 }
 # Sum = 0.75, inner_weight = 0.25
 
-# P2P regression gates — fail any = zero reward
+# P2P regression gates — record failures as diagnostics/penalty inputs
 P2P_GATES = ["P2P_GETFILECONTENT_EXISTS", "P2P_GETALLCHANGED_EXISTS"]
 
 # Check P2P gates first

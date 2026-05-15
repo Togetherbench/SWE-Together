@@ -28,11 +28,11 @@ if [ ! -f "$AGENT_SESSION" ]; then
 fi
 
 # =============================================================================
-# Gate P2P (gating only, no reward): TypeScript compiles (scoped to agent diff)
+# Gate P2P (diagnostic/penalty only, no reward): TypeScript compiles (scoped to agent diff)
 # Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 # If this fails on the agent's patch, treat as regression and return 0.
 # =============================================================================
-echo "=== P2P Gate: TypeScript compilation (gating only, no reward) ==="
+echo "=== P2P Gate: TypeScript compilation (diagnostic/penalty only, no reward) ==="
 CHANGED_TS_FILES=$(cd "$REPO" && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
 if [ -z "$CHANGED_TS_FILES" ]; then
     echo "PASS: no agent .ts/.tsx changes — gate skipped"

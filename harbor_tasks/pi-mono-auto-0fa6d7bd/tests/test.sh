@@ -52,7 +52,7 @@ if [ "$ANY_CHANGE" -eq 0 ]; then
 fi
 
 # ============================================================
-# P2P GATE (gating only): Transpilation
+# P2P GATE (diagnostic/penalty only): Transpilation
 # ============================================================
 echo "=== P2P Gate: Transpilation ==="
 if command -v bun >/dev/null 2>&1; then
@@ -338,7 +338,7 @@ if [ -n "$TEST_FILES" ] && command -v bun >/dev/null 2>&1; then
     rc=$?
     cat /tmp/testout_$$.log | tail -20
     if [ $rc -ne 0 ]; then
-      echo "Note: tests in $tf failed (no reward penalty unless gating)"
+      echo "Note: tests in $tf failed (no reward penalty unless diagnostic)"
     fi
     rm -f /tmp/testout_$$.log
   done

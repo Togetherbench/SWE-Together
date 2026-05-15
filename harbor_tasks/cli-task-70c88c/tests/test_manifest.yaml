@@ -1,6 +1,6 @@
 version: "1.0"
 gates:
-  # --- P2P regression gates (must all pass; zero reward on failure) ---
+  # --- P2P regression gates (must all pass; diagnostic/penalty only) ---
   - id: build_succeeds
     kind: P2P
     command: "cd /workspace/cli && go build ./..."

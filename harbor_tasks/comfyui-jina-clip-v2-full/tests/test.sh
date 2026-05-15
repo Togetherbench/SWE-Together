@@ -25,7 +25,7 @@ finish() {
     exit 0
 }
 
-# Disable CUDA gating
+# Disable CUDA diagnostic
 sed -i 's/if args\.cpu:/if args.cpu or not torch.cuda.is_available():/' \
     /workspace/ComfyUI/comfy/model_management.py 2>/dev/null || true
 
@@ -582,16 +582,13 @@ try:
         existing = float(f.read().strip() or 0)
 except Exception:
     pass
-hard_zero = False  # P2P_REGRESSION gates are informational only (v043 fix)
-if hard_zero:
-    reward = 0.0
-else:
-    # weighted-replace formula (c8bc168a standard, replaces additive)
-    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
-    reward = existing * inner_weight
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid):
-            reward += float(w)
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+# weighted-replace formula (c8bc168a standard, replaces additive)
+inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+reward = existing * inner_weight
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid):
+        reward += float(w)
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

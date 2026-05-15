@@ -271,7 +271,7 @@ EOF
     HAS_SP=$(echo "$NAMES_LINE" | grep -c '"site-packages-skill"')
     HAS_NM=$(echo "$NAMES_LINE" | grep -c '"node-modules-skill"')
 
-    # Score each skip independently (graded). real-skill must be present (gating).
+    # Score each skip independently (graded). real-skill must be present (diagnostic).
     # Note: node_modules skip already works on buggy base (hardcoded check), so
     # only award credit for venv, __pycache__, site-packages (the new skips).
     if [ "$HAS_REAL" -ge 1 ]; then
@@ -412,16 +412,13 @@ except Exception:
 # P2P_REGRESSION_INFORMATIONAL: P2P_REGRESSION items are now informational only.
 # Pre-existing TS/test errors unrelated to model task scope must not zero reward.
 p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)  # logged below
-hard_zero = False  # was: any(... in P2P_REGRESSION) — dropped per v043 fix
-if hard_zero:
-    reward = 0.0
-else:
-    # weighted-replace formula (c8bc168a standard, replaces additive)
-    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
-    reward = existing * inner_weight
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid):
-            reward += float(w)
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+# weighted-replace formula (c8bc168a standard, replaces additive)
+inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+reward = existing * inner_weight
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid):
+        reward += float(w)
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

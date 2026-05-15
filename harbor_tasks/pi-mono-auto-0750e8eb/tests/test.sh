@@ -28,7 +28,7 @@ for f in "$TI_FILE" "$TUI_FILE" "$MD_FILE" "$BOX_FILE"; do
 done
 
 # ============================================================
-# P2P GATES (gating only)
+# P2P GATES (diagnostic/penalty only)
 # ============================================================
 
 # (a) No unresolved merge conflict markers
@@ -211,7 +211,7 @@ if echo "$PURITY" | grep -q '"found":true' \
    && echo "$PURITY" | grep -q '"hasIterm":true'; then
     P5=1
 fi
-emit $P5 0.09 "containsImage body is pure string check using includes(), no capability gating"
+emit $P5 0.09 "containsImage body is pure string check using includes(), no capability diagnostic"
 
 # ---------- F2P #6 (0.09): Box cache reverted to explicit fields
 # (cachedWidth / cachedChildLines / cachedBgSample / cachedLines) AND

@@ -48,7 +48,7 @@ fi
 export TARGET SPARSE
 
 # ════════════════════════════════════════════════════════════
-# P2P_GATING: parse + structural sanity
+# P2P_REGRESSION: parse + structural sanity
 # ════════════════════════════════════════════════════════════
 P2P_RES=$(python3 << 'PYEOF'
 import os, ast, sys
@@ -127,7 +127,7 @@ run_v043_gate p2p_upstream_518584f9 'py_compile_changed_generic' 'cd /workspace/
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_no_buggy_pair": 0.25, "t1_f2p_scale_factor_preserved": 0.15, "t1_f2p_sparse_remediated": 0.25, "t1_f2p_target_remediated": 0.35}
-P2P_GATING = ["p2p_structure_intact"]
+P2P_REGRESSION = ["p2p_structure_intact"]
 P2P_REGRESSION = ["p2p_upstream_518584f9"]
 verdicts = {}
 try:
@@ -141,16 +141,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)
@@ -433,7 +428,7 @@ weights = {
     "t1_f2p_no_buggy_pair": 0.25,
     "t1_f2p_scale_factor_preserved": 0.15,
 }
-gating_failed = False
+diagnostic_failed = False
 passed = {}
 with open("/logs/verifier/gates.json") as f:
     for line in f:
@@ -445,10 +440,10 @@ with open("/logs/verifier/gates.json") as f:
             continue
         gid = obj.get("id"); ok = obj.get("passed", False)
         if gid == "p2p_structure_intact" and not ok:
-            gating_failed = True
+            diagnostic_failed = True
         if gid in weights and ok:
             passed[gid] = weights[gid]
-total = 0.0 if gating_failed else sum(passed.values())
+total = 0.0 if diagnostic_failed else sum(passed.values())
 print(f"{total:.4f}")
 PYEOF
 )

@@ -20,7 +20,7 @@ Full provenance + screening funnel: see [`data-pipeline/README.md`](../data-pipe
 Tasks coexist in two scoring formats:
 
 ### 1. Legacy F2P / P2P (122 tasks)
-Per-task `tests/test.sh` + `tests/test_manifest.yaml` declares `F2P` (weighted) and `P2P_REGRESSION` (gating) gates. Reward uses the **weighted-replace formula**:
+Per-task `tests/test.sh` + `tests/test_manifest.yaml` declares `F2P` (weighted) and `P2P_REGRESSION` (diagnostic) gates. Reward uses the **weighted-replace formula**:
 ```
 reward = legacy_score * inner_share + Σ(passed F2P weights)
 ```

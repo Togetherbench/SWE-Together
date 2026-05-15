@@ -208,7 +208,7 @@ VERDICTS[F2P_TESTS_EXIST]=$G6_PASS
 
 base_reward=$(cat "$LOGS_DIR/base_reward.txt" 2>/dev/null || echo "0.0")
 
-# P2P_REGRESSION: informational only — never zero reward (per CLAUDE.md / scoring_traps.md)
+# P2P_REGRESSION: informational only — diagnostic/penalty only (per CLAUDE.md / scoring_traps.md)
 p2p_failed=false
 
 # F2P: at least one gate must pass for non-zero reward (when no inner reward exists)

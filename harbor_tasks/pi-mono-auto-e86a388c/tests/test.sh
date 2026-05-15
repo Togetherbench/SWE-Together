@@ -440,9 +440,9 @@ fi
 
 # ═══════════════════════════════════════════════════════════════
 # F2P 5 [0.10] — strictResponses(Pairing) flag NOT required: reading
-# the source proves the gating is by default, not behind opt-in flag.
+# the source proves the diagnostic is by default, not behind opt-in flag.
 # We check there is no "strictResponses" / "strictResponsesPairing"
-# conditional gating the new behavior.
+# conditional diagnostic the new behavior.
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "--- F2P 5 [0.10]: no strictResponsesPairing opt-in flag gates the fix ---"
@@ -471,7 +471,7 @@ if echo "$COMBINED" | grep -E "strictResponsesPairing" >/dev/null 2>&1; then
         # Weight zeroed: passes on buggy base too (not true F2P)
     fi
 else
-    echo "PASS F2P5: no strictResponsesPairing gating in source"
+    echo "PASS F2P5: no strictResponsesPairing diagnostic in source"
     # Weight zeroed: passes on buggy base too (not true F2P)
 fi
 
@@ -667,16 +667,13 @@ except Exception:
 # P2P_REGRESSION_INFORMATIONAL: P2P_REGRESSION items are now informational only.
 # Pre-existing TS/test errors unrelated to model task scope must not zero reward.
 p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)  # logged below
-hard_zero = False  # was: any(... in P2P_REGRESSION) — dropped per v043 fix
-if hard_zero:
-    reward = 0.0
-else:
-    # weighted-replace formula (c8bc168a standard, replaces additive)
-    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
-    reward = existing * inner_weight
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid):
-            reward += float(w)
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+# weighted-replace formula (c8bc168a standard, replaces additive)
+inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
+reward = existing * inner_weight
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid):
+        reward += float(w)
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

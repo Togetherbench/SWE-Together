@@ -59,12 +59,12 @@ run_v043_gate p2p_upstream_7a8254b6 'cargo_metadata_workspace' 'cd /workspace/hy
 run_v043_gate p2p_upstream_d59414f2 'rust_files_nonempty' 'cd /workspace/hyperswitch && ok=1; for f in crates/router/src/routes/routing.rs; do if [ ! -s "$f" ]; then ok=0; break; fi; head -c 4 "$f" | grep -q '\''^//'\'' && head -c 4 "$f" >/dev/null; done; [ $ok = 1 ] && echo OK || exit 1'
 
 # Recompute reward using v043 weights.
-# v043.1 fix: P2P_REGRESSION is informational only (never zero reward).
-# Only P2P_GATING ids may hard-zero. f2p_any_pass guard preserves inner reward.
+# v043.1 fix: P2P_REGRESSION is informational only (diagnostic/penalty only).
+# Only P2P_REGRESSION ids may feed bounded penalty/diagnostics; f2p_any_pass guard preserves inner reward.
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_api_key_path_preserved": 0.2, "t1_f2p_no_jwt_only_handler_auth": 0.25, "t1_f2p_not_release_cfg_eliminated": 0.3, "t1_f2p_release_cfg_eliminated": 0.25}
-P2P_GATING = ["p2p_file_present"]
+P2P_REGRESSION = ["p2p_file_present"]
 P2P_REGRESSION = ["p2p_upstream_7a8254b6", "p2p_upstream_d59414f2"]
 verdicts = {}
 try:
@@ -84,12 +84,9 @@ try:
         existing = float(f.read().strip() or 0)
 except Exception:
     pass
-# Only P2P_GATING (a separate kind) may hard-zero reward. P2P_REGRESSION is
-# informational and is logged to gates.json but never zeroes the reward.
-p2p_failed = False
-for gid in P2P_GATING:
-    if not verdicts.get(gid, False):
-        p2p_failed = True; break
+# Only P2P_REGRESSION (a separate kind) may feed bounded penalty/diagnostics. P2P_REGRESSION is
+# informational and is logged to gates.json but never feeds bounded penalty/diagnostics.
+p2p_failed = False  # P2P failures feed bounded penalty/diagnostics only.
 f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
 if p2p_failed or (not f2p_any_pass and existing <= 0):
     reward = 0.0

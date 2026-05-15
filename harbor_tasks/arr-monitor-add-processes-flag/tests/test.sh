@@ -12,7 +12,7 @@ fi
 
 export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
 
-# ---- HARD GATES (P2P-style; gating only, no points) ----
+# ---- HARD GATES (P2P-style; diagnostic/penalty only, no points) ----
 if [ ! -f arr-monitor.py ]; then
   echo "0.0" > /logs/verifier/reward.txt; exit 0
 fi

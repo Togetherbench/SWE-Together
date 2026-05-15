@@ -2,7 +2,7 @@
 # Defines gates that test.sh evaluates, then computes weighted reward.
 
 gates:
-  # --- P2P_REGRESSION (gating only — all must pass, no reward weight) ---
+  # --- P2P_REGRESSION (diagnostic/penalty only — all must pass, no reward weight) ---
   - id: p2p_compiles
     kind: P2P_REGRESSION
     weight: 0

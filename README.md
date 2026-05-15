@@ -37,9 +37,9 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 Original wave contributions before drops were larger (~255 candidate tasks); the current 173 reflect the post-curator (88 verifier-touches in v0.4.3.x) and post-DROP-9 (v0.4.3.2) suite.
 
-No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two scoring tiers coexist:
+No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two verifier families coexist:
 
-- **Legacy F2P/P2P** (122 tasks): per-task `tests/test_manifest.yaml` with `F2P` (weighted) + `P2P_REGRESSION` (gating) gates, weighted-replace formula.
+- **Manifest F2P/P2P** (122 tasks): per-task `tests/test_manifest.yaml` with `F2P` and `P2P_REGRESSION`/`P2P` gates. The target scoring semantics are unweighted F2P coverage with bounded P2P penalty, computed centrally from `gates.json`; legacy weighted-replace and `P2P_GATING` verifiers are being migrated.
 - **SWE-rebench-style** (68 tasks): per-task `tests/install_config.json` declares `test_cmd` + `FAIL_TO_PASS` + `log_parser`. The verifier runs the test command, parses stdout with one of 76 log parsers vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2) (MIT), and scores by `FAIL_TO_PASS` pass rate. See `data-pipeline/scaffold/build_swerebench_configs.py`.
 
 The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).

@@ -418,11 +418,8 @@ rm -rf "$SBX"
 ###############################################################################
 REWARD=0
 
-# P2P gating
-P2P_PASS=1
-grep -q '"id":"p2p_changelog_structure_intact","passed":true' "$GATES_FILE" || P2P_PASS=0
-
-if [ "$P2P_PASS" = "1" ]; then
+# P2P_REGRESSION is diagnostic only; score F2P coverage regardless.
+if true; then
   [ "$GATE_T1A" = "1" ] && REWARD=$(awk "BEGIN{print $REWARD + 0.25}")
   [ "$GATE_T1B" = "1" ] && REWARD=$(awk "BEGIN{print $REWARD + 0.25}")
   [ "$GATE_T7A" = "1" ] && REWARD=$(awk "BEGIN{print $REWARD + 0.30}")
@@ -462,7 +459,7 @@ run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /w
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_changelog_attribution_format": 0.25, "t1_f2p_changelog_unreleased_grew": 0.25, "t7_f2p_autocomplete_dir_marker": 0.2, "t7_f2p_autocomplete_dir_no_trailing_space": 0.3}
-P2P_GATING = ["p2p_changelog_structure_intact"]
+P2P_REGRESSION = ["p2p_changelog_structure_intact"]
 P2P_REGRESSION = ["p2p_upstream_771580d1", "p2p_upstream_816994b6", "p2p_upstream_e395cbc7", "p2p_upstream_522628b0"]
 verdicts = {}
 try:
@@ -476,18 +473,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-# P2P_REGRESSION_INFORMATIONAL: only P2P_GATING items hard-zero. P2P_REGRESSION is informational.
-p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
-for gid in P2P_GATING:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they feed diagnostics/penalty only.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

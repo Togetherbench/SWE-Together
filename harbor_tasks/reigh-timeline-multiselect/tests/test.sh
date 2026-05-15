@@ -599,7 +599,7 @@ run_v043_gate p2p_upstream_cdf050a5 'npm_run_build' 'cd /workspace/repo && cd /w
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t1_f2p_bundle_multi_5frames_runtime": 0.25, "t1_f2p_drag_hook_uses_selectedIds": 0.1, "t1_f2p_selection_hook_runtime_toggle": 0.2, "t2_f2p_orange_selection_color": 0.1, "t3_f2p_TimelineContainer_wires_selection": 0.1, "t4_f2p_action_bar_with_selectedCount": 0.15, "t4_f2p_onNewShot_threaded": 0.05, "t6_f2p_jump_to_shot_wired": 0.05}
-P2P_GATING = ["p2p_instruction_unmodified"]
+P2P_REGRESSION = ["p2p_instruction_unmodified"]
 P2P_REGRESSION = ["p2p_upstream_523760b1", "p2p_upstream_cdf050a5"]
 verdicts = {}
 try:
@@ -613,16 +613,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they never feed bounded penalty/diagnostics.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

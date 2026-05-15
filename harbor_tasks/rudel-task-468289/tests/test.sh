@@ -198,7 +198,7 @@ VERDICTS[F2P_TOOLTIP_MIGRATION]=$G6_PASS
 
 base_reward=$(cat "$LOGS_DIR/base_reward.txt" 2>/dev/null || echo "0.0")
 
-# P2P_REGRESSION: informational only — never zero reward
+# P2P_REGRESSION: informational only — diagnostic/penalty only
 p2p_failed=false
 
 # F2P: at least one gate must pass for non-zero reward (and only if no inner reward)

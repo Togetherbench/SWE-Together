@@ -26,7 +26,7 @@ The user reports that the "Quote Reply" feature in the gemini-voyager browser ex
 
 - Test runner: vitest (bun run test -- --reporter=json)
 - 3 F2P behavioral gates (math-tests-exist, math-tests-pass, suite-healthy) — total weight 0.70
-- 1 P2P regression gate (no-regressions) — gating only
+- 1 P2P regression gate (no-regressions) — diagnostic/penalty only
 - Reward formula: weighted-replace with existing = 0.0
 
 ## Files Changed (canonical)

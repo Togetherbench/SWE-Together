@@ -355,10 +355,7 @@ REWARD=$(awk -v a=$G_T4_ADDED -v b=$G_T4_BREADTH -v c=$G_T4_CRIT \
              -v d=$G_T6_KW -v e=$G_T6_MECH -v f=$G_T7_HITS -v g=$G_T7_DIST \
              'BEGIN { printf "%.4f", a*0.20 + b*0.25 + c*0.15 + d*0.10 + e*0.15 + f*0.10 + g*0.05 }')
 
-# Apply P2P_GATING
-if [ "$P2P_OK" != true ]; then
-    REWARD="0.0000"
-fi
+# P2P_REGRESSION is diagnostic only; diagnostic/penalty only here.
 
 echo "" >> "$LOG"
 echo "=== Gate Results ===" >> "$LOG"
@@ -404,7 +401,7 @@ run_v043_gate p2p_upstream_816994b6 'vitest_session_manager_ai' 'cd /workspace/p
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t4_f2p_critical_pkgs_covered": 0.15, "t4_f2p_keyword_added_to_publishable_pkg": 0.2, "t4_f2p_keyword_breadth": 0.25, "t6_f2p_doc_keyword_mention": 0.1, "t6_f2p_doc_search_mechanic": 0.15, "t7_f2p_search_distinct_from_baseline": 0.05, "t7_f2p_search_returns_hits": 0.1}
-P2P_GATING = ["p2p_pkg_json_valid"]
+P2P_REGRESSION = ["p2p_pkg_json_valid"]
 P2P_REGRESSION = ["p2p_upstream_9dadbbf2", "p2p_upstream_8548d166", "p2p_upstream_771580d1", "p2p_upstream_816994b6"]
 verdicts = {}
 try:
@@ -418,18 +415,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-# P2P_REGRESSION_INFORMATIONAL: only P2P_GATING items hard-zero. P2P_REGRESSION is informational.
-p2p_reg_failed = any(not verdicts.get(gid, False) for gid in P2P_REGRESSION)
-for gid in P2P_GATING:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# P2P failures are diagnostics/penalty inputs; they feed diagnostics/penalty only.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

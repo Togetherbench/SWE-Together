@@ -31,4 +31,4 @@ The fix: when the transcript file doesn't exist, return immediately — there's 
 
 - 4 behavioral gates (Gold/Silver, 0.70 total weight): timing-based tests for nonexistent file fast return, recent file wait, stale file skip
 - 2 structural gates (Bronze, 0.13 total weight): function existence, test update check
-- 2 P2P_REGRESSION gates (gating-only): existing tests pass, stale fast path preserved
+- 2 P2P_REGRESSION gates (diagnostic-only): existing tests pass, stale fast path preserved
