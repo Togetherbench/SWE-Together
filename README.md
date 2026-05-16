@@ -26,7 +26,7 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**166 tasks** under `harbor_tasks/` (current trunk; 173 at the `togetherbench@0.4.4.3` release tag), all derived from **real recorded coding sessions** across four sourcing waves. Per-source breakdown:
+**166 tasks** under `harbor_tasks/` (`togetherbench@0.4.5` trunk), all derived from **real recorded coding sessions** across four sourcing waves. Per-source breakdown:
 
 | source wave | tasks | family prefixes in `harbor_tasks/` |
 |---|---:|---|
@@ -49,60 +49,22 @@ Note: 62 additional tasks have an `install_config.json` on disk from an earlier 
 
 The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
 
-### Results — `togetherbench@0.4.4.3` (6 models, 932 unique (model, task) pairs)
+### Results — `togetherbench@0.4.5` (6 models, 6,166 trials across 13 cohort dirs)
 
-> **Benchmark version:** `togetherbench@0.4.4.3` (173 tasks, user sim v0.6.0, CC v2.1.108). Full numbers + audit notes in `analysis/V044_RELEASE_NOTES.md`.
->
-> Results are tied to a specific benchmark version. The task set, user simulator, and test scripts all change between versions; always reference the version when citing results.
+Per-(model, task) deduped, latest trial wins, audit-excluded trials filtered (161 DeepSeek HTTP 402 billing failures + 35 rate-limit-corrupted; full audit in `analysis/V044_RELEASE_NOTES.md`). Recomputed against the 166-task v0.4.5 trunk from `analysis/v044_leaderboard.json` selected trials.
 
-**Headline** — per-(model, task) deduped, latest trial wins, audit-excluded trials filtered (162 DeepSeek HTTP 402 billing failures + 38 rate-limit-corrupted; see "Audit findings" below):
+| rank | model | provider | **headline mean** (n) | ≥5/6 (n=161) | strict 6/6 (n=74) |
+|---|---|---|---|---|---|
+| 1 | **Opus 4.6** | `anthropic/claude-opus-4-6` (OAuth subscription) | **0.3877** (164) | **0.3803** | 0.3910 |
+| 2 | **DeepSeek V4 Pro** | `deepseek/deepseek-v4-pro` | **0.3868** (167) | 0.3775 | **0.4049** |
+| 3 | DeepSeek V4 Flash | `deepseek/deepseek-v4-flash` | 0.3660 (168) | 0.3568 | 0.3918 |
+| 4 | MiniMax M2.7 | `minimaxd/MiniMax-M2.7` | 0.3545 (167) | 0.3449 | 0.3738 |
+| 5 | MiniMax M2.5 | `minimaxd/MiniMax-M2.5` | 0.3250 (167) | 0.3312 | 0.3616 |
+| 6 | GLM 5.1 | `glmd/glm-5.1` (z.ai direct) | 0.3162 (78) | 0.3055 | 0.3096 |
 
-| rank | model              | provider                                | mean       | n_tasks | nonzero |
-|------|--------------------|-----------------------------------------|------------|---------|---------|
-| 1    | **DeepSeek V4 Pro**   | `deepseek/deepseek-v4-pro`           | **0.4013** | 169     | 120     |
-| 2    | **Opus 4.6**          | `anthropic/claude-opus-4-6` (subscription) | **0.3922** | 167  | 112     |
-| 3    | MiniMax M2.7          | `minimaxd/MiniMax-M2.7`               | 0.3690     | 169     | 114     |
-| 4    | **DeepSeek V4 Flash** | `deepseek/deepseek-v4-flash`          | **0.3660** | 170     | 112     |
-| 5    | MiniMax M2.5          | `minimaxd/MiniMax-M2.5`               | 0.3426     | 167     | 109     |
-| 6    | GLM 5.1               | `glmd/glm-5.1` (z.ai direct)          | 0.3408     | 79      | 47      |
+Top two (Opus, DS Pro) are within **0.0009** on the headline and **0.014** on strict 6/6 — statistical tie within bootstrap noise.
 
-**Apples-to-apples — 166 tasks attempted by ≥5 of 6 models**:
-
-| rank | model              | mean       | n_tasks |
-|------|--------------------|------------|---------|
-| 1    | DeepSeek V4 Pro    | **0.3917** | 166     |
-| 2    | Opus 4.6           | **0.3888** | 165     |
-| 3    | DeepSeek V4 Flash  | 0.3610     | 166     |
-| 4    | MiniMax M2.7       | 0.3592     | 166     |
-| 5    | MiniMax M2.5       | 0.3361     | 165     |
-| 6    | GLM 5.1            | 0.3313     | 76      |
-
-**Strict 6/6 — 74 tasks all 6 models attempted**:
-
-| rank | model              | mean       |
-|------|--------------------|------------|
-| 1    | DeepSeek V4 Pro    | **0.4111** |
-| 2    | Opus 4.6           | 0.4089     |
-| 3    | DeepSeek V4 Flash  | 0.4003     |
-| 4    | MiniMax M2.7       | 0.3795     |
-| 5    | MiniMax M2.5       | 0.3734     |
-| 6    | GLM 5.1            | 0.3267     |
-
-Top three (DS Pro, Opus, DS Flash) are within **0.011** on the strict 6/6 set — statistical tie within bootstrap noise.
-
-### Audit findings (v0.4.4.3 vs v0.4.4.2)
-
-A systematic audit of all 13 cohort dirs uncovered two systematic biases:
-
-| issue | trials excluded | impact |
-|---|---|---|
-| **DeepSeek HTTP 402 "Payment Required"** (DS Pro/Flash swerb runs hit during a billing window) | **162** (84 DS Pro + 81 DS Flash, 35% of swerb each, both `_v043` cohorts unaffected) | DS means lifted +0.07–0.10; DS Pro now leads, DS Flash jumps from #6 → #4 |
-| **Rate-limit corruption** (≥10 `api_retry` events + reward 0; CC fabricates after 10 retries per CLAUDE.md) | 38 (GLM 35, MM 2.5 2, MM 2.7 1) | GLM was the obvious case (#6 → #4 vs the original v0.4.4.1 numbers); MM cohorts barely moved |
-
-Pre-fix, DS was systematically depressed by silent billing failures. The v0.4.4.3 leaderboard above already has these exclusions baked in — see `analysis/V044_RELEASE_NOTES.md` for the full per-cohort audit table.
-
-> **Anthropic OAuth path (subscription billing, free under Claude Pro/Max plan):**
-> Opus 4.6 trials in this release used `claude setup-token` to generate a long-lived `sk-ant-oat01-...` token, exported as `CLAUDE_CODE_OAUTH_TOKEN`. The patched `src/run_eval.py:build_agent_env` detects the `oat01` prefix and routes via `Authorization: Bearer` (the Anthropic API rejects OAuth tokens via the `x-api-key` header). It also pops `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` from `os.environ` so Harbor's `claude_code` adapter doesn't leak them into the sandbox. See "Anthropic subscription billing" in `analysis/V044_RELEASE_NOTES.md` for the full mechanic.
+> **Results are tied to a specific benchmark version.** Task set, user simulator, and test scripts all change between versions; always cite the version. Audit context — Opus 4.6 trials use OAuth subscription billing (`CLAUDE_CODE_OAUTH_TOKEN`, `sk-ant-oat01-...`); DS Pro/Flash had a billing window hit during the swerb runs (161 HTTP 402 trials filtered). See `analysis/V044_RELEASE_NOTES.md` for full per-cohort audit + the OAuth routing patch in `src/run_eval.py:build_agent_env`.
 
 ---
 
@@ -118,45 +80,28 @@ cd SWE-Replay
 uv sync
 ```
 
-Pin to a release tag (`git checkout v0.4.4.3`) when reproducing published numbers — the task set, user simulator, and test scripts evolve.
+Pin to a release tag (`git checkout v0.4.5`) when reproducing published numbers — the task set, user simulator, and test scripts evolve.
 
 ### Running the full eval (production path)
 
-`src/run_eval.py` is the production async evaluator. It drives Harbor's `LocalOrchestrator` across N concurrent E2B sandboxes (default 20 workers), launches the in-sandbox LiteLLM proxy per trial, and writes per-cohort `trials_<tag>/<task>__<id>/` directories.
+`src/run_eval.py` is the production async evaluator. It drives Harbor's `LocalOrchestrator` across N concurrent E2B sandboxes, launches the in-sandbox LiteLLM proxy per trial, and writes per-cohort `trials_<tag>/<task>__<id>/` directories.
 
 ```bash
-# Anthropic — pay-per-token API key (sk-ant-api03-...)
-ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
-    --model anthropic/claude-opus-4-6 \
-    --tag opus46 --workers 10
-
-# Anthropic — subscription billing via OAuth setup-token (FREE under Pro/Max plan)
-#   First: claude setup-token   → prints sk-ant-oat01-... long-lived token
-CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... uv run python src/run_eval.py \
-    --model anthropic/claude-opus-4-6 \
-    --tag opus46_oauth --workers 10
-# (the script auto-detects oat01 prefix; pops ANTHROPIC_API_KEY/BASE_URL
-#  from os.environ so Harbor doesn't leak them into the sandbox)
-
-# DeepSeek (direct Anthropic-compat via in-sandbox proxy, WORKERS=10 OK)
-DEEPSEEK_API_KEY=<key> uv run python src/run_eval.py \
-    --model deepseek/deepseek-v4-flash --tag ds_flash --workers 10
-
-# MiniMax direct (api.minimax.io/anthropic, WORKERS=1 — minimaxd needs serial)
-MINIMAX_API_KEY=<key> uv run python src/run_eval.py \
-    --model minimaxd/MiniMax-M2.7 --tag mm27 --workers 1
-
-# z.ai GLM direct (Anthropic-compat via proxy, WORKERS=2 — Beijing peak hours
-# can throttle even at single concurrency; see CLAUDE.md "glm51 (z.ai) concurrency")
-GLM_API_KEY=<key> uv run python src/run_eval.py \
-    --model glmd/glm-5.1 --tag glm51 --workers 2
-
-# ARK (Volcengine — Bearer auth, 5h quota window resetting at 12:32 +0800)
-ARK_API_KEY=<key> uv run python src/run_eval.py \
-    --model ark/kimi-k2.6 --tag ark_kimi --workers 1
+# Generic invocation (substitute model + env var per provider table below)
+<API_KEY_ENV>=<key> uv run python src/run_eval.py \
+    --model <provider>/<model> --tag <cohort_tag> --workers <N>
 ```
 
-Default user-sim model: `openrouter/google/gemini-3.1-pro-preview` (uses `OPENROUTER_API_KEY` from `.env`). See `src/run_eval.py:build_agent_env` for every supported provider prefix.
+| provider prefix | API key env var | workers | notes |
+|---|---|---|---|
+| `anthropic/` | `ANTHROPIC_API_KEY` (`sk-ant-api03-…`) | 10 | pay-per-token |
+| `anthropic/` (subscription) | `CLAUDE_CODE_OAUTH_TOKEN` (`sk-ant-oat01-…` from `claude setup-token`) | 10 | free under Claude Pro/Max; script auto-detects `oat01` prefix and routes via Bearer auth |
+| `deepseek/` | `DEEPSEEK_API_KEY` | 10 | direct Anthropic-compat via in-sandbox proxy |
+| `minimaxd/` | `MINIMAX_API_KEY` | 1 | api.minimax.io/anthropic — needs serial |
+| `glmd/` | `GLM_API_KEY` | 2 | z.ai direct; Beijing peak hours can throttle (see CLAUDE.md) |
+| `ark/` | `ARK_API_KEY` | 1 | Volcengine Bearer auth; 5h quota window resets at 12:32 +0800 |
+
+Default user-sim model: `openrouter/google/gemini-3.1-pro-preview` (needs `OPENROUTER_API_KEY` in `.env`). See `src/run_eval.py:build_agent_env` for every supported provider prefix.
 
 ### Running a single task (debugging)
 
@@ -170,36 +115,19 @@ Trial output: `trials/<task>__<id>/verifier/reward.txt`.
 
 ### Building / updating the leaderboard
 
-The v0.4.4.x leaderboard is built by `scripts/finalize_v044.sh`, which:
-1. Replays every captured agent patch against the current `harbor_tasks/*/tests/test.sh` in fresh E2B sandboxes (no model re-runs)
-2. Per-(model, task) deduplicates using the latest trial by `result.json::started_at`
-3. Excludes rate-limit-corrupted trials (≥10 `api_retry` events + reward 0) and DeepSeek HTTP 402 billing failures
-4. Writes `analysis/v044_leaderboard.json` with `headline_latest` + `apples_to_apples_5_of_6` + `apples_to_apples_6_of_6`
-5. Optionally tarballs each cohort dir and uploads to GitHub release
+The leaderboard is built by `scripts/finalize_v044.sh` (script name still pinned to v044): replay every captured agent patch against the current `tests/test.sh` in fresh E2B sandboxes (no model re-runs), per-(model, task) dedup using the latest trial by `started_at`, exclude rate-limit-corrupted + DeepSeek HTTP 402 trials, write `analysis/v044_leaderboard.json` (`headline_latest` + `apples_to_apples_5_of_6` + `apples_to_apples_6_of_6`), optional tarball + GitHub release upload.
 
 ```bash
-# Full pipeline (replay + leaderboard rebuild + tarball + GitHub upload)
-bash scripts/finalize_v044.sh
-
-# Skip the replay (use on-disk reward.txt as-is) — useful when integrating new fill cohorts
-bash scripts/finalize_v044.sh --no-replay
-
-# Local rebuild only, no GitHub release
-bash scripts/finalize_v044.sh --no-upload
+bash scripts/finalize_v044.sh              # full pipeline
+bash scripts/finalize_v044.sh --no-replay  # use on-disk reward.txt as-is
+bash scripts/finalize_v044.sh --no-upload  # local rebuild only
 ```
 
-The legacy `v0.4.3` builder still works for reproducing v0.4.3 numbers:
-
-```bash
-uv run python scripts/build_leaderboard.py \
-    --cohorts trials_opus46_high_v043 trials_deepseek_v4_flash_v043 \
-              trials_deepseek_v4_pro_v043 trials_minimax27_v043 trials_minimax25_v043 \
-    --out analysis/v043_leaderboard
-```
+Legacy `v0.4.3` builder for reproducing the older five-cohort leaderboard: `scripts/build_leaderboard.py --cohorts trials_<model>_v043 ... --out analysis/v043_leaderboard`.
 
 ### Viewing traces
 
-**Hosted:** [traces.togetherbench.com](https://traces.togetherbench.com/jobs/trials) — includes Trajectory, User Simulation Prompt, and Agent Logs tabs. All 13 v0.4.4.3 cohort dirs are uploaded (sanitized for API key leaks via `scripts/sanitize_traces.py`); browse by trial name (e.g., `cli-task-14ee15__abcd123`).
+**Hosted:** [traces.togetherbench.com](https://traces.togetherbench.com/jobs/trials) — Trajectory, User Simulation Prompt, and Agent Logs tabs. All 13 v0.4.5 cohort dirs are uploaded (sanitized via `scripts/sanitize_traces.py`); browse by trial name (e.g., `cli-task-14ee15__abcd123`).
 
 Each trace shows a sim version badge (e.g., `User Sim v0.6.0 · 5/11 msgs`) indicating which simulator version produced the trial and how many messages it sent.
 
@@ -234,14 +162,11 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 
 ### Architecture (v0.6.0)
 
-- **Claude Code harness only.** Every target model — Opus, Sonnet, MiniMax, GLM, DeepSeek, Kimi, … — runs through Claude Code CLI v2.1.108 (baked into every task image) and reaches its provider via the in-sandbox LiteLLM proxy on `localhost:4210`. Mixing harnesses across models would conflate harness quality with model quality.
-- **User-sim model: Gemini 3.1 Pro** (default `openrouter/google/gemini-3.1-pro-preview`). Best GT coverage, most realistic turn structure, lower cost than Claude. See `src/user_agent/agent_test_comparison.md`.
-- **Multi-turn via `claude --resume`** — each user-sim turn appends a message to the existing CC session. The CC agent is instructed to "work incrementally — stop and report after each sub-task" so there are more intervention checkpoints for the sim.
-- **Repo config file injection** — CLAUDE.md, AGENTS.md, `.claude/`, `.ai/`, `.cursor/` are discovered and prepended to the agent instruction for cross-harness parity.
-- **Structured tool output** — the sim picks one of: `no-op`, `question`, `redirect`, `new_requirement`, `check_external`. v0.6.0 forces this via `tool_choice=required` (Gemini's `functionCallingConfig.mode = "ANY"`), eliminating ~1,269 text-as-no-op cases per eval run.
-- **Soft message guidance** — GT-based range (`GT × 0.5` – `GT × 1.5`) replaces the old hard `max_messages` cap; the sim decides based on context.
-- **Wall-clock timing** — each trial records agent wall-clock time, GT session duration, and speedup ratio. Agents are consistently 4–8× faster than real users.
-- **Conversation history** — accumulated across turns (tau-bench pattern), with the LLM's reasoning preserved (not just the tool argument).
+- **Claude Code harness only.** Every target model runs through CC CLI v2.1.108 (baked into every task image) and reaches its provider via the in-sandbox LiteLLM proxy on `localhost:4210`. Mixing harnesses would conflate harness quality with model quality.
+- **User-sim model: Gemini 3.1 Pro** (`openrouter/google/gemini-3.1-pro-preview`). Best GT coverage, lower cost than Claude. See `src/user_agent/agent_test_comparison.md`.
+- **Multi-turn via `claude --resume`** — each sim turn appends a message to the existing CC session. CC is instructed to "work incrementally — stop and report after each sub-task" for more intervention checkpoints.
+- **Structured tool output via `tool_choice=required`** — sim picks one of `no-op`, `question`, `redirect`, `new_requirement`, `check_external`. Eliminated ~1,269 text-as-no-op cases per eval vs. v0.5.x.
+- **Other v0.6.0 wins**: repo config injection (CLAUDE.md, AGENTS.md, `.claude/`, `.cursor/` prepended to agent instruction), soft message guidance (`GT × 0.5`–`GT × 1.5` range replacing hard cap), wall-clock + GT-duration tracking (agents are 4–8× faster than real users), conversation history with LLM reasoning preserved.
 
 ### Version History
 
@@ -299,16 +224,15 @@ trials/<task>__<id>/
                               (10-step inline prompt: screen → scaffold → tests → audit)
     ↓ build_swerebench_configs.py [optional]: migrate test.sh to install_config.json
                               + vendored SWE-rebench log parsers (68 tasks so far)
-166 Harbor benchmark tasks  (current trunk; 173 at v0.4.4.3 release; post curator + DROP-9 + audit drops)
+166 Harbor benchmark tasks  (v0.4.5 trunk; was 167 at v0.4.4.3, 172 at v0.4.4.4-pr132; post curator + DROP-9 + audit drops)
     ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, concurrent E2B sandboxes;
                         per-provider concurrency caps: anthropic/deepseek=10, glm=2, mm=1)
     ↓ scripts/finalize_v044.sh (replay all captured patches against latest test.sh →
                                  per-(model, task) latest-trial dedup → exclude rate-limit
                                  corrupted + DS 402 billing → tar.zst → gh release upload)
-v0.4.3 release: 5 cohorts, ~490 trials, 99 unique tasks scored (101-task suite at the time)
-v0.4.4.x consolidation: 13 cohort dirs, 6 models, 932 unique (model,task) pairs across
-                         168 audit-corrected tasks; v0.4.4.3 added Opus subscription-OAuth
-                         + GLM fill cohorts and DeepSeek HTTP 402 / rate-limit exclusions
+v0.4.5 trunk: 13 cohort dirs, 6 models. Latest leaderboard recomputed from
+              analysis/v044_leaderboard.json::selected_trials filtered to the
+              166-task trunk (1 task dropped since v0.4.4.4-pr132).
 ```
 
 A task ships only when (a) its buggy state scores in `(0, 1)` on the verifier (not all-zero, not all-perfect), (b) an alternative valid fix scores ≥0.7 (verifier accepts diverse approaches per the [SWE-bench Verified critique](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)), and (c) a stub solution scores ≤0.3 (verifier doesn't reward shape-only output). See `system_overview.md` for the full author iteration loop.
@@ -333,9 +257,8 @@ Benchmark results are only meaningful when tied to a specific version. Five thin
 ### Release format
 
 ```
-togetherbench@0.4.4.3
-  Tasks: 173 (168 unique scored after audit exclusions)
-  Commit: a24b94b1a
+togetherbench@0.4.5
+  Tasks: 166 (recomputed leaderboard from v0.4.4.4-pr132 selected trials)
   User sim: v0.6.0
   CC binary: 2.1.108 (pinned in image)
   Cohorts: 13 trial dirs across 6 models
@@ -348,7 +271,7 @@ togetherbench@0.4.4.3
 
 When citing results, always include the benchmark version:
 
-> "DeepSeek V4 Pro scored 0.4013 avg reward on togetherbench@0.4.4.3 (n=169 tasks, user sim v0.6.0, audit-corrected)"
+> "Opus 4.6 scored 0.3877 avg reward on togetherbench@0.4.5 (n=164 tasks, user sim v0.6.0, audit-corrected)"
 
 ### Version history
 
@@ -361,12 +284,14 @@ When citing results, always include the benchmark version:
 | `@0.4.1–0.4.2` | 2026-04-30 | 127 | v0.6.0 | F2P weight normalization, Rust toolchain symlinks, REBUILD_TOKEN cache-bust, OR proxy SSE streaming, prompt-cache restored, sanitize-traces secret-leak fix. |
 | `@0.4.3` | 2026-05-01 | 101 | v0.6.0 | 5 cohorts (Opus 4.6, DeepSeek×2, MiniMax×2). Score-formula fix (additive→weighted-replace). P2P_REGRESSION semantics split. ARK Bearer auth. DeepSeek direct. |
 | `@0.4.3.1`–`@0.4.3.3` | 2026-05-07–09 | 190→172 | v0.6.0 | SWE-chat expansion (89 new tasks, PR #119); SWE-rebench scoring introduced (68 tasks); degenerate-ceiling rescue (88 verifier-touches); 9 final DROPs after curator pass. |
-| **`@0.4.4`–`@0.4.4.3`** | **2026-05-10–11** | **173** | **v0.6.0** | **Replay-only consolidation + audit corrections.** Single coherent leaderboard across 13 cohort dirs; per-(model, task) latest-trial dedup; auditor's preserved-pre-rescue bug closed (202 trials drop honestly instead of inheriting inflated scores); strict-fresh policy (every committed reward from a v17 latest-test.sh execution). v0.4.4.2 added Opus + GLM **fill runs** (Opus 30 new tasks via `claude setup-token` subscription billing; GLM 21 new tasks via z.ai direct). v0.4.4.3 added two systematic-bias exclusions: **DeepSeek HTTP 402 billing failures (162 trials)** + **rate-limit-corruption trials (38)** — DS Pro then took #1. |
+| `@0.4.4`–`@0.4.4.3` | 2026-05-10–11 | 167 | v0.6.0 | Replay-only consolidation + audit corrections. Single coherent leaderboard across 13 cohort dirs; per-(model, task) latest-trial dedup; auditor's preserved-pre-rescue bug closed; strict-fresh policy. v0.4.4.2 added Opus + GLM fill runs (Opus 30 new tasks via `claude setup-token`; GLM 21 new tasks via z.ai direct). v0.4.4.3 added two systematic-bias exclusions: **DeepSeek HTTP 402 billing failures (161 trials)** + **rate-limit-corruption trials (35)** — DS Pro briefly took #1. |
+| `@0.4.4.4-pr132` | 2026-05-12 | 172 | v0.6.0 | Intermediate snapshot used to generate `analysis/v044_leaderboard.json` (`selected_trials` + `headline_latest`). |
+| **`@0.4.5`** | **2026-05-16** | **166** | **v0.6.0** | **Task-set cleanup + leaderboard recomputation.** Dropped `pi-mono-keybinding-scope` (curator follow-up). Source attribution corrected: SWE-chat 77 (was undercounted as 45) / Pi 27 / Hyperswitch 17 / DataClaw+misc 45 — 13 SWE-chat families inherit upstream-repo names with no `swechat-` prefix. Leaderboard recomputed from `v044_leaderboard.json::selected_trials` filtered to current trunk: Opus 4.6 and DS Pro tied at the top (0.3877 vs 0.3868). |
 
-**Roadmap to v0.4.5**:
-1. **Re-run DeepSeek swerb with valid billing** to recover the 162 excluded trials (replaces exclusions with real data).
-2. **GLM 5.1 fill remaining 71 tasks** when z.ai's account-level throttling eases (lifts GLM n=79 → ~150).
-3. **Verifier-quality pass** for the 34 all-zero tasks (likely too-strict gates) and 6 all-one tasks (degenerate ceiling). See `analysis/V044_RELEASE_NOTES.md` "Harness audit" section.
+**Roadmap to v0.4.6**:
+1. **Re-run DeepSeek swerb with valid billing** to recover the 161 excluded trials.
+2. **GLM 5.1 fill remaining ~88 tasks** when z.ai throttling eases (lifts n=78 → ~166).
+3. **Verifier-quality pass** for the all-zero and degenerate-ceiling tasks. See `analysis/V044_RELEASE_NOTES.md` "Harness audit" section.
 
 ---
 
