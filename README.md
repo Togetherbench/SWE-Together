@@ -129,7 +129,9 @@ Legacy `v0.4.3` builder for reproducing the older five-cohort leaderboard: `scri
 
 **Hosted:** [traces.togetherbench.com](https://traces.togetherbench.com/jobs/trials) — Trajectory, User Simulation Prompt, and Agent Logs tabs. All 13 v0.4.5 cohort dirs are uploaded (sanitized via `scripts/sanitize_traces.py`); browse by trial name (e.g., `cli-task-14ee15__abcd123`).
 
-Each trace shows a sim version badge (e.g., `User Sim v0.6.0 · 5/11 msgs`) indicating which simulator version produced the trial and how many messages it sent.
+Two version indicators appear on every page:
+- **Bottom-right pill — `benchmark: togetherbench@<version>`** — the release the trial data was published against. Click to jump to the GitHub release. Programmatic: `GET /api/version` → `{"benchmark_version": "v0.4.5", "release_url": "..."}`. Bump by editing `BENCHMARK_VERSION` in `deploy/patched_server.py` and redeploying.
+- **Per-trial sim badge — `User Sim v0.6.0 · 5/11 msgs`** — which simulator version produced this trial and how many messages it sent.
 
 `src/run_eval.py` auto-uploads after each cohort run (set `BUCKET_ENDPOINT` / `BUCKET_NAME` / `BUCKET_ACCESS_KEY` / `BUCKET_SECRET_KEY` in `.env`). For batch re-uploads (e.g., after a credential rotation), see `scripts/upload_traces.py` or use the inline pattern in `src/run_eval.py:_sanitize_and_upload`.
 
