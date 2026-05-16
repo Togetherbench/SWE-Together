@@ -51,6 +51,15 @@ def classify(d: dict) -> str:
     return "CLEAN_OR_OK"
 
 
+def is_explicitly_unreliable(d: dict) -> bool:
+    """A canonical with `_reliability.status = FLAGGED_UNRELIABLE` was
+    intentionally given up on (codex-format gap, install_config bug, etc.) —
+    the audit knows it's imperfect and consumers should treat it as such.
+    Informational only; doesn't trip fail_count."""
+    rel = d.get("_reliability")
+    return bool(rel and rel.get("status") == "FLAGGED_UNRELIABLE")
+
+
 FAIL_BUCKETS = {
     "DIRECTIONAL_UNVERIFIED",
     "LOSSY_UNFIXED",
@@ -74,6 +83,7 @@ def main() -> int:
 
     by_source: dict[str, int] = defaultdict(int)
     buckets: dict[str, list[dict]] = defaultdict(list)
+    explicit_unreliable: list[dict] = []  # informational; not failing
     for p in all_jsons:
         source = p.split("/artifacts_", 1)[1].split("/", 1)[0]
         by_source[source] += 1
@@ -84,12 +94,18 @@ def main() -> int:
                                           "task": "?", "reason": str(e)})
             continue
         bucket = classify(d)
-        buckets[bucket].append({
+        item = {
             "path": p, "source": source,
             "task": d.get("_task_name", "?"),
             "fidelity": d.get("_fidelity", "?"),
             "files": d.get("files_changed_count", 0),
-        })
+        }
+        buckets[bucket].append(item)
+        if is_explicitly_unreliable(d):
+            explicit_unreliable.append({
+                **item,
+                "reason": (d.get("_reliability") or {}).get("reason", "?"),
+            })
 
     fail_count = sum(len(buckets[k]) for k in FAIL_BUCKETS)
     if args.strict:
@@ -124,6 +140,12 @@ def main() -> int:
                 for item in buckets[k]:
                     print(f"  {item['source']:14} {item['task']:42} "
                           f"fidelity={item['fidelity']:14} files={item['files']}")
+        if explicit_unreliable:
+            print(f"\n[EXPLICITLY_UNRELIABLE]  {len(explicit_unreliable)} "
+                  f"(informational; flagged by audit, not failing)")
+            for item in explicit_unreliable:
+                print(f"  {item['source']:14} {item['task']:42} "
+                      f"reason={item['reason']}")
         print(f"\nfail_count = {fail_count}  "
               f"({'OK' if fail_count == 0 else 'NEEDS ATTENTION'})")
 

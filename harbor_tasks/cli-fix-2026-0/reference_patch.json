@@ -42,8 +42,29 @@
     "reviewer": "subagent-batch-aa",
     "date": "2026-05-14",
     "note": "Directional fidelity with _fidelity_verified=true; 3 warnings are formatter-between-Edits noise; diff counts (4 files, +135/-116) match; all 4 files in test.sh.",
-    "checks_passed": ["schema", "diff_coherence", "fidelity_verified_directional", "test_sh_alignment", "no_phantom_files"]
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "fidelity_verified_directional",
+      "test_sh_alignment",
+      "no_phantom_files"
+    ]
   },
   "_canonical_source_path": "data-pipeline/artifacts_cli/canonical_patches/2026-01-26-4fec7ea0-3335-43ec-a178-d4ab47d5aef3.json",
-  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit."
+  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set1",
+    "date": "2026-05-15",
+    "check_performed": "Warnings are formatter-noise",
+    "evidence": "All 3 _reconstruction_warnings are 'old text not found' anchor mismatches in manual_commit_*_test.go and manual_commit_attribution_test.go. Zero file_nf, zero export-stripped. test.sh references all 4 canonical files.",
+    "note": "3/3 warnings are pure anchor-mismatch (formatter ran between Edits). 4-file patch fully covered by test.sh AST/grep gates on manual_commit_hooks.go and attribution.go."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-aa",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Mechanical checks pass: diff --git count == files_changed_count; +/- line counts match total_additions/total_deletions; hunk headers valid (no @@ -0,0 +0,0); new file mode markers present for new files; no placeholder filenames or LLM-filler comments."
+  }
 }

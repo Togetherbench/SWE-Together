@@ -50,5 +50,29 @@
       "fidelity_provenance_consistent",
       "test_gate_alignment"
     ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set1",
+    "date": "2026-05-15",
+    "check_performed": "Cross-validated against upstream commit 4993e6e3",
+    "evidence": "gh api repos/entireio/cli/commits/4993e6e3: 2 files / +34/-1 (explain.go, explain_test.go). Canonical files_changed == identical 2 files. Single warning anchor-mismatch on explain.go.",
+    "note": "Exact 2-file/+34-line footprint match with upstream. Within reviewer's claimed 5% tolerance. Single anchor-mismatch is formatter noise."
+  },
+  "_triple_check_round2": {
+    "status": "FLAG",
+    "reviewer": "round2-batch-ab",
+    "date": "2026-05-15",
+    "found_issues": [
+      "install_config FAIL_TO_PASS contains 'TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag' but patch only adds 'TestExplainSession_NotFound'. Canonical patch scores 1/2=0.50 ceiling under the SWE-rebench-style F2P rate."
+    ],
+    "note": "Reference patch itself is clean: directional tool_replay (1 anchor warn on explain.go), 2 files, 2 headers, +34/-1, 2 hunks. install_config lists 2 F2P; only 1 actually exists in the patch. Patch is correct; install_config F2P needs scrubbing. Flag is on install_config alignment, not on the reference_patch. APPROVED of the patch holds."
+  },
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "reason": "install_config_f2p_mismatch",
+    "note": "install_config.json F2P lists TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag but canonical only adds TestExplainSession_NotFound. Perfect canonical caps at 0.5. Bug is in install_config, not canonical.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit"
   }
 }

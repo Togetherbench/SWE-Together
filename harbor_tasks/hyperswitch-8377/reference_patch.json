@@ -45,5 +45,12 @@
       "upstream_pr_diff",
       "no_phantom"
     ]
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ae",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "github_pr_diff PR#8368; coherent (15 hdrs == fcc, +719/-12 matches totals); fidelity=exact."
   }
 }

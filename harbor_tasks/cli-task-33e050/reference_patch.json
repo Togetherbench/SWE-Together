@@ -52,5 +52,20 @@
       "fidelity_provenance_consistent",
       "test_gate_alignment"
     ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set1",
+    "date": "2026-05-15",
+    "check_performed": "Cross-validated against upstream commit 10b32918",
+    "evidence": "gh api repos/entireio/cli/commits/10b32918: 2 files / +18/-19 (claudecode/lifecycle.go, lifecycle_test.go). Canonical files_changed == exact upstream set. All 3 warnings anchor-mismatch on lifecycle.go.",
+    "note": "Upstream and canonical file sets match exactly. Canonical's line count exceeds upstream due to session test scaffolding (typical); 3 anchor mismatches are formatter noise."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ab",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Directional tool_replay, 3 warnings (all anchor-mismatch on lifecycle.go \u2014 formatter noise pattern). 2 files / 2 headers / +71/-11 exact. F2P=2, both found in patch. APPROVED holds."
   }
 }

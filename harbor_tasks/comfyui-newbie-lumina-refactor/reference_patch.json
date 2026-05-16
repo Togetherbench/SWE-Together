@@ -18,8 +18,8 @@
   "_reconstruction": "tool_replay",
   "_fidelity": "directional",
   "_reconstruction_warnings": [
-    "model_base.py and supported_models.py diffs reconstructed as block-replacements of the NewBie* classes only (not full-file diffs against upstream base, because those classes don't exist in upstream commit 5ac3b26 \u2014 they originate from a separate `newbie` branch/PR that the task setup is expected to apply but the current Dockerfile does NOT establish). The block-replacements pair msg[57] OLD (the buggy NewBieImage class as it appeared in the session's working tree) with the composite final state from msg[70]+msg[78]; same pattern for supported_models.py msg[29] OLD \u2192 msg[77] NEW. This captures the semantic edit but the absolute line numbers in the diff hunks are synthetic.",
-    "Original tool_replay extractor warnings (9 total) \u2014 old text not found in supported_models.py / model_base.py \u2014 were due to applying edits against upstream base rather than the session's newbie-branch working tree."
+    "model_base.py and supported_models.py diffs reconstructed as block-replacements of the NewBie* classes only (not full-file diffs against upstream base, because those classes don't exist in upstream commit 5ac3b26 — they originate from a separate `newbie` branch/PR that the task setup is expected to apply but the current Dockerfile does NOT establish). The block-replacements pair msg[57] OLD (the buggy NewBieImage class as it appeared in the session's working tree) with the composite final state from msg[70]+msg[78]; same pattern for supported_models.py msg[29] OLD → msg[77] NEW. This captures the semantic edit but the absolute line numbers in the diff hunks are synthetic.",
+    "Original tool_replay extractor warnings (9 total) — old text not found in supported_models.py / model_base.py — were due to applying edits against upstream base rather than the session's newbie-branch working tree."
   ],
   "_base_commit": "5ac3b26a7dedb9b13c681abe8733c54f13353273",
   "_repo_url": "https://github.com/comfyanonymous/ComfyUI",
@@ -30,7 +30,7 @@
     "source": "tool_replay (lumina/model.py + newbie/model.py preserved) + hand reconstruction of model_base.py and supported_models.py final-state blocks from session msgs[29,33,77] (supported_models) and msgs[57,61,65,70,78] (model_base)",
     "fidelity": "directional",
     "verified": true,
-    "note": "Added comfy/model_base.py and comfy/supported_models.py block-level diffs covering the F2P-4 (CONDRegular for clip_text_pooled), F2P-5 (no apply_model override on NewBie), and F2P-6 (clip_text_dim wired into NewBie config) test gates. Diff hunks are block-replacements (no absolute line numbers tied to upstream) since the buggy NewBie classes don't exist in upstream commit 5ac3b26 \u2014 they live on the unrealized `newbie` branch the task instruction references."
+    "note": "Added comfy/model_base.py and comfy/supported_models.py block-level diffs covering the F2P-4 (CONDRegular for clip_text_pooled), F2P-5 (no apply_model override on NewBie), and F2P-6 (clip_text_dim wired into NewBie config) test gates. Diff hunks are block-replacements (no absolute line numbers tied to upstream) since the buggy NewBie classes don't exist in upstream commit 5ac3b26 — they live on the unrealized `newbie` branch the task instruction references."
   },
   "_canonical_source_path": "data-pipeline/artifacts_comfyui/canonical_patches/d3a75944-9c4f-4769-92e9-636eeb172bb7.json",
   "_sync_note": "Re-synced 2026-05-15 after content-fix promotion (sageattention/comfyui-newbie hand-completion).",
@@ -49,5 +49,20 @@
   },
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-15",
-  "_verification_note": "Content-fix 2026-05-15 (hand block-reconstruction): added missing model_base.py + supported_models.py block-replacements. F2P gates 4/5/6 substrate now present. _fidelity stays directional because hunk line numbers are synthetic \u2014 Dockerfile doesn't fetch the 'newbie' branch where the buggy classes live, so the diff captures semantic intent but won't git-apply cleanly. Inherent task-setup issue, not a canonical defect."
+  "_verification_note": "Content-fix 2026-05-15 (hand block-reconstruction): added missing model_base.py + supported_models.py block-replacements. F2P gates 4/5/6 substrate now present. _fidelity stays directional because hunk line numbers are synthetic — Dockerfile doesn't fetch the 'newbie' branch where the buggy classes live, so the diff captures semantic intent but won't git-apply cleanly. Inherent task-setup issue, not a canonical defect.",
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set1",
+    "date": "2026-05-15",
+    "check_performed": "Hand-reconstructed to match test.sh",
+    "evidence": "test_manifest.yaml gates target comfy/ldm/lumina/model.py and comfy/model_base.py compile checks; canonical files_changed includes both + supported_models.py + newbie/model.py. 1 anchor-mismatch warning + 1 block-replacement note about synthetic line numbers (documented limitation).",
+    "note": "Block-reconstruction is acknowledged limitation: Dockerfile doesn't fetch newbie branch so hunks are semantic-not-applyable. F2P gates use compile(open()) not git apply, so synthetic line numbers don't affect verifier."
+  },
+  "_triple_check_round2": {
+    "status": "PASS",
+    "reviewer": "round2-batch-ad",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "hdr=4/fc=4 +187/187 -99/99 hunks=10; 2 warnings (documented)"
+  }
 }

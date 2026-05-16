@@ -28,5 +28,12 @@
     "fidelity": "exact",
     "verified": false,
     "note": "Recovered 2026-05-14 after adding 'replace'/'write_file' to extractor's mutating-tool set."
+  },
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "reason": "noisy_scratch_dominant",
+    "note": "Canonical includes 6 exploration-scratch files plus 1 deliverable (permute_bias.py). Honest about what the session contained, but high noise. Test.sh only grades the deliverable; replays should filter the 6 scratch files.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit"
   }
 }

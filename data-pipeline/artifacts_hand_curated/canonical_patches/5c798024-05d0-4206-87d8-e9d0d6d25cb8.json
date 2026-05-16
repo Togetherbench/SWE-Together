@@ -41,5 +41,12 @@
     "dated": "2026-05-15"
   },
   "_canonical_source_path": "/tmp/hand-curate-B/marin-task-5c7980.json",
-  "_sync_note": "Hand-curated candidate."
+  "_sync_note": "Hand-curated candidate.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "post-promote-backfill",
+    "date": "2026-05-15",
+    "note": "Promoted from stub via hand_curate_from_session. Round-2 r2-af AGREE: single-file +38/-0 matches numstat; _curation_verified_against_test_sh=true.",
+    "supersedes_pre_promote": false
+  }
 }

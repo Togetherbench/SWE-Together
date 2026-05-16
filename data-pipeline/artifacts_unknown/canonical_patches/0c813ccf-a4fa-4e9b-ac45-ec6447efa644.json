@@ -30,5 +30,12 @@
     "fidelity": "high",
     "verified": false,
     "note": "Replaced session's bare fork README with session content + standardized Environment variables section (SAGEATTENTION_CUDA_ARCH_LIST, TORCH_CUDA_ARCH_LIST single-entry, SAGEATTN_SKIP_CUDA_BUILD). This matches test.sh F2P-3 expectations and the buggy-state fork README created by the synth script. setup.py and pyproject.toml diffs untouched (already complete from session)."
+  },
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "post-promote-backfill",
+    "date": "2026-05-15",
+    "note": "Hand-completion added missing SAGEATTN_SKIP_CUDA_BUILD env-vars block (content-fix promotion). Round-2 r2-ai AGREE on content (after numstat clean-up below).",
+    "supersedes_pre_promote": false
   }
 }

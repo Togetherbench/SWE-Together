@@ -53,5 +53,20 @@
       "test_alignment",
       "upstream_verified"
     ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-curated",
+    "date": "2026-05-15",
+    "check_performed": "Fetched gh api repos/obsessiondb/rudel/commits/15dd493e as unified diff; byte-compared.",
+    "evidence": "904 lines == 904 lines; 8 files == 8 files; exact byte match",
+    "note": "Exact byte match to upstream commit 15dd493e. Pre-existing _fidelity_verified:true reconfirmed."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ah",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Real canonical via upstream_commit_diff (15dd493e8), verified. 8 diff headers match files_changed_count=8; +330/-207 totals exact. 'directional' label conservative \u2014 only 2 edit_anchor_mismatches on ProjectTrendChart. New ChartTooltip.tsx marker A and other files M. Round1 APPROVED+triple_check confirmed."
   }
 }

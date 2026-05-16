@@ -34,5 +34,12 @@
     "verified": true,
     "note": "Auto-extractor routed extraction to comfyanonymous/ComfyUI (the base image's default upstream), but the Dockerfile re-points origin to Comfy-Org/ComfyUI_frontend. Upstream PR #9332 ('fix: respect always snap to grid when auto-scale layout from nodes 1.0 to 2.0') addresses the same issue but with a completely different implementation (uses LiteGraph.alwaysSnapToGrid + graph.getSnapToGridSize() and a coordinate-anchor rewrite), which would FAIL the task's tests (T1G2 requires settingStore.get('<SnapToGrid>'), T2 requires CANVAS_GRID_SIZE). The test gates were designed around the session's specific solution (final state of msg[43]: imports {LiteGraph, snapPoint}, reads 'pysssss.SnapToGrid' + 'Comfy.SnapToGrid.GridSize' || LiteGraph.CANVAS_GRID_SIZE, applies an applySnap helper). Replayed the session's last Edit on the file against the Dockerfile base, regenerated diff, verified `git apply` succeeds and the resulting file contains all test-required markers (snapPoint import + call, settingStore.get('Comfy.SnapToGrid.GridSize'), CANVAS_GRID_SIZE, applySnap helper, alwaysSnapToGrid guard).",
     "dated": "2026-05-15"
+  },
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "post-promote-backfill",
+    "date": "2026-05-15",
+    "note": "Promoted from stub via hand_curate_upstream (PR #9332 + session-derived). Round-2 r2-ac AGREE. Coherent single-file +69/-18; F2P gates align to canonical content.",
+    "supersedes_pre_promote": false
   }
 }

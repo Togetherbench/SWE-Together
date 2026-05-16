@@ -20,5 +20,12 @@
       "stub_schema",
       "category_reason_valid"
     ]
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ag",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Valid stub: _status=no_canonical, _category=unknown_no_canonical, _reason explains absence; no patch fields expected."
   }
 }

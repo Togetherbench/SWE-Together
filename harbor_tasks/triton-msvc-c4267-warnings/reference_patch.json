@@ -49,5 +49,22 @@
       "category_plausible",
       "no_source_canonical"
     ]
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ai",
+    "date": "2026-05-15",
+    "found_issues": [
+      "files_changed_schema_minor_deviation: lacks `M\\t` prefix and trailing newline relative to other canonicals; numstat field has correct format. Cosmetic.",
+      "no_current__review_block: only _review_pre_promote (stub-era) exists; promotion to real patch on 2026-05-15 left no fresh review."
+    ],
+    "note": "Promoted from stub to real diff 2026-05-15 (hand_curate_from_session). Single-file 2+/2- patch, header=1 matches files_changed_count=1. Static-cast<unsigned> narrowing changes align with test gates per _verification_note. Promotion is sound."
+  },
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "post-promote-backfill",
+    "date": "2026-05-15",
+    "note": "Promoted from stub via hand_curate_from_session (anchor mismatch was spurious; oldString matched base verbatim). Round-2 r2-ai AGREE.",
+    "supersedes_pre_promote": true
   }
 }

@@ -34,5 +34,12 @@
     "verified": true,
     "note": "Cross-checked against upstream commit 4993e6e3 on entireio/cli: canonical patch matches both upstream files (explain.go, explain_test.go) with identical +34 line addition footprint. Single warning is anchor-mismatch formatter noise. Patch within 5% of upstream.",
     "dated": "2026-05-14"
+  },
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "reason": "install_config_f2p_mismatch",
+    "note": "install_config.json F2P lists TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag but canonical only adds TestExplainSession_NotFound. Perfect canonical caps at 0.5. Bug is in install_config, not canonical.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit"
   }
 }

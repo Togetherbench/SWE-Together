@@ -27,5 +27,12 @@
     "source": "messages_replay against original_session.json",
     "fidelity": "exact",
     "verified": false
+  },
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "reason": "install_config_f2p_mismatch",
+    "note": "install_config.json F2P lists TestStateStore_Load_DeletesStaleSession but the canonical (and upstream commit) only defines _List_ variant. Perfect canonical caps at 3/4=0.75. Bug is in install_config, not canonical; flagged so consumers know score-ceiling.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit"
   }
 }

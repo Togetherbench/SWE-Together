@@ -38,5 +38,12 @@
     "dated": "2026-05-15"
   },
   "_canonical_source_path": "/tmp/hand-curate-B/triton-msvc-c4267-warnings.json",
-  "_sync_note": "Hand-curated candidate."
+  "_sync_note": "Hand-curated candidate.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "post-promote-backfill",
+    "date": "2026-05-15",
+    "note": "Promoted from stub via hand_curate_from_session (anchor mismatch was spurious; oldString matched base verbatim). Round-2 r2-ai AGREE.",
+    "supersedes_pre_promote": false
+  }
 }

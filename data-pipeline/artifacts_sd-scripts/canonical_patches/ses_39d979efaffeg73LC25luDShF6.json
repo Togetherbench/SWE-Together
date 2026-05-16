@@ -16,7 +16,7 @@
   "agent_percentage": null,
   "_source": "sd-scripts",
   "_reconstruction": "tool_replay",
-  "_fidelity": "exact",
+  "_fidelity": "high",
   "_reconstruction_warnings": [
     "op[37] apply_patch: update: hunk anchor not found in library/strategy_sd.py",
     "op[51] apply_patch: update: hunk anchor not found in library/config_util.py"
@@ -28,7 +28,11 @@
   "_extraction": {
     "method": "tool_replay",
     "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
-  }
+    "fidelity": "high",
+    "verified": false,
+    "note": " Round-2 r2-ai downgrade: 2 edit_anchor_mismatch warnings present; 'exact' label dishonest per the fidelity rubric. Patch content is correct."
+  },
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-15",
+  "_verification_note": "Round-2 r2-ai noted 'exact' overclaim; downgraded to 'high'. 2 anchor-mismatch warnings are formatter-noise on canonical files (config_util.py, strategy_sd.py) \u2014 patch content matches the dedup fix."
 }

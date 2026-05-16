@@ -35,5 +35,20 @@
   "_candidate_upstream_verified": true,
   "_candidate_date": "2026-05-15",
   "_canonical_source_path": "data-pipeline/artifacts_pi-mono/canonical_patches/4439324b-de70-4c14-964d-fc052dea9410.json",
-  "_sync_note": "Re-synced 2026-05-15 after design-call rescue: replaced session canonical (had 4 scratch root files) with upstream commit b21b42d0."
+  "_sync_note": "Re-synced 2026-05-15 after design-call rescue: replaced session canonical (had 4 scratch root files) with upstream commit b21b42d0.",
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-curated",
+    "date": "2026-05-15",
+    "check_performed": "Fetched gh api repos/badlogic/pi-mono/commits/b21b42d0 (_candidate_upstream_commit) as unified diff; compared per-line additions.",
+    "evidence": "Same 3 files; identical deletions; 1 multi-line vs single-line reformatting of `messages: [...]` array in test file (same array contents)",
+    "note": "Same logical change. strip_session_debris validated (4 scratch reproducer files correctly removed). Array formatting difference cosmetic only."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ah",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Real canonical via tool_replay/exact, cross-validated against upstream b21b42d0. 3 hunks match; +83/-3 line counts exact. _candidate_strategy stripped 4 scratch reproducer files explicitly. Round1 triple-check (AGREE) confirmed. No issues."
+  }
 }

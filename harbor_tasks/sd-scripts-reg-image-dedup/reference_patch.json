@@ -21,5 +21,22 @@
       "category_plausible",
       "no_source_canonical"
     ]
+  },
+  "_triple_check_round2": {
+    "status": "FLAG",
+    "reviewer": "round2-batch-ai",
+    "date": "2026-05-15",
+    "found_issues": [
+      "stub_reason_inaccurate: _reason=\"tool_replay produced empty diff (anchor mismatches)\" is misleading. Session actually has 3 well-formed Codex apply_patch ops with full patchText (paths: C:\\\\sd-scripts\\\\library\\\\train_util.py and library/train_util.py). True cause is Codex apply_patch format unsupported by extractor, not anchor failures. Stub is plausibly hand-curate-recoverable.",
+      "categorization_label_replay_no_diff_technically_correct: extractor did produce empty diff, so label fits. But it should be promoted to a real canonical via hand-curation rather than left as stub indefinitely."
+    ],
+    "note": "Stub schema OK; categorization label `replay_no_diff` accurate as outcome but reason text is wrong. Disagreement with reviewer note \"Codex patchText format with file_path absolute paths\" \u2014 only the FIRST of 3 patches has Windows absolute path; the other 2 use repo-relative paths and could be replayed with a Codex-aware extractor."
+  },
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "reason": "unrecoverable_codex_format",
+    "note": "Session has 3 Codex apply_patch ops with full patchText, but the extractor doesn't currently handle Codex's camelCase shape (filePath/oldString/newString). Recoverable in principle, but cost > value. Flagged unreliable for replay.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit"
   }
 }

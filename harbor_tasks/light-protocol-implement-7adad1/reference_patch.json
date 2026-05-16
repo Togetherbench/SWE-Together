@@ -47,5 +47,20 @@
   },
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-15",
-  "_verification_note": "Post-review verification (batch AF, 2026-05-15): 2 anchor mismatches on builder.rs and single_ata.rs \u2014 formatter-noise per MEMORY rule. F2P=3 rust tests align to canonical files."
+  "_verification_note": "Post-review verification (batch AF, 2026-05-15): 2 anchor mismatches on builder.rs and single_ata.rs \u2014 formatter-noise per MEMORY rule. F2P=3 rust tests align to canonical files.",
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set2",
+    "date": "2026-05-15",
+    "check_performed": "warnings formatter-noise",
+    "evidence": "2 anchor warnings: single_ata.rs is in files_changed (formatter-noise), builder.rs is NOT in files_changed (stripped). 0 file-not-found.",
+    "note": "Reviewer framing imprecise (builder.rs is dropped op not formatter), but overall directional fidelity sound. F2P targets canonical Rust test files."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-af",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "7 diff headers match files_changed_count=7; 2 new files have /dev/null source; numstat addition sum 109+28+2+1+53+10+189=392 matches total_additions=392, deletions sum 5+1+1=7 matches total_deletions=7. _fidelity:exact appropriate given builder.rs warning is for dropped-op (file not in canonical) and single_ata.rs anchor mismatch is formatter-noise on a canonical file."
+  }
 }

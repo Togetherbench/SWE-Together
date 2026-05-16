@@ -46,5 +46,12 @@
       "no_canonical_appropriate",
       "stub_schema"
     ]
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-aa",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Promoted from stub via hand_curated_upstream; combines upstream commit 8cc2971 (real fix, +54/-18) with Dockerfile-injected .exe/.msi addition into a single +57/-19 canonical for arr-monitor.py; counts match metadata; valid hunk headers; documented _verification_note explains why auto-extractor failed (local bare-repo origin in Dockerfile)."
   }
 }

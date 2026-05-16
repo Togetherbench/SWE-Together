@@ -59,5 +59,20 @@
       "test_alignment",
       "fidelity_verified_prior"
     ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set2",
+    "date": "2026-05-15",
+    "check_performed": "warnings formatter-noise",
+    "evidence": "12 anchor warnings: 8 on openai-responses.ts + 4 on openai-responses-reasoning-replay-e2e.test.ts \u2014 both in canonical files_changed. 0 file_not_found.",
+    "note": "All warnings target files INSIDE canonical. Classic large-test-file build with formatter passes reshaping anchors. _fidelity=directional appropriate."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ag",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Diff coherent: 3 hdrs/+168/-3 match; 12 warnings all formatter-anchor noise on openai-responses.ts (8) + reasoning-replay test (4), both inside canonical files_changed; directional fidelity honest."
   }
 }

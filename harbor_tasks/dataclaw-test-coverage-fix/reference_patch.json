@@ -20,5 +20,12 @@
       "stub_category_correct",
       "stub_reason_verified"
     ]
+  },
+  "_triple_check_round2": {
+    "status": "PASS_STUB",
+    "reviewer": "round2-batch-ad",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "valid stub: category=stripped_export verified; review aligns"
   }
 }

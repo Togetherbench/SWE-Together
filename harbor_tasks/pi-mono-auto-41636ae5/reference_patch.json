@@ -46,5 +46,20 @@
       "test_alignment",
       "curation_method_documented"
     ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-curated",
+    "date": "2026-05-15",
+    "check_performed": "Fetched gh api repos/earendil-works/pi/commits/287a0b60 as unified diff; byte-compared.",
+    "evidence": "103 lines == 103 lines; 3 files == 3 files; exact byte match",
+    "note": "Exact byte match to upstream commit 287a0b60. _curation_method=upstream_commit verified."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ag",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Diff coherent: 3 hdrs/+28/-21 match meta; exact, 0 warnings; new clipboard-native.ts file (1 A marker) matches test target."
   }
 }

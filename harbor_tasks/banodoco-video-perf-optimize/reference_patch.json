@@ -16,6 +16,17 @@
     "reviewer": "subagent-batch-aa",
     "date": "2026-05-14",
     "note": "Stub correctly classified as stripped_export: original_session.json messages have assistant content=None (NoneType) with no tool_use payloads; no diffable content survives.",
-    "checks_passed": ["no_canonical_appropriate", "stub_schema", "category_plausible"]
+    "checks_passed": [
+      "no_canonical_appropriate",
+      "stub_schema",
+      "category_plausible"
+    ]
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-aa",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Stub stripped_export confirmed: all tool_uses[*].input are bare strings (no diffable content); no Edit/Write payload survives extraction."
   }
 }

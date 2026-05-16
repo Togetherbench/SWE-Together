@@ -54,8 +54,28 @@
     "reviewer": "subagent-batch-aa",
     "date": "2026-05-14",
     "note": "Directional fidelity with _fidelity_verified=true (canonical is superset of upstream PR e2911fc5 due to CodeRabbit-driven extras); diff counts (5 files, +156/-19) match; install_config aligns test_files/source_files with patch.",
-    "checks_passed": ["schema", "diff_coherence", "fidelity_verified_directional", "test_sh_alignment_via_install_config"]
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "fidelity_verified_directional",
+      "test_sh_alignment_via_install_config"
+    ]
   },
   "_canonical_source_path": "data-pipeline/artifacts_amytis/canonical_patches/e3714eda-1ed1-4fab-b9ae-d59bb23a0966.json",
-  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit."
+  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set1",
+    "date": "2026-05-15",
+    "check_performed": "Cross-validated against upstream commit e2911fc5",
+    "evidence": "gh api repos/hutusi/amytis/commits/e2911fc5: 5 files / +101/-11. Canonical files_changed has same 5 files (page.tsx variants, urls.ts, static-params.test.ts). 15/15 warnings are anchor mismatches (formatter noise).",
+    "note": "Upstream and canonical share same 5-file footprint. Extra session-side helpers (resolveSeriesSlug etc.) are line-level supersets within the same files; behavioral F2P tests in static-params.test.ts are agnostic to helper names."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-aa",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Directional with 15 warnings; _fidelity_verified=true with note that canonical is superset of upstream PR e2911fc5 (CodeRabbit extras); counts match (5 files, +156/-19); hunks valid."
+  }
 }

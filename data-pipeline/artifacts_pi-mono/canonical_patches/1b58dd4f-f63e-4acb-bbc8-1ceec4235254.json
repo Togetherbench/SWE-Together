@@ -34,5 +34,12 @@
     "verified": true,
     "note": "Fidelity flagged 'directional' due to a single 'op[52] edit: old text not found' warning against packages/coding-agent/src/modes/rpc/rpc-mode.ts. Classic formatter-noise signature: single anchor mismatch across 5 mutating ops on 4 files (mut/file=1.2, warn/mut=0.20). No file-not-found or missing-file warnings. Base commit f86e3c3 resolves on earendil-works/pi (2026-01-26).",
     "dated": "2026-05-14"
+  },
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "reason": "test_sh_misdesigned",
+    "note": "Canonical matches upstream commit 5dbeadae exactly (4 files). test.sh checks for strings (_applyExtensionBindings, 'reload.*re-applies bindings') that have ZERO matches in entire pi-mono git history. Canonical is correct; verifier is misdesigned. See sibling .investigation.md.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit"
   }
 }

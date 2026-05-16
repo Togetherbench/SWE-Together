@@ -48,5 +48,20 @@
       "fidelity_honest",
       "upstream_verified"
     ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-curated",
+    "date": "2026-05-15",
+    "check_performed": "Fetched gh api repos/kohya-ss/sd-scripts/commits/14e6ed93 (PR #2269 commit 2) as unified diff; compared additions/deletions and file headers against canonical.",
+    "evidence": "Same 2 files; identical core +/- semantic content. Canonical 173 lines vs upstream 210 lines: difference is 3 trailing-whitespace-only delta lines in a docstring tuple plus a 'Returns:' line canonical omits via tighter hunk context.",
+    "note": "Same files, same semantic change (PR #2269 commit 2 'fallback to legacy key without resolution suffix'). Trivial whitespace-only delta in docstring context."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ai",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "High-fidelity upstream_commit reconstruction (14e6ed93). 2 files, +73/-23 matches body exactly. No warnings. Round-2 clean."
   }
 }
