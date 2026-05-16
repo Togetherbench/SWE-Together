@@ -26,16 +26,18 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**173 tasks** under `harbor_tasks/` (`v0.4.4.3` trunk), all derived from **real recorded coding sessions** across four sourcing waves. Current per-family breakdown (after curator drops + audit):
+**166 tasks** under `harbor_tasks/` (current trunk; 173 at the `togetherbench@0.4.4.3` release tag), all derived from **real recorded coding sessions** across four sourcing waves. Per-source breakdown:
 
-| family | count | source wave |
-|---|---|---|
-| cli-* | 45 | SWE-chat (Stanford `SALT-NLP/SWE-chat`) |
-| pi-mono-*, pi-excel-* | 29 | Pi-staging (`badlogic/pi-share-hf`) |
-| hyperswitch-* | 17 | Hyperswitch (`archit11/claude_traces_hs`) |
-| reigh-*, gemini-voyager-*, comfyui-*, rudel-*, marin-*, moltis-*, agent-swarm-*, amytis-*, dataclaw-*, etc. | 82 | DataClaw (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) + misc |
+| source wave | tasks | family prefixes in `harbor_tasks/` |
+|---|---:|---|
+| **SWE-chat** (Stanford `SALT-NLP/SWE-chat`) | **77** | `cli-*` (44), `gemini-voyager-*` (9), `rudel-*` (6), `agent-swarm-*` (3), `amytis-*` (3), `moltis-*` (3), `cc-backend-*` (2), `marin-*` (2), `no-magic-*` (2), `cluefin-*`, `light-protocol-*`, `lock-code-manager-*` |
+| **Pi-staging** (`badlogic/pi-share-hf`) | **27** | `pi-mono-*`, `pi-excel-*` |
+| **Hyperswitch** (`archit11/claude_traces_hs`) | **17** | `hyperswitch-*` |
+| **DataClaw + misc** (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) | **45** | `reigh-*` (9), `comfyui-*` (8), `sd-scripts-*` (5), `nunchaku-*` (3), `dataclaw-*` (3), `banodoco-*` (2), `sageattention-*` (2), `triton-*` (2), `unsloth-*` (2), `desloppify-*` (2), plus singletons |
 
-Original wave contributions before drops were larger (~255 candidate tasks); the current 173 reflect the post-curator (88 verifier-touches in v0.4.3.x) and post-DROP-9 (v0.4.3.2) suite.
+> **Naming convention — read this if a family looks misplaced.** SWE-chat task directories inherit the **upstream GitHub repo's name** as the family prefix (e.g., `rudel-*` ← `obsessiondb/rudel`, `gemini-voyager-*` ← `Nagi-ovo/gemini-voyager`, `moltis-*` ← `moltis-org/moltis`). They do *not* carry a `swechat-` prefix. The authoritative source check is session-id overlap with `data-pipeline/artifacts_swechat/step1_all_sessions.json` (760 records), not the task-name prefix.
+
+Original wave contributions before drops were larger (~255 candidate tasks); the current 166 reflect the post-curator (88 verifier-touches in v0.4.3.x), post-DROP-9 (v0.4.3.2), and post-v0.4.4.3 audit cleanup.
 
 No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two verifier families coexist:
 
@@ -294,7 +296,7 @@ trials/<task>__<id>/
                               (10-step inline prompt: screen → scaffold → tests → audit)
     ↓ build_swerebench_configs.py [optional]: migrate test.sh to install_config.json
                               + vendored SWE-rebench log parsers (68 tasks so far)
-173 Harbor benchmark tasks  (v0.4.4.3 trunk: post curator + DROP-9 + audit drops)
+166 Harbor benchmark tasks  (current trunk; 173 at v0.4.4.3 release; post curator + DROP-9 + audit drops)
     ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, concurrent E2B sandboxes;
                         per-provider concurrency caps: anthropic/deepseek=10, glm=2, mm=1)
     ↓ scripts/finalize_v044.sh (replay all captured patches against latest test.sh →
