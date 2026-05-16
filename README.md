@@ -26,16 +26,19 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**166 tasks** under `harbor_tasks/` (`togetherbench@0.4.5` trunk), all derived from **real recorded coding sessions** across four sourcing waves. Per-source breakdown:
+**166 tasks** under `harbor_tasks/` (`togetherbench@0.4.5` trunk), all derived from **real recorded coding sessions** across the four upstream sources defined in the paper (Table 2, §3.1):
 
-| source wave | tasks | family prefixes in `harbor_tasks/` |
-|---|---:|---|
-| **SWE-chat** (Stanford `SALT-NLP/SWE-chat`) | **77** | `cli-*` (44), `gemini-voyager-*` (9), `rudel-*` (6), `agent-swarm-*` (3), `amytis-*` (3), `moltis-*` (3), `cc-backend-*` (2), `marin-*` (2), `no-magic-*` (2), `cluefin-*`, `light-protocol-*`, `lock-code-manager-*` |
-| **Pi-staging** (`badlogic/pi-share-hf`) | **27** | `pi-mono-*`, `pi-excel-*` |
-| **Hyperswitch** (`archit11/claude_traces_hs`) | **17** | `hyperswitch-*` |
-| **DataClaw + misc** (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) | **45** | `reigh-*` (9), `comfyui-*` (8), `sd-scripts-*` (5), `nunchaku-*` (3), `dataclaw-*` (3), `banodoco-*` (2), `sageattention-*` (2), `triton-*` (2), `unsloth-*` (2), `desloppify-*` (2), plus singletons |
+| source | upstream HF dataset(s) | raw sessions | active tasks | top family prefixes in `harbor_tasks/` |
+|---|---|---:|---:|---|
+| **SWE-chat** | Stanford `SALT-NLP/SWE-chat` (single curated dataset) | 5,851 | **77** | `cli-*` (44, ← `entireio/cli`), `gemini-voyager-*` (9), `rudel-*` (6), `agent-swarm-*` (3), `amytis-*` (3), `moltis-*` (3), `cc-backend-*` (2), `marin-*` (2), `no-magic-*` (2), `cluefin-*`, `light-protocol-*`, `lock-code-manager-*` |
+| **DataClaw** | 32 community HF datasets tagged `dataclaw` (per-publisher exports of their own project sessions) | 2,228 | **45** | `reigh-*` (9), `comfyui-*` (8), `sd-scripts-*` (5), `nunchaku-*` (3), `dataclaw-*` (3), `banodoco-*` (2), `sageattention-*` (2), `triton-*` (2), `unsloth-*` (2), `desloppify-*` (2), plus singletons across ~15 more upstream repos |
+| **Pi-staging** | 29 HF datasets under `badlogic/pi-share-hf` | 2,397 | **27** | `pi-mono-*`, `pi-excel-*` |
+| **Hyperswitch** | `archit11/claude_traces_hs` (single research dataset on `juspay/hyperswitch`) | 784 | **17** | `hyperswitch-*` |
+| **Total** | | 11,260 | **166** | |
 
-> **Naming convention — read this if a family looks misplaced.** SWE-chat task directories inherit the **upstream GitHub repo's name** as the family prefix (e.g., `rudel-*` ← `obsessiondb/rudel`, `gemini-voyager-*` ← `Nagi-ovo/gemini-voyager`, `moltis-*` ← `moltis-org/moltis`). They do *not* carry a `swechat-` prefix. The authoritative source check is session-id overlap with `data-pipeline/artifacts_swechat/step1_all_sessions.json` (760 records), not the task-name prefix.
+> **Why DataClaw family prefixes look heterogeneous.** DataClaw is **not** a single curated corpus — it's an ecosystem of 32 independent HF datasets, each published by a different developer running [`peteromallet/dataclaw`](https://github.com/peteromallet/dataclaw) to export their own coding sessions. Each publisher's sessions tend to target their own project, so DataClaw naturally produces dozens of distinct upstream-repo family prefixes (reigh, comfyui, sd-scripts, banodoco, nunchaku, sageattention, triton, unsloth, etc.) rather than a single uniform name. All 45 are still bona-fide DataClaw-sourced — verified by per-task screening at `data-pipeline/artifacts_dataclaw/funnel.md` and corroborated by the paper's Table 2.
+>
+> **SWE-chat is the same story for different reasons.** SWE-chat task directories also inherit upstream-repo names (e.g., `rudel-*` ← `obsessiondb/rudel`, `gemini-voyager-*` ← `Nagi-ovo/gemini-voyager`, `moltis-*` ← `moltis-org/moltis`); they do **not** carry a `swechat-` prefix. Authoritative source check for SWE-chat: session-id overlap with `data-pipeline/artifacts_swechat/step1_all_sessions.json` (760 records).
 
 Original wave contributions before drops were larger (~255 candidate tasks); the current 166 reflect the post-curator (88 verifier-touches in v0.4.3.x), post-DROP-9 (v0.4.3.2), and post-v0.4.4.3 audit cleanup.
 
