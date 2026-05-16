@@ -47,7 +47,7 @@ No synthetic tasks. Each task has a Docker environment, a natural-language instr
 
 Note: 62 additional tasks have an `install_config.json` on disk from an earlier migration sweep but their active `test.sh` still routes through the manifest path — the `install_config.json` is informational, not load-bearing for those.
 
-The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
+The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. The headline metric is the **final reward** (0.0–1.0) returned by each trial's verifier after the simulator-driven loop completes; the per-(model, task) mean of that single number is what the leaderboard ranks on.
 
 ### Results — `togetherbench@0.4.5` (6 models, 6,166 trials across 13 cohort dirs)
 
