@@ -39,10 +39,13 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 Original wave contributions before drops were larger (~255 candidate tasks); the current 166 reflect the post-curator (88 verifier-touches in v0.4.3.x), post-DROP-9 (v0.4.3.2), and post-v0.4.4.3 audit cleanup.
 
-No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two verifier families coexist:
+No synthetic tasks. Each task has a Docker environment, a natural-language instruction (the real user's first message, verbatim), and a deterministic verifier. Two verifier families coexist (counts reflect which scoring path each task's `tests/test.sh` actually executes):
 
-- **Manifest F2P/P2P** (122 tasks): per-task `tests/test_manifest.yaml` with `F2P` and `P2P_REGRESSION`/`P2P` gates. The target scoring semantics are unweighted F2P coverage with bounded P2P penalty, computed centrally from `gates.json`; legacy weighted-replace and `P2P_GATING` verifiers are being migrated.
-- **SWE-rebench-style** (68 tasks): per-task `tests/install_config.json` declares `test_cmd` + `FAIL_TO_PASS` + `log_parser`. The verifier runs the test command, parses stdout with one of 76 log parsers vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2) (MIT), and scores by `FAIL_TO_PASS` pass rate. See `data-pipeline/scaffold/build_swerebench_configs.py`.
+- **Manifest F2P/P2P** (123 tasks): per-task `tests/test_manifest.yaml` with `F2P` and `P2P_REGRESSION`/`P2P` gates. The target scoring semantics are unweighted F2P coverage with bounded P2P penalty, computed centrally from `gates.json`; legacy weighted-replace and `P2P_GATING` verifiers are being migrated.
+- **SWE-rebench-style** (39 tasks): per-task `tests/install_config.json` declares `test_cmd` + `FAIL_TO_PASS` + `log_parser`. The verifier runs the test command, parses stdout with one of 76 log parsers vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2) (MIT), and scores by `FAIL_TO_PASS` pass rate. See `data-pipeline/scaffold/build_swerebench_configs.py`.
+- 4 remaining tasks use bespoke source-grep verifiers (no manifest, no `install_config.json`).
+
+Note: 62 additional tasks have an `install_config.json` on disk from an earlier migration sweep but their active `test.sh` still routes through the manifest path — the `install_config.json` is informational, not load-bearing for those.
 
 The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
 
@@ -286,7 +289,7 @@ trials/<task>__<id>/
   ├─ pi_staging harvest        2,397  (29 HF datasets, top: badlogicgames/pi-mono 627)
   ├─ new_dataclaw harvest      ~2,014 (16+ DataClaw publishers; top: woctordho, peteromallet, segin)
   └─ archit11/claude_traces_hs   ~784 (third-party HF research dataset on juspay/hyperswitch)
-    ↓ Step 1: rule-based filter (stars ≥20, ≥3 user msgs, public repo) — no LLM
+    ↓ Step 1: rule-based filter (stars ≥10 for SWE-chat, ≥20 for DataClaw; ≥3 user msgs; public repo) — no LLM
     ↓ Step 2: Gemini 3.1 Pro session viability judge (single stage)
     ↓ Step 4 [SWE-chat only]: extract canonical patch from commits.parquet
                               (single-commit checkpoints — 170/329 high-trust subset)
