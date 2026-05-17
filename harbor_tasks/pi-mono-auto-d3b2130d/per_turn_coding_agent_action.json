@@ -1,0 +1,476 @@
+{
+  "session_id": "d3b2130d-c36d-43b7-b3ed-692e8a7d611b",
+  "task_name": "pi-mono-auto-d3b2130d",
+  "turn_count": 8,
+  "total_tool_calls": 34,
+  "total_mutating_ops": 8,
+  "schema_version": "1.1",
+  "turns": [
+    {
+      "turn": 0,
+      "user_message": "can we search the npm registry for keywords specified in package.json of packages? i have a few packages published that have the keyword \"pi\" in them. can you try to search and tell me how that works and what packages come up?",
+      "user_message_chars": 226,
+      "msg_range": [
+        0,
+        4
+      ],
+      "agent_text": "Let me check the package.json files to see the keywords and then search the npm registry.\n\nNow let me check the keywords in your package.json files and search more specifically:\n\nHere's how npm registry search works and what packages come up:\n\n## How npm search works\n\nThe `npm search <term>` command searches the npm registry by:\n1. **Package name** (exact and partial matches)\n2. **Keywords** from the `keywords` array in package.json\n3. **Description** text\n\nYou can use `npm search --json` to get structured output.\n\n## Your @mariozechner packages found\n\nFrom the search, these pi-mono packages are published:\n\n| Package | Keywords |\n|---------|----------|\n| `@mariozechner/pi-ai` | ai, llm, openai, anthropic, gemini, bedrock, unified, api |\n| `@mariozechner/pi-agent-core` | ai, agent, llm, transport, state-management |\n| `@mariozechner/pi-coding-agent` | coding-agent, ai, llm, cli, tui, agent |\n| `@mariozechner/pi-mom` | slack, bot, ai, agent |\n| `@mariozechner/pi` | llm, vllm, gpu, ai, cli |\n| `@mariozechner/pi-tui` | tui, terminal, ui, text-editor, differential-rendering, typescript, cli |\n| `@mariozechner/pi-web-ui` | ai, chat, ui, components, llm, web-components, mini-lit |\n\nAlso found: `@mariozechner/clipboard` (and its platform-specific binaries), `@mariozechner/mini-lit`, `@mariozechner/jiti`, `@mariozechner/claude-trace`.\n\nInterestingly, searching for just \"pi\" returns mostly unrelated packages (math pi, Raspberry Pi GPIO libraries, etc.) because \"pi\" is a common term. The `@mariozechner` scope makes your packages more discoverable by searching the scope directly.\n\nThere's also `@justram/pie` which depends on `@mariozechner/pi-ai`.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "find packages -name \"package.json\" -maxdepth 2 | xargs grep -l \"keywords\" | head -5",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "npm search pi --json 2>/dev/null | head -100",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "for pkg in packages/*/package.json; do echo \"=== $pkg ===\"; jq -r '.name, .keywords' \"$pkg\" 2>/dev/null; done",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "npm search @mariozechner --json 2>/dev/null",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "find packages -name \"package.json\" -maxdepth 2 | xargs grep -l \"keywords\" | head -5",
+        "npm search pi --json 2>/dev/null | head -100",
+        "for pkg in packages/*/package.json; do echo \"=== $pkg ===\"; jq -r '.name, .keywords' \"$pkg\" 2>/dev/null; done",
+        "npm search @mariozechner --json 2>/dev/null"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 4,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 1,
+      "user_message": "so we can't search just by keywords?",
+      "user_message_chars": 36,
+      "msg_range": [
+        4,
+        7
+      ],
+      "agent_text": "You're right, `npm search` doesn't have a keywords-only filter. It searches across name, description, and keywords together.\n\nThere's no official npm CLI flag like `--keywords-only`. However, you can use the npm registry API directly:\n\nYes! You can search by keywords using the registry API directly:\n\n```bash\ncurl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:<keyword>\"\n```\n\nThe syntax is `keywords:<keyword>` in the search text. You can also combine multiple:\n- `keywords:ai+keywords:cli` (AND)\n- `keywords:ai,cli` (either keyword)\n\nFor example, searching `keywords:coding-agent` returns 109 packages, including:\n- `@mariozechner/pi-coding-agent`\n- `@mariozechner/coding-agent` (older name?)\n- Various forks: `@oh-my-pi/pi-coding-agent`, `@cargo-cult/pi-coding-agent`, `@vaclav-synacek/pi-coding-agent-termux`\n- Several pi extensions: `pi-mcp-adapter`, `pi-powerline-footer`, `pi-package-test`\n\nThe npm CLI doesn't expose this directly, but you could wrap it in a simple script if you use it often.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:coding-agent\" | jq '.objects[].package | {name, keywords}'",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:coding-agent\" | jq '.objects[].package | {name, keywords}'"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 1,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 2,
+      "user_message": "ok, i think we should ensure that we have a unique keyword we can search for, how about pi-package?",
+      "user_message_chars": 99,
+      "msg_range": [
+        7,
+        10
+      ],
+      "agent_text": "Good idea. Let me check what's currently using that keyword and then update your packages:\n\n`pi-package` is available, nobody's using it. Should I add it to the keywords array in all your package.json files?\n\n- packages/agent/package.json\n- packages/ai/package.json\n- packages/coding-agent/package.json\n- packages/mom/package.json\n- packages/pods/package.json\n- packages/tui/package.json\n- packages/web-ui/package.json",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package | {name, keywords}'",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package | {name, keywords}'"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 1,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 3,
+      "user_message": "no, add it to ../pi-doom/ ../pi-package-test/ and ../pi-gitlab-duo/",
+      "user_message_chars": 67,
+      "msg_range": [
+        10,
+        13
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "cat ../pi-doom/package.json ../pi-package-test/package.json ../pi-gitlab-duo/package.json 2>/dev/null | jq -s '.[].keywords'",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "../pi-doom/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "../pi-package-test/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "../pi-gitlab-duo/package.json",
+          "detail": ""
+        }
+      ],
+      "files_read": [
+        "../pi-doom/package.json",
+        "../pi-package-test/package.json",
+        "../pi-gitlab-duo/package.json"
+      ],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "cat ../pi-doom/package.json ../pi-package-test/package.json ../pi-gitlab-duo/package.json 2>/dev/null | jq -s '.[].keywords'"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 4,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 4,
+      "user_message": "then publish new versions of these",
+      "user_message_chars": 34,
+      "msg_range": [
+        13,
+        19
+      ],
+      "agent_text": "Now let me bump versions and publish:\n\nDone. Published:\n- `pi-doom@0.1.1`\n- `pi-package-test@0.1.6`\n- `pi-gitlab-duo@0.1.4`\n\nAll three now have the `pi-package` keyword. You can verify with:\n\n```bash\ncurl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package.name'\n```\n\n(It may take a few minutes for the npm registry to index the new versions.)",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "../pi-package-test/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "../pi-gitlab-duo/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "../pi-doom/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "../pi-package-test/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "../pi-gitlab-duo/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "../pi-doom/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "../pi-package-test/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "../pi-gitlab-duo/package.json",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "cd ../pi-doom && npm publish --access public 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "cd ../pi-package-test && npm publish --access public 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "cd ../pi-gitlab-duo && npm publish --access public 2>&1",
+          "detail": ""
+        }
+      ],
+      "files_read": [
+        "../pi-package-test/package.json",
+        "../pi-gitlab-duo/package.json"
+      ],
+      "files_edited": [
+        "../pi-doom/package.json",
+        "../pi-package-test/package.json",
+        "../pi-gitlab-duo/package.json"
+      ],
+      "files_written": [],
+      "bash_commands": [
+        "cd ../pi-doom && npm publish --access public 2>&1",
+        "cd ../pi-package-test && npm publish --access public 2>&1",
+        "cd ../pi-gitlab-duo && npm publish --access public 2>&1"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 11,
+      "n_mutating_ops": 6,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": [
+        "op[2] edit: file not found: ../pi-doom/package.json",
+        "op[3] edit: file not found: ../pi-package-test/package.json",
+        "op[4] edit: file not found: ../pi-gitlab-duo/package.json",
+        "op[5] edit: file not found: ../pi-doom/package.json",
+        "op[6] edit: file not found: ../pi-package-test/package.json",
+        "op[7] edit: file not found: ../pi-gitlab-duo/package.json"
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "ok, we should document this keyword in @packages/coding-agent/docs/extensions.md @packages/coding-agent/README.md and any other .md file that talks about pi packages.",
+      "user_message_chars": 166,
+      "msg_range": [
+        19,
+        28
+      ],
+      "agent_text": "Let me find all relevant documentation files:\n\nLet me check if there are other relevant docs:\n\nNow I'll add the `pi-package` keyword documentation to both files. The best places are:\n\n1. In `extensions.md` - in the \"Bundling other pi packages\" section\n2. In `README.md` - in the \"Extensions\" section under Customization\n\nNow I have the full picture. Let me add the `pi-package` keyword documentation:\n\nNow let me run the check to make sure everything is good:\n\nAll checks pass. Here's a summary of the changes:\n\n**Updated files:**\n1. `packages/coding-agent/docs/extensions.md` - Added a \"Discoverability\" note in the \"Bundling other pi packages\" section explaining the `pi-package` keyword and how to search for packages\n2. `packages/coding-agent/README.md` - Added a \"Discoverability\" section in the Extensions area with the npm search command\n\n**Published packages with `pi-package` keyword:**\n- `pi-doom@0.1.1`\n- `pi-package-test@0.1.6`\n- `pi-gitlab-duo@0.1.4`",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "rg -l \"pi package|npm.*publish|package\\.json.*pi|pi\\.extensions|pi\\.skills|pi\\.themes\" packages/coding-agent --type md",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "packages/coding-agent/docs/extensions.md",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "packages/coding-agent/README.md",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "rg -l \"package\\.json|pi\\.extensions|pi\\.skills|npm.*publish|pi install|pi list\" packages/coding-agent/docs --type md",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "read",
+          "target": "packages/coding-agent/docs/extensions.md",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "packages/coding-agent/docs/extensions.md",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "edit",
+          "target": "packages/coding-agent/README.md",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "cd packages/coding-agent && npm run check 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "npm run check 2>&1",
+          "detail": ""
+        }
+      ],
+      "files_read": [
+        "packages/coding-agent/docs/extensions.md",
+        "packages/coding-agent/README.md"
+      ],
+      "files_edited": [
+        "packages/coding-agent/docs/extensions.md",
+        "packages/coding-agent/README.md"
+      ],
+      "files_written": [],
+      "bash_commands": [
+        "rg -l \"pi package|npm.*publish|package\\.json.*pi|pi\\.extensions|pi\\.skills|pi\\.themes\" packages/coding-agent --type md",
+        "rg -l \"package\\.json|pi\\.extensions|pi\\.skills|npm.*publish|pi install|pi list\" packages/coding-agent/docs --type md",
+        "cd packages/coding-agent && npm run check 2>&1",
+        "npm run check 2>&1"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 9,
+      "n_mutating_ops": 2,
+      "completion_signaled": true,
+      "cumulative_patch": "diff --git a/packages/coding-agent/README.md b/packages/coding-agent/README.md\nindex 5a13d28..b869dc2 100644\n--- a/packages/coding-agent/README.md\n+++ b/packages/coding-agent/README.md\n@@ -1010,6 +1010,12 @@ pi update  # update all non-pinned packages\n \n Use `-l` to install into project settings (`.pi/settings.json`).\n \n+**Discoverability:** Published pi packages should include the `pi-package` keyword in their `package.json` for npm search:\n+\n+```bash\n+curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package.name'\n+```\n+\n **Package filtering:** By default, packages load all resources (extensions, skills, prompts, themes). To selectively load only certain resources, use the object form in settings.json:\n \n ```json\ndiff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md\nindex 098004f..82ed5d6 100644\n--- a/packages/coding-agent/docs/extensions.md\n+++ b/packages/coding-agent/docs/extensions.md\n@@ -242,6 +242,18 @@ To include resources from another pi package, add it as a dependency with `bundl\n \n `bundledDependencies` embeds the package inside your tarball, preserving the `node_modules/` structure. Without it, npm's hoisting could move the dependency elsewhere, breaking the paths.\n \n+**Discoverability:** Add the `pi-package` keyword to your `package.json` so users can find your package on npm:\n+\n+```json\n+{\n+  \"name\": \"my-extension-pack\",\n+  \"keywords\": [\"pi-package\", \"pi-extension\", \"...\"],\n+  ...\n+}\n+```\n+\n+Search for pi packages: `curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\"`\n+\n The `package.json` approach enables:\n - Multiple extensions from one package\n - Skills, prompts, and themes declared alongside extensions\n",
+      "cumulative_files_changed_count": 2,
+      "cumulative_additions": 18,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 6,
+      "user_message": "search",
+      "user_message_chars": 6,
+      "msg_range": [
+        28,
+        32
+      ],
+      "agent_text": "No results yet. The npm registry takes a few minutes to index new package versions. Let me check if the packages themselves have the keyword:\n\nThe keyword is there. The search index just needs time to update (usually 5-15 minutes).",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package.name'",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "curl -s \"https://registry.npmjs.org/pi-doom/0.1.1\" | jq '.keywords'",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package.name'",
+        "curl -s \"https://registry.npmjs.org/pi-doom/0.1.1\" | jq '.keywords'"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 2,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/packages/coding-agent/README.md b/packages/coding-agent/README.md\nindex 5a13d28..b869dc2 100644\n--- a/packages/coding-agent/README.md\n+++ b/packages/coding-agent/README.md\n@@ -1010,6 +1010,12 @@ pi update  # update all non-pinned packages\n \n Use `-l` to install into project settings (`.pi/settings.json`).\n \n+**Discoverability:** Published pi packages should include the `pi-package` keyword in their `package.json` for npm search:\n+\n+```bash\n+curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package.name'\n+```\n+\n **Package filtering:** By default, packages load all resources (extensions, skills, prompts, themes). To selectively load only certain resources, use the object form in settings.json:\n \n ```json\ndiff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md\nindex 098004f..82ed5d6 100644\n--- a/packages/coding-agent/docs/extensions.md\n+++ b/packages/coding-agent/docs/extensions.md\n@@ -242,6 +242,18 @@ To include resources from another pi package, add it as a dependency with `bundl\n \n `bundledDependencies` embeds the package inside your tarball, preserving the `node_modules/` structure. Without it, npm's hoisting could move the dependency elsewhere, breaking the paths.\n \n+**Discoverability:** Add the `pi-package` keyword to your `package.json` so users can find your package on npm:\n+\n+```json\n+{\n+  \"name\": \"my-extension-pack\",\n+  \"keywords\": [\"pi-package\", \"pi-extension\", \"...\"],\n+  ...\n+}\n+```\n+\n+Search for pi packages: `curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\"`\n+\n The `package.json` approach enables:\n - Multiple extensions from one package\n - Skills, prompts, and themes declared alongside extensions\n",
+      "cumulative_files_changed_count": 2,
+      "cumulative_additions": 18,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 7,
+      "user_message": "ok commit an dpush the changes in the working dir",
+      "user_message_chars": 49,
+      "msg_range": [
+        32,
+        36
+      ],
+      "agent_text": "Done. Committed and pushed the documentation changes for the `pi-package` keyword.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "git status",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "bash",
+          "target": "git add packages/coding-agent/README.md packages/coding-agent/docs/extensions.md && git commit -m \"docs(coding-agent): document pi-package keyword for npm discoverability\" && git push",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "git status",
+        "git add packages/coding-agent/README.md packages/coding-agent/docs/extensions.md && git commit -m \"docs(coding-agent): document pi-package keyword for npm discoverability\" && git push"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 2,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/packages/coding-agent/README.md b/packages/coding-agent/README.md\nindex 5a13d28..b869dc2 100644\n--- a/packages/coding-agent/README.md\n+++ b/packages/coding-agent/README.md\n@@ -1010,6 +1010,12 @@ pi update  # update all non-pinned packages\n \n Use `-l` to install into project settings (`.pi/settings.json`).\n \n+**Discoverability:** Published pi packages should include the `pi-package` keyword in their `package.json` for npm search:\n+\n+```bash\n+curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\" | jq '.objects[].package.name'\n+```\n+\n **Package filtering:** By default, packages load all resources (extensions, skills, prompts, themes). To selectively load only certain resources, use the object form in settings.json:\n \n ```json\ndiff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md\nindex 098004f..82ed5d6 100644\n--- a/packages/coding-agent/docs/extensions.md\n+++ b/packages/coding-agent/docs/extensions.md\n@@ -242,6 +242,18 @@ To include resources from another pi package, add it as a dependency with `bundl\n \n `bundledDependencies` embeds the package inside your tarball, preserving the `node_modules/` structure. Without it, npm's hoisting could move the dependency elsewhere, breaking the paths.\n \n+**Discoverability:** Add the `pi-package` keyword to your `package.json` so users can find your package on npm:\n+\n+```json\n+{\n+  \"name\": \"my-extension-pack\",\n+  \"keywords\": [\"pi-package\", \"pi-extension\", \"...\"],\n+  ...\n+}\n+```\n+\n+Search for pi packages: `curl -s \"https://registry.npmjs.org/-/v1/search?text=keywords:pi-package\"`\n+\n The `package.json` approach enables:\n - Multiple extensions from one package\n - Skills, prompts, and themes declared alongside extensions\n",
+      "cumulative_files_changed_count": 2,
+      "cumulative_additions": 18,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    }
+  ],
+  "repo_url": "https://github.com/badlogic/pi-mono",
+  "base_commit": "353ac792ebb99931c640ee55af90881d3a45c4d9",
+  "replay_status": "ok",
+  "total_replay_warnings": 6
+}

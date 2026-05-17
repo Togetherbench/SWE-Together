@@ -1,0 +1,606 @@
+{
+  "session_id": "5a69ca08-eee5-4626-ac94-c23483e262cb",
+  "task_name": "cli-task-5a69ca",
+  "turn_count": 8,
+  "total_tool_calls": 55,
+  "total_mutating_ops": 13,
+  "schema_version": "1.1",
+  "turns": [
+    {
+      "turn": 0,
+      "user_message": "Implement the following plan:\n\n# Fix: Empty repo \"reference not found\" error (#242)\n\n## Context\n\nIn a freshly `git init`'d repo with no commits, `repo.Head()` returns `plumbing.ErrReferenceNotFound`. Both strategies fail during session initialization, producing a cryptic error: `\"failed to save changes: failed to initialize session: failed to get HEAD: reference not found\"`. The fix: detect the empty-repo case early, provide clear messaging, and degrade gracefully.\n\n## Changes\n\n### 1. Add `ErrEmptyRepository` sentinel error\n\n**File:** `cmd/entire/cli/strategy/strategy.go` (after line 27)\n\nAdd alongside existing sentinel errors:\n```go\nvar ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n```\n\n### 2. Add `IsEmptyRepository` helper\n\n**File:** `cmd/entire/cli/strategy/common.go`\n\n```go\nfunc IsEmptyRepository(repo *git.Repository) bool {\n    _, err := repo.Head()\n    return errors.Is(err, plumbing.ErrReferenceNotFound)\n}\n```\n\n### 3. Fix manual-commit `initializeSession`\n\n**File:** `cmd/entire/cli/strategy/manual_commit_session.go:195-198`\n\nReplace generic error with empty-repo detection:\n```go\nhead, err := repo.Head()\nif err != nil {\n    if errors.Is(err, plumbing.ErrReferenceNotFound) {\n        return nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n    }\n    return nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n}\n```\n\n### 4. Fix auto-commit `InitializeSession`\n\n**File:** `cmd/entire/cli/strategy/auto_commit.go:908-911`\n\nSame pattern:\n```go\nhead, err := repo.Head()\nif err != nil {\n    if errors.Is(err, plumbing.ErrReferenceNotFound) {\n        return fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n    }\n    return fmt.Errorf(\"failed to get HEAD: %w\", err)\n}\n```\n\n### 5. Improve hook handler messaging\n\n**File:** `cmd/entire/cli/hooks_claudecode_handlers.go:82-84`\n\nDetect `ErrEmptyRepository` and print a friendlier note instead of the generic warning:\n```go\nif err := initializer.InitializeSession(...); err != nil {\n    if errors.Is(err, strategy.ErrEmptyRepository) {\n        fmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n    } else {\n        fmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n    }\n}\n```\n\nAdd `\"errors\"` to imports (strategy is already imported).\n\n### 6. Add warning in `entire enable`\n\n**File:** `cmd/entire/cli/setup.go` — in `RunE` (after git repo check at line 74)\n\nAdd a lightweight check right after the existing `paths.RepoRoot()` validation:\n```go\n// Warn if repo has no commits yet\nif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n    fmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n    fmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n    fmt.Fprintln(cmd.OutOrStdout())\n}\n```\n\nAdd `\"github.com/entireio/cli/cmd/entire/cli/strategy\"` to imports.\n\n### 7. Unit tests\n\n**File:** `cmd/entire/cli/strategy/manual_commit_test.go` — new test function\n\nTest that `initializeSession` returns `ErrEmptyRepository` on an empty repo. Uses `t.TempDir()`, `git.PlainInit()`, and `t.Chdir()` (no `t.Parallel()` since `t.Chdir` is process-global).\n\n**File:** `cmd/entire/cli/strategy/auto_commit_test.go` — new test function\n\nSame pattern for auto-commit's `InitializeSession`.\n\n**File:** `cmd/entire/cli/strategy/common_test.go` — new test function\n\nTest `IsEmptyRepository` returns true for empty repo, false for repo with commits.\n\n## Files touched\n\n| File | Change |\n|------|--------|\n| `strategy/strategy.go` | Add `ErrEmptyRepository` sentinel |\n| `strategy/common.go` | Add `IsEmptyRepository()` helper |\n| `strategy/manual_commit_session.go` | Detect empty repo in `initializeSession` |\n| `strategy/auto_commit.go` | Detect empty repo in `InitializeSession` |\n| `hooks_claudecode_handlers.go` | Friendly message for empty repo |\n| `setup.go` | Warning during `entire enable` |\n| `strategy/manual_commit_test.go` | Unit test |\n| `strategy/auto_commit_test.go` | Unit test |\n| `strategy/common_test.go` | Unit test |\n\n## What this does NOT change\n\n- No attempt to fully support empty repos (too many downstream HEAD dependencies)\n- No changes to `SaveChanges` or `SaveTaskCheckpoint` — the improved error from `initializeSession` flows through naturally\n- No changes to other `repo.Head()` callers — they're only reachable with an initialized session, which can't happen in an empty repo\n\n## Verification\n\n```bash\nmise run fmt && mise run lint && mise run test:ci\n```\n\nManual test:\n1. `mkdir /tmp/test-empty && cd /tmp/test-empty && git init`\n2. `entire enable` — should succeed with warning about no commits\n3. Start a Claude Code session — should see \"Note: Session checkpoints disabled\" instead of the cryptic error\n4. `git commit --allow-empty -m \"Initial commit\"` — subsequent sessions should work normally\n\n\nIf you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/robin/.REDACTED.jsonl",
+      "user_message_chars": 5214,
+      "msg_range": [
+        0,
+        95
+      ],
+      "agent_text": "I'll start by reading the files I need to modify in parallel.\n\nNow let me look at the existing test files to understand patterns.\n\nI have all the context I need. Let me implement the changes now. I'll make all the independent edits in parallel.\n\nNow I need to add the `errors` and `plumbing` imports to manual_commit_session.go.\n\nNow fix auto_commit.go:\n\nNow fix the hook handler in hooks_claudecode_handlers.go:\n\nNow I need to add `\"errors\"` to the imports in hooks_claudecode_handlers.go. Let me check the current imports:\n\nNow add the warning in `setup.go`. I need to add it after the `paths.RepoRoot()` check (line 71-74):\n\nNow let me add the unit tests. First, the `IsEmptyRepository` test in common_test.go:\n\nLet me find the end of common_test.go to append the test:\n\nNow add the manual-commit test. Let me find a good place to add it in manual_commit_test.go:\n\nNow add the auto-commit test:\n\nI need to add `\"errors\"` to the imports and add the test:\n\nNow I also need to add `\"errors\"` to manual_commit_test.go imports. Let me check:\n\nGood - `errors` and `agent` are already imported in manual_commit_test.go. Now let me run the formatting, linting, and tests:\n\nLint passes. Now run the specific tests:\n\nAll 3 new tests pass. Now let me run the full test suite:\n\nAll tests pass, including integration tests. Here's a summary of all changes made:\n\n## Changes\n\n### 1. `strategy/strategy.go` — Added `ErrEmptyRepository` sentinel error\nNew sentinel alongside existing errors, used by both strategies.\n\n### 2. `strategy/common.go` — Added `IsEmptyRepository()` helper\nChecks if `repo.Head()` returns `plumbing.ErrReferenceNotFound`, which indicates no commits exist.\n\n### 3. `strategy/manual_commit_session.go` — Detect empty repo in `initializeSession`\nBefore the generic \"failed to get HEAD\" error, checks for the reference-not-found case and wraps `ErrEmptyRepository` with an actionable message. Added `\"errors\"` import.\n\n### 4. `strategy/auto_commit.go` — Detect empty repo in `InitializeSession`\nSame pattern as manual-commit.\n\n### 5. `hooks_claudecode_handlers.go` — Friendly message for empty repo\nWhen `InitializeSession` returns `ErrEmptyRepository`, prints a user-friendly note instead of the generic warning. Added `\"errors\"` import.\n\n### 6. `setup.go` — Warning during `entire enable`\nAfter the git repo check, detects empty repos and prints a note that checkpoints won't work until the first commit.\n\n### 7. Tests\n- **`common_test.go`** — `TestIsEmptyRepository`: verifies true for empty repo, false for repo with commits\n- **`manual_commit_test.go`** — `TestManualCommit_InitializeSession_EmptyRepo`: verifies `ErrEmptyRepository` is returned\n- **`auto_commit_test.go`** — `TestAutoCommit_InitializeSession_EmptyRepo`: verifies `ErrEmptyRepository` is returned",
+      "agent_thinking_chars": 1493,
+      "ops": [
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/strategy.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/hooks_claudecode_handlers.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/setup.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/strategy.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/hooks_claudecode_handlers.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/hooks_claudecode_handlers.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/hooks_claudecode_handlers.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/setup.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "wc -l /Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "wc -l /Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "wc -l /Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run fmt",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise trust && mise run fmt",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run lint 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "test",
+          "tool": "Bash",
+          "target": "go test ./cmd/entire/cli/strategy/ -run \"TestIsEmptyRepository|TestManualCommit_InitializeSession_EmptyRepo|TestAutoCommit_InitializeSession_EmptyRepo\" -v 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run test:ci 2>&1",
+          "detail": ""
+        }
+      ],
+      "files_read": [
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/strategy.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/hooks_claudecode_handlers.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/setup.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go"
+      ],
+      "files_edited": [
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/strategy.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/hooks_claudecode_handlers.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/setup.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+        "/Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go"
+      ],
+      "files_written": [],
+      "bash_commands": [
+        "wc -l /Users/robin/Developer/cli/cmd/entire/cli/strategy/common_test.go",
+        "wc -l /Users/robin/Developer/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+        "wc -l /Users/robin/Developer/cli/cmd/entire/cli/strategy/auto_commit_test.go",
+        "mise run fmt",
+        "mise trust && mise run fmt",
+        "mise run lint 2>&1",
+        "mise run test:ci 2>&1"
+      ],
+      "test_invocations": [
+        "go test ./cmd/entire/cli/strategy/ -run \"TestIsEmptyRepository|TestManualCommit_InitializeSession_EmptyRepo|TestAutoCommit_InitializeSession_EmptyRepo\" -v 2>&1"
+      ],
+      "n_tool_calls": 36,
+      "n_mutating_ops": 12,
+      "completion_signaled": true,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 1,
+      "user_message": "commit this on a feature branch. use prefix 'rwr/' for the branch name",
+      "user_message_chars": 70,
+      "msg_range": [
+        95,
+        111
+      ],
+      "agent_text": "Committed on `rwr/fix-empty-repo-reference-not-found` with a clean working tree. The commit includes all 9 files (6 implementation + 3 test files) with 120 additions.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git status",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git diff",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git log --oneline -5",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git checkout -b rwr/fix-empty-repo-reference-not-found",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git add cmd/entire/cli/strategy/strategy.go cmd/entire/cli/strategy/common.go cmd/entire/cli/strategy/manual_commit_session.go cmd/entire/cli/strategy/auto_commit.go cmd/entire/cli/hooks_claudecode_ha",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git commit -m \"$(cat <<'EOF'\nFix empty repo \"reference not found\" error (#242)\n\nDetect empty repositories (no commits) early and provide clear messaging\ninstead of the cryptic \"failed to get HEAD: ref",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git status",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "git status",
+        "git diff",
+        "git log --oneline -5",
+        "git checkout -b rwr/fix-empty-repo-reference-not-found",
+        "git add cmd/entire/cli/strategy/strategy.go cmd/entire/cli/strategy/common.go cmd/entire/cli/strategy/manual_commit_session.go cmd/entire/cli/strategy/auto_commit.go cmd/entire/cli/hooks_claudecode_ha",
+        "git commit -m \"$(cat <<'EOF'\nFix empty repo \"reference not found\" error (#242)\n\nDetect empty repositories (no commits) early and provide clear messaging\ninstead of the cryptic \"failed to get HEAD: ref",
+        "git status"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 7,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 2,
+      "user_message": "in setup.go we now call strategy.OpenRepository(). do we need to close the repositiory again?",
+      "user_message_chars": 93,
+      "msg_range": [
+        111,
+        115
+      ],
+      "agent_text": "No. go-git's `git.PlainOpenWithOptions()` returns a `*git.Repository` that has no `Close()` method — it's not a resource that needs cleanup. It just wraps access to the `.git` directory on disk. So the current code is fine.",
+      "agent_thinking_chars": 197,
+      "ops": [],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 0,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 3,
+      "user_message": "rather than modifying intiializesession for manual_commit_session.go and auto_commit.go, could we call 'IsEmptyRepository' inside common.go:OpenRepository()?",
+      "user_message_chars": 157,
+      "msg_range": [
+        115,
+        119
+      ],
+      "agent_text": "That would be risky. `OpenRepository()` is called broadly across the codebase — `ValidateRepository`, `EnsureSetup`, `ListCheckpoints`, `checkCanRewind`, `GetMetadataBranchTree`, etc. Most of those callers don't need HEAD and work fine on empty repos. Returning an error from `OpenRepository()` for empty repos would break them.\n\nFor example, `entire enable` itself calls `strategy.OpenRepository()` (both in our new warning check and later via `strat.EnsureSetup()`). If `OpenRepository` rejected empty repos, `entire enable` would fail instead of just warning.\n\nThe current approach keeps the check scoped to the two places that actually need HEAD — session initialization — which is where the original bug manifests.",
+      "agent_thinking_chars": 1063,
+      "ops": [],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 0,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 4,
+      "user_message": "make a PR for this",
+      "user_message_chars": 18,
+      "msg_range": [
+        119,
+        131
+      ],
+      "agent_text": "PR created: https://github.com/entireio/cli/pull/255",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git status",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git log --oneline main..HEAD",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git diff main...HEAD --stat",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git push -u origin rwr/fix-empty-repo-reference-not-found",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "gh pr create --title \"Fix empty repo \\\"reference not found\\\" error\" --body \"$(cat <<'EOF'\n## Summary\n- Detect empty repositories (no commits) early and provide clear user-facing messages instead of th",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "git status",
+        "git log --oneline main..HEAD",
+        "git diff main...HEAD --stat",
+        "git push -u origin rwr/fix-empty-repo-reference-not-found",
+        "gh pr create --title \"Fix empty repo \\\"reference not found\\\" error\" --body \"$(cat <<'EOF'\n## Summary\n- Detect empty repositories (no commits) early and provide clear user-facing messages instead of th"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 5,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 5,
+      "user_message": "create and empty commit so we capture this conversation with entire",
+      "user_message_chars": 67,
+      "msg_range": [
+        131,
+        135
+      ],
+      "agent_text": "Done. Empty commit created to capture this conversation.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git commit --allow-empty -m \"Record conversation for empty repo fix (#242)\"",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "git commit --allow-empty -m \"Record conversation for empty repo fix (#242)\""
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 1,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 6,
+      "user_message": "push this to the branch",
+      "user_message_chars": 23,
+      "msg_range": [
+        135,
+        139
+      ],
+      "agent_text": "Pushed.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git push",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "git push"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 1,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 9,
+      "cumulative_additions": 120,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 7,
+      "user_message": "can you check hooks_geminicli_handers.go. perhaps this needs a change too",
+      "user_message_chars": 73,
+      "msg_range": [
+        139,
+        153
+      ],
+      "agent_text": "Yes, same pattern at line 441-445 in `handleGeminiBeforeAgent`:\n\n```go\nif err := initializer.InitializeSession(input.SessionID, agentType, input.SessionRef, input.UserPrompt); err != nil {\n    fmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n}\n```\n\nThis needs the same `ErrEmptyRepository` check. It already imports `\"errors\"` and `\"strategy\"`.\n\nClean. Let me amend the commit and push:\n\nGood catch. `hooks_geminicli_handlers.go` had the identical pattern in `handleGeminiBeforeAgent` (line 441-445). Fixed and pushed.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/hooks_geminicli_handlers.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/robin/Developer/cli/cmd/entire/cli/hooks_geminicli_handlers.go",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run fmt && mise run lint 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git add cmd/entire/cli/hooks_geminicli_handlers.go && git commit -m \"$(cat <<'EOF'\nApply same empty-repo check to Gemini CLI hook handler\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n)",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git push",
+          "detail": ""
+        }
+      ],
+      "files_read": [
+        "/Users/robin/Developer/cli/cmd/entire/cli/hooks_geminicli_handlers.go"
+      ],
+      "files_edited": [
+        "/Users/robin/Developer/cli/cmd/entire/cli/hooks_geminicli_handlers.go"
+      ],
+      "files_written": [],
+      "bash_commands": [
+        "mise run fmt && mise run lint 2>&1",
+        "git add cmd/entire/cli/hooks_geminicli_handlers.go && git commit -m \"$(cat <<'EOF'\nApply same empty-repo check to Gemini CLI hook handler\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n)",
+        "git push"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 5,
+      "n_mutating_ops": 1,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/hooks_claudecode_handlers.go b/cmd/entire/cli/hooks_claudecode_handlers.go\nindex 8189eb1..206d4e5 100644\n--- a/cmd/entire/cli/hooks_claudecode_handlers.go\n+++ b/cmd/entire/cli/hooks_claudecode_handlers.go\n@@ -5,6 +5,7 @@ package cli\n import (\n \t\"context\"\n \t\"encoding/json\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n@@ -80,7 +81,11 @@ func captureInitialState() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := hookData.agent.Type()\n \t\tif err := initializer.InitializeSession(hookData.sessionID, agentType, hookData.input.SessionRef, hookData.input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/hooks_geminicli_handlers.go b/cmd/entire/cli/hooks_geminicli_handlers.go\nindex 20478ef..7479239 100644\n--- a/cmd/entire/cli/hooks_geminicli_handlers.go\n+++ b/cmd/entire/cli/hooks_geminicli_handlers.go\n@@ -441,7 +441,11 @@ func handleGeminiBeforeAgent() error {\n \tif initializer, ok := strat.(strategy.SessionInitializer); ok {\n \t\tagentType := ag.Type()\n \t\tif err := initializer.InitializeSession(input.SessionID, agentType, input.SessionRef, input.UserPrompt); err != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\tif errors.Is(err, strategy.ErrEmptyRepository) {\n+\t\t\t\tfmt.Fprintln(os.Stderr, \"Note: Session checkpoints disabled (no commits yet). Create your first commit to enable them.\")\n+\t\t\t} else {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"Warning: failed to initialize session state: %v\\n\", err)\n+\t\t\t}\n \t\t}\n \t}\n \ndiff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go\nindex 435881a..976bb66 100644\n--- a/cmd/entire/cli/setup.go\n+++ b/cmd/entire/cli/setup.go\n@@ -73,6 +73,13 @@ Strategies: manual-commit (default), auto-commit`,\n \t\t\t\treturn NewSilentError(errors.New(\"not a git repository\"))\n \t\t\t}\n \n+\t\t\t// Warn if repo has no commits yet\n+\t\t\tif repo, err := strategy.OpenRepository(); err == nil && strategy.IsEmptyRepository(repo) {\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"Note: This repository has no commits yet. Entire will be configured, but\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout(), \"session checkpoints won't work until you create your first commit.\")\n+\t\t\t\tfmt.Fprintln(cmd.OutOrStdout())\n+\t\t\t}\n+\n \t\t\tif err := validateSetupFlags(useLocalSettings, useProjectSettings); err != nil {\n \t\t\t\treturn err\n \t\t\t}\ndiff --git a/cmd/entire/cli/strategy/auto_commit.go b/cmd/entire/cli/strategy/auto_commit.go\nindex 7012e98..025fba3 100644\n--- a/cmd/entire/cli/strategy/auto_commit.go\n+++ b/cmd/entire/cli/strategy/auto_commit.go\n@@ -907,6 +907,9 @@ func (s *AutoCommitStrategy) InitializeSession(sessionID string, agentType agent\n \t// Get current HEAD commit to track as base\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/auto_commit_test.go b/cmd/entire/cli/strategy/auto_commit_test.go\nindex a005eb5..876e4bb 100644\n--- a/cmd/entire/cli/strategy/auto_commit_test.go\n+++ b/cmd/entire/cli/strategy/auto_commit_test.go\n@@ -1,11 +1,13 @@\n package strategy\n \n import (\n+\t\"errors\"\n \t\"os\"\n \t\"path/filepath\"\n \t\"strings\"\n \t\"testing\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/paths\"\n \t\"github.com/entireio/cli/cmd/entire/cli/trailers\"\n \n@@ -1035,3 +1037,25 @@ func TestAutoCommitStrategy_SaveChanges_NoChangesSkipped(t *testing.T) {\n \t\t\tsessionsCommitBefore, sessionsRefAfter.Hash())\n \t}\n }\n+\n+// TestAutoCommit_InitializeSession_EmptyRepo verifies that InitializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestAutoCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\t_, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &AutoCommitStrategy{}\n+\terr = s.InitializeSession(\"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"InitializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"InitializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 211c420..163a48d 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -38,6 +38,14 @@ const (\n // Each package needs its own package-scoped sentinel for git log iteration patterns.\n var errStop = errors.New(\"stop iteration\")\n \n+// IsEmptyRepository returns true if the repository has no commits yet.\n+// This is detected by checking if HEAD exists — a freshly git-init'd repo\n+// has no HEAD reference until the first commit is created.\n+func IsEmptyRepository(repo *git.Repository) bool {\n+\t_, err := repo.Head()\n+\treturn errors.Is(err, plumbing.ErrReferenceNotFound)\n+}\n+\n // IsAncestorOf checks if commit is an ancestor of (or equal to) target.\n // Returns true if target can reach commit by following parent links.\n // Limits search to 1000 commits to avoid excessive traversal.\ndiff --git a/cmd/entire/cli/strategy/common_test.go b/cmd/entire/cli/strategy/common_test.go\nindex f1dce1f..352b7af 100644\n--- a/cmd/entire/cli/strategy/common_test.go\n+++ b/cmd/entire/cli/strategy/common_test.go\n@@ -735,3 +735,46 @@ func TestIsProtectedPath(t *testing.T) {\n \t\t})\n \t}\n }\n+\n+func TestIsEmptyRepository(t *testing.T) {\n+\tt.Run(\"empty repo returns true\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\t\tif !IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = false, want true for empty repo\")\n+\t\t}\n+\t})\n+\n+\tt.Run(\"repo with commit returns false\", func(t *testing.T) {\n+\t\tdir := t.TempDir()\n+\t\trepo, err := git.PlainInit(dir, false)\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t\t}\n+\n+\t\t// Create a commit\n+\t\ttestFile := filepath.Join(dir, \"test.txt\")\n+\t\tif err := os.WriteFile(testFile, []byte(\"content\"), 0o644); err != nil {\n+\t\t\tt.Fatalf(\"failed to write file: %v\", err)\n+\t\t}\n+\t\twt, err := repo.Worktree()\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"failed to get worktree: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Add(\"test.txt\"); err != nil {\n+\t\t\tt.Fatalf(\"failed to add file: %v\", err)\n+\t\t}\n+\t\tif _, err := wt.Commit(\"Initial commit\", &git.CommitOptions{\n+\t\t\tAuthor: &object.Signature{Name: \"Test\", Email: \"test@test.com\"},\n+\t\t}); err != nil {\n+\t\t\tt.Fatalf(\"failed to commit: %v\", err)\n+\t\t}\n+\n+\t\tif IsEmptyRepository(repo) {\n+\t\t\tt.Error(\"IsEmptyRepository() = true, want false for repo with commit\")\n+\t\t}\n+\t})\n+}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go\nindex 7de37c7..2d34ffb 100644\n--- a/cmd/entire/cli/strategy/manual_commit_session.go\n+++ b/cmd/entire/cli/strategy/manual_commit_session.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"errors\"\n \t\"fmt\"\n \t\"time\"\n \n@@ -194,6 +195,9 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(currentSe\n func (s *ManualCommitStrategy) initializeSession(repo *git.Repository, sessionID string, agentType agent.AgentType, transcriptPath string, userPrompt string) (*SessionState, error) {\n \thead, err := repo.Head()\n \tif err != nil {\n+\t\tif errors.Is(err, plumbing.ErrReferenceNotFound) {\n+\t\t\treturn nil, fmt.Errorf(\"%w: create an initial commit to enable session checkpoints\", ErrEmptyRepository)\n+\t\t}\n \t\treturn nil, fmt.Errorf(\"failed to get HEAD: %w\", err)\n \t}\n \ndiff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go\nindex 07aec19..8154e78 100644\n--- a/cmd/entire/cli/strategy/manual_commit_test.go\n+++ b/cmd/entire/cli/strategy/manual_commit_test.go\n@@ -2948,3 +2948,25 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {\n \t\tt.Error(\"Prompts should contain second prompt\")\n \t}\n }\n+\n+// TestManualCommit_InitializeSession_EmptyRepo verifies that initializeSession\n+// returns ErrEmptyRepository when called on a repo with no commits.\n+// Uses t.Chdir (process-global state), so cannot use t.Parallel().\n+func TestManualCommit_InitializeSession_EmptyRepo(t *testing.T) {\n+\tdir := t.TempDir()\n+\trepo, err := git.PlainInit(dir, false)\n+\tif err != nil {\n+\t\tt.Fatalf(\"failed to init repo: %v\", err)\n+\t}\n+\n+\tt.Chdir(dir)\n+\n+\ts := &ManualCommitStrategy{}\n+\t_, err = s.initializeSession(repo, \"test-session\", agent.AgentTypeClaudeCode, \"/tmp/transcript.jsonl\", \"hello\")\n+\tif err == nil {\n+\t\tt.Fatal(\"initializeSession() should return error for empty repo\")\n+\t}\n+\tif !errors.Is(err, ErrEmptyRepository) {\n+\t\tt.Errorf(\"initializeSession() error = %v, want ErrEmptyRepository\", err)\n+\t}\n+}\ndiff --git a/cmd/entire/cli/strategy/strategy.go b/cmd/entire/cli/strategy/strategy.go\nindex e32f3da..37fdc79 100644\n--- a/cmd/entire/cli/strategy/strategy.go\n+++ b/cmd/entire/cli/strategy/strategy.go\n@@ -26,6 +26,9 @@ var ErrNotTaskCheckpoint = errors.New(\"not a task checkpoint\")\n // ErrNotImplemented is returned when a feature is not yet implemented.\n var ErrNotImplemented = errors.New(\"not implemented\")\n \n+// ErrEmptyRepository is returned when the repository has no commits yet.\n+var ErrEmptyRepository = errors.New(\"repository has no commits yet\")\n+\n // SessionIDConflictError is returned when trying to start a new session\n // but the shadow branch already has commits from a different session ID.\n // This prevents orphaning existing session work.\n",
+      "cumulative_files_changed_count": 10,
+      "cumulative_additions": 125,
+      "cumulative_deletions": 2,
+      "replay_warnings_this_turn": []
+    }
+  ],
+  "repo_url": "https://github.com/entireio/cli",
+  "base_commit": "4f09f97c2a2d90f5fa28609ff98dbd9ccb988794",
+  "replay_status": "ok",
+  "total_replay_warnings": 0
+}

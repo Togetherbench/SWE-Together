@@ -1,0 +1,183 @@
+{
+  "session_id": "ad23fc35-7c07-4f09-bdd5-13ce23c28ce9",
+  "task_name": "comfyui-gemma3-sliding-window",
+  "turn_count": 4,
+  "total_tool_calls": 10,
+  "total_mutating_ops": 3,
+  "schema_version": "1.1",
+  "turns": [
+    {
+      "turn": 0,
+      "user_message": "In ComfyUI, the Gemma text encoder is implemented in @comfy/text_encoders/llama.py . Is there any difference in functionality from the reference implementation in C:\\transformers ? What do we need to implement the sliding attention?\n--- Content from referenced files ---\nContent from @comfy/text_encoders/llama.py:\nimport torch\nimport torch.nn as nn\nfrom dataclasses import dataclass\nfrom typing import Optional, Any\nimport math\nimport logging\n\nfrom comfy.ldm.modules.attention import optimized_attention_for_device\nimport comfy.model_management\nimport comfy.ldm.common_dit\n\nimport comfy.model_management\nfrom . import qwen_vl\n\n@dataclass\nclass Llama2Config:\n    vocab_size: int = 128320\n    hidden_size: int = 4096\n    intermediate_size: int = 14336\n    num_hidden_layers: int = 32\n    num_attention_heads: int = 32\n    num_key_value_heads: int = 8\n    max_position_embeddings: int = 8192\n    rms_norm_eps: float = 1e-5\n    rope_theta: float = 500000.0\n    transformer_type: str = \"llama\"\n    head_dim = 128\n    rms_norm_add = False\n    mlp_activation = \"silu\"\n    qkv_bias = False\n    rope_dims = None\n    q_norm = None\n    k_norm = None\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Mistral3Small24BConfig:\n    vocab_size: int = 131072\n    hidden_size: int = 5120\n    intermediate_size: int = 32768\n    num_hidden_layers: int = 40\n    num_attention_heads: int = 32\n    num_key_value_heads: int = 8\n    max_position_embeddings: int = 8192\n    rms_norm_eps: float = 1e-5\n    rope_theta: float = 1000000000.0\n    transformer_type: str = \"llama\"\n    head_dim = 128\n    rms_norm_add = False\n    mlp_activation = \"silu\"\n    qkv_bias = False\n    rope_dims = None\n    q_norm = None\n    k_norm = None\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Qwen25_3BConfig:\n    vocab_size: int = 151936\n    hidden_size: int = 2048\n    intermediate_size: int = 11008\n    num_hidden_layers: int = 36\n    num_attention_heads: int = 16\n    num_key_value_heads: int = 2\n    max_position_embeddings: int = 128000\n    rms_norm_eps: float = 1e-6\n    rope_theta: float = 1000000.0\n    transformer_type: str = \"llama\"\n    head_dim = 128\n    rms_norm_add = False\n    mlp_activation = \"silu\"\n    qkv_bias = True\n    rope_dims = None\n    q_norm = None\n    k_norm = None\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Qwen3_4BConfig:\n    vocab_size: int = 151936\n    hidden_size: int = 2560\n    intermediate_size: int = 9728\n    num_hidden_layers: int = 36\n    num_attention_heads: int = 32\n    num_key_value_heads: int = 8\n    max_position_embeddings: int = 40960\n    rms_norm_eps: float = 1e-6\n    rope_theta: float = 1000000.0\n    transformer_type: str = \"llama\"\n    head_dim = 128\n    rms_norm_add = False\n    mlp_activation = \"silu\"\n    qkv_bias = False\n    rope_dims = None\n    q_norm = \"gemma3\"\n    k_norm = \"gemma3\"\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Ovis25_2BConfig:\n    vocab_size: int = 151936\n    hidden_size: int = 2048\n    intermediate_size: int = 6144\n    num_hidden_layers: int = 28\n    num_attention_heads: int = 16\n    num_key_value_heads: int = 8\n    max_position_embeddings: int = 40960\n    rms_norm_eps: float = 1e-6\n    rope_theta: float = 1000000.0\n    transformer_type: str = \"llama\"\n    head_dim = 128\n    rms_norm_add = False\n    mlp_activation = \"silu\"\n    qkv_bias = False\n    rope_dims = None\n    q_norm = \"gemma3\"\n    k_norm = \"gemma3\"\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Qwen25_7BVLI_Config:\n    vocab_size: int = 152064\n    hidden_size: int = 3584\n    intermediate_size: int = 18944\n    num_hidden_layers: int = 28\n    num_attention_heads: int = 28\n    num_key_value_heads: int = 4\n    max_position_embeddings: int = 128000\n    rms_norm_eps: float = 1e-6\n    rope_theta: float = 1000000.0\n    transformer_type: str = \"llama\"\n    head_dim = 128\n    rms_norm_add = False\n    mlp_activation = \"silu\"\n    qkv_bias = True\n    rope_dims = [16, 24, 24]\n    q_norm = None\n    k_norm = None\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Gemma2_2B_Config:\n    vocab_size: int = 256000\n    hidden_size: int = 2304\n    intermediate_size: int = 9216\n    num_hidden_layers: int = 26\n    num_attention_heads: int = 8\n    num_key_value_heads: int = 4\n    max_position_embeddings: int = 8192\n    rms_norm_eps: float = 1e-6\n    rope_theta: float = 10000.0\n    transformer_type: str = \"gemma2\"\n    head_dim = 256\n    rms_norm_add = True\n    mlp_activation = \"gelu_pytorch_tanh\"\n    qkv_bias = False\n    rope_dims = None\n    q_norm = None\n    k_norm = None\n    sliding_attention = None\n    rope_scale = None\n    final_norm: bool = True\n\n@dataclass\nclass Gemma3_4B_Config:\n    vocab_size: int = 262208\n    hidden_size: int = 2560\n    intermediate_size: int = 10240\n    num_hidden_layers: int = 34\n    num_attention_heads: int = 8\n    num_key_value_heads: int = 4\n    max_position_embeddings: int = 131072\n    rms_norm_eps: float = 1e-6\n    rope_theta = [10000.0, 1000000.0]\n    transformer_type: str = \"gemma3\"\n    head_dim = 256\n    rms_norm_add = True\n    mlp_activation = \"gelu_pytorch_tanh\"\n    qkv_bias = False\n    rope_dims = None\n    q_norm = \"gemma3\"\n    k_norm = \"gemma3\"\n    sliding_attention = [False, False, False, False, False, 1024]\n    rope_scale = [1.0, 8.0]\n    final_norm: bool = True\n\nclass RMSNorm(nn.Module):\n    def __init__(self, dim: int, eps: float = 1e-5, add=False, device=None, dtype=None):\n        super().__init__()\n        self.eps = eps\n        self.weight = nn.Parameter(torch.empty(dim, device=device, dtype=dtype))\n        self.add = add\n\n    def forward(self, x: torch.Tensor):\n        w = self.weight\n        if self.add:\n            w = w + 1.0\n\n        return comfy.ldm.common_dit.rms_norm(x, w, self.eps)\n\n\n\ndef rotate_half(x):\n    \"\"\"Rotates half the hidden dims of the input.\"\"\"\n    x1 = x[..., : x.shape[-1] // 2]\n    x2 = x[..., x.shape[-1] // 2 :]\n    return torch.cat((-x2, x1), dim=-1)\n\n\ndef precompute_freqs_cis(head_dim, position_ids, theta, rope_scale=None, rope_dims=None, device=None):\n    if not isinstance(theta, list):\n        theta = [theta]\n\n    out = []\n    for index, t in enumerate(theta):\n        theta_numerator = torch.arange(0, head_dim, 2, device=device).float()\n        inv_freq = 1.0 / (t ** (theta_numerator / head_dim))\n\n        if rope_scale is not None:\n            if isinstance(rope_scale, list):\n                inv_freq /= rope_scale[index]\n            else:\n                inv_freq /= rope_scale\n\n        inv_freq_expanded = inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)\n        position_ids_expanded = position_ids[:, None, :].float()\n        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)\n        emb = torch.cat((freqs, freqs), dim=-1)\n        cos = emb.cos()\n        sin = emb.sin()\n        if rope_dims is not None and position_ids.shape[0] > 1:\n            mrope_section = rope_dims * 2\n            cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1).unsqueeze(0)\n            sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1).unsqueeze(0)\n        else:\n            cos = cos.unsqueeze(1)\n            sin = sin.unsqueeze(1)\n        out.append((cos, sin))\n\n    if len(out) == 1:\n        return out[0]\n\n    return out\n\n\ndef apply_rope(xq, xk, freqs_cis):\n    org_dtype = xq.dtype\n    cos = freqs_cis[0]\n    sin = freqs_cis[1]\n    q_embed = (xq * cos) + (rotate_half(xq) * sin)\n    k_embed = (xk * cos) + (rotate_half(xk) * sin)\n    return q_embed.to(org_dtype), k_embed.to(org_dtype)\n\n\nclass Attention(nn.Module):\n    def __init__(self, config: Llama2Config, device=None, dtype=None, ops: Any = None):\n        super().__init__()\n        self.num_heads = config.num_attention_heads\n        self.num_kv_heads = config.num_key_value_heads\n        self.hidden_size = config.hidden_size\n\n        self.head_dim = config.head_dim\n        self.inner_size = self.num_heads * self.head_dim\n\n        ops = ops or nn\n        self.q_proj = ops.Linear(config.hidden_size, self.inner_size, bias=config.qkv_bias, device=device, dtype=dtype)\n        self.k_proj = ops.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=config.qkv_bias, device=device, dtype=dtype)\n        self.v_proj = ops.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=config.qkv_bias, device=device, dtype=dtype)\n        self.o_proj = ops.Linear(self.inner_size, config.hidden_size, bias=False, device=device, dtype=dtype)\n\n        self.q_norm = None\n        self.k_norm = None\n\n        if config.q_norm == \"gemma3\":\n            self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n        if config.k_norm == \"gemma3\":\n            self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n\n    def forward(\n        self,\n        hidden_states: torch.Tensor,\n        attention_mask: Optional[torch.Tensor] = None,\n        freqs_cis: Optional[torch.Tensor] = None,\n        optimized_attention=None,\n    ):\n        batch_size, seq_length, _ = hidden_states.shape\n        xq = self.q_proj(hidden_states)\n        xk = self.k_proj(hidden_states)\n        xv = self.v_proj(hidden_states)\n\n        xq = xq.view(batch_size, seq_length, self.num_heads, self.head_dim).transpose(1, 2)\n        xk = xk.view(batch_size, seq_length, self.num_kv_heads, self.head_dim).transpose(1, 2)\n        xv = xv.view(batch_size, seq_length, self.num_kv_heads, self.head_dim).transpose(1, 2)\n\n        if self.q_norm is not None:\n            xq = self.q_norm(xq)\n        if self.k_norm is not None:\n            xk = self.k_norm(xk)\n\n        xq, xk = apply_rope(xq, xk, freqs_cis=freqs_cis)\n\n        xk = xk.repeat_interleave(self.num_heads // self.num_kv_heads, dim=1)\n        xv = xv.repeat_interleave(self.num_heads // self.num_kv_heads, dim=1)\n\n        output = optimized_attention(xq, xk, xv, self.num_heads, mask=attention_mask, skip_reshape=True)\n        return self.o_proj(output)\n\nclass MLP(nn.Module):\n    def __init__(self, config: Llama2Config, device=None, dtype=None, ops: Any = None):\n        super().__init__()\n        ops = ops or nn\n        self.gate_proj = ops.Linear(config.hidden_size, config.intermediate_size, bias=False, device=device, dtype=dtype)\n        self.up_proj = ops.Linear(config.hidden_size, config.intermediate_size, bias=False, device=device, dtype=dtype)\n        self.down_proj = ops.Linear(config.intermediate_size, config.hidden_size, bias=False, device=device, dtype=dtype)\n        if config.mlp_activation == \"silu\":\n            self.activation = torch.nn.functional.silu\n        elif config.mlp_activation == \"gelu_pytorch_tanh\":\n            self.activation = lambda a: torch.nn.functional.gelu(a, approximate=\"tanh\")\n\n    def forward(self, x):\n        return self.down_proj(self.activation(self.gate_proj(x)) * self.up_proj(x))\n\nclass TransformerBlock(nn.Module):\n    def __init__(self, config: Llama2Config, index, device=None, dtype=None, ops: Any = None):\n        super().__init__()\n        self.self_attn = Attention(config, device=device, dtype=dtype, ops=ops)\n        self.mlp = MLP(config, device=device, dtype=dtype, ops=ops)\n        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, device=device, dtype=dtype)\n        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, device=device, dtype=dtype)\n\n    def forward(\n        self,\n        x: torch.Tensor,\n        attention_mask: Optional[torch.Tensor] = None,\n        freqs_cis: Optional[torch.Tensor] = None,\n        optimized_attention=None,\n    ):\n        # Self Attention\n        residual = x\n        x = self.input_layernorm(x)\n        x = self.self_attn(\n            hidden_states=x,\n            attention_mask=attention_mask,\n            freqs_cis=freqs_cis,\n            optimized_attention=optimized_attention,\n        )\n        x = residual + x\n\n        # MLP\n        residual = x\n        x = self.post_attention_layernorm(x)\n        x = self.mlp(x)\n        x = residual + x\n\n        return x\n\nclass TransformerBlockGemma2(nn.Module):\n    def __init__(self, config: Llama2Config, index, device=None, dtype=None, ops: Any = None):\n        super().__init__()\n        self.self_attn = Attention(config, device=device, dtype=dtype, ops=ops)\n        self.mlp = MLP(config, device=device, dtype=dtype, ops=ops)\n        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n        self.pre_feedforward_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n        self.post_feedforward_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n\n        if config.sliding_attention is not None:  # TODO: implement. (Not that necessary since models are trained on less than 1024 tokens)\n            self.sliding_attention = config.sliding_attention[index % len(config.sliding_attention)]\n        else:\n            self.sliding_attention = False\n\n        self.transformer_type = config.transformer_type\n\n    def forward(\n        self,\n        x: torch.Tensor,\n        attention_mask: Optional[torch.Tensor] = None,\n        freqs_cis: Optional[torch.Tensor] = None,\n        optimized_attention=None,\n    ):\n        if self.transformer_type == 'gemma3':\n            if self.sliding_attention:\n                if x.shape[1] > self.sliding_attention:\n                    logging.warning(\"Warning: sliding attention not implemented, results may be incorrect\")\n                freqs_cis = freqs_cis[1]\n            else:\n                freqs_cis = freqs_cis[0]\n\n        # Self Attention\n        residual = x\n        x = self.input_layernorm(x)\n        x = self.self_attn(\n            hidden_states=x,\n            attention_mask=attention_mask,\n            freqs_cis=freqs_cis,\n            optimized_attention=optimized_attention,\n        )\n\n        x = self.post_attention_layernorm(x)\n        x = residual + x\n\n        # MLP\n        residual = x\n        x = self.pre_feedforward_layernorm(x)\n        x = self.mlp(x)\n        x = self.post_feedforward_layernorm(x)\n        x = residual + x\n\n        return x\n\nclass Llama2_(nn.Module):\n    def __init__(self, config, device=None, dtype=None, ops=None):\n        super().__init__()\n        self.config = config\n        self.vocab_size = config.vocab_size\n\n        self.embed_tokens = ops.Embedding(\n            config.vocab_size,\n            config.hidden_size,\n            device=device,\n            dtype=dtype\n        )\n        if self.config.transformer_type == \"gemma2\" or self.config.transformer_type == \"gemma3\":\n            transformer = TransformerBlockGemma2\n            self.normalize_in = True\n        else:\n            transformer = TransformerBlock\n            self.normalize_in = False\n\n        self.layers = nn.ModuleList([\n            transformer(config, index=i, device=device, dtype=dtype, ops=ops)\n            for i in range(config.num_hidden_layers)\n        ])\n\n        if config.final_norm:\n            self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps, add=config.rms_norm_add, device=device, dtype=dtype)\n        else:\n            self.norm = None\n\n        # self.lm_head = ops.Linear(config.hidden_size, config.vocab_size, bias=False, device=device, dtype=dtype)\n\n    def forward(self, x, attention_mask=None, embeds=None, num_tokens=None, intermediate_output=None, final_layer_norm_intermediate=True, dtype=None, position_ids=None, embeds_info=[]):\n        if embeds is not None:\n            x = embeds\n        else:\n            x = self.embed_tokens(x, out_dtype=dtype)\n\n        if self.normalize_in:\n            x *= self.config.hidden_size ** 0.5\n\n        if position_ids is None:\n            position_ids = torch.arange(0, x.shape[1], device=x.device).unsqueeze(0)\n\n        freqs_cis = precompute_freqs_cis(self.config.head_dim,\n                                         position_ids,\n                                         self.config.rope_theta,\n                                         self.config.rope_scale,\n                                         self.config.rope_dims,\n                                         device=x.device)\n\n        mask = None\n        if attention_mask is not None:\n            mask = 1.0 - attention_mask.to(x.dtype).reshape((attention_mask.shape[0], 1, -1, attention_mask.shape[-1])).expand(attention_mask.shape[0], 1, attention_mask.shape[-1], attention_mask.shape[-1])\n            mask = mask.masked_fill(mask.to(torch.bool), float(\"-inf\"))\n\n        causal_mask = torch.empty(x.shape[1], x.shape[1], dtype=x.dtype, device=x.device).fill_(float(\"-inf\")).triu_(1)\n        if mask is not None:\n            mask += causal_mask\n        else:\n            mask = causal_mask\n        optimized_attention = optimized_attention_for_device(x.device, mask=mask is not None, small_input=True)\n\n        intermediate = None\n        all_intermediate = None\n        only_layers = None\n        if intermediate_output is not None:\n            if isinstance(intermediate_output, list):\n                all_intermediate = []\n                only_layers = set(intermediate_output)\n            elif intermediate_output == \"all\":\n                all_intermediate = []\n                intermediate_output = None\n            elif intermediate_output < 0:\n                intermediate_output = len(self.layers) + intermediate_output\n\n        for i, layer in enumerate(self.layers):\n            if all_intermediate is not None:\n                if only_layers is None or (i in only_layers):\n                    all_intermediate.append(x.unsqueeze(1).clone())\n            x = layer(\n                x=x,\n                attention_mask=mask,\n                freqs_cis=freqs_cis,\n                optimized_attention=optimized_attention,\n            )\n            if i == intermediate_output:\n                intermediate = x.clone()\n\n        if self.norm is not None:\n            x = self.norm(x)\n\n        if all_intermediate is not None:\n            if only_layers is None or ((i + 1) in only_layers):\n                all_intermediate.append(x.unsqueeze(1).clone())\n\n        if all_intermediate is not None:\n            intermediate = torch.cat(all_intermediate, dim=1)\n\n        if intermediate is not None and final_layer_norm_intermediate and self.norm is not None:\n            intermediate = self.norm(intermediate)\n\n        return x, intermediate\n\nclass BaseLlama:\n    def get_input_embeddings(self):\n        return self.model.embed_tokens\n\n    def set_input_embeddings(self, embeddings):\n        self.model.embed_tokens = embeddings\n\n    def forward(self, input_ids, *args, **kwargs):\n        return self.model(input_ids, *args, **kwargs)\n\n\nclass Llama2(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Llama2Config(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\nclass Mistral3Small24B(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Mistral3Small24BConfig(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\nclass Qwen25_3B(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Qwen25_3BConfig(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\nclass Qwen3_4B(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Qwen3_4BConfig(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\nclass Ovis25_2B(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Ovis25_2BConfig(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\nclass Qwen25_7BVLI(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Qwen25_7BVLI_Config(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.visual = qwen_vl.Qwen2VLVisionTransformer(hidden_size=1280, output_hidden_size=config.hidden_size, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\n    def preprocess_embed(self, embed, device):\n        if embed[\"type\"] == \"image\":\n            image, grid = qwen_vl.process_qwen2vl_images(embed[\"data\"])\n            return self.visual(image.to(device, dtype=torch.float32), grid), grid\n        return None, None\n\n    def forward(self, x, attention_mask=None, embeds=None, num_tokens=None, intermediate_output=None, final_layer_norm_intermediate=True, dtype=None, embeds_info=[]):\n        grid = None\n        position_ids = None\n        offset = 0\n        for e in embeds_info:\n            if e.get(\"type\") == \"image\":\n                grid = e.get(\"extra\", None)\n                start = e.get(\"index\")\n                if position_ids is None:\n                    position_ids = torch.zeros((3, embeds.shape[1]), device=embeds.device)\n                    position_ids[:, :start] = torch.arange(0, start, device=embeds.device)\n                end = e.get(\"size\") + start\n                len_max = int(grid.max()) // 2\n                start_next = len_max + start\n                position_ids[:, end:] = torch.arange(start_next + offset, start_next + (embeds.shape[1] - end) + offset, device=embeds.device)\n                position_ids[0, start:end] = start + offset\n                max_d = int(grid[0][1]) // 2\n                position_ids[1, start:end] = torch.arange(start + offset, start + max_d + offset, device=embeds.device).unsqueeze(1).repeat(1, math.ceil((end - start) / max_d)).flatten(0)[:end - start]\n                max_d = int(grid[0][2]) // 2\n                position_ids[2, start:end] = torch.arange(start + offset, start + max_d + offset, device=embeds.device).unsqueeze(0).repeat(math.ceil((end - start) / max_d), 1).flatten(0)[:end - start]\n                offset += len_max - (end - start)\n\n        if grid is None:\n            position_ids = None\n\n        return super().forward(x, attention_mask=attention_mask, embeds=embeds, num_tokens=num_tokens, intermediate_output=intermediate_output, final_layer_norm_intermediate=final_layer_norm_intermediate, dtype=dtype, position_ids=position_ids)\n\nclass Gemma2_2B(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Gemma2_2B_Config(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n\nclass Gemma3_4B(BaseLlama, torch.nn.Module):\n    def __init__(self, config_dict, dtype, device, operations):\n        super().__init__()\n        config = Gemma3_4B_Config(**config_dict)\n        self.num_layers = config.num_hidden_layers\n\n        self.model = Llama2_(config, device=device, dtype=dtype, ops=operations)\n        self.dtype = dtype\n--- End of content ---",
+      "user_message_chars": 24089,
+      "msg_range": [
+        0,
+        6
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "search",
+          "tool": "glob",
+          "target": "**/*gemma*",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\transformers\\src\\transformers\\models\\gemma2\\modeling_gemma2.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\transformers\\src\\transformers\\models\\gemma3\\modeling_gemma3.py",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "replace",
+          "target": "C:\\ComfyUI\\comfy\\text_encoders\\llama.py",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [
+        "C:\\ComfyUI\\comfy\\text_encoders\\llama.py"
+      ],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 4,
+      "n_mutating_ops": 1,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/comfy/text_encoders/llama.py b/comfy/text_encoders/llama.py\nindex 0d07ac8..7f1b4b0 100644\n--- a/comfy/text_encoders/llama.py\n+++ b/comfy/text_encoders/llama.py\n@@ -387,7 +387,14 @@ class TransformerBlockGemma2(nn.Module):\n         if self.transformer_type == 'gemma3':\n             if self.sliding_attention:\n                 if x.shape[1] > self.sliding_attention:\n-                    logging.warning(\"Warning: sliding attention not implemented, results may be incorrect\")\n+                    sliding_mask = torch.ones(x.shape[1], x.shape[1], device=x.device, dtype=torch.bool)\n+                    sliding_mask = torch.triu(sliding_mask, diagonal=-self.sliding_attention)\n+                    window_mask = torch.zeros((x.shape[1], x.shape[1]), device=x.device, dtype=x.dtype)\n+                    window_mask.masked_fill_(~sliding_mask, float(\"-inf\"))\n+                    if attention_mask is not None:\n+                        attention_mask = attention_mask + window_mask\n+                    else:\n+                        attention_mask = window_mask\n                 freqs_cis = freqs_cis[1]\n             else:\n                 freqs_cis = freqs_cis[0]\n",
+      "cumulative_files_changed_count": 1,
+      "cumulative_additions": 8,
+      "cumulative_deletions": 1,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 1,
+      "user_message": "Is there any other difference between functionality apart from the softcap?",
+      "user_message_chars": 75,
+      "msg_range": [
+        6,
+        11
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\transformers\\src\\transformers\\models\\gemma3\\configuration_gemma3.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\text_encoders\\llama.py",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "replace",
+          "target": "C:\\ComfyUI\\comfy\\text_encoders\\llama.py",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [
+        "C:\\ComfyUI\\comfy\\text_encoders\\llama.py"
+      ],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 3,
+      "n_mutating_ops": 1,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/comfy/text_encoders/llama.py b/comfy/text_encoders/llama.py\nindex 0d07ac8..3b4a5de 100644\n--- a/comfy/text_encoders/llama.py\n+++ b/comfy/text_encoders/llama.py\n@@ -177,7 +177,7 @@ class Gemma3_4B_Config:\n     num_key_value_heads: int = 4\n     max_position_embeddings: int = 131072\n     rms_norm_eps: float = 1e-6\n-    rope_theta = [10000.0, 1000000.0]\n+    rope_theta = [1000000.0, 10000.0]\n     transformer_type: str = \"gemma3\"\n     head_dim = 256\n     rms_norm_add = True\n@@ -186,7 +186,7 @@ class Gemma3_4B_Config:\n     rope_dims = None\n     q_norm = \"gemma3\"\n     k_norm = \"gemma3\"\n-    sliding_attention = [False, False, False, False, False, 1024]\n+    sliding_attention = [False, False, False, False, False, 4096]\n     rope_scale = [1.0, 8.0]\n     final_norm: bool = True\n \n@@ -387,7 +387,14 @@ class TransformerBlockGemma2(nn.Module):\n         if self.transformer_type == 'gemma3':\n             if self.sliding_attention:\n                 if x.shape[1] > self.sliding_attention:\n-                    logging.warning(\"Warning: sliding attention not implemented, results may be incorrect\")\n+                    sliding_mask = torch.ones(x.shape[1], x.shape[1], device=x.device, dtype=torch.bool)\n+                    sliding_mask = torch.triu(sliding_mask, diagonal=-self.sliding_attention)\n+                    window_mask = torch.zeros((x.shape[1], x.shape[1]), device=x.device, dtype=x.dtype)\n+                    window_mask.masked_fill_(~sliding_mask, float(\"-inf\"))\n+                    if attention_mask is not None:\n+                        attention_mask = attention_mask + window_mask\n+                    else:\n+                        attention_mask = window_mask\n                 freqs_cis = freqs_cis[1]\n             else:\n                 freqs_cis = freqs_cis[0]\n",
+      "cumulative_files_changed_count": 1,
+      "cumulative_additions": 10,
+      "cumulative_deletions": 3,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Read https://huggingface.co/google/gemma-3-4b-it/blob/main/config.json and the relevant code and config in this repo. Shouldn't the sliding window be 1024 ?",
+      "user_message_chars": 156,
+      "msg_range": [
+        11,
+        12
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 0,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/comfy/text_encoders/llama.py b/comfy/text_encoders/llama.py\nindex 0d07ac8..3b4a5de 100644\n--- a/comfy/text_encoders/llama.py\n+++ b/comfy/text_encoders/llama.py\n@@ -177,7 +177,7 @@ class Gemma3_4B_Config:\n     num_key_value_heads: int = 4\n     max_position_embeddings: int = 131072\n     rms_norm_eps: float = 1e-6\n-    rope_theta = [10000.0, 1000000.0]\n+    rope_theta = [1000000.0, 10000.0]\n     transformer_type: str = \"gemma3\"\n     head_dim = 256\n     rms_norm_add = True\n@@ -186,7 +186,7 @@ class Gemma3_4B_Config:\n     rope_dims = None\n     q_norm = \"gemma3\"\n     k_norm = \"gemma3\"\n-    sliding_attention = [False, False, False, False, False, 1024]\n+    sliding_attention = [False, False, False, False, False, 4096]\n     rope_scale = [1.0, 8.0]\n     final_norm: bool = True\n \n@@ -387,7 +387,14 @@ class TransformerBlockGemma2(nn.Module):\n         if self.transformer_type == 'gemma3':\n             if self.sliding_attention:\n                 if x.shape[1] > self.sliding_attention:\n-                    logging.warning(\"Warning: sliding attention not implemented, results may be incorrect\")\n+                    sliding_mask = torch.ones(x.shape[1], x.shape[1], device=x.device, dtype=torch.bool)\n+                    sliding_mask = torch.triu(sliding_mask, diagonal=-self.sliding_attention)\n+                    window_mask = torch.zeros((x.shape[1], x.shape[1]), device=x.device, dtype=x.dtype)\n+                    window_mask.masked_fill_(~sliding_mask, float(\"-inf\"))\n+                    if attention_mask is not None:\n+                        attention_mask = attention_mask + window_mask\n+                    else:\n+                        attention_mask = window_mask\n                 freqs_cis = freqs_cis[1]\n             else:\n                 freqs_cis = freqs_cis[0]\n",
+      "cumulative_files_changed_count": 1,
+      "cumulative_additions": 10,
+      "cumulative_deletions": 3,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Read https://huggingface.co/google/gemma-3-4b-it/blob/main/config.json and the relevant code and config on this HuggingFace repo. Shouldn't the sliding window be 1024 ?",
+      "user_message_chars": 168,
+      "msg_range": [
+        12,
+        17
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "other",
+          "tool": "web_fetch",
+          "target": "",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "google_web_search",
+          "target": "Gemma 3 4B sliding window size config.json",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "replace",
+          "target": "C:\\ComfyUI\\comfy\\text_encoders\\llama.py",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [
+        "C:\\ComfyUI\\comfy\\text_encoders\\llama.py"
+      ],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 3,
+      "n_mutating_ops": 1,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/comfy/text_encoders/llama.py b/comfy/text_encoders/llama.py\nindex 0d07ac8..96e86fb 100644\n--- a/comfy/text_encoders/llama.py\n+++ b/comfy/text_encoders/llama.py\n@@ -177,7 +177,7 @@ class Gemma3_4B_Config:\n     num_key_value_heads: int = 4\n     max_position_embeddings: int = 131072\n     rms_norm_eps: float = 1e-6\n-    rope_theta = [10000.0, 1000000.0]\n+    rope_theta = [1000000.0, 10000.0]\n     transformer_type: str = \"gemma3\"\n     head_dim = 256\n     rms_norm_add = True\n@@ -387,7 +387,14 @@ class TransformerBlockGemma2(nn.Module):\n         if self.transformer_type == 'gemma3':\n             if self.sliding_attention:\n                 if x.shape[1] > self.sliding_attention:\n-                    logging.warning(\"Warning: sliding attention not implemented, results may be incorrect\")\n+                    sliding_mask = torch.ones(x.shape[1], x.shape[1], device=x.device, dtype=torch.bool)\n+                    sliding_mask = torch.triu(sliding_mask, diagonal=-self.sliding_attention)\n+                    window_mask = torch.zeros((x.shape[1], x.shape[1]), device=x.device, dtype=x.dtype)\n+                    window_mask.masked_fill_(~sliding_mask, float(\"-inf\"))\n+                    if attention_mask is not None:\n+                        attention_mask = attention_mask + window_mask\n+                    else:\n+                        attention_mask = window_mask\n                 freqs_cis = freqs_cis[1]\n             else:\n                 freqs_cis = freqs_cis[0]\n",
+      "cumulative_files_changed_count": 1,
+      "cumulative_additions": 9,
+      "cumulative_deletions": 2,
+      "replay_warnings_this_turn": []
+    }
+  ],
+  "repo_url": "https://github.com/comfyanonymous/ComfyUI",
+  "base_commit": "1ca89b810e921efce95fb4d254a8c6c93180450b",
+  "replay_status": "ok",
+  "total_replay_warnings": 0
+}

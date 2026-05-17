@@ -1,0 +1,312 @@
+{
+  "session_id": "a3be2dfa-824b-4fd2-88a0-92c0ac5e216e",
+  "task_name": "comfyui-lumina-axes-lens",
+  "turn_count": 5,
+  "total_tool_calls": 28,
+  "total_mutating_ops": 3,
+  "schema_version": "1.1",
+  "turns": [
+    {
+      "turn": 0,
+      "user_message": "Compare the implementation of Lumina 2 model in C:\\ComfyUI and C:\\diffusers . Assuming Diffusers is the source of truth, is there any problem in ComfyUI's implementation? You're running in PowerShell. Use PowerShell commands.",
+      "user_message_chars": 225,
+      "msg_range": [
+        0,
+        19
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "other",
+          "tool": "run_shell_command",
+          "target": "Get-ChildItem -Path C:\\ComfyUI, C:\\diffusers -Recurse -Filter \"*lumina*\" -ErrorAction SilentlyContinue | Select-Object FullName",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "list_directory",
+          "target": "",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy_extras\\nodes_lumina2.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\diffusers\\src\\diffusers\\models\\transformers\\transformer_lumina2.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "search_file_content",
+          "target": "NextDiT",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\model_base.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "search_file_content",
+          "target": "Lumina2",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\supported_models.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\model_detection.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\model_base.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\model_base.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "search_file_content",
+          "target": "class BaseModel",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\model_base.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "search_file_content",
+          "target": "class RMSNorm",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\rmsnorm.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\modules\\diffusionmodules\\mmdit.py",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 17,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 1,
+      "user_message": "Is `axes_lens` used in the RoPE in Lumina 2 in ComfyUI and Diffusers?",
+      "user_message_chars": 69,
+      "msg_range": [
+        19,
+        28
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\flux\\layers.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "search_file_content",
+          "target": "self.rope_embedder =",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\diffusers\\src\\diffusers\\models\\transformers\\transformer_lumina2.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\diffusers\\src\\diffusers\\models\\transformers\\transformer_lumina2.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "read_file",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\flux\\math.py",
+          "detail": ""
+        },
+        {
+          "kind": "other",
+          "tool": "search_file_content",
+          "target": "self.axes_lens",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 8,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Go on",
+      "user_message_chars": 5,
+      "msg_range": [
+        28,
+        30
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 0,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "",
+      "cumulative_files_changed_count": 0,
+      "cumulative_additions": 0,
+      "cumulative_deletions": 0,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Implement axes_lens in ComfyUI. To minimize the change to other models than Lumina2, you may create a new class to replace `EmbedND` in @comfy/ldm/lumina/model.py .\n--- Content from referenced files ---\nContent from @comfy/ldm/lumina/model.py:\n# Code from: https://github.com/Alpha-VLLM/Lumina-Image-2.0/blob/main/models/model.py\nfrom __future__ import annotations\n\nfrom typing import List, Optional, Tuple\n\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nimport comfy.ldm.common_dit\n\nfrom comfy.ldm.modules.diffusionmodules.mmdit import TimestepEmbedder\nfrom comfy.ldm.modules.attention import optimized_attention_masked\nfrom comfy.ldm.flux.layers import EmbedND\nfrom comfy.ldm.flux.math import apply_rope\nimport comfy.patcher_extension\n\n\ndef modulate(x, scale):\n    return x * (1 + scale.unsqueeze(1))\n\n#############################################################################\n#                               Core NextDiT Model                              #\n#############################################################################\n\ndef clamp_fp16(x):\n    if x.dtype == torch.float16:\n        return torch.nan_to_num(x, nan=0.0, posinf=65504, neginf=-65504)\n    return x\n\nclass JointAttention(nn.Module):\n    \"\"\"Multi-head attention module.\"\"\"\n\n    def __init__(\n        self,\n        dim: int,\n        n_heads: int,\n        n_kv_heads: Optional[int],\n        qk_norm: bool,\n        out_bias: bool = False,\n        operation_settings={},\n    ):\n        \"\"\"\n        Initialize the Attention module.\n\n        Args:\n            dim (int): Number of input dimensions.\n            n_heads (int): Number of heads.\n            n_kv_heads (Optional[int]): Number of kv heads, if using GQA.\n\n        \"\"\"\n        super().__init__()\n        self.n_kv_heads = n_heads if n_kv_heads is None else n_kv_heads\n        self.n_local_heads = n_heads\n        self.n_local_kv_heads = self.n_kv_heads\n        self.n_rep = self.n_local_heads // self.n_local_kv_heads\n        self.head_dim = dim // n_heads\n\n        self.qkv = operation_settings.get(\"operations\").Linear(\n            dim,\n            (n_heads + self.n_kv_heads + self.n_kv_heads) * self.head_dim,\n            bias=False,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n        self.out = operation_settings.get(\"operations\").Linear(\n            n_heads * self.head_dim,\n            dim,\n            bias=out_bias,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n\n        if qk_norm:\n            self.q_norm = operation_settings.get(\"operations\").RMSNorm(self.head_dim, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n            self.k_norm = operation_settings.get(\"operations\").RMSNorm(self.head_dim, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n        else:\n            self.q_norm = self.k_norm = nn.Identity()\n\n    def forward(\n        self,\n        x: torch.Tensor,\n        x_mask: torch.Tensor,\n        freqs_cis: torch.Tensor,\n        transformer_options={},\n    ) -> torch.Tensor:\n        \"\"\"\n\n        Args:\n            x:\n            x_mask:\n            freqs_cis:\n\n        Returns:\n\n        \"\"\"\n        bsz, seqlen, _ = x.shape\n\n        xq, xk, xv = torch.split(\n            self.qkv(x),\n            [\n                self.n_local_heads * self.head_dim,\n                self.n_local_kv_heads * self.head_dim,\n                self.n_local_kv_heads * self.head_dim,\n            ],\n            dim=-1,\n        )\n        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)\n        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)\n        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)\n\n        xq = self.q_norm(xq)\n        xk = self.k_norm(xk)\n\n        xq, xk = apply_rope(xq, xk, freqs_cis)\n\n        n_rep = self.n_local_heads // self.n_local_kv_heads\n        if n_rep >= 1:\n            xk = xk.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)\n            xv = xv.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)\n        output = optimized_attention_masked(xq.movedim(1, 2), xk.movedim(1, 2), xv.movedim(1, 2), self.n_local_heads, x_mask, skip_reshape=True, transformer_options=transformer_options)\n\n        return self.out(output)\n\n\nclass FeedForward(nn.Module):\n    def __init__(\n        self,\n        dim: int,\n        hidden_dim: int,\n        multiple_of: int,\n        ffn_dim_multiplier: Optional[float],\n        operation_settings={},\n    ):\n        \"\"\"\n        Initialize the FeedForward module.\n\n        Args:\n            dim (int): Input dimension.\n            hidden_dim (int): Hidden dimension of the feedforward layer.\n            multiple_of (int): Value to ensure hidden dimension is a multiple\n                of this value.\n            ffn_dim_multiplier (float, optional): Custom multiplier for hidden\n                dimension. Defaults to None.\n\n        \"\"\"\n        super().__init__()\n        # custom dim factor multiplier\n        if ffn_dim_multiplier is not None:\n            hidden_dim = int(ffn_dim_multiplier * hidden_dim)\n        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)\n\n        self.w1 = operation_settings.get(\"operations\").Linear(\n            dim,\n            hidden_dim,\n            bias=False,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n        self.w2 = operation_settings.get(\"operations\").Linear(\n            hidden_dim,\n            dim,\n            bias=False,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n        self.w3 = operation_settings.get(\"operations\").Linear(\n            dim,\n            hidden_dim,\n            bias=False,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n\n    # @torch.compile\n    def _forward_silu_gating(self, x1, x3):\n        return clamp_fp16(F.silu(x1) * x3)\n\n    def forward(self, x):\n        return self.w2(self._forward_silu_gating(self.w1(x), self.w3(x)))\n\n\nclass JointTransformerBlock(nn.Module):\n    def __init__(\n        self,\n        layer_id: int,\n        dim: int,\n        n_heads: int,\n        n_kv_heads: int,\n        multiple_of: int,\n        ffn_dim_multiplier: float,\n        norm_eps: float,\n        qk_norm: bool,\n        modulation=True,\n        z_image_modulation=False,\n        attn_out_bias=False,\n        operation_settings={},\n    ) -> None:\n        \"\"\"\n        Initialize a TransformerBlock.\n\n        Args:\n            layer_id (int): Identifier for the layer.\n            dim (int): Embedding dimension of the input features.\n            n_heads (int): Number of attention heads.\n            n_kv_heads (Optional[int]): Number of attention heads in key and\n                value features (if using GQA), or set to None for the same as\n                query.\n            multiple_of (int):\n            ffn_dim_multiplier (float):\n            norm_eps (float):\n\n        \"\"\"\n        super().__init__()\n        self.dim = dim\n        self.head_dim = dim // n_heads\n        self.attention = JointAttention(dim, n_heads, n_kv_heads, qk_norm, out_bias=attn_out_bias, operation_settings=operation_settings)\n        self.feed_forward = FeedForward(\n            dim=dim,\n            hidden_dim=dim,\n            multiple_of=multiple_of,\n            ffn_dim_multiplier=ffn_dim_multiplier,\n            operation_settings=operation_settings,\n        )\n        self.layer_id = layer_id\n        self.attention_norm1 = operation_settings.get(\"operations\").RMSNorm(dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n        self.ffn_norm1 = operation_settings.get(\"operations\").RMSNorm(dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n\n        self.attention_norm2 = operation_settings.get(\"operations\").RMSNorm(dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n        self.ffn_norm2 = operation_settings.get(\"operations\").RMSNorm(dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n\n        self.modulation = modulation\n        if modulation:\n            if z_image_modulation:\n                self.adaLN_modulation = nn.Sequential(\n                    operation_settings.get(\"operations\").Linear(\n                        min(dim, 256),\n                        4 * dim,\n                        bias=True,\n                        device=operation_settings.get(\"device\"),\n                        dtype=operation_settings.get(\"dtype\"),\n                    ),\n                )\n            else:\n                self.adaLN_modulation = nn.Sequential(\n                    nn.SiLU(),\n                    operation_settings.get(\"operations\").Linear(\n                        min(dim, 1024),\n                        4 * dim,\n                        bias=True,\n                        device=operation_settings.get(\"device\"),\n                        dtype=operation_settings.get(\"dtype\"),\n                    ),\n                )\n\n    def forward(\n        self,\n        x: torch.Tensor,\n        x_mask: torch.Tensor,\n        freqs_cis: torch.Tensor,\n        adaln_input: Optional[torch.Tensor]=None,\n        transformer_options={},\n    ):\n        \"\"\"\n        Perform a forward pass through the TransformerBlock.\n\n        Args:\n            x (torch.Tensor): Input tensor.\n            freqs_cis (torch.Tensor): Precomputed cosine and sine frequencies.\n\n        Returns:\n            torch.Tensor: Output tensor after applying attention and\n                feedforward layers.\n\n        \"\"\"\n        if self.modulation:\n            assert adaln_input is not None\n            scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(adaln_input).chunk(4, dim=1)\n\n            x = x + gate_msa.unsqueeze(1).tanh() * self.attention_norm2(\n                clamp_fp16(self.attention(\n                    modulate(self.attention_norm1(x), scale_msa),\n                    x_mask,\n                    freqs_cis,\n                    transformer_options=transformer_options,\n                ))\n            )\n            x = x + gate_mlp.unsqueeze(1).tanh() * self.ffn_norm2(\n                clamp_fp16(self.feed_forward(\n                    modulate(self.ffn_norm1(x), scale_mlp),\n                ))\n            )\n        else:\n            assert adaln_input is None\n            x = x + self.attention_norm2(\n                clamp_fp16(self.attention(\n                    self.attention_norm1(x),\n                    x_mask,\n                    freqs_cis,\n                    transformer_options=transformer_options,\n                ))\n            )\n            x = x + self.ffn_norm2(\n                self.feed_forward(\n                    self.ffn_norm1(x),\n                )\n            )\n        return x\n\n\nclass FinalLayer(nn.Module):\n    \"\"\"\n    The final layer of NextDiT.\n    \"\"\"\n\n    def __init__(self, hidden_size, patch_size, out_channels, z_image_modulation=False, operation_settings={}):\n        super().__init__()\n        self.norm_final = operation_settings.get(\"operations\").LayerNorm(\n            hidden_size,\n            elementwise_affine=False,\n            eps=1e-6,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n        self.linear = operation_settings.get(\"operations\").Linear(\n            hidden_size,\n            patch_size * patch_size * out_channels,\n            bias=True,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n\n        if z_image_modulation:\n            min_mod = 256\n        else:\n            min_mod = 1024\n\n        self.adaLN_modulation = nn.Sequential(\n            nn.SiLU(),\n            operation_settings.get(\"operations\").Linear(\n                min(hidden_size, min_mod),\n                hidden_size,\n                bias=True,\n                device=operation_settings.get(\"device\"),\n                dtype=operation_settings.get(\"dtype\"),\n            ),\n        )\n\n    def forward(self, x, c):\n        scale = self.adaLN_modulation(c)\n        x = modulate(self.norm_final(x), scale)\n        x = self.linear(x)\n        return x\n\n\nclass NextDiT(nn.Module):\n    \"\"\"\n    Diffusion model with a Transformer backbone.\n    \"\"\"\n\n    def __init__(\n        self,\n        patch_size: int = 2,\n        in_channels: int = 4,\n        dim: int = 4096,\n        n_layers: int = 32,\n        n_refiner_layers: int = 2,\n        n_heads: int = 32,\n        n_kv_heads: Optional[int] = None,\n        multiple_of: int = 256,\n        ffn_dim_multiplier: float = 4.0,\n        norm_eps: float = 1e-5,\n        qk_norm: bool = False,\n        cap_feat_dim: int = 5120,\n        axes_dims: List[int] = (16, 56, 56),\n        axes_lens: List[int] = (1, 512, 512),\n        rope_theta=10000.0,\n        z_image_modulation=False,\n        time_scale=1.0,\n        pad_tokens_multiple=None,\n        clip_text_dim=None,\n        image_model=None,\n        device=None,\n        dtype=None,\n        operations=None,\n    ) -> None:\n        super().__init__()\n        self.dtype = dtype\n        operation_settings = {\"operations\": operations, \"device\": device, \"dtype\": dtype}\n        self.in_channels = in_channels\n        self.out_channels = in_channels\n        self.patch_size = patch_size\n        self.time_scale = time_scale\n        self.pad_tokens_multiple = pad_tokens_multiple\n\n        self.x_embedder = operation_settings.get(\"operations\").Linear(\n            in_features=patch_size * patch_size * in_channels,\n            out_features=dim,\n            bias=True,\n            device=operation_settings.get(\"device\"),\n            dtype=operation_settings.get(\"dtype\"),\n        )\n\n        self.noise_refiner = nn.ModuleList(\n            [\n                JointTransformerBlock(\n                    layer_id,\n                    dim,\n                    n_heads,\n                    n_kv_heads,\n                    multiple_of,\n                    ffn_dim_multiplier,\n                    norm_eps,\n                    qk_norm,\n                    modulation=True,\n                    z_image_modulation=z_image_modulation,\n                    operation_settings=operation_settings,\n                )\n                for layer_id in range(n_refiner_layers)\n            ]\n        )\n        self.context_refiner = nn.ModuleList(\n            [\n                JointTransformerBlock(\n                    layer_id,\n                    dim,\n                    n_heads,\n                    n_kv_heads,\n                    multiple_of,\n                    ffn_dim_multiplier,\n                    norm_eps,\n                    qk_norm,\n                    modulation=False,\n                    operation_settings=operation_settings,\n                )\n                for layer_id in range(n_refiner_layers)\n            ]\n        )\n\n        self.t_embedder = TimestepEmbedder(min(dim, 1024), output_size=256 if z_image_modulation else None, **operation_settings)\n        self.cap_embedder = nn.Sequential(\n            operation_settings.get(\"operations\").RMSNorm(cap_feat_dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\")),\n            operation_settings.get(\"operations\").Linear(\n                cap_feat_dim,\n                dim,\n                bias=True,\n                device=operation_settings.get(\"device\"),\n                dtype=operation_settings.get(\"dtype\"),\n            ),\n        )\n\n        self.clip_text_pooled_proj = None\n\n        if clip_text_dim is not None:\n            self.clip_text_dim = clip_text_dim\n            self.clip_text_pooled_proj = nn.Sequential(\n                operation_settings.get(\"operations\").RMSNorm(clip_text_dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\")),\n                operation_settings.get(\"operations\").Linear(\n                    clip_text_dim,\n                    clip_text_dim,\n                    bias=True,\n                    device=operation_settings.get(\"device\"),\n                    dtype=operation_settings.get(\"dtype\"),\n                ),\n            )\n            self.time_text_embed = nn.Sequential(\n                nn.SiLU(),\n                operation_settings.get(\"operations\").Linear(\n                    min(dim, 1024) + clip_text_dim,\n                    min(dim, 1024),\n                    bias=True,\n                    device=operation_settings.get(\"device\"),\n                    dtype=operation_settings.get(\"dtype\"),\n                ),\n            )\n\n        self.layers = nn.ModuleList(\n            [\n                JointTransformerBlock(\n                    layer_id,\n                    dim,\n                    n_heads,\n                    n_kv_heads,\n                    multiple_of,\n                    ffn_dim_multiplier,\n                    norm_eps,\n                    qk_norm,\n                    z_image_modulation=z_image_modulation,\n                    attn_out_bias=False,\n                    operation_settings=operation_settings,\n                )\n                for layer_id in range(n_layers)\n            ]\n        )\n        self.norm_final = operation_settings.get(\"operations\").RMSNorm(dim, eps=norm_eps, elementwise_affine=True, device=operation_settings.get(\"device\"), dtype=operation_settings.get(\"dtype\"))\n        self.final_layer = FinalLayer(dim, patch_size, self.out_channels, z_image_modulation=z_image_modulation, operation_settings=operation_settings)\n\n        if self.pad_tokens_multiple is not None:\n            self.x_pad_[REDACTED] dim), device=device, dtype=dtype))\n            self.cap_pad_[REDACTED] dim), device=device, dtype=dtype))\n\n        assert (dim // n_heads) == sum(axes_dims)\n        self.axes_dims = axes_dims\n        self.axes_lens = axes_lens\n        self.rope_embedder = EmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims)\n        self.dim = dim\n        self.n_heads = n_heads\n\n    def unpatchify(\n        self, x: torch.Tensor, img_size: List[Tuple[int, int]], cap_size: List[int], return_tensor=False\n    ) -> List[torch.Tensor]:\n        \"\"\"\n        x: (N, T, patch_size**2 * C)\n        imgs: (N, H, W, C)\n        \"\"\"\n        pH = pW = self.patch_size\n        imgs = []\n        for i in range(x.size(0)):\n            H, W = img_size[i]\n            begin = cap_size[i]\n            end = begin + (H // pH) * (W // pW)\n            imgs.append(\n                x[i][begin:end]\n                .view(H // pH, W // pW, pH, pW, self.out_channels)\n                .permute(4, 0, 2, 1, 3)\n                .flatten(3, 4)\n                .flatten(1, 2)\n            )\n\n        if return_tensor:\n            imgs = torch.stack(imgs, dim=0)\n        return imgs\n\n    def patchify_and_embed(\n        self, x: List[torch.Tensor] | torch.Tensor, cap_feats: torch.Tensor, cap_mask: torch.Tensor, t: torch.Tensor, num_tokens, transformer_options={}\n    ) -> Tuple[torch.Tensor, torch.Tensor, List[Tuple[int, int]], List[int], torch.Tensor]:\n        bsz = len(x)\n        pH = pW = self.patch_size\n        device = x[0].device\n        orig_x = x\n\n        if self.pad_tokens_multiple is not None:\n            pad_extra = (-cap_feats.shape[1]) % self.pad_tokens_multiple\n            cap_feats = torch.cat((cap_feats, self.cap_pad_token.to(device=cap_feats.device, dtype=cap_feats.dtype, copy=True).unsqueeze(0).repeat(cap_feats.shape[0], pad_extra, 1)), dim=1)\n\n        cap_pos_ids = torch.zeros(bsz, cap_feats.shape[1], 3, dtype=torch.float32, device=device)\n        cap_pos_ids[:, :, 0] = torch.arange(cap_feats.shape[1], dtype=torch.float32, device=device) + 1.0\n\n        B, C, H, W = x.shape\n        x = self.x_embedder(x.view(B, C, H // pH, pH, W // pW, pW).permute(0, 2, 4, 3, 5, 1).flatten(3).flatten(1, 2))\n\n        rope_options = transformer_options.get(\"rope_options\", None)\n        h_scale = 1.0\n        w_scale = 1.0\n        h_start = 0\n        w_start = 0\n        if rope_options is not None:\n            h_scale = rope_options.get(\"scale_y\", 1.0)\n            w_scale = rope_options.get(\"scale_x\", 1.0)\n\n            h_start = rope_options.get(\"shift_y\", 0.0)\n            w_start = rope_options.get(\"shift_x\", 0.0)\n\n        H_tokens, W_tokens = H // pH, W // pW\n        x_pos_ids = torch.zeros((bsz, x.shape[1], 3), dtype=torch.float32, device=device)\n        x_pos_ids[:, :, 0] = cap_feats.shape[1] + 1\n        x_pos_ids[:, :, 1] = (torch.arange(H_tokens, dtype=torch.float32, device=device) * h_scale + h_start).view(-1, 1).repeat(1, W_tokens).flatten()\n        x_pos_ids[:, :, 2] = (torch.arange(W_tokens, dtype=torch.float32, device=device) * w_scale + w_start).view(1, -1).repeat(H_tokens, 1).flatten()\n\n        if self.pad_tokens_multiple is not None:\n            pad_extra = (-x.shape[1]) % self.pad_tokens_multiple\n            x = torch.cat((x, self.x_pad_token.to(device=x.device, dtype=x.dtype, copy=True).unsqueeze(0).repeat(x.shape[0], pad_extra, 1)), dim=1)\n            x_pos_ids = torch.nn.functional.pad(x_pos_ids, (0, 0, 0, pad_extra))\n\n        freqs_cis = self.rope_embedder(torch.cat((cap_pos_ids, x_pos_ids), dim=1)).movedim(1, 2)\n\n        patches = transformer_options.get(\"patches\", {})\n\n        # refine context\n        for layer in self.context_refiner:\n            cap_feats = layer(cap_feats, cap_mask, freqs_cis[:, :cap_pos_ids.shape[1]], transformer_options=transformer_options)\n\n        padded_img_mask = None\n        x_input = x\n        for i, layer in enumerate(self.noise_refiner):\n            x = layer(x, padded_img_mask, freqs_cis[:, cap_pos_ids.shape[1]:], t, transformer_options=transformer_options)\n            if \"noise_refiner\" in patches:\n                for p in patches[\"noise_refiner\"]:\n                    out = p({\"img\": x, \"img_input\": x_input, \"txt\": cap_feats, \"pe\": freqs_cis[:, cap_pos_ids.shape[1]:], \"vec\": t, \"x\": orig_x, \"block_index\": i, \"transformer_options\": transformer_options, \"block_type\": \"noise_refiner\"})\n                    if \"img\" in out:\n                        x = out[\"img\"]\n\n        padded_full_embed = torch.cat((cap_feats, x), dim=1)\n        mask = None\n        img_sizes = [(H, W)] * bsz\n        l_effective_cap_len = [cap_feats.shape[1]] * bsz\n        return padded_full_embed, mask, img_sizes, l_effective_cap_len, freqs_cis\n\n    def forward(self, x, timesteps, context, num_tokens, attention_mask=None, **kwargs):\n        return comfy.patcher_extension.WrapperExecutor.new_class_executor(\n            self._forward,\n            self,\n            comfy.patcher_extension.get_all_wrappers(comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, kwargs.get(\"transformer_options\", {}))\n        ).execute(x, timesteps, context, num_tokens, attention_mask, **kwargs)\n\n    # def forward(self, x, t, cap_feats, cap_mask):\n    def _forward(self, x, timesteps, context, num_tokens, attention_mask=None, transformer_options={}, **kwargs):\n        t = 1.0 - timesteps\n        cap_feats = context\n        cap_mask = attention_mask\n        bs, c, h, w = x.shape\n        x = comfy.ldm.common_dit.pad_to_patch_size(x, (self.patch_size, self.patch_size))\n        \"\"\"\n        Forward pass of NextDiT.\n        t: (N,) tensor of diffusion timesteps\n        y: (N,) tensor of text tokens/features\n        \"\"\"\n\n        t = self.t_embedder(t * self.time_scale, dtype=x.dtype)  # (N, D)\n        adaln_input = t\n\n        cap_feats = self.cap_embedder(cap_feats)  # (N, L, D)  # todo check if able to batchify w.o. redundant compute\n\n        if self.clip_text_pooled_proj is not None:\n            pooled = kwargs.get(\"clip_text_pooled\", None)\n            if pooled is not None:\n                pooled = self.clip_text_pooled_proj(pooled)\n            else:\n                pooled = torch.zeros((1, self.clip_text_dim), device=x.device, dtype=x.dtype)\n\n            adaln_input = self.time_text_embed(torch.cat((t, pooled), dim=-1))\n\n        patches = transformer_options.get(\"patches\", {})\n        x_is_tensor = isinstance(x, torch.Tensor)\n        img, mask, img_size, cap_size, freqs_cis = self.patchify_and_embed(x, cap_feats, cap_mask, adaln_input, num_tokens, transformer_options=transformer_options)\n        freqs_cis = freqs_cis.to(img.device)\n\n        transformer_options[\"total_blocks\"] = len(self.layers)\n        transformer_options[\"block_type\"] = \"double\"\n        img_input = img\n        for i, layer in enumerate(self.layers):\n            transformer_options[\"block_index\"] = i\n            img = layer(img, mask, freqs_cis, adaln_input, transformer_options=transformer_options)\n            if \"double_block\" in patches:\n                for p in patches[\"double_block\"]:\n                    out = p({\"img\": img[:, cap_size[0]:], \"img_input\": img_input[:, cap_size[0]:], \"txt\": img[:, :cap_size[0]], \"pe\": freqs_cis[:, cap_size[0]:], \"vec\": adaln_input, \"x\": x, \"block_index\": i, \"transformer_options\": transformer_options})\n                    if \"img\" in out:\n                        img[:, cap_size[0]:] = out[\"img\"]\n                    if \"txt\" in out:\n                        img[:, :cap_size[0]] = out[\"txt\"]\n\n        img = self.final_layer(img, adaln_input)\n        img = self.unpatchify(img, img_size, cap_size, return_tensor=x_is_tensor)[:, :, :h, :w]\n\n        return -img\n--- End of content ---",
+      "user_message_chars": 25643,
+      "msg_range": [
+        30,
+        33
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "edit",
+          "tool": "replace",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "replace",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "replace",
+          "target": "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [
+        "C:\\ComfyUI\\comfy\\ldm\\lumina\\model.py"
+      ],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 3,
+      "n_mutating_ops": 3,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/comfy/ldm/lumina/model.py b/comfy/ldm/lumina/model.py\nindex 96cb37f..46650ae 100644\n--- a/comfy/ldm/lumina/model.py\n+++ b/comfy/ldm/lumina/model.py\n@@ -11,7 +11,7 @@ import comfy.ldm.common_dit\n from comfy.ldm.modules.diffusionmodules.mmdit import TimestepEmbedder\n from comfy.ldm.modules.attention import optimized_attention_masked\n from comfy.ldm.flux.layers import EmbedND\n-from comfy.ldm.flux.math import apply_rope\n+from comfy.ldm.flux.math import apply_rope, rope\n import comfy.patcher_extension\n \n \n@@ -352,6 +352,42 @@ class FinalLayer(nn.Module):\n         return x\n \n \n+class LuminaEmbedND(nn.Module):\n+    def __init__(self, dim: int, theta: int, axes_dim: list, axes_lens: list = None):\n+        super().__init__()\n+        self.dim = dim\n+        self.theta = theta\n+        self.axes_dim = axes_dim\n+        self.axes_lens = axes_lens\n+        if axes_lens is not None:\n+            for i, (d, l) in enumerate(zip(axes_dim, axes_lens)):\n+                pos = torch.arange(l).unsqueeze(0)\n+                freqs = rope(pos, d, theta)\n+                freqs = freqs.squeeze(0)\n+                self.register_buffer(f\"freqs_{i}\", freqs.view(l, -1))\n+\n+    def forward(self, ids: torch.Tensor) -> torch.Tensor:\n+        if self.axes_lens is None:\n+            n_axes = ids.shape[-1]\n+            emb = torch.cat(\n+                [rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(n_axes)],\n+                dim=-3,\n+            )\n+            return emb.unsqueeze(1)\n+\n+        n_axes = ids.shape[-1]\n+        emb_list = []\n+        for i in range(n_axes):\n+            freqs = getattr(self, f\"freqs_{i}\")\n+            idx = ids[..., i].long()\n+            part = F.embedding(idx, freqs)\n+            part = part.view(*idx.shape, self.axes_dim[i], 2, 2)\n+            emb_list.append(part)\n+        \n+        emb = torch.cat(emb_list, dim=-3)\n+        return emb.unsqueeze(1)\n+\n+\n class NextDiT(nn.Module):\n     \"\"\"\n     Diffusion model with a Transformer backbone.\n@@ -501,7 +537,7 @@ class NextDiT(nn.Module):\n         assert (dim // n_heads) == sum(axes_dims)\n         self.axes_dims = axes_dims\n         self.axes_lens = axes_lens\n-        self.rope_embedder = EmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims)\n+        self.rope_embedder = LuminaEmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims, axes_lens=axes_lens)\n         self.dim = dim\n         self.n_heads = n_heads\n \n",
+      "cumulative_files_changed_count": 1,
+      "cumulative_additions": 38,
+      "cumulative_deletions": 2,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 4,
+      "user_message": "What's the difference between the implementations with and without `axes_lens`?",
+      "user_message_chars": 79,
+      "msg_range": [
+        33,
+        35
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 0,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/comfy/ldm/lumina/model.py b/comfy/ldm/lumina/model.py\nindex 96cb37f..46650ae 100644\n--- a/comfy/ldm/lumina/model.py\n+++ b/comfy/ldm/lumina/model.py\n@@ -11,7 +11,7 @@ import comfy.ldm.common_dit\n from comfy.ldm.modules.diffusionmodules.mmdit import TimestepEmbedder\n from comfy.ldm.modules.attention import optimized_attention_masked\n from comfy.ldm.flux.layers import EmbedND\n-from comfy.ldm.flux.math import apply_rope\n+from comfy.ldm.flux.math import apply_rope, rope\n import comfy.patcher_extension\n \n \n@@ -352,6 +352,42 @@ class FinalLayer(nn.Module):\n         return x\n \n \n+class LuminaEmbedND(nn.Module):\n+    def __init__(self, dim: int, theta: int, axes_dim: list, axes_lens: list = None):\n+        super().__init__()\n+        self.dim = dim\n+        self.theta = theta\n+        self.axes_dim = axes_dim\n+        self.axes_lens = axes_lens\n+        if axes_lens is not None:\n+            for i, (d, l) in enumerate(zip(axes_dim, axes_lens)):\n+                pos = torch.arange(l).unsqueeze(0)\n+                freqs = rope(pos, d, theta)\n+                freqs = freqs.squeeze(0)\n+                self.register_buffer(f\"freqs_{i}\", freqs.view(l, -1))\n+\n+    def forward(self, ids: torch.Tensor) -> torch.Tensor:\n+        if self.axes_lens is None:\n+            n_axes = ids.shape[-1]\n+            emb = torch.cat(\n+                [rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(n_axes)],\n+                dim=-3,\n+            )\n+            return emb.unsqueeze(1)\n+\n+        n_axes = ids.shape[-1]\n+        emb_list = []\n+        for i in range(n_axes):\n+            freqs = getattr(self, f\"freqs_{i}\")\n+            idx = ids[..., i].long()\n+            part = F.embedding(idx, freqs)\n+            part = part.view(*idx.shape, self.axes_dim[i], 2, 2)\n+            emb_list.append(part)\n+        \n+        emb = torch.cat(emb_list, dim=-3)\n+        return emb.unsqueeze(1)\n+\n+\n class NextDiT(nn.Module):\n     \"\"\"\n     Diffusion model with a Transformer backbone.\n@@ -501,7 +537,7 @@ class NextDiT(nn.Module):\n         assert (dim // n_heads) == sum(axes_dims)\n         self.axes_dims = axes_dims\n         self.axes_lens = axes_lens\n-        self.rope_embedder = EmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims)\n+        self.rope_embedder = LuminaEmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims, axes_lens=axes_lens)\n         self.dim = dim\n         self.n_heads = n_heads\n \n",
+      "cumulative_files_changed_count": 1,
+      "cumulative_additions": 38,
+      "cumulative_deletions": 2,
+      "replay_warnings_this_turn": []
+    }
+  ],
+  "repo_url": "https://github.com/comfyanonymous/ComfyUI",
+  "base_commit": "da2bfb5b0af26c7a1c44ec951dbd0fffe413c793",
+  "replay_status": "ok",
+  "total_replay_warnings": 0
+}

@@ -1,0 +1,325 @@
+{
+  "session_id": "19def01c-b939-40ef-b431-47aa7121df4c",
+  "task_name": "cli-task-19def0",
+  "turn_count": 3,
+  "total_tool_calls": 34,
+  "total_mutating_ops": 7,
+  "schema_version": "1.1",
+  "turns": [
+    {
+      "turn": 0,
+      "user_message": "The stale session cleanup logic is only implemented in this package-level LoadSessionState function, but not in StateStore.Load which is called directly by ManualCommitStrategy.loadSessionState(). This creates an inconsistency where stale sessions are cleaned up in some code paths but not others.\n\nConsider adding the stale session check to StateStore.Load() in session/state.go instead, so all callers automatically benefit from stale session cleanup. This would make the behavior consistent across the codebase and ensure that ManualCommitStrategy.loadSessionState() (used in hooks and many other places) also returns nil for stale sessions.",
+      "user_message_chars": 644,
+      "msg_range": [
+        0,
+        85
+      ],
+      "agent_text": "Let me understand the current code structure first.\n\nNow let me see how `ManualCommitStrategy.loadSessionState()` works and find all callers of both `StateStore.Load` and the package-level `LoadSessionState`.\n\nNow let me check where `ManualCommitStrategy.loadSessionState()` is called, to confirm the scope of the inconsistency.\n\nGood, `loadSessionState()` is called extensively in hooks and production code. Now let me check the existing stale session test to understand expectations.\n\nNow I have a clear picture. Let me also look at the test for stale sessions in `StateStore.List` to see what exists there.\n\nLet me check the `SessionState` type in the strategy package to understand the relationship.\n\nGood, it's a type alias. Now I have the full picture. Here's what I'll do:\n\n1. **`StateStore.Load()`** — add stale session check + cleanup (the core fix)\n2. **`StateStore.List()`** — remove the now-redundant stale check (Load handles it)\n3. **`strategy.LoadSessionState()`** — remove the duplicate stale check (it reads files directly but can rely on the same pattern, or better yet, refactor to use StateStore)\n\nLet me also check if `LoadSessionState` in strategy could be simplified to use `StateStore`.\n\nNow I'll make the changes. Let me start with the core fix in `StateStore.Load()`, then clean up the redundant checks.\n\nNow remove the redundant stale check from `StateStore.List()`:\n\nNow simplify `LoadSessionState` in the strategy package to use `StateStore` instead of duplicating file I/O:\n\nNow let me clean up the unused imports in `strategy/session_state.go`:\n\nNow let me also check if there are unused imports after removing the `_ = ctx` line:\n\nGood — imports in `session/state.go` are all still used (`slog` and `logging` are used in the new stale check code). Now let me add a test for `StateStore.Load` returning nil for stale sessions.\n\nNow let me add a test for `StateStore.Load` directly returning nil for stale sessions:\n\nNow let me run the tests to make sure everything works.\n\nNow let me run the strategy tests that touch stale session behavior:\n\nAll tests pass. Now let me run the full test suite as required before committing:\n\nThe existing staticcheck issues are pre-existing. I just need to fix the two `testifylint` issues in my new test:\n\nNow let me run the full test suite:",
+      "agent_thinking_chars": 3911,
+      "ops": [
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go",
+          "detail": ""
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "\\.Load\\(ctx,",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli"
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "LoadSessionState\\(",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli"
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "func.*loadSessionState",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy"
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+          "detail": ""
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "s\\.loadSessionState\\(",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy"
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "TestStateStore.*Stale|stale.*state.*store|StateStore.*stale",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli/session"
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "func Test.*Stale|func Test.*State",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go"
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "type SessionState",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy"
+        },
+        {
+          "kind": "search",
+          "tool": "Grep",
+          "target": "func LoadSessionState",
+          "detail": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go"
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state.go",
+          "detail": ""
+        },
+        {
+          "kind": "read",
+          "tool": "Read",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "test",
+          "tool": "Bash",
+          "target": "go test ./cmd/entire/cli/session/ -run \"TestStateStore_Load_DeletesStaleSession|TestStateStore_List_DeletesStaleSession|TestState_IsStale\" -v -count=1 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "test",
+          "tool": "Bash",
+          "target": "go test ./cmd/entire/cli/strategy/ -run \"TestLoadSessionState_DeletesStaleSession|TestShadowStrategy_ListAllSessionStates|TestLoadSessionState\" -v -count=1 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run fmt 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run lint 2>&1",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "edit",
+          "tool": "Edit",
+          "target": "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "mise run fmt && mise run lint 2>&1",
+          "detail": ""
+        }
+      ],
+      "files_read": [
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/manual_commit_session.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state_test.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/manual_commit_test.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go"
+      ],
+      "files_edited": [
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/strategy/session_state.go",
+        "/Users/paul/src/entireio/cli/cmd/entire/cli/session/state_test.go"
+      ],
+      "files_written": [],
+      "bash_commands": [
+        "mise run fmt 2>&1",
+        "mise run lint 2>&1",
+        "mise run fmt && mise run lint 2>&1"
+      ],
+      "test_invocations": [
+        "go test ./cmd/entire/cli/session/ -run \"TestStateStore_Load_DeletesStaleSession|TestStateStore_List_DeletesStaleSession|TestState_IsStale\" -v -count=1 2>&1",
+        "go test ./cmd/entire/cli/strategy/ -run \"TestLoadSessionState_DeletesStaleSession|TestShadowStrategy_ListAllSessionStates|TestLoadSessionState\" -v -count=1 2>&1"
+      ],
+      "n_tool_calls": 29,
+      "n_mutating_ops": 7,
+      "completion_signaled": true,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/session/state.go b/cmd/entire/cli/session/state.go\nindex 7ce4cbc..fd94087 100644\n--- a/cmd/entire/cli/session/state.go\n+++ b/cmd/entire/cli/session/state.go\n@@ -237,10 +237,9 @@ func NewStateStoreWithDir(stateDir string) *StateStore {\n }\n \n // Load loads the session state for the given session ID.\n-// Returns (nil, nil) when session file doesn't exist (not an error condition).\n+// Returns (nil, nil) when session file doesn't exist or session is stale (not an error condition).\n+// Stale sessions (ended longer than StaleSessionThreshold ago) are automatically deleted.\n func (s *StateStore) Load(ctx context.Context, sessionID string) (*State, error) {\n-\t_ = ctx // Reserved for future use\n-\n \t// Validate session ID to prevent path traversal\n \tif err := validation.ValidateSessionID(sessionID); err != nil {\n \t\treturn nil, fmt.Errorf(\"invalid session ID: %w\", err)\n@@ -261,6 +260,16 @@ func (s *StateStore) Load(ctx context.Context, sessionID string) (*State, error)\n \t\treturn nil, fmt.Errorf(\"failed to unmarshal session state: %w\", err)\n \t}\n \tstate.NormalizeAfterLoad()\n+\n+\tif state.IsStale() {\n+\t\tlogCtx := logging.WithComponent(ctx, \"session\")\n+\t\tlogging.Debug(logCtx, \"deleting stale session state\",\n+\t\t\tslog.String(\"session_id\", sessionID),\n+\t\t)\n+\t\t_ = s.Clear(ctx, sessionID) //nolint:errcheck // best-effort cleanup of stale session\n+\t\treturn nil, nil             //nolint:nilnil // stale session treated as not found\n+\t}\n+\n \treturn &state, nil\n }\n \ndiff --git a/cmd/entire/cli/strategy/session_state.go b/cmd/entire/cli/strategy/session_state.go\nindex b159bd5..662c6ba 100644\n--- a/cmd/entire/cli/strategy/session_state.go\n+++ b/cmd/entire/cli/strategy/session_state.go\n@@ -2,7 +2,6 @@ package strategy\n \n import (\n \t\"context\"\n-\t\"encoding/json\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n",
+      "cumulative_files_changed_count": 2,
+      "cumulative_additions": 12,
+      "cumulative_deletions": 4,
+      "replay_warnings_this_turn": [
+        "op[15] edit: old text not found in cmd/entire/cli/session/state.go",
+        "op[16] edit: old text not found in cmd/entire/cli/strategy/session_state.go",
+        "op[21] edit: old text not found in cmd/entire/cli/session/state_test.go",
+        "op[26] edit: old text not found in cmd/entire/cli/session/state_test.go",
+        "op[27] edit: old text not found in cmd/entire/cli/session/state_test.go"
+      ]
+    },
+    {
+      "turn": 1,
+      "user_message": "[Request interrupted by user for tool use]",
+      "user_message_chars": 42,
+      "msg_range": [
+        85,
+        86
+      ],
+      "agent_text": "",
+      "agent_thinking_chars": 0,
+      "ops": [],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [],
+      "test_invocations": [],
+      "n_tool_calls": 0,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/session/state.go b/cmd/entire/cli/session/state.go\nindex 7ce4cbc..fd94087 100644\n--- a/cmd/entire/cli/session/state.go\n+++ b/cmd/entire/cli/session/state.go\n@@ -237,10 +237,9 @@ func NewStateStoreWithDir(stateDir string) *StateStore {\n }\n \n // Load loads the session state for the given session ID.\n-// Returns (nil, nil) when session file doesn't exist (not an error condition).\n+// Returns (nil, nil) when session file doesn't exist or session is stale (not an error condition).\n+// Stale sessions (ended longer than StaleSessionThreshold ago) are automatically deleted.\n func (s *StateStore) Load(ctx context.Context, sessionID string) (*State, error) {\n-\t_ = ctx // Reserved for future use\n-\n \t// Validate session ID to prevent path traversal\n \tif err := validation.ValidateSessionID(sessionID); err != nil {\n \t\treturn nil, fmt.Errorf(\"invalid session ID: %w\", err)\n@@ -261,6 +260,16 @@ func (s *StateStore) Load(ctx context.Context, sessionID string) (*State, error)\n \t\treturn nil, fmt.Errorf(\"failed to unmarshal session state: %w\", err)\n \t}\n \tstate.NormalizeAfterLoad()\n+\n+\tif state.IsStale() {\n+\t\tlogCtx := logging.WithComponent(ctx, \"session\")\n+\t\tlogging.Debug(logCtx, \"deleting stale session state\",\n+\t\t\tslog.String(\"session_id\", sessionID),\n+\t\t)\n+\t\t_ = s.Clear(ctx, sessionID) //nolint:errcheck // best-effort cleanup of stale session\n+\t\treturn nil, nil             //nolint:nilnil // stale session treated as not found\n+\t}\n+\n \treturn &state, nil\n }\n \ndiff --git a/cmd/entire/cli/strategy/session_state.go b/cmd/entire/cli/strategy/session_state.go\nindex b159bd5..662c6ba 100644\n--- a/cmd/entire/cli/strategy/session_state.go\n+++ b/cmd/entire/cli/strategy/session_state.go\n@@ -2,7 +2,6 @@ package strategy\n \n import (\n \t\"context\"\n-\t\"encoding/json\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n",
+      "cumulative_files_changed_count": 2,
+      "cumulative_additions": 12,
+      "cumulative_deletions": 4,
+      "replay_warnings_this_turn": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Commit with thorough message.",
+      "user_message_chars": 29,
+      "msg_range": [
+        86,
+        99
+      ],
+      "agent_text": "Let me check the current state first.\n\nCommitted. The change consolidates stale session cleanup into `StateStore.Load()` so that all callers — including `ManualCommitStrategy.loadSessionState()` used in hooks, condensation, rewind, and git operations — automatically benefit. The redundant checks in `StateStore.List()` and `strategy.LoadSessionState()` were removed, and the latter was simplified to delegate to `StateStore` instead of duplicating file I/O.",
+      "agent_thinking_chars": 0,
+      "ops": [
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git -C /Users/paul/src/entireio/cli status",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git -C /Users/paul/src/entireio/cli diff",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git -C /Users/paul/src/entireio/cli log --oneline -5",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git -C /Users/paul/src/entireio/cli add cmd/entire/cli/session/state.go cmd/entire/cli/session/state_test.go cmd/entire/cli/strategy/session_state.go && git -C /Users/paul/src/entireio/cli commit -m \"",
+          "detail": ""
+        },
+        {
+          "kind": "bash",
+          "tool": "Bash",
+          "target": "git -C /Users/paul/src/entireio/cli status",
+          "detail": ""
+        }
+      ],
+      "files_read": [],
+      "files_edited": [],
+      "files_written": [],
+      "bash_commands": [
+        "git -C /Users/paul/src/entireio/cli status",
+        "git -C /Users/paul/src/entireio/cli diff",
+        "git -C /Users/paul/src/entireio/cli log --oneline -5",
+        "git -C /Users/paul/src/entireio/cli add cmd/entire/cli/session/state.go cmd/entire/cli/session/state_test.go cmd/entire/cli/strategy/session_state.go && git -C /Users/paul/src/entireio/cli commit -m \"",
+        "git -C /Users/paul/src/entireio/cli status"
+      ],
+      "test_invocations": [],
+      "n_tool_calls": 5,
+      "n_mutating_ops": 0,
+      "completion_signaled": false,
+      "cumulative_patch": "diff --git a/cmd/entire/cli/session/state.go b/cmd/entire/cli/session/state.go\nindex 7ce4cbc..fd94087 100644\n--- a/cmd/entire/cli/session/state.go\n+++ b/cmd/entire/cli/session/state.go\n@@ -237,10 +237,9 @@ func NewStateStoreWithDir(stateDir string) *StateStore {\n }\n \n // Load loads the session state for the given session ID.\n-// Returns (nil, nil) when session file doesn't exist (not an error condition).\n+// Returns (nil, nil) when session file doesn't exist or session is stale (not an error condition).\n+// Stale sessions (ended longer than StaleSessionThreshold ago) are automatically deleted.\n func (s *StateStore) Load(ctx context.Context, sessionID string) (*State, error) {\n-\t_ = ctx // Reserved for future use\n-\n \t// Validate session ID to prevent path traversal\n \tif err := validation.ValidateSessionID(sessionID); err != nil {\n \t\treturn nil, fmt.Errorf(\"invalid session ID: %w\", err)\n@@ -261,6 +260,16 @@ func (s *StateStore) Load(ctx context.Context, sessionID string) (*State, error)\n \t\treturn nil, fmt.Errorf(\"failed to unmarshal session state: %w\", err)\n \t}\n \tstate.NormalizeAfterLoad()\n+\n+\tif state.IsStale() {\n+\t\tlogCtx := logging.WithComponent(ctx, \"session\")\n+\t\tlogging.Debug(logCtx, \"deleting stale session state\",\n+\t\t\tslog.String(\"session_id\", sessionID),\n+\t\t)\n+\t\t_ = s.Clear(ctx, sessionID) //nolint:errcheck // best-effort cleanup of stale session\n+\t\treturn nil, nil             //nolint:nilnil // stale session treated as not found\n+\t}\n+\n \treturn &state, nil\n }\n \ndiff --git a/cmd/entire/cli/strategy/session_state.go b/cmd/entire/cli/strategy/session_state.go\nindex b159bd5..662c6ba 100644\n--- a/cmd/entire/cli/strategy/session_state.go\n+++ b/cmd/entire/cli/strategy/session_state.go\n@@ -2,7 +2,6 @@ package strategy\n \n import (\n \t\"context\"\n-\t\"encoding/json\"\n \t\"fmt\"\n \t\"log/slog\"\n \t\"os\"\n",
+      "cumulative_files_changed_count": 2,
+      "cumulative_additions": 12,
+      "cumulative_deletions": 4,
+      "replay_warnings_this_turn": []
+    }
+  ],
+  "repo_url": "https://github.com/entireio/cli",
+  "base_commit": "7f6c5bd3ce5d041269a2619c66f352607a06d6b2",
+  "replay_status": "ok",
+  "total_replay_warnings": 5
+}
