@@ -442,7 +442,12 @@ def _sanitize_and_upload(trials_dir: Path):
     scripts_dir = REPO_ROOT / "scripts"
     sanitize_script = scripts_dir / "sanitize_traces.py"
     upload_script = scripts_dir / "upload_traces.py"
-    python_bin = str(REPO_ROOT / ".venv" / "bin" / "python3")
+    # Resolve a usable python3: prefer the same interpreter we're already running
+    # (works whether we were invoked from the main repo or a worktree without its
+    # own .venv); fall back to REPO_ROOT/.venv for backward compat with hosts that
+    # pinned that path explicitly.
+    venv_python = REPO_ROOT / ".venv" / "bin" / "python3"
+    python_bin = sys.executable if Path(sys.executable).exists() else str(venv_python)
 
     # Check for bucket credentials
     bucket = os.environ.get("BUCKET_NAME", "")
@@ -500,7 +505,11 @@ async def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model", required=True, help="Action agent model (e.g., anthropic/claude-opus-4-6)")
-    parser.add_argument("--user-model", default="openrouter/google/gemini-3.1-pro-preview", help="User sim model")
+    # Default to direct Gemini (matches config.yaml + runner.py + the v0.4.4
+    # DS-Flash / DS-Pro production manifests). The OpenRouter route works too,
+    # pass --user-model openrouter/google/gemini-3.1-pro-preview if needed,
+    # but the default OR token has been flaky (401 "User not found").
+    parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview", help="User sim model")
     parser.add_argument("--tag", required=True, help="Short tag for this run")
     parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
     parser.add_argument("--env-type", default=None, help="Environment: docker, e2b, etc.")
@@ -650,14 +659,24 @@ async def main():
 
     # Run via Harbor's LocalOrchestrator
     start = time.time()
-    # Retry on E2B sandbox rate limits (429) with exponential backoff.
+    # Retry on transient E2B infra failures with exponential backoff.
     # Retries happen INSIDE the semaphore — a retrying trial holds its
     # concurrency slot, so total E2B pressure stays ≤ n_concurrent_trials.
-    # Backoff: 30s → 60s → 120s → 240s → 300s (capped) ≈ 12 min total window.
+    # Backoff: 60s → 120s → 240s → 300s → 300s ≈ 17 min total window.
+    #
+    # IMPORTANT: include_exceptions is matched against type(e).__name__ (string
+    # equality, not isinstance). So we list the *concrete* subclasses we want to
+    # retry, not "SandboxException" (which would only match the literal alias-404
+    # case where retry can never succeed).
     retry_config = RetryConfig(
         max_retries=5,
-        include_exceptions=["SandboxException"],
-        min_wait_sec=30.0,
+        include_exceptions=[
+            "RateLimitException",  # E2B 429 — sandbox cap or template-build cap
+            "TimeoutException",    # sandbox lost mid-run (gRPC unavailable)
+            "ConnectTimeout",      # httpcore network blip during sandbox create
+            "AddTestsDirError",    # transient docker upload_dir failure
+        ],
+        min_wait_sec=60.0,
         max_wait_sec=300.0,
         wait_multiplier=2.0,
     )

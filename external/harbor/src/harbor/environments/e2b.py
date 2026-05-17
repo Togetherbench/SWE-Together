@@ -52,12 +52,12 @@ class E2BEnvironment(BaseEnvironment):
         self._sandbox: AsyncSandbox | None = None
         # Permanent fix for shichaopei alias collision: prefix our team aliases
         # with HARBOR_TEAM_PREFIX so they live in a private namespace no other
-        # E2B team can squat on. Default empty preserves upstream behavior.
-        # Set in src/run_eval.py: HARBOR_TEAM_PREFIX="tb" → aliases become
-        # `tb-<task>__<hash>` instead of `<task>__<hash>`. Combined with our
-        # `team-marker.txt` (extra dirhash entropy), aliases are now unique
-        # to togetherbench's E2B team.
-        team_prefix = os.environ.get("HARBOR_TEAM_PREFIX", "").strip()
+        # E2B team can squat on. Default "tb" so any entry point (`harbor run`
+        # CLI, ad-hoc scripts, replay tooling) automatically gets the prefix —
+        # callers can still set HARBOR_TEAM_PREFIX="" to opt out for testing.
+        # Combined with our `team-marker.txt` (extra dirhash entropy), aliases
+        # are uniquely scoped to togetherbench's E2B team.
+        team_prefix = os.environ.get("HARBOR_TEAM_PREFIX", "tb").strip()
         prefix = f"{team_prefix}-" if team_prefix else ""
         self._template_name = f"{prefix}{environment_name}__{dirhash(self.environment_dir, 'sha256')[:8]}".replace(
             ".", "-"
