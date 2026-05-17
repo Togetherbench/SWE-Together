@@ -1,6 +1,5 @@
 {
   "session_id": "019be8c1-cb10-74b2-89db-45e8aa8327b2",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "Dao-AILab/flash-attention",
@@ -10,16 +9,18 @@
   "total_deletions": 0,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tflash_attn/flash_attn_triton.py\nM\tflash_attn/ops/triton/layer_norm.py\nM\tflash_attn/ops/triton/linear.py\n",
-  "numstat": "1\t0\tflash_attn/flash_attn_triton.py\n2\t0\tflash_attn/ops/triton/layer_norm.py\n2\t0\tflash_attn/ops/triton/linear.py\n",
+  "numstat": [
+    "1\t0\tflash_attn/flash_attn_triton.py",
+    "2\t0\tflash_attn/ops/triton/layer_norm.py",
+    "2\t0\tflash_attn/ops/triton/linear.py"
+  ],
   "patch": "diff --git a/flash_attn/flash_attn_triton.py b/flash_attn/flash_attn_triton.py\nindex 30420c0..923381f 100644\n--- a/flash_attn/flash_attn_triton.py\n+++ b/flash_attn/flash_attn_triton.py\n@@ -656,6 +656,7 @@ def init_to_zero(name):\n         # triton.Config({\"BLOCK_M\": 64, \"BLOCK_N\": 64, \"SEQUENCE_PARALLEL\": True}, num_warps=4, num_stages=1, pre_hook=init_to_zero('DQ')),\n     ],\n     key=[\"CACHE_KEY_SEQLEN_Q\", \"CACHE_KEY_SEQLEN_K\", \"BIAS_TYPE\", \"IS_CAUSAL\", \"BLOCK_HEADDIM\"],\n+    cache_results=True,\n )\n @triton.heuristics(\n     {\ndiff --git a/flash_attn/ops/triton/layer_norm.py b/flash_attn/ops/triton/layer_norm.py\nindex 192cee4..b9f4339 100644\n--- a/flash_attn/ops/triton/layer_norm.py\n+++ b/flash_attn/ops/triton/layer_norm.py\n@@ -163,6 +163,7 @@ def rms_norm_ref(\n @triton.autotune(\n     configs=triton_autotune_configs(),\n     key=[\"N\", \"HAS_RESIDUAL\", \"STORE_RESIDUAL_OUT\", \"IS_RMS_NORM\", \"HAS_BIAS\", \"HAS_X1\", \"HAS_W1\", \"HAS_B1\"],\n+    cache_results=True,\n )\n # torch compile doesn't like triton.heuristics, so we set these manually when calling the kernel\n # @triton.heuristics({\"HAS_BIAS\": lambda args: args[\"B\"] is not None})\n@@ -471,6 +472,7 @@ def _layer_norm_fwd_impl(\n @triton.autotune(\n     configs=triton_autotune_configs(),\n     key=[\"N\", \"HAS_DRESIDUAL\", \"STORE_DRESIDUAL\", \"IS_RMS_NORM\", \"HAS_BIAS\", \"HAS_DROPOUT\"],\n+    cache_results=True,\n )\n # torch compile doesn't like triton.heuristics, so we set these manually when calling the kernel\n # @triton.heuristics({\"HAS_BIAS\": lambda args: args[\"B\"] is not None})\ndiff --git a/flash_attn/ops/triton/linear.py b/flash_attn/ops/triton/linear.py\nindex a8966db..13c905d 100644\n--- a/flash_attn/ops/triton/linear.py\n+++ b/flash_attn/ops/triton/linear.py\n@@ -121,6 +121,7 @@ def get_configs_io_bound():\n         \"perf_model\": estimate_matmul_time,\n         \"top_k\": 10,\n     },\n+    cache_results=True,\n )\n @triton.heuristics(\n     {\n@@ -418,6 +419,7 @@ def triton_linear_act(\n         \"perf_model\": estimate_matmul_time,\n         \"top_k\": 10,\n     },\n+    cache_results=True,\n )\n @triton.heuristics(\n     {\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "unknown",
   "_reconstruction": "tool_replay_curated",
   "_fidelity": "high",
   "_reconstruction_warnings": [
-    "Original replay-time warnings referenced flash_attn/flash_attn_triton_amd/* files \u2014 directory does NOT exist at base commit ef736fe; those edits were against a different worktree or hallucinated in the agent's text summary. Discarded as not applicable.",
-    "op[8]/op[14] hunk-anchor warnings (linear.py, layer_norm.py) \u2014 replay still produced correct insertion lines for kernel_fwd/kernel_bwd/_layer_norm_fwd/_layer_norm_bwd autotunes; verified via git apply + AST-level test grader simulation (5/5 sites PASS, total=1.0000)."
+    "Original replay-time warnings referenced flash_attn/flash_attn_triton_amd/* files — directory does NOT exist at base commit ef736fe; those edits were against a different worktree or hallucinated in the agent's text summary. Discarded as not applicable.",
+    "op[8]/op[14] hunk-anchor warnings (linear.py, layer_norm.py) — replay still produced correct insertion lines for kernel_fwd/kernel_bwd/_layer_norm_fwd/_layer_norm_bwd autotunes; verified via git apply + AST-level test grader simulation (5/5 sites PASS, total=1.0000)."
   ],
   "_base_commit": "ef736fe03d42c0d5f0844486e57ebf6c6dd12d0b",
   "_repo_url": "https://github.com/Dao-AILab/flash-attention",
@@ -28,23 +29,29 @@
   "_reconstruction_warnings_original": [
     "op[8] apply_patch: update: hunk anchor not found in flash_attn/ops/triton/linear.py",
     "op[14] apply_patch: update: hunk anchor not found in flash_attn/ops/triton/layer_norm.py",
-    "op[21] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_prefill.py \u2192 flash_attn/flash_attn_triton_amd/fwd_prefill.py",
-    "op[23] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_decode.py \u2192 flash_attn/flash_attn_triton_amd/fwd_decode.py",
-    "op[25] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_decode.py \u2192 flash_attn/flash_attn_triton_amd/fwd_decode.py",
-    "op[27] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py \u2192 flash_attn/flash_attn_triton_amd/bwd.py",
-    "op[29] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py \u2192 flash_attn/flash_attn_triton_amd/bwd.py",
-    "op[31] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py \u2192 flash_attn/flash_attn_triton_amd/bwd.py"
+    "op[21] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_prefill.py → flash_attn/flash_attn_triton_amd/fwd_prefill.py",
+    "op[23] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_decode.py → flash_attn/flash_attn_triton_amd/fwd_decode.py",
+    "op[25] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/fwd_decode.py → flash_attn/flash_attn_triton_amd/fwd_decode.py",
+    "op[27] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py → flash_attn/flash_attn_triton_amd/bwd.py",
+    "op[29] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py → flash_attn/flash_attn_triton_amd/bwd.py",
+    "op[31] apply_patch: update: file not found flash_attn/flash_attn_triton_amd/bwd.py → flash_attn/flash_attn_triton_amd/bwd.py"
   ],
   "_curation_method": "verified_existing_patch_against_test_sh",
   "_curation_source": "git_apply_check_plus_ast_grader_simulation",
-  "_curation_notes": "Verified existing tool_replay patch by: (1) git clone --depth=1 origin ef736fe in /tmp; (2) git apply --check + git apply both succeed cleanly; (3) ran AST-level mock-triton grader replicating tests/test.sh's verify_site() logic \u2014 all 5 EXPECTED_SITES (linear.py::kernel_fwd, linear.py::kernel_bwd, layer_norm.py::_layer_norm_fwd_1pass_kernel, layer_norm.py::_layer_norm_bwd_kernel, flash_attn_triton.py::_bwd_kernel) report cache_results=True with non-empty configs+key, scoring 5*0.18 + 0.10 = 1.0000. Patch is the canonical ground truth for this task; lossy flag was a false positive caused by replay warnings about AMD files that don't exist at this base commit. files_changed_count=3, total_additions=5, total_deletions=0, patch_bytes=2074.",
+  "_curation_notes": "Verified existing tool_replay patch by: (1) git clone --depth=1 origin ef736fe in /tmp; (2) git apply --check + git apply both succeed cleanly; (3) ran AST-level mock-triton grader replicating tests/test.sh's verify_site() logic — all 5 EXPECTED_SITES (linear.py::kernel_fwd, linear.py::kernel_bwd, layer_norm.py::_layer_norm_fwd_1pass_kernel, layer_norm.py::_layer_norm_bwd_kernel, flash_attn_triton.py::_bwd_kernel) report cache_results=True with non-empty configs+key, scoring 5*0.18 + 0.10 = 1.0000. Patch is the canonical ground truth for this task; lossy flag was a false positive caused by replay warnings about AMD files that don't exist at this base commit. files_changed_count=3, total_additions=5, total_deletions=0, patch_bytes=2074.",
   "_curation_verified_against_test_sh": true,
   "_curation_test_sh_simulated_reward": 1.0,
-  "_extraction": {
-    "method": "verified_existing_patch_against_test_sh",
-    "source": "git_apply_check_plus_ast_grader_simulation",
-    "fidelity": "high",
-    "verified": false,
-    "note": "Verified existing tool_replay patch by: (1) git clone --depth=1 origin ef736fe in /tmp; (2) git apply --check + git apply both succeed cleanly; (3) ran AST-level mock-triton grader replicating tests/test.sh's verify_site() logic \u2014 all 5 EXPECTED_SITES (linear.py::kernel_fwd, linear.py::kernel_bwd, layer_norm.py::_layer_norm_fwd_1pass_kernel, layer_norm.py::_layer_norm_bwd_kernel, flash_attn_triton.py::_bwd_kernel) report cache_results=True with non-empty configs+key, scoring 5*0.18 + 0.10 = 1.00"
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ad",
+    "date": "2026-05-14",
+    "note": "high fidelity (honest), schema complete, hdr=3/3 +5/-0 matches numstat, all 3 files aligned, 2 warnings documented",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "test_sh_alignment",
+      "no_phantom_files",
+      "fidelity_honest"
+    ]
   }
 }

@@ -122,3 +122,6 @@ The existing `AnalyticsCard` component stays untouched (still used by StatCard a
    - "Copy as image" copies to clipboard + toast
    - "Download as PNG" downloads file with timestamp name
    - Watermark appears in downloaded/shared images
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

@@ -41,3 +41,6 @@ Implement the following plan:
 2. `bun run lint`
 3. `bun run test`
 4. `bun run build:chrome`
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

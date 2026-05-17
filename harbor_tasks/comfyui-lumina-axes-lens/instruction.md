@@ -1,1 +1,1 @@
-Implement axes_lens in ComfyUI. To minimize the change to other models than Lumina2, you may create a new class to replace `EmbedND` in comfy/ldm/lumina/model.py .
+Compare the implementation of Lumina 2 model in C:\ComfyUI and C:\diffusers . Assuming Diffusers is the source of truth, is there any problem in ComfyUI's implementation? You're running in PowerShell. Use PowerShell commands.

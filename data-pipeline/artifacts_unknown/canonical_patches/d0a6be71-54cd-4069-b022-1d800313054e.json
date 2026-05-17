@@ -1,6 +1,5 @@
 {
   "session_id": "d0a6be71-54cd-4069-b022-1d800313054e",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "thu-ml/SageAttention",
@@ -10,10 +9,12 @@
   "total_deletions": 4,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tcsrc/dispatch_utils.h\nM\tsageattention/core.py\nM\tcsrc/fused/fused.cu\n",
-  "numstat": "3\t0\tcsrc/dispatch_utils.h\n5\t1\tsageattention/core.py\n5\t3\tcsrc/fused/fused.cu\n",
+  "numstat": [
+    "3\t0\tcsrc/dispatch_utils.h",
+    "5\t1\tsageattention/core.py",
+    "5\t3\tcsrc/fused/fused.cu"
+  ],
   "patch": "diff --git a/csrc/dispatch_utils.h b/csrc/dispatch_utils.h\nindex 6d798e6..7eca3bc 100644\n--- a/csrc/dispatch_utils.h\n+++ b/csrc/dispatch_utils.h\n@@ -27,6 +27,9 @@\n   } else if (head_dim == 128) {                                 \\\n     constexpr int HEAD_DIM = 128;                               \\\n     __VA_ARGS__                                                 \\\n+  } else if (head_dim == 256) {                                 \\\n+    constexpr int HEAD_DIM = 256;                               \\\n+    __VA_ARGS__                                                 \\\n   } else {                                                      \\\n     std::ostringstream err_msg;                                 \\\n     err_msg << \"Unsupported head dim: \" << int(head_dim);       \\\ndiff --git a/sageattention/core.py b/sageattention/core.py\nindex 4fc2509..4e4730b 100644\n--- a/sageattention/core.py\n+++ b/sageattention/core.py\n@@ -262,7 +262,11 @@ def sageattn_qk_int8_pv_fp16_triton(\n         q = torch.nn.functional.pad(q, (0, 128 - head_dim_og))\n         k = torch.nn.functional.pad(k, (0, 128 - head_dim_og))\n         v = torch.nn.functional.pad(v, (0, 128 - head_dim_og))\n-    elif head_dim_og > 128:\n+    elif head_dim_og > 128 and head_dim_og < 256:\n+        q = torch.nn.functional.pad(q, (0, 256 - head_dim_og))\n+        k = torch.nn.functional.pad(k, (0, 256 - head_dim_og))\n+        v = torch.nn.functional.pad(v, (0, 256 - head_dim_og))\n+    elif head_dim_og > 256:\n         raise ValueError(f\"Unsupported head_dim: {head_dim_og}\")\n \n     # assert last dim is contiguous\ndiff --git a/csrc/fused/fused.cu b/csrc/fused/fused.cu\nindex 0000000..0000001 100644\n--- a/csrc/fused/fused.cu\n+++ b/csrc/fused/fused.cu\n@@ -861,7 +861,7 @@\n   CHECK_DIMS(input, 4);\n   CHECK_DIMS(output, 4);\n \n-  constexpr int CTA_SIZE = 64;\n+  constexpr int CTA_SIZE_HOST = 64;\n \n   const int batch_size = input.size(0);\n   const int head_dim = input.size(3);\n@@ -881,7 +881,7 @@\n     stride_d_output = output.stride(1);\n     stride_h_output = output.stride(2);\n \n-    padded_num_tokens = (num_tokens + CTA_SIZE - 1) / CTA_SIZE * CTA_SIZE;\n+    padded_num_tokens = (num_tokens + CTA_SIZE_HOST - 1) / CTA_SIZE_HOST * CTA_SIZE_HOST;\n \n     CHECK_SHAPE(output, batch_size, head_dim, num_heads, padded_num_tokens);\n   }\n@@ -894,7 +894,7 @@\n     stride_d_output = output.stride(2);\n     stride_h_output = output.stride(1);\n \n-    padded_num_tokens = (num_tokens + CTA_SIZE - 1) / CTA_SIZE * CTA_SIZE;\n+    padded_num_tokens = (num_tokens + CTA_SIZE_HOST - 1) / CTA_SIZE_HOST * CTA_SIZE_HOST;\n     CHECK_SHAPE(output, batch_size, num_heads, head_dim, padded_num_tokens);\n   }\n \n@@ -905,6 +905,8 @@\n \n   DISPATCH_PYTORCH_DTYPE_TO_CTYPE_FP16(input_dtype, c_type, {\n     DISPATCH_HEAD_DIM(head_dim, HEAD_DIM, {\n+      constexpr int CTA_SIZE = (HEAD_DIM == 256) ? 32 : 64;\n+\n       dim3 grid(padded_num_tokens / CTA_SIZE, num_heads, batch_size);\n \n       static_assert(CTA_SIZE * HEAD_DIM <= 8192);\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "unknown",
   "_reconstruction": "tool_replay",
   "_fidelity": "high",
@@ -24,12 +25,5 @@
   "_repo_url": "https://github.com/thu-ml/SageAttention",
   "_task_name": "sageattention-headdim-256",
   "_n_mutating_ops": 3,
-  "_extraction": {
-    "method": "hand_curate_content_completion",
-    "source": "tool_replay + hand recovery of session msg[15] fused.cu edit (anchor mismatch was because session OLD reflected agent-truncated view; reconstructed against upstream base c9f4cd7)",
-    "fidelity": "high",
-    "verified": false,
-    "note": "Added csrc/fused/fused.cu edit (CTA_SIZE -> CTA_SIZE_HOST rename + constexpr CTA_SIZE conditional for HEAD_DIM==256) recovered from session msg[15] which the tool_replay extractor flagged as 'old text not found' due to slight context drift. The conceptual change matches what test gates t1_f2p_fused_cta_conditional_for_256 and t1_f2p_fused_static_assert_satisfied check for."
-  },
   "_audit_note": "Round-2 r2-ai numstat-arithmetic fix: regenerated counts from patch body."
 }

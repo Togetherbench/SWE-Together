@@ -1,6 +1,5 @@
 {
   "session_id": "hyperswitch-9437",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "juspay/hyperswitch",
@@ -10,10 +9,10 @@
   "total_deletions": 3,
   "commit_message": "[gold patch from juspay/hyperswitch#9446 closing #9437]",
   "files_changed": "M\tcrates/hyperswitch_connectors/src/connectors/checkout/transformers.rs",
-  "numstat": "111\t3\tcrates/hyperswitch_connectors/src/connectors/checkout/transformers.rs",
+  "numstat": [
+    "111\t3\tcrates/hyperswitch_connectors/src/connectors/checkout/transformers.rs"
+  ],
   "patch": "diff --git a/crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs b/crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs\nindex 912ea1f5d3e..8ebe17a2acc 100644\n--- a/crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs\n+++ b/crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs\n@@ -1,7 +1,11 @@\n-use common_enums::enums::{self, AttemptStatus, PaymentChannel};\n+use common_enums::{\n+    enums::{self, AttemptStatus, PaymentChannel},\n+    CountryAlpha2,\n+};\n use common_utils::{\n     errors::{CustomResult, ParsingError},\n     ext_traits::ByteSliceExt,\n+    id_type::CustomerId,\n     request::Method,\n     types::MinorUnit,\n };\n@@ -25,6 +29,7 @@ use hyperswitch_domain_models::{\n use hyperswitch_interfaces::{consts, errors, webhooks};\n use masking::{ExposeInterface, Secret};\n use serde::{Deserialize, Serialize};\n+use serde_with::skip_serializing_none;\n use time::PrimitiveDateTime;\n use url::Url;\n \n@@ -269,6 +274,54 @@ pub struct ReturnUrl {\n     pub failure_url: Option<String>,\n }\n \n+#[skip_serializing_none]\n+#[derive(Debug, Default, Serialize)]\n+pub struct CheckoutCustomer {\n+    pub name: Option<CustomerId>,\n+    pub tax_number: Option<Secret<String>>,\n+}\n+\n+#[skip_serializing_none]\n+#[derive(Debug, Default, Serialize)]\n+pub struct CheckoutProcessing {\n+    pub order_id: Option<String>,\n+    pub tax_amount: Option<MinorUnit>,\n+    pub discount_amount: Option<MinorUnit>,\n+    pub duty_amount: Option<MinorUnit>,\n+    pub shipping_amount: Option<MinorUnit>,\n+    pub shipping_tax_amount: Option<MinorUnit>,\n+}\n+\n+#[skip_serializing_none]\n+#[derive(Debug, Default, Serialize)]\n+pub struct CheckoutShippingAddress {\n+    pub country: Option<CountryAlpha2>,\n+    pub zip: Option<Secret<String>>,\n+}\n+\n+#[skip_serializing_none]\n+#[derive(Debug, Default, Serialize)]\n+pub struct CheckoutShipping {\n+    pub address: Option<CheckoutShippingAddress>,\n+    pub from_address_zip: Option<String>,\n+}\n+\n+#[skip_serializing_none]\n+#[derive(Debug, Default, Serialize)]\n+pub struct CheckoutLineItem {\n+    pub commodity_code: Option<String>,\n+    pub discount_amount: Option<MinorUnit>,\n+    pub name: Option<String>,\n+    pub quantity: Option<u16>,\n+    pub reference: Option<String>,\n+    pub tax_exempt: Option<bool>,\n+    pub tax_amount: Option<MinorUnit>,\n+    pub total_amount: Option<MinorUnit>,\n+    pub unit_of_measure: Option<String>,\n+    pub unit_price: Option<MinorUnit>,\n+}\n+\n+#[skip_serializing_none]\n #[derive(Debug, Serialize)]\n pub struct PaymentsRequest {\n     pub source: PaymentSource,\n@@ -285,6 +338,12 @@ pub struct PaymentsRequest {\n     pub payment_type: CheckoutPaymentType,\n     pub merchant_initiated: Option<bool>,\n     pub previous_payment_id: Option<String>,\n+\n+    // Level 2/3 data fields\n+    pub customer: Option<CheckoutCustomer>,\n+    pub processing: Option<CheckoutProcessing>,\n+    pub shipping: Option<CheckoutShipping>,\n+    pub items: Option<Vec<CheckoutLineItem>>,\n }\n \n #[derive(Debug, Serialize, Deserialize)]\n@@ -512,8 +571,51 @@ impl TryFrom<&CheckoutRouterData<&PaymentsAuthorizeRouterData>> for PaymentsRequ\n         let auth_type: CheckoutAuthType = connector_auth.try_into()?;\n         let processing_channel_id = auth_type.processing_channel_id;\n         let metadata = item.router_data.request.metadata.clone().map(Into::into);\n+        let (customer, processing, shipping, items) =\n+            if let Some(l2l3_data) = &item.router_data.l2_l3_data {\n+                (\n+                    Some(CheckoutCustomer {\n+                        name: l2l3_data.customer_id.clone(),\n+                        tax_number: l2l3_data.customer_tax_registration_id.clone(),\n+                    }),\n+                    Some(CheckoutProcessing {\n+                        order_id: l2l3_data.merchant_order_reference_id.clone(),\n+                        tax_amount: l2l3_data.order_tax_amount,\n+                        discount_amount: l2l3_data.discount_amount,\n+                        duty_amount: l2l3_data.duty_amount,\n+                        shipping_amount: l2l3_data.shipping_cost,\n+                        shipping_tax_amount: l2l3_data.shipping_amount_tax,\n+                    }),\n+                    Some(CheckoutShipping {\n+                        address: Some(CheckoutShippingAddress {\n+                            country: l2l3_data.shipping_country,\n+                            zip: l2l3_data.shipping_destination_zip.clone(),\n+                        }),\n+                        from_address_zip: l2l3_data.shipping_origin_zip.clone().map(|z| z.expose()),\n+                    }),\n+                    l2l3_data.order_details.as_ref().map(|details| {\n+                        details\n+                            .iter()\n+                            .map(|item| CheckoutLineItem {\n+                                commodity_code: item.commodity_code.clone(),\n+                                discount_amount: item.unit_discount_amount,\n+                                name: Some(item.product_name.clone()),\n+                                quantity: Some(item.quantity),\n+                                reference: item.product_id.clone(),\n+                                tax_exempt: None,\n+                                tax_amount: item.total_tax_amount,\n+                                total_amount: item.total_amount,\n+                                unit_of_measure: item.unit_of_measure.clone(),\n+                                unit_price: Some(item.amount),\n+                            })\n+                            .collect()\n+                    }),\n+                )\n+            } else {\n+                (None, None, None, None)\n+            };\n \n-        Ok(Self {\n+        let request = Self {\n             source: source_var,\n             amount: item.amount.to_owned(),\n             currency: item.router_data.request.currency.to_string(),\n@@ -526,7 +628,13 @@ impl TryFrom<&CheckoutRouterData<&PaymentsAuthorizeRouterData>> for PaymentsRequ\n             payment_type,\n             merchant_initiated,\n             previous_payment_id,\n-        })\n+            customer,\n+            processing,\n+            shipping,\n+            items,\n+        };\n+\n+        Ok(request)\n     }\n }\n \n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "hyperswitch",
   "_reconstruction": "github_pr_diff",
   "_fidelity": "exact",
@@ -25,12 +24,6 @@
   "_upstream_issue": 9437,
   "_upstream_pr": 9446,
   "_pr_lookup_status": "earliest of 1 merged closing PRs",
-  "_extraction": {
-    "method": "github_pr_diff",
-    "source": "gh pr diff 9446 --repo juspay/hyperswitch",
-    "fidelity": "exact",
-    "verified": false
-  },
   "_canonical_source_path": "data-pipeline/artifacts_hyperswitch/canonical_patches/hyperswitch-9437.json",
   "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
   "_review": {
@@ -52,5 +45,7 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "github_pr_diff PR#9446; coherent (1 hdrs == fcc, +111/-3 matches totals); fidelity=exact."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

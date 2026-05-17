@@ -74,3 +74,6 @@ Follow the exact same pattern as `sidebarAutoHide`: popup toggle → `chrome.sto
 2. `bun run lint` — clean
 3. `bun run test` — all pass
 4. `bun run dev:chrome` — toggle in popup, verify snow renders on Gemini page, verify no interaction blocking
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

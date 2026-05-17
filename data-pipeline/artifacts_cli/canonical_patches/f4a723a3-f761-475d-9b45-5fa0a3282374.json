@@ -1,6 +1,5 @@
 {
   "session_id": "f4a723a3-f761-475d-9b45-5fa0a3282374",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "entireio/cli",
@@ -10,10 +9,12 @@
   "total_deletions": 27,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tcmd/entire/cli/commit_message.go\nM\tcmd/entire/cli/commit_message_test.go\nM\tcmd/entire/cli/lifecycle.go\n",
-  "numstat": "9\t3\tcmd/entire/cli/commit_message.go\n56\t23\tcmd/entire/cli/commit_message_test.go\n1\t1\tcmd/entire/cli/lifecycle.go\n",
+  "numstat": [
+    "9\t3\tcmd/entire/cli/commit_message.go",
+    "56\t23\tcmd/entire/cli/commit_message_test.go",
+    "1\t1\tcmd/entire/cli/lifecycle.go"
+  ],
   "patch": "diff --git a/cmd/entire/cli/commit_message.go b/cmd/entire/cli/commit_message.go\nindex 3d3e0f7..d8b91d9 100644\n--- a/cmd/entire/cli/commit_message.go\n+++ b/cmd/entire/cli/commit_message.go\n@@ -1,13 +1,16 @@\n package cli\n \n import (\n+\t\"fmt\"\n \t\"strings\"\n \n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n \t\"github.com/entireio/cli/cmd/entire/cli/stringutil\"\n )\n \n-// generateCommitMessage creates a commit message from the user's original prompt\n-func generateCommitMessage(originalPrompt string) string {\n+// generateCommitMessage creates a commit message from the user's original prompt.\n+// If the prompt is empty or cleans to empty, falls back to \"<agentType> session updates\".\n+func generateCommitMessage(originalPrompt string, agentType agent.AgentType) string {\n \tif originalPrompt != \"\" {\n \t\tcleaned := cleanPromptForCommit(originalPrompt)\n \t\tif cleaned != \"\" {\n@@ -15,7 +18,10 @@ func generateCommitMessage(originalPrompt string) string {\n \t\t}\n \t}\n \n-\treturn \"Claude Code session updates\"\n+\tif agentType == \"\" {\n+\t\tagentType = agent.AgentTypeUnknown\n+\t}\n+\treturn fmt.Sprintf(\"%s session updates\", agentType)\n }\n \n // cleanPromptForCommit cleans up a user prompt to make it suitable as a commit message\ndiff --git a/cmd/entire/cli/commit_message_test.go b/cmd/entire/cli/commit_message_test.go\nindex 994bb76..5b44577 100644\n--- a/cmd/entire/cli/commit_message_test.go\n+++ b/cmd/entire/cli/commit_message_test.go\n@@ -2,6 +2,8 @@ package cli\n \n import (\n \t\"testing\"\n+\n+\t\"github.com/entireio/cli/cmd/entire/cli/agent\"\n )\n \n func TestCleanPromptForCommit(t *testing.T) {\n@@ -185,47 +187,78 @@ func TestCleanPromptForCommit(t *testing.T) {\n \n func TestGenerateCommitMessage(t *testing.T) {\n \ttests := []struct {\n-\t\tname     string\n-\t\tprompt   string\n-\t\texpected string\n+\t\tname      string\n+\t\tprompt    string\n+\t\tagentType agent.AgentType\n+\t\texpected  string\n \t}{\n \t\t{\n-\t\t\tname:     \"returns cleaned prompt\",\n-\t\t\tprompt:   \"Can you fix the login bug?\",\n-\t\t\texpected: \"Fix the login bug\",\n+\t\t\tname:      \"returns cleaned prompt\",\n+\t\t\tprompt:    \"Can you fix the login bug?\",\n+\t\t\tagentType: agent.AgentTypeClaudeCode,\n+\t\t\texpected:  \"Fix the login bug\",\n+\t\t},\n+\t\t{\n+\t\t\tname:      \"returns default for empty prompt with Claude Code\",\n+\t\t\tprompt:    \"\",\n+\t\t\tagentType: agent.AgentTypeClaudeCode,\n+\t\t\texpected:  \"Claude Code session updates\",\n+\t\t},\n+\t\t{\n+\t\t\tname:      \"returns default when cleaned prompt is empty\",\n+\t\t\tprompt:    \"Can you ?\",\n+\t\t\tagentType: agent.AgentTypeClaudeCode,\n+\t\t\texpected:  \"Claude Code session updates\",\n+\t\t},\n+\t\t{\n+\t\t\tname:      \"returns default for whitespace only prompt\",\n+\t\t\tprompt:    \"   \",\n+\t\t\tagentType: agent.AgentTypeClaudeCode,\n+\t\t\texpected:  \"Claude Code session updates\",\n+\t\t},\n+\t\t{\n+\t\t\tname:      \"handles direct command prompt\",\n+\t\t\tprompt:    \"Add unit tests for the auth module\",\n+\t\t\tagentType: agent.AgentTypeClaudeCode,\n+\t\t\texpected:  \"Add unit tests for the auth module\",\n \t\t},\n \t\t{\n-\t\t\tname:     \"returns default for empty prompt\",\n-\t\t\tprompt:   \"\",\n-\t\t\texpected: \"Claude Code session updates\",\n+\t\t\tname:      \"handles polite request\",\n+\t\t\tprompt:    \"Please refactor the database connection handling\",\n+\t\t\tagentType: agent.AgentTypeClaudeCode,\n+\t\t\texpected:  \"Refactor the database connection handling\",\n \t\t},\n \t\t{\n-\t\t\tname:     \"returns default when cleaned prompt is empty\",\n-\t\t\tprompt:   \"Can you ?\",\n-\t\t\texpected: \"Claude Code session updates\",\n+\t\t\tname:      \"returns Cursor fallback for empty prompt\",\n+\t\t\tprompt:    \"\",\n+\t\t\tagentType: agent.AgentTypeCursor,\n+\t\t\texpected:  \"Cursor session updates\",\n \t\t},\n \t\t{\n-\t\t\tname:     \"returns default for whitespace only prompt\",\n-\t\t\tprompt:   \"   \",\n-\t\t\texpected: \"Claude Code session updates\",\n+\t\t\tname:      \"returns Gemini CLI fallback for empty prompt\",\n+\t\t\tprompt:    \"\",\n+\t\t\tagentType: agent.AgentTypeGemini,\n+\t\t\texpected:  \"Gemini CLI session updates\",\n \t\t},\n \t\t{\n-\t\t\tname:     \"handles direct command prompt\",\n-\t\t\tprompt:   \"Add unit tests for the auth module\",\n-\t\t\texpected: \"Add unit tests for the auth module\",\n+\t\t\tname:      \"returns OpenCode fallback for empty prompt\",\n+\t\t\tprompt:    \"\",\n+\t\t\tagentType: agent.AgentTypeOpenCode,\n+\t\t\texpected:  \"OpenCode session updates\",\n \t\t},\n \t\t{\n-\t\t\tname:     \"handles polite request\",\n-\t\t\tprompt:   \"Please refactor the database connection handling\",\n-\t\t\texpected: \"Refactor the database connection handling\",\n+\t\t\tname:      \"returns Agent fallback for empty agent type\",\n+\t\t\tprompt:    \"\",\n+\t\t\tagentType: \"\",\n+\t\t\texpected:  \"Agent session updates\",\n \t\t},\n \t}\n \n \tfor _, tt := range tests {\n \t\tt.Run(tt.name, func(t *testing.T) {\n-\t\t\tresult := generateCommitMessage(tt.prompt)\n+\t\t\tresult := generateCommitMessage(tt.prompt, tt.agentType)\n \t\t\tif result != tt.expected {\n-\t\t\t\tt.Errorf(\"generateCommitMessage(%q) = %q, want %q\", tt.prompt, result, tt.expected)\n+\t\t\t\tt.Errorf(\"generateCommitMessage(%q, %q) = %q, want %q\", tt.prompt, tt.agentType, result, tt.expected)\n \t\t\t}\n \t\t})\n \t}\ndiff --git a/cmd/entire/cli/lifecycle.go b/cmd/entire/cli/lifecycle.go\nindex 64fe7ca..7b14cac 100644\n--- a/cmd/entire/cli/lifecycle.go\n+++ b/cmd/entire/cli/lifecycle.go\n@@ -270,7 +270,7 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev\n \tif len(allPrompts) > 0 {\n \t\tlastPrompt = allPrompts[len(allPrompts)-1]\n \t}\n-\tcommitMessage := generateCommitMessage(lastPrompt)\n+\tcommitMessage := generateCommitMessage(lastPrompt, ag.Type())\n \tfmt.Fprintf(os.Stderr, \"Using commit message: %s\\n\", commitMessage)\n \n \t// Get worktree root for path normalization\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "cli",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
@@ -22,10 +23,17 @@
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-f4a723",
   "_n_mutating_ops": 4,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ac",
+    "date": "2026-05-14",
+    "note": "tool_replay exact 0 warnings; 3 files +66/-27 matches; all 3 files referenced in test.sh.",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "files_in_test_sh",
+      "no_phantom",
+      "fidelity_honest"
+    ]
   }
 }

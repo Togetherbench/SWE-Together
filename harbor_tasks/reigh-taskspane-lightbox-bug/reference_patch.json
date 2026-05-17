@@ -27,5 +27,13 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "Stub category 'stripped_export' valid; round1 APPROVED stands."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false,
+  "_instruction_fallback_msg_index": 3,
+  "_instruction_trivial_skipped": [
+    "CAVEAT_ONLY",
+    "COMMAND_STANZA_TRIVIAL_ARGS",
+    "COMMAND_STANZA_TRIVIAL_ARGS"
+  ]
 }

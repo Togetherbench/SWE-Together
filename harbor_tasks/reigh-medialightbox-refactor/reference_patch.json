@@ -27,5 +27,7 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "Stub category 'stripped_export' VALIDATED: spot-checked original_session.json \u2014 693 tool_uses all with bare-string inputs (paths only, no content). Edit/Write tool calls do not exist as structured ops in pi-share export. Reason is accurate; no phantom patch."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

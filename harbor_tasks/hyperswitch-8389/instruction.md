@@ -1,3 +1,13 @@
+You are working on the hyperswitch repository (Rust payment processing system).
+
+REPOSITORY SETUP:
+- Repository: juspay/hyperswitch
+- Working directory: ./repos/hyperswitch_pool_0 (already cloned)
+- Base commit: c5c0e677f2a2d43170a66330c98e0ebc4d771717
+- Task ID: juspay__hyperswitch-8389
+- Version: v1.114.0
+
+TASK DESCRIPTION:
 Bug: [FEATURE] Kv Redis feature for V2 models
 
 

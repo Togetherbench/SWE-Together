@@ -27,5 +27,7 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "Valid no_canonical stub with category stripped_export. Schema fields _task_name/_status/_category/_reason/_extraction/_sync_note all present and self-consistent. No patch claimed."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

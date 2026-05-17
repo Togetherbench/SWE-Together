@@ -1,3 +1,13 @@
+You are working on the hyperswitch repository (Rust payment processing system).
+
+REPOSITORY SETUP:
+- Repository: juspay/hyperswitch
+- Working directory: ./repos/hyperswitch_pool_5 (already cloned)
+- Base commit: 2553780051e3a2fe54fcb99384e4bd8021d52048
+- Task ID: juspay__hyperswitch-9465
+- Version: v1.117.0
+
+TASK DESCRIPTION:
 Bug: DB changes for split payments (v2)
 
 

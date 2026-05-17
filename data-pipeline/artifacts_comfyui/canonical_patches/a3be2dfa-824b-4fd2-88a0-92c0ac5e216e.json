@@ -1,6 +1,5 @@
 {
   "session_id": "a3be2dfa-824b-4fd2-88a0-92c0ac5e216e",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "comfyanonymous/ComfyUI",
@@ -10,10 +9,10 @@
   "total_deletions": 2,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tcomfy/ldm/lumina/model.py\n",
-  "numstat": "38\t2\tcomfy/ldm/lumina/model.py\n",
+  "numstat": [
+    "38\t2\tcomfy/ldm/lumina/model.py"
+  ],
   "patch": "diff --git a/comfy/ldm/lumina/model.py b/comfy/ldm/lumina/model.py\nindex 96cb37f..46650ae 100644\n--- a/comfy/ldm/lumina/model.py\n+++ b/comfy/ldm/lumina/model.py\n@@ -11,7 +11,7 @@ import comfy.ldm.common_dit\n from comfy.ldm.modules.diffusionmodules.mmdit import TimestepEmbedder\n from comfy.ldm.modules.attention import optimized_attention_masked\n from comfy.ldm.flux.layers import EmbedND\n-from comfy.ldm.flux.math import apply_rope\n+from comfy.ldm.flux.math import apply_rope, rope\n import comfy.patcher_extension\n \n \n@@ -352,6 +352,42 @@ class FinalLayer(nn.Module):\n         return x\n \n \n+class LuminaEmbedND(nn.Module):\n+    def __init__(self, dim: int, theta: int, axes_dim: list, axes_lens: list = None):\n+        super().__init__()\n+        self.dim = dim\n+        self.theta = theta\n+        self.axes_dim = axes_dim\n+        self.axes_lens = axes_lens\n+        if axes_lens is not None:\n+            for i, (d, l) in enumerate(zip(axes_dim, axes_lens)):\n+                pos = torch.arange(l).unsqueeze(0)\n+                freqs = rope(pos, d, theta)\n+                freqs = freqs.squeeze(0)\n+                self.register_buffer(f\"freqs_{i}\", freqs.view(l, -1))\n+\n+    def forward(self, ids: torch.Tensor) -> torch.Tensor:\n+        if self.axes_lens is None:\n+            n_axes = ids.shape[-1]\n+            emb = torch.cat(\n+                [rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(n_axes)],\n+                dim=-3,\n+            )\n+            return emb.unsqueeze(1)\n+\n+        n_axes = ids.shape[-1]\n+        emb_list = []\n+        for i in range(n_axes):\n+            freqs = getattr(self, f\"freqs_{i}\")\n+            idx = ids[..., i].long()\n+            part = F.embedding(idx, freqs)\n+            part = part.view(*idx.shape, self.axes_dim[i], 2, 2)\n+            emb_list.append(part)\n+        \n+        emb = torch.cat(emb_list, dim=-3)\n+        return emb.unsqueeze(1)\n+\n+\n class NextDiT(nn.Module):\n     \"\"\"\n     Diffusion model with a Transformer backbone.\n@@ -501,7 +537,7 @@ class NextDiT(nn.Module):\n         assert (dim // n_heads) == sum(axes_dims)\n         self.axes_dims = axes_dims\n         self.axes_lens = axes_lens\n-        self.rope_embedder = EmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims)\n+        self.rope_embedder = LuminaEmbedND(dim=dim // n_heads, theta=rope_theta, axes_dim=axes_dims, axes_lens=axes_lens)\n         self.dim = dim\n         self.n_heads = n_heads\n \n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "comfyui",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
@@ -22,11 +21,17 @@
   "_repo_url": "https://github.com/comfyanonymous/ComfyUI",
   "_task_name": "comfyui-lumina-axes-lens",
   "_n_mutating_ops": 3,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json (post Fix-B WRITE/EDIT tool aliases)",
-    "fidelity": "exact",
-    "verified": false,
-    "note": "Recovered 2026-05-14 after adding 'replace'/'write_file' to extractor's mutating-tool set."
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ad",
+    "date": "2026-05-14",
+    "note": "exact fidelity, schema complete, hdr=1/1 +38/-2 matches numstat, file aligned, 0 warnings",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "test_sh_alignment",
+      "no_phantom_files",
+      "fidelity_honest"
+    ]
   }
 }

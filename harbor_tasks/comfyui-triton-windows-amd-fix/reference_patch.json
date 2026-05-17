@@ -1,6 +1,5 @@
 {
   "session_id": "167b3c69-fb33-43fb-80ff-367a81c81ce4",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "kijai/ComfyUI-WanVideoWrapper",
@@ -9,11 +8,11 @@
   "total_additions": 1,
   "total_deletions": 2,
   "commit_message": "Workaround Triton AMD-Windows compiler bug ('tt.load op destroyed but still has uses' on incrementally advanced K_scale_ptr) by computing the K_scale_ptr offset explicitly from (start_n // BLOCK_N) on each load instead of using a pointer that is mutated inside the loop. Drops the now-unused `K_scale_ptr += 1` increment.",
-  "files_changed": "1\t2\tultravico/sageattn/attn_qk_int8_per_block.py",
-  "numstat": "1\t2\tultravico/sageattn/attn_qk_int8_per_block.py",
+  "files_changed": "M\tultravico/sageattn/attn_qk_int8_per_block.py\n",
+  "numstat": [
+    "1\t2\tultravico/sageattn/attn_qk_int8_per_block.py"
+  ],
   "patch": "diff --git a/ultravico/sageattn/attn_qk_int8_per_block.py b/ultravico/sageattn/attn_qk_int8_per_block.py\n--- a/ultravico/sageattn/attn_qk_int8_per_block.py\n+++ b/ultravico/sageattn/attn_qk_int8_per_block.py\n@@ -30,7 +30,7 @@\n         start_n = tl.multiple_of(start_n, BLOCK_N)\n         k_mask = offs_n[None, :] < (kv_len - start_n)\n         k = tl.load(K_ptrs, mask = k_mask)\n-        k_scale = tl.load(K_scale_ptr)\n+        k_scale = tl.load(K_scale_ptr + (start_n // BLOCK_N))\n \n \n         m = offs_m[:, None]\n@@ -66,7 +66,6 @@\n         acc += tl.dot(p, v, out_dtype=tl.float16)\n         m_i = m_ij\n         K_ptrs += BLOCK_N * stride_kn\n-        K_scale_ptr += 1\n         V_ptrs += BLOCK_N * stride_vn\n     return acc, l_i\n \n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "hand_curated",
   "_reconstruction": "hand_curated_upstream",
   "_fidelity": "high",
@@ -27,31 +26,15 @@
   "_fidelity_verified_date": "2026-05-15",
   "_verification_note": "Auto-extractor marked this 'no_mutating_ops' because the session uses the {'replace'} tool, not Edit/Write, and three of the five replace ops target C:\\triton\\... (a separate Triton C++ repo not present in this container). The two relevant replace ops (msgs 3 and 5) both edit the SAME line in the WanVideoWrapper python kernel and converge to: change `k_scale = tl.load(K_scale_ptr)` to `k_scale = tl.load(K_scale_ptr + (start_n // BLOCK_N))` and remove the matching `K_scale_ptr += 1` loop increment. Auto-extractor also pointed at the wrong upstream (base image default comfyanonymous/ComfyUI); Dockerfile actually re-points origin to kijai/ComfyUI-WanVideoWrapper at b06c7d2. Verified `git apply --check` against the b06c7d2 base file; resulting file matches the test.sh gates that scan for an offset-based load expression and absence of the pointer increment in the loop body.",
   "_curation_notes": "Auto-extractor marked this 'no_mutating_ops' because the session uses the {'replace'} tool, not Edit/Write, and three of the five replace ops target C:\\triton\\... (a separate Triton C++ repo not present in this container). The two relevant replace ops (msgs 3 and 5) both edit the SAME line in the WanVideoWrapper python kernel and converge to: change `k_scale = tl.load(K_scale_ptr)` to `k_scale = tl.load(K_scale_ptr + (start_n // BLOCK_N))` and remove the matching `K_scale_ptr += 1` loop increment. Auto-extractor also pointed at the wrong upstream (base image default comfyanonymous/ComfyUI); Dockerfile actually re-points origin to kijai/ComfyUI-WanVideoWrapper at b06c7d2. Verified `git apply --check` against the b06c7d2 base file; resulting file matches the test.sh gates that scan for an offset-based load expression and absence of the pointer increment in the loop body.",
-  "_extraction": {
-    "method": "hand_curate_session_reconstruction",
-    "source": "Reconstructed from original_session.json messages[3]+[5] (replace tool_uses against C:\\ComfyUI\\custom_nodes\\ComfyUI-WanVideoWrapper\\ultravico\\sageattn\\attn_qk_int8_per_block.py)",
-    "fidelity": "high",
-    "verified": true,
-    "note": "Auto-extractor marked this 'no_mutating_ops' because the session uses the {'replace'} tool, not Edit/Write, and three of the five replace ops target C:\\triton\\... (a separate Triton C++ repo not present in this container). The two relevant replace ops (msgs 3 and 5) both edit the SAME line in the WanVideoWrapper python kernel and converge to: change `k_scale = tl.load(K_scale_ptr)` to `k_scale = tl.load(K_scale_ptr + (start_n // BLOCK_N))` and remove the matching `K_scale_ptr += 1` loop increment. Auto-extractor also pointed at the wrong upstream (base image default comfyanonymous/ComfyUI); Dockerfile actually re-points origin to kijai/ComfyUI-WanVideoWrapper at b06c7d2. Verified `git apply --check` against the b06c7d2 base file; resulting file matches the test.sh gates that scan for an offset-based load expression and absence of the pointer increment in the loop body.",
-    "dated": "2026-05-15"
-  },
   "_canonical_source_path": "data-pipeline/artifacts_hand_curated/canonical_patches/167b3c69-fb33-43fb-80ff-367a81c81ce4.json",
   "_sync_note": "Synced 2026-05-15 after hand-curate-A promotion (replaces no_canonical stub).",
-  "_review_pre_promote": {
-    "status": "APPROVED",
-    "reviewer": "subagent-batch-ad",
-    "date": "2026-05-14",
-    "note": "stub OK: session has 0 Edit/Write/MultiEdit ops (verified); category=no_mutating_ops is correct",
-    "checks_passed": [
-      "stub_category_correct",
-      "stub_reason_verified"
-    ]
-  },
   "_triple_check_round2": {
     "status": "PASS",
     "reviewer": "round2-batch-ad",
     "date": "2026-05-15",
     "found_issues": [],
     "note": "hdr=1/fc=1 +1/1 -2/2 hunks=2"
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

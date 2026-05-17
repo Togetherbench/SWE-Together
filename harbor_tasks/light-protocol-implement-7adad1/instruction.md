@@ -272,4 +272,4 @@ to them as well.
 - `cargo test-sbf -p csdk-anchor-full-derived-test` passes
 
 
-If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/ananas/.REDACTED.jsonl
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

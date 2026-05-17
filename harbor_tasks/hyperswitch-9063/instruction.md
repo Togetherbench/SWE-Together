@@ -1,3 +1,13 @@
+You are working on the hyperswitch repository (Rust payment processing system).
+
+REPOSITORY SETUP:
+- Repository: juspay/hyperswitch
+- Working directory: ./repos/hyperswitch_pool_9 (already cloned)
+- Base commit: 8446ffbf5992a97d79d129cade997effc60fcd85
+- Task ID: juspay__hyperswitch-9063
+- Version: v1.116.0
+
+TASK DESCRIPTION:
 Bug: Change Underscore(_) to hyphen(-) in payment link locale.
 
 

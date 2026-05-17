@@ -5,8 +5,7 @@
   "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/workspace/cli",
   "FAIL_TO_PASS": [
-    "TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag",
-    "TestExplainSession_NotFound"
+    "TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag"
   ],
   "PASS_TO_PASS": [],
   "source_files": [

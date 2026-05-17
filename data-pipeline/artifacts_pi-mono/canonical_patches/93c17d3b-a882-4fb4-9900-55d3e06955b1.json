@@ -1,6 +1,5 @@
 {
   "session_id": "93c17d3b-a882-4fb4-9900-55d3e06955b1",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "badlogic/pi-mono",
@@ -10,10 +9,11 @@
   "total_deletions": 0,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tpackages/coding-agent/examples/extensions/README.md\nA\tpackages/coding-agent/examples/extensions/message-signal.ts\n",
-  "numstat": "1\t0\tpackages/coding-agent/examples/extensions/README.md\n142\t0\tpackages/coding-agent/examples/extensions/message-signal.ts\n",
+  "numstat": [
+    "1\t0\tpackages/coding-agent/examples/extensions/README.md",
+    "142\t0\tpackages/coding-agent/examples/extensions/message-signal.ts"
+  ],
   "patch": "diff --git a/packages/coding-agent/examples/extensions/README.md b/packages/coding-agent/examples/extensions/README.md\nindex 18cf40c..84e8d63 100644\n--- a/packages/coding-agent/examples/extensions/README.md\n+++ b/packages/coding-agent/examples/extensions/README.md\n@@ -103,6 +103,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/\n | Extension | Description |\n |-----------|-------------|\n | `message-renderer.ts` | Custom message rendering with colors and expandable details via `registerMessageRenderer` |\n+| `message-signal.ts` | `/start` injects hidden protocol instructions and reacts to assistant marker strings via `message_end` |\n | `event-bus.ts` | Inter-extension communication via `pi.events` |\n \n ### Session Metadata\ndiff --git a/packages/coding-agent/examples/extensions/message-signal.ts b/packages/coding-agent/examples/extensions/message-signal.ts\nnew file mode 100644\nindex 0000000..a789e11\n--- /dev/null\n+++ b/packages/coding-agent/examples/extensions/message-signal.ts\n@@ -0,0 +1,142 @@\n+/**\n+ * Message Signal Example\n+ *\n+ * Demonstrates a lightweight \"model -> extension\" signaling pattern:\n+ * - /start injects a hidden custom message with protocol instructions\n+ * - Model emits specific marker strings in assistant messages\n+ * - Extension listens on message_end and reacts (show/hide UI)\n+ *\n+ * Usage:\n+ *   /start          Enable protocol for this session\n+ *   /stop           Disable protocol and clear UI\n+ *   /signal-help    Show marker strings\n+ */\n+\n+import type { ExtensionAPI, ExtensionContext } from \"@mariozechner/pi-coding-agent\";\n+\n+const PROTOCOL_TYPE = \"message-signal-protocol\";\n+const OPEN_SIGNAL = \"[[PI_SIGNAL_OPEN_UI]]\";\n+const CLOSE_SIGNAL = \"[[PI_SIGNAL_CLOSE_UI]]\";\n+const DONE_SIGNAL = \"[[PI_SIGNAL_DONE]]\";\n+\n+const PROTOCOL_INSTRUCTIONS = `\n+You are in extension signaling mode.\n+\n+When you want the extension to open UI, output this marker on its own line:\n+${OPEN_SIGNAL}\n+\n+When you want the extension to close UI, output this marker on its own line:\n+${CLOSE_SIGNAL}\n+\n+When your task is complete, output this marker on its own line:\n+${DONE_SIGNAL}\n+\n+Rules:\n+- Keep normal helpful text.\n+- Emit markers only when needed.\n+- Emit exact marker text, no typos.\n+`;\n+\n+function extractAssistantText(message: unknown): string {\n+\tif (!message || typeof message !== \"object\") return \"\";\n+\tconst role = (message as { role?: unknown }).role;\n+\tif (role !== \"assistant\") return \"\";\n+\n+\tconst content = (message as { content?: unknown }).content;\n+\tif (!Array.isArray(content)) return \"\";\n+\n+\treturn content\n+\t\t.map((part) => {\n+\t\t\tif (!part || typeof part !== \"object\") return \"\";\n+\t\t\tif ((part as { type?: unknown }).type !== \"text\") return \"\";\n+\t\t\tconst text = (part as { text?: unknown }).text;\n+\t\t\treturn typeof text === \"string\" ? text : \"\";\n+\t\t})\n+\t\t.filter((text) => text.length > 0)\n+\t\t.join(\"\\n\");\n+}\n+\n+export default function messageSignalExtension(pi: ExtensionAPI) {\n+\tlet enabled = false;\n+\n+\tconst showPanel = (ctx: ExtensionContext): void => {\n+\t\tctx.ui.setWidget(\"message-signal\", [\"Signal UI is open\", `Waiting for ${CLOSE_SIGNAL}`]);\n+\t\tctx.ui.setStatus(\"message-signal\", \"signal-ui: open\");\n+\t};\n+\n+\tconst hidePanel = (ctx: ExtensionContext): void => {\n+\t\tctx.ui.setWidget(\"message-signal\", undefined);\n+\t\tctx.ui.setStatus(\"message-signal\", undefined);\n+\t};\n+\n+\tpi.registerCommand(\"start\", {\n+\t\tdescription: \"Enable message signaling protocol for model -> extension events\",\n+\t\thandler: async (_args, ctx) => {\n+\t\t\tenabled = true;\n+\n+\t\t\tif (ctx.isIdle()) {\n+\t\t\t\tpi.sendMessage({\n+\t\t\t\t\tcustomType: PROTOCOL_TYPE,\n+\t\t\t\t\tcontent: PROTOCOL_INSTRUCTIONS,\n+\t\t\t\t\tdisplay: false,\n+\t\t\t\t\tdetails: {\n+\t\t\t\t\t\tenabledAt: Date.now(),\n+\t\t\t\t\t\tsignals: { open: OPEN_SIGNAL, close: CLOSE_SIGNAL, done: DONE_SIGNAL },\n+\t\t\t\t\t},\n+\t\t\t\t});\n+\t\t\t} else {\n+\t\t\t\tpi.sendMessage(\n+\t\t\t\t\t{\n+\t\t\t\t\t\tcustomType: PROTOCOL_TYPE,\n+\t\t\t\t\t\tcontent: PROTOCOL_INSTRUCTIONS,\n+\t\t\t\t\t\tdisplay: false,\n+\t\t\t\t\t\tdetails: {\n+\t\t\t\t\t\t\tenabledAt: Date.now(),\n+\t\t\t\t\t\t\tsignals: { open: OPEN_SIGNAL, close: CLOSE_SIGNAL, done: DONE_SIGNAL },\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t\t{ deliverAs: \"followUp\" },\n+\t\t\t\t);\n+\t\t\t}\n+\n+\t\t\tctx.ui.notify(\"Message signaling enabled\", \"info\");\n+\t\t\tctx.ui.setStatus(\"message-signal\", \"signal-mode: enabled\");\n+\t\t},\n+\t});\n+\n+\tpi.registerCommand(\"stop\", {\n+\t\tdescription: \"Disable message signaling protocol and clear extension UI\",\n+\t\thandler: async (_args, ctx) => {\n+\t\t\tenabled = false;\n+\t\t\thidePanel(ctx);\n+\t\t\tctx.ui.notify(\"Message signaling disabled\", \"info\");\n+\t\t},\n+\t});\n+\n+\tpi.registerCommand(\"signal-help\", {\n+\t\tdescription: \"Show marker strings used by message signaling\",\n+\t\thandler: async (_args, ctx) => {\n+\t\t\tctx.ui.notify(`open=${OPEN_SIGNAL} close=${CLOSE_SIGNAL} done=${DONE_SIGNAL}`, \"info\");\n+\t\t},\n+\t});\n+\n+\tpi.on(\"message_end\", async (event, ctx) => {\n+\t\tif (!enabled) return;\n+\n+\t\tconst text = extractAssistantText(event.message);\n+\t\tif (!text) return;\n+\n+\t\tif (text.includes(OPEN_SIGNAL)) {\n+\t\t\tshowPanel(ctx);\n+\t\t\tctx.ui.notify(\"Received OPEN signal\", \"info\");\n+\t\t}\n+\t\tif (text.includes(CLOSE_SIGNAL)) {\n+\t\t\thidePanel(ctx);\n+\t\t\tctx.ui.notify(\"Received CLOSE signal\", \"info\");\n+\t\t}\n+\t\tif (text.includes(DONE_SIGNAL)) {\n+\t\t\tctx.ui.notify(\"Received DONE signal\", \"info\");\n+\t\t\tctx.ui.setStatus(\"message-signal\", \"signal-mode: done\");\n+\t\t}\n+\t});\n+}\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "pi-mono",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
@@ -22,10 +22,16 @@
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-auto-93c17d3b",
   "_n_mutating_ops": 5,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "Real canonical (exact); patches examples/extensions/message-signal.ts + README. test.sh grades message-signal.ts. Aligned.",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "test_alignment",
+      "no_phantom_files"
+    ]
   }
 }

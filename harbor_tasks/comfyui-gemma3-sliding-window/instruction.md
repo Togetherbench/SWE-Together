@@ -1,14 +1,5 @@
-The Gemma3 text encoder in `comfy/text_encoders/llama.py` has a TODO comment noting that sliding window attention is not implemented — it just logs a warning. Using the HuggingFace transformers Gemma3 reference implementation as a guide, properly implement the sliding window attention.
-
-Key reference facts:
-- HuggingFace Gemma3 uses `sliding_window=1024` and `sliding_window_pattern=6`
-- `sliding_window_pattern=6` means every 6th layer (where `(layer_idx+1) % 6 == 0`) uses global attention; all other layers use local sliding window attention
-
-Make sure the implementation is complete and correct — review the existing config and code for any inconsistencies with the reference implementation and fix them. The sliding window mask should limit each token to only attend within the window, and should be properly combined with any existing attention mask.
-
-The file to edit is `comfy/text_encoders/llama.py`.
-
---- Reference: Current code in comfy/text_encoders/llama.py ---
+In ComfyUI, the Gemma text encoder is implemented in @comfy/text_encoders/llama.py . Is there any difference in functionality from the reference implementation in C:\transformers ? What do we need to implement the sliding attention?
+--- Content from referenced files ---
 Content from @comfy/text_encoders/llama.py:
 import torch
 import torch.nn as nn

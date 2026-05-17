@@ -1,6 +1,5 @@
 {
   "session_id": "hyperswitch-8612",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "juspay/hyperswitch",
@@ -10,10 +9,11 @@
   "total_deletions": 11,
   "commit_message": "[gold patch from juspay/hyperswitch#8615 closing #8612]",
   "files_changed": "M\tcrates/router/src/core/payments/routing.rs\nM\tcrates/router/src/core/payments/routing/utils.rs",
-  "numstat": "12\t9\tcrates/router/src/core/payments/routing.rs\n14\t2\tcrates/router/src/core/payments/routing/utils.rs",
+  "numstat": [
+    "12\t9\tcrates/router/src/core/payments/routing.rs",
+    "14\t2\tcrates/router/src/core/payments/routing/utils.rs"
+  ],
   "patch": "diff --git a/crates/router/src/core/payments/routing.rs b/crates/router/src/core/payments/routing.rs\nindex 7feea3286ca..4bbffcde633 100644\n--- a/crates/router/src/core/payments/routing.rs\n+++ b/crates/router/src/core/payments/routing.rs\n@@ -442,22 +442,24 @@ pub async fn perform_static_routing_v1(\n     Vec<routing_types::RoutableConnectorChoice>,\n     Option<common_enums::RoutingApproach>,\n )> {\n-    let algorithm_id = if let Some(id) = algorithm_id {\n-        id\n-    } else {\n+    let get_merchant_fallback_config = || async {\n         #[cfg(feature = \"v1\")]\n-        let fallback_config = routing::helpers::get_merchant_default_config(\n+        return routing::helpers::get_merchant_default_config(\n             &*state.clone().store,\n             business_profile.get_id().get_string_repr(),\n             &api_enums::TransactionType::from(transaction_data),\n         )\n         .await\n-        .change_context(errors::RoutingError::FallbackConfigFetchFailed)?;\n+        .change_context(errors::RoutingError::FallbackConfigFetchFailed);\n         #[cfg(feature = \"v2\")]\n-        let fallback_config = admin::ProfileWrapper::new(business_profile.clone())\n+        return admin::ProfileWrapper::new(business_profile.clone())\n             .get_default_fallback_list_of_connector_under_profile()\n-            .change_context(errors::RoutingError::FallbackConfigFetchFailed)?;\n-\n+            .change_context(errors::RoutingError::FallbackConfigFetchFailed);\n+    };\n+    let algorithm_id = if let Some(id) = algorithm_id {\n+        id\n+    } else {\n+        let fallback_config = get_merchant_fallback_config().await?;\n         return Ok((fallback_config, None));\n     };\n     let cached_algorithm = ensure_algorithm_cached_v1(\n@@ -507,7 +509,8 @@ pub async fn perform_static_routing_v1(\n             state,\n             backend_input.clone(),\n             business_profile.get_id().get_string_repr().to_string(),\n-            routing_events_wrapper\n+            routing_events_wrapper,\n+            get_merchant_fallback_config().await?,\n         )\n         .await\n         .map_err(|e|\ndiff --git a/crates/router/src/core/payments/routing/utils.rs b/crates/router/src/core/payments/routing/utils.rs\nindex d2167f88498..d217cc04360 100644\n--- a/crates/router/src/core/payments/routing/utils.rs\n+++ b/crates/router/src/core/payments/routing/utils.rs\n@@ -298,12 +298,21 @@ pub async fn perform_decision_euclid_routing(\n     input: BackendInput,\n     created_by: String,\n     events_wrapper: RoutingEventsWrapper<RoutingEvaluateRequest>,\n+    fallback_output: Vec<RoutableConnectorChoice>,\n ) -> RoutingResult<Vec<RoutableConnectorChoice>> {\n     logger::debug!(\"decision_engine_euclid: evaluate api call for euclid routing evaluation\");\n \n     let mut events_wrapper = events_wrapper;\n+    let fallback_output = fallback_output\n+        .into_iter()\n+        .map(|c| DeRoutableConnectorChoice {\n+            gateway_name: c.connector,\n+            gateway_id: c.merchant_connector_id,\n+        })\n+        .collect::<Vec<_>>();\n \n-    let routing_request = convert_backend_input_to_routing_eval(created_by, input)?;\n+    let routing_request =\n+        convert_backend_input_to_routing_eval(created_by, input, fallback_output)?;\n     events_wrapper.set_request_body(routing_request.clone());\n \n     let event_response = EuclidApiClient::send_decision_engine_request(\n@@ -515,6 +524,7 @@ pub struct ListRountingAlgorithmsRequest {\n pub fn convert_backend_input_to_routing_eval(\n     created_by: String,\n     input: BackendInput,\n+    fallback_output: Vec<DeRoutableConnectorChoice>,\n ) -> RoutingResult<RoutingEvaluateRequest> {\n     let mut params: HashMap<String, Option<ValueType>> = HashMap::new();\n \n@@ -631,6 +641,7 @@ pub fn convert_backend_input_to_routing_eval(\n     Ok(RoutingEvaluateRequest {\n         created_by,\n         parameters: params,\n+        fallback_output,\n     })\n }\n \n@@ -677,6 +688,7 @@ impl DecisionEngineErrorsInterface for or_types::ErrorResponse {\n pub struct RoutingEvaluateRequest {\n     pub created_by: String,\n     pub parameters: HashMap<String, Option<ValueType>>,\n+    pub fallback_output: Vec<DeRoutableConnectorChoice>,\n }\n \n #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]\n@@ -690,7 +702,7 @@ pub struct RoutingEvaluateResponse {\n }\n \n /// Routable Connector chosen for a payment\n-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n pub struct DeRoutableConnectorChoice {\n     pub gateway_name: common_enums::RoutableConnectors,\n     pub gateway_id: Option<id_type::MerchantConnectorAccountId>,\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "hyperswitch",
   "_reconstruction": "github_pr_diff",
   "_fidelity": "exact",
@@ -25,10 +25,17 @@
   "_upstream_issue": 8612,
   "_upstream_pr": 8615,
   "_pr_lookup_status": "earliest of 1 merged closing PRs",
-  "_extraction": {
-    "method": "github_pr_diff",
-    "source": "gh pr diff 8615 --repo juspay/hyperswitch",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ae",
+    "date": "2026-05-14",
+    "note": "github_pr_diff; 2 hdrs/+26/-11 coherent; both routing.rs/utils.rs in test+manifest.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "test_alignment",
+      "upstream_pr_diff",
+      "no_phantom"
+    ]
   }
 }

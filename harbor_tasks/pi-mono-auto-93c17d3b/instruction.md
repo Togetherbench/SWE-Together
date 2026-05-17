@@ -28,6 +28,8 @@ function getNightKey(now: Date): string {
 }
 
 function isConfirmationCommand(command: string): boolean {
+    // Accept: echo confirm-that-we-continue-after-midnight
+    // Also tolerate optional single/double quotes around phrase and extra whitespace.
     return /^\s*echo\s+['"]?confirm-that-we-continue-after-midnight['"]?\s*$/i.test(command);
 }
 
@@ -160,13 +162,3 @@ Think pi send-event "end-review" or pi send-event "ask-question" "Is this a good
 to avoid this shit: https://x.com/badlogicgames/status/2023513812385886601?s=20
 
 so basically, what he's asking is, for there to be a mechanism for the model to ... do what. eli5
-
----
-
-Now that you understand the concept, write a test extension that demonstrates it. Create a TypeScript extension at `.pi/extensions/message-signal.ts` that:
-1. Registers a slash command (like /start) that injects a hidden custom message instructing the model to output specific signal strings (like [[SIGNAL_OPEN_UI]] and [[SIGNAL_CLOSE_UI]]) when it wants to trigger actions
-2. Listens on the `message_end` event to detect these signal strings in the assistant's output
-3. Reacts to signals (e.g., logging what was detected, tracking state)
-4. Uses the ExtensionAPI properly (pi.on, pi.registerCommand, etc.)
-
-The extension should be a working demonstration of the "model talks back to extensions via output signals" pattern that Armin described.

@@ -1,8 +1,3 @@
-When replaying tool calls from the `github-copilot` backend to the `openai-codex` backend, the Codex API rejects the normalized function_call item IDs with an error like "contained additional characters".
+in ~/Downloads/ec3732e6-aac8-487f-a741-e6d2b5d64888.jsonl there is a tool call or something that errors. /var/folders/49/l4171l3n219_xwq30fmyzr8w0000gn/T/pi-clipboard-b42c7d13-2ad3-49f7-9923-a54a67792ad5.png
 
-Example: a Copilot-originated tool call has a raw ID like:
-`call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi...`
-
-The `/`, `+`, `=` characters in the item-ID part get replaced with `_` during normalization, producing something like `fc_I9b95oN1wD_cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vi` — which the Codex backend rejects even though every individual character is valid.
-
-The normalization logic is in `packages/ai/src/providers/openai-responses-shared.ts`. Fix it so that foreign tool call IDs (from a different provider than the target) are always safe for the target backend, deterministic (same input always produces same output), and within the 64-character limit.
+locate it, tell me why this happened

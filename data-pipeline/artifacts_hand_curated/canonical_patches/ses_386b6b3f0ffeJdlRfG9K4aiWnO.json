@@ -1,0 +1,30 @@
+{
+  "session_id": "ses_386b6b3f0ffeJdlRfG9K4aiWnO",
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "kohya-ss/sd-scripts",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 25,
+  "total_deletions": 30,
+  "commit_message": "Read `git diff HEAD~`. Do we really need `rebalance_regularization_images`?",
+  "files_changed": "M\tlibrary/train_util.py\n",
+  "numstat": [
+    "25\t30\tlibrary/train_util.py"
+  ],
+  "patch": "diff --git a/library/train_util.py b/library/train_util.py\nindex 2314431..a11fd44 100644\n--- a/library/train_util.py\n+++ b/library/train_util.py\n@@ -808,7 +808,7 @@ class BaseDataset(torch.utils.data.Dataset):\n         if hasattr(self, \"num_reg_images\"):\n             self.num_reg_images = num_reg_images\n \n-    def filter_registered_images_by_orig_resolution(self) -> int:\n+    def filter_registered_images_by_orig_resolution(self, update_counts: bool = True) -> int:\n         if not self.has_orig_resolution_filter():\n             return 0\n \n@@ -821,7 +821,7 @@ class BaseDataset(torch.utils.data.Dataset):\n             del self.image_to_subset[image_key]\n             filtered_count += 1\n \n-        if filtered_count > 0:\n+        if filtered_count > 0 and update_counts:\n             self.update_dataset_image_counts()\n \n         return filtered_count\n@@ -1953,6 +1953,26 @@ class BaseDataset(torch.utils.data.Dataset):\n class DreamBoothDataset(BaseDataset):\n     IMAGE_INFO_CACHE_FILE = \"metadata_cache.json\"\n \n+    def register_balanced_regularization_images(\n+        self, reg_infos: Sequence[Tuple[ImageInfo, DreamBoothSubset]], num_train_images: int\n+    ) -> None:\n+        if len(reg_infos) == 0 or num_train_images <= 0:\n+            return\n+\n+        n = 0\n+        first_loop = True\n+        while n < num_train_images:\n+            for info, subset in reg_infos:\n+                if first_loop:\n+                    self.register_image(info, subset)\n+                    n += info.num_repeats\n+                else:\n+                    info.num_repeats += 1  # rewrite registered info\n+                    n += 1\n+                if n >= num_train_images:\n+                    break\n+            first_loop = False\n+\n     def rebalance_regularization_images(self):\n         if not self.is_training_dataset:\n             return\n@@ -1973,22 +1993,10 @@ class DreamBoothDataset(BaseDataset):\n         for info, subset in reg_infos:\n             info.num_repeats = subset.num_repeats\n \n-        n = 0\n-        first_loop = True\n-        while n < num_train_images:\n-            for info, subset in reg_infos:\n-                if first_loop:\n-                    self.register_image(info, subset)\n-                    n += info.num_repeats\n-                else:\n-                    info.num_repeats += 1\n-                    n += 1\n-                if n >= num_train_images:\n-                    break\n-            first_loop = False\n+        self.register_balanced_regularization_images(reg_infos, num_train_images)\n \n     def filter_registered_images_by_orig_resolution(self) -> int:\n-        filtered_count = super().filter_registered_images_by_orig_resolution()\n+        filtered_count = super().filter_registered_images_by_orig_resolution(update_counts=not self.is_training_dataset)\n \n         if filtered_count > 0 and self.is_training_dataset:\n             self.rebalance_regularization_images()\n@@ -2276,20 +2284,7 @@ class DreamBoothDataset(BaseDataset):\n         if num_reg_images == 0:\n             logger.warning(\"no regularization images / 正則化画像が見つかりませんでした\")\n         else:\n-            # num_repeatsを計算する：どうせ大した数ではないのでループで処理する\n-            n = 0\n-            first_loop = True\n-            while n < num_train_images:\n-                for info, subset in reg_infos:\n-                    if first_loop:\n-                        self.register_image(info, subset)\n-                        n += info.num_repeats\n-                    else:\n-                        info.num_repeats += 1  # rewrite registered info\n-                        n += 1\n-                    if n >= num_train_images:\n-                        break\n-                first_loop = False\n+            self.register_balanced_regularization_images(reg_infos, num_train_images)\n \n         self.num_reg_images = num_reg_images\n \n",
+  "_source": "codex_replay",
+  "_reconstruction": "codex_tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "apply_patch:library/train_util.py: hunk anchor_not_found",
+    "apply_patch:library/train_util.py: hunk anchor_not_found",
+    "apply_patch:library/train_util.py: hunk anchor_not_found"
+  ],
+  "_base_commit": "34e7138b6a80c2d88f40c99fd68879c6e683f639",
+  "_repo_url": "https://github.com/kohya-ss/sd-scripts",
+  "_task_name": "sd-scripts-reg-image-dedup",
+  "_n_mutating_ops": 6,
+  "_fidelity_verified": true,
+  "_verification_note": "Manually audited 2026-05-16. The 3 anchor_not_found warnings are mid-chain replay drift (chained apply_patch ops where later hunks anchored against earlier-patch output), NOT data loss. The captured diff cleanly shows the full intended refactor described in instruction.md: (1) new register_balanced_regularization_images helper extracted on DreamBoothDataset with zero-reg-images guard, (2) two inline 'while n < num_train_images' duplicates at __init__ and rebalance_regularization_images both replaced with calls to the helper, (3) BaseDataset.filter_registered_images_by_orig_resolution gains update_counts=True param and DreamBooth override calls super(update_counts=not self.is_training_dataset) to defer counts so the rebalance path can run them once. Total numstat 25+/30- matches a self-contained train_util.py refactor. Canonical is faithful to the agent's final state."
+}

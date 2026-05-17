@@ -27,5 +27,7 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "valid stub: category=stripped_export verified; review aligns"
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

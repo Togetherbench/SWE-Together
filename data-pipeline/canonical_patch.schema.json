@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://togetherbench.dev/schemas/canonical_patch.schema.json",
+  "title": "Canonical Patch",
+  "description": "Normalized schema for canonical-patch artifacts in multi-user-turn-codebench. Covers both layers: data-pipeline/artifacts_<source>/canonical_patches/<sid>.json (source) and harbor_tasks/<task>/reference_patch.json (reference). Both layers share this single schema; layer-specific differences are expressed via the `_layer` discriminator. Stub records (no canonical patch available) are valid by setting `_status: \"no_canonical\"` and omitting the patch fields.",
+  "type": "object",
+
+  "$defs": {
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "iso_date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "name_status_line": {
+      "type": "string",
+      "pattern": "^[AMDRCTU][0-9]*\\t[^\\n]+(\\t[^\\n]+)?$",
+      "description": "git diff --name-status line: status code + tab + path (and renames have a second tab + new path)."
+    },
+    "numstat_line": {
+      "type": "string",
+      "pattern": "^([0-9]+|-)\\t([0-9]+|-)\\t[^\\n]+$",
+      "description": "git diff --numstat line: additions + tab + deletions + tab + path. Binary files are '-\\t-\\tpath'."
+    },
+    "review_block": {
+      "type": "object",
+      "required": ["status", "reviewer", "date"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["APPROVED", "AGREE", "FIXED", "FLAGGED", "PENDING"]
+        },
+        "reviewer": { "type": "string" },
+        "date":     { "$ref": "#/$defs/iso_date" },
+        "note":     { "type": "string" },
+        "checks_passed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "found_issues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "supersedes_pre_promote": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+
+  "required": [
+    "schema_version",
+    "_task_name",
+    "_layer",
+    "_source",
+    "_status"
+  ],
+
+  "properties": {
+
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Bump on any breaking change to this schema."
+    },
+
+    "_layer": {
+      "type": "string",
+      "enum": ["source", "reference"],
+      "description": "`source` = data-pipeline/artifacts_<source>/canonical_patches/. `reference` = harbor_tasks/<task>/reference_patch.json."
+    },
+
+    "_task_name": {
+      "type": "string",
+      "description": "Harbor task directory name. Stable join key across layers."
+    },
+
+    "_source": {
+      "type": "string",
+      "enum": [
+        "agent-swarm", "amytis", "cc-backend", "cli", "comfyui",
+        "dataclaw", "hand_curated", "hyperswitch", "pi-mono",
+        "sd-scripts", "unknown"
+      ],
+      "description": "Upstream session corpus. NOT a method label; do not collapse with `_extraction.method`."
+    },
+
+    "_status": {
+      "type": "string",
+      "enum": ["canonical", "no_canonical"],
+      "description": "`canonical` = patch fields are present and meaningful. `no_canonical` = stub; patch fields MUST be omitted or empty and `_category` MUST be set."
+    },
+
+    "_category": {
+      "type": "string",
+      "enum": [
+        "stripped_export",
+        "no_mutating_ops",
+        "replay_no_diff",
+        "hashline_unparseable",
+        "unknown_no_canonical"
+      ],
+      "description": "Required iff `_status == \"no_canonical\"`. Reason the patch could not be recovered."
+    },
+
+    "_reason": {
+      "type": "string",
+      "description": "Human-readable expansion of `_category`."
+    },
+
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "Upstream session UUID. Null for upstream-PR-derived patches."
+    },
+
+    "_base_commit": {
+      "$ref": "#/$defs/git_sha",
+      "description": "Commit BEFORE the fix that the Docker environment clones. Replaces SWE-bench `base_commit`."
+    },
+
+    "_repo_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Full https:// URL. Use this; do NOT derive from `repo_id`."
+    },
+
+    "repo_id": {
+      "type": "string",
+      "pattern": "^[^/]+/[^/]+$",
+      "description": "owner/name short form. Mirror of `_repo_url`."
+    },
+
+    "patch": {
+      "type": "string",
+      "description": "Unified diff in `git diff` format (the canonical fix). Equivalent to SWE-bench `patch`. UTF-8. Required when `_status == \"canonical\"`."
+    },
+
+    "patch_truncated": {
+      "type": "boolean",
+      "description": "Always written. True iff the patch was hit by an upstream rollout truncation cap (Hyperswitch 1000-char), in which case `_fidelity` MUST be `lossy` or `directional`."
+    },
+
+    "_fidelity": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "high",
+        "directional",
+        "lossy",
+        "verifier_aligned",
+        "no_canonical",
+        "verified",
+        "clean",
+        "reconstructed",
+        "upstream_canonical"
+      ],
+      "description": "Top-level fidelity tier — how much can downstream trust this as a textual gold patch? Canonical values: `exact` = byte-equivalent replay/upstream diff; `high` = minor formatter/whitespace drift but content-correct; `directional` = right files + intent match, content partially reconstructed; `lossy` = structurally incomplete; `verifier_aligned` = curator hand-tuned to satisfy `tests/test.sh`; `no_canonical` = stub (paired with `_status: no_canonical`). Transitional legacy values still carried by a handful of curator-tagged records pending re-bucketing: `verified` (triton-windows-rebase-buildhelpers and 1 hand_curated); `clean`, `reconstructed`, `upstream_canonical` (2 records each, restored from the curator's original tag rather than collapsed into `high`/`exact`). New writes SHOULD pick from the canonical 6. Mirrored by `_extraction.fidelity` for the same record (the nested field is the per-extraction-step view; this top-level field is the consumer-facing summary)."
+    },
+
+    "files_changed": {
+      "type": "string",
+      "description": "`git diff --name-status` output. One line per file; each line matches `name_status_line`. Trailing newline allowed. MUST NOT be numstat-shaped."
+    },
+
+    "numstat": {
+      "description": "`git diff --numstat` output. Canonical shape is an array of numstat-line strings (one entry per file). String form is accepted for legacy reads — newline-joined `git diff --numstat` text where each line matches `numstat_line`.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/numstat_line" }
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+
+    "files_changed_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "MUST equal the non-blank line count of `files_changed`."
+    },
+
+    "total_additions": { "type": "integer", "minimum": 0 },
+    "total_deletions": { "type": "integer", "minimum": 0 },
+
+    "commit_message": {
+      "type": "string",
+      "description": "Commit-message-like description. For reconstructed patches use the literal string `[reconstructed from session messages]` for explicitness."
+    },
+
+    "commit_sha": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/git_sha" }
+      ],
+      "description": "SHA of the upstream resolving commit when available. Null for reconstructed patches with no upstream linkage."
+    },
+
+    "is_agent_author": {
+      "type": "boolean",
+      "description": "Whether the original session was driven by an AI agent (as opposed to a human commit)."
+    },
+
+    "_extraction": {
+      "type": "object",
+      "required": ["method", "fidelity"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "gh_pr_diff",
+            "upstream_commit_diff",
+            "messages_replay",
+            "codex_replay",
+            "hand_curated",
+            "none"
+          ],
+          "description": "Single canonical vocabulary (matches the normalized corpus). Collapses the 19+ legacy spellings — `tool_replay`/`session_message_curation` → `messages_replay`; `github_pr_diff`/`upstream_pr` → `gh_pr_diff`; `upstream_commit` → `upstream_commit_diff`; all `hand_*` variants → `hand_curated` with details in `note`."
+        },
+        "fidelity": {
+          "type": "string",
+          "enum": ["exact", "high", "directional", "lossy", "verifier_aligned", "verified", "none"],
+          "description": "Per-extraction-step view of fidelity. Same vocabulary as top-level `_fidelity` except `none` is allowed here (paired with `method: none` for stubs) and `no_canonical` is not — for stubs use `none` at this level and `no_canonical` at the top level. `verified` is a transitional legacy label (see top-level `_fidelity`)."
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Has someone manually compared this against the upstream artifact and signed off?"
+        },
+        "source": {
+          "type": "string",
+          "description": "Free-form provenance string (e.g. file path, gh URL)."
+        },
+        "note": { "type": "string" },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "dated": { "$ref": "#/$defs/iso_date" }
+      },
+      "additionalProperties": false
+    },
+
+    "_reliability": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["RELIABLE", "INFORMATIONAL", "FLAGGED_UNRELIABLE"],
+          "description": "Trust signal. `RESOLVED` was a historical post-fix transient state and now collapses to `RELIABLE`."
+        },
+        "note":   { "type": "string" },
+        "issues": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+
+    "_review": {
+      "$ref": "#/$defs/review_block",
+      "description": "Latest review pass. Older reviews (round1, pre-promote) move into `_review_history`."
+    },
+
+    "_review_history": {
+      "type": "array",
+      "description": "Append-only audit trail. Replaces the proliferation of `_review_pre_promote`, `_triple_check`, `_triple_check_round2`, `_triple_check_pre_promote`, `_triple_check_round2_pre_promote`, `_review_fix`, `_review_pre_remediation`.",
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/review_block" },
+          {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "round1",
+                  "round2",
+                  "pre_promote",
+                  "pre_remediation",
+                  "fix"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+
+    "_curation": {
+      "type": "object",
+      "description": "Optional manual-curation metadata. Replaces the 9 scattered `_curation_*` and `_candidate_*` keys.",
+      "properties": {
+        "notes":            { "type": "string" },
+        "evidence":         { "type": "string" },
+        "strategy":         { "type": "string" },
+        "verified_against_test_sh": { "type": "boolean" },
+        "test_sh_simulated_reward": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "verifier_coverage": {
+          "type": "string"
+        },
+        "candidate_strategy":          { "type": "string" },
+        "candidate_upstream_commit":   { "$ref": "#/$defs/git_sha" },
+        "candidate_upstream_verified": { "type": "boolean" },
+        "candidate_status":            { "type": "string" },
+        "candidate_date":              { "$ref": "#/$defs/iso_date" }
+      },
+      "additionalProperties": false
+    },
+
+    "_upstream": {
+      "type": "object",
+      "description": "Optional upstream linkage. Replaces `_upstream_issue`, `_upstream_pr`, `_pr_lookup_status`.",
+      "properties": {
+        "issue":          { "type": "integer", "minimum": 1 },
+        "pr":             { "type": "integer", "minimum": 1 },
+        "pr_lookup_status": {
+          "type": "string",
+          "enum": ["resolved", "ambiguous", "no_pr_found", "skipped"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "_install_config_commit_sha": {
+      "$ref": "#/$defs/git_sha",
+      "description": "Commit recorded by the harness's install_config.json when synthesizing the buggy state. Lets us detect drift if the Dockerfile is bumped."
+    },
+
+    "_canonical_source_path": {
+      "type": "string",
+      "description": "Reference-layer only. Relative path back to the authoritative source-layer JSON. Required when `_layer == \"reference\"`."
+    },
+
+    "_sync_note": {
+      "type": "string",
+      "description": "Reference-layer only. Free-form note from the sync script (e.g. `sync_reference_patches.py`)."
+    },
+
+    "_n_mutating_ops": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of mutating tool calls (Edit/Write/MultiEdit/Bash-with-redirect) found in the session. 0 implies `_status == \"no_canonical\"` with `_category == \"no_mutating_ops\"`."
+    },
+
+    "FAIL_TO_PASS": {
+      "type": "array",
+      "description": "Aspirational SWE-bench-style gate list. Currently empty across the corpus; reserved for the next migration that pulls this from test_manifest.yaml.",
+      "items": { "type": "string" }
+    },
+    "PASS_TO_PASS": {
+      "type": "array",
+      "description": "Aspirational SWE-bench-style regression gate list. Currently empty across the corpus.",
+      "items": { "type": "string" }
+    },
+
+    "_extraction_warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Renamed from `_reconstruction_warnings` for parity with `_extraction.method`/`_extraction.fidelity`."
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "_status": { "const": "canonical" } } },
+      "then": {
+        "required": [
+          "patch", "patch_truncated",
+          "files_changed", "numstat", "files_changed_count",
+          "total_additions", "total_deletions",
+          "_base_commit", "_repo_url", "repo_id",
+          "_fidelity"
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "_status": { "const": "no_canonical" } } },
+      "then": {
+        "required": ["_category", "_reason"],
+        "not": { "required": ["patch"] }
+      }
+    },
+    {
+      "if": { "properties": { "_layer": { "const": "reference" } } },
+      "then": { "required": ["_canonical_source_path"] }
+    }
+  ],
+
+  "additionalProperties": false,
+  "unevaluatedProperties": false
+}

@@ -1000,7 +1000,7 @@ def extract_one(task_dir: Path, output_root: Path, force: bool) -> dict:
             deletions=hs["total_deletions"],
             warnings=0,
             ops=0,
-            method="github_pr_diff",
+            method="gh_pr_diff",
         )
         return result
 
@@ -1118,7 +1118,10 @@ def extract_one(task_dir: Path, output_root: Path, force: bool) -> dict:
         "agent_percentage": None,
         # Non-SWE additions (underscore-prefixed, additive)
         "_source": source,
-        "_reconstruction": "tool_replay",
+        # Emit the canonical method label that data-pipeline/canonical_patch.schema.json
+        # accepts under `_extraction.method`. Was `tool_replay` pre-normalization
+        # (commit 24a689ef3); the legacy spelling is no longer schema-valid.
+        "_reconstruction": "messages_replay",
         "_fidelity": fidelity,
         "_reconstruction_warnings": warnings,
         "_base_commit": base_commit,
@@ -1198,7 +1201,9 @@ def try_hyperswitch_issue_pr_diff(task_name: str, repo_url: str,
         "patch_truncated": truncated,
         "agent_percentage": None,
         "_source": source,
-        "_reconstruction": "github_pr_diff",
+        # Canonical method label (see normalize note in extract_one); the
+        # `github_pr_diff` legacy spelling collapses into `gh_pr_diff`.
+        "_reconstruction": "gh_pr_diff",
         "_fidelity": "exact",
         "_reconstruction_warnings": [],
         "_base_commit": base_commit,

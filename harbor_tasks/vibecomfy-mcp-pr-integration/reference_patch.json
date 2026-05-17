@@ -30,5 +30,7 @@
       "same_stripped_export_pattern: 22 Edit + 16 Write tool_uses, all inputs collapsed to bare strings."
     ],
     "note": "209 tool_uses, stripped_export confirmed. Stub legit."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

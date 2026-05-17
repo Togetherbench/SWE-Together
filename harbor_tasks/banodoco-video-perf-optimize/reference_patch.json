@@ -28,5 +28,7 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "Stub stripped_export confirmed: all tool_uses[*].input are bare strings (no diffable content); no Edit/Write payload survives extraction."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

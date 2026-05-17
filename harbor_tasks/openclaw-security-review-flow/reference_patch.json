@@ -27,5 +27,8 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "Valid no_canonical stub. Category stripped_export consistent with bare-string tool inputs. All stub-schema fields present."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false,
+  "_instruction_command_args_extracted": true
 }

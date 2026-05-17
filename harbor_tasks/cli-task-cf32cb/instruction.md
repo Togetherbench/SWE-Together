@@ -81,3 +81,6 @@ Also need to handle the remote metadata case (same as current `resumeMultipleChe
 ```bash
 mise run fmt && mise run lint && mise run test:ci
 ```
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

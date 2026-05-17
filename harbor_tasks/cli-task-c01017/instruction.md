@@ -65,3 +65,4 @@ Specifically verify:
 - All existing tests still pass (the fix is backward-compatible with string content)
 
 
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

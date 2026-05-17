@@ -78,18 +78,10 @@ Remove file entirely — no other consumers.
 
 ## What this does NOT change
 
+- Timeline.tsx — no changes needed, already accepts all required props
+- TimelineContainer — no changes needed
 - SegmentOutputStrip — no changes needed
 - BatchModeContent — separate component, unaffected (has its own unpositioned helper)
-
-## Dead code cleanup (after the core refactor)
-
-After removing TimelineModeContent, some props and constants in downstream components become dead code — they were only ever passed by TimelineModeContent and are no longer used by any caller. Review and clean these up:
-
-### Timeline.tsx
-Remove dead props from the component interface and destructure that no longer have any caller after TMC is deleted. Also remove any module-level constants that only existed as defaults for those dead props (e.g. empty-array sentinels).
-
-### TimelineContainer/
-Check TimelineContainer's types and component file for any props or variables that were only threaded through from the now-removed dead props above. Remove them.
 
 ## Verification
 
@@ -99,3 +91,4 @@ Check TimelineContainer's types and component file for any props or variables th
 4. TypeScript: `npx tsc --noEmit` passes
 
 
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /user_c042661f/.claude/projects/-Users-user_c042661f-Documents-reigh/4857fd66-0aac-4d5b-8fc3-4ec10ad48176.jsonl

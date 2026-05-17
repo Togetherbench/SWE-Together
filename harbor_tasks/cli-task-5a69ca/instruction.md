@@ -138,4 +138,4 @@ Manual test:
 4. `git commit --allow-empty -m "Initial commit"` — subsequent sessions should work normally
 
 
-If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <path-to-file>
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

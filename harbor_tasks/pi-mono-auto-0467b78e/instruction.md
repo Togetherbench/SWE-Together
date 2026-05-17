@@ -34,7 +34,3 @@ Tests:
 - ...
 
 If no issues are found, say so under Bad and Ugly.
-
-After completing your review:
-- Save the full review text to `/workspace/review.md`
-- If any changelog entries are missing for this PR, add them to the appropriate `packages/*/CHANGELOG.md` file(s) following the format rules above

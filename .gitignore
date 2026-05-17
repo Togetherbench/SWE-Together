@@ -62,3 +62,11 @@ trials_*_v043*.tar
 trials_*_v043*.tar.zst
 _v043_corrections_data.json
 69e17aa991dbacfdd9316e25/
+
+# Generated HTML reports — never commit; Railway rebuilds them on deploy
+# (see railway/Dockerfile). Terminal-readable stats are CLI only:
+# `python3 scripts/patch_stats.py`.
+reports/*.html
+
+# Generated audit/lint outputs
+data-pipeline/scripts/one_off/*.result.json

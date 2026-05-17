@@ -121,3 +121,6 @@ Colors follow naturally (index-based on sorted order). When `split_by` or data c
 2. In ProjectTrendChart: select "Tokens" → legend reorders to highest-token project at top; switch back to "Sessions" → order reverts; colors remain the same across switches
 3. In ErrorTrendChart: switch from "Total Errors" → "Avg per Session" → legend reorders but colors stay the same per project/user/model
 4. In DimensionAnalysis: select a 2nd dimension → legend items appear sorted by highest split value at top
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

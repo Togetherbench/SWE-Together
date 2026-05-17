@@ -89,4 +89,4 @@ Add tests in `tests/test_init.py` (or a new `tests/test_overlapping_locks.py` if
 2. `uv run pre-commit run --all-files` — linting passes
 
 
-If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/raman/.claude/projects/-Users-raman-projects-lock-code-manager/b1386405-5f79-42e9-a9bf-25375841c5d0.jsonl
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

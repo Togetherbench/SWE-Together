@@ -129,3 +129,6 @@ Fixes the inconsistency where `getAgent("")` errors but `ResolveAgentForRewind("
 2. `mise run fmt && mise run lint`
 3. `go test ./cmd/entire/cli/... -count=1`
 4. Manual: create a checkpoint with two sessions from different agents, rewind, verify each transcript lands in the correct agent directory with correct resume commands
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

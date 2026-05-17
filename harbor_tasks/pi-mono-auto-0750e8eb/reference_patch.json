@@ -27,5 +27,7 @@
     "date": "2026-05-15",
     "found_issues": [],
     "note": "Valid no_canonical stub. Category replay_no_diff consistent with anchor-mismatch failure mode. All stub-schema fields present."
-  }
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
 }

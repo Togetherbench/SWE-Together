@@ -1,6 +1,5 @@
 {
   "session_id": "46c118bb-d5d8-4454-97cd-cd36a6be1955",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "entireio/cli",
@@ -10,10 +9,12 @@
   "total_deletions": 3,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\te2e/agents/droid.go\nM\te2e/agents/tmux.go\nM\te2e/testutil/repo.go\n",
-  "numstat": "6\t1\te2e/agents/droid.go\n3\t1\te2e/agents/tmux.go\n5\t1\te2e/testutil/repo.go\n",
+  "numstat": [
+    "6\t1\te2e/agents/droid.go",
+    "3\t1\te2e/agents/tmux.go",
+    "5\t1\te2e/testutil/repo.go"
+  ],
   "patch": "diff --git a/e2e/agents/droid.go b/e2e/agents/droid.go\nindex 30903da..4a9bac6 100644\n--- a/e2e/agents/droid.go\n+++ b/e2e/agents/droid.go\n@@ -199,7 +199,12 @@ func (d *Droid) StartSession(ctx context.Context, dir string) (Session, error) {\n \n \t// Droid auto-generates a greeting on startup which fires a Stop hook.\n \t// Wait for the greeting turn to fully complete before accepting prompts.\n-\ttime.Sleep(2 * time.Second)\n+\tselect {\n+\tcase <-ctx.Done():\n+\t\t_ = s.Close()\n+\t\treturn nil, fmt.Errorf(\"context cancelled during startup wait: %w\", ctx.Err())\n+\tcase <-time.After(2 * time.Second):\n+\t}\n \ts.stableAtSend = \"\"\n \n \treturn s, nil\ndiff --git a/e2e/agents/tmux.go b/e2e/agents/tmux.go\nindex e2b5c81..6a2260d 100644\n--- a/e2e/agents/tmux.go\n+++ b/e2e/agents/tmux.go\n@@ -163,7 +163,9 @@ func (s *TmuxSession) IsPaneDead() bool {\n \tcmd := exec.Command(\"tmux\", \"display-message\", \"-t\", s.name, \"-p\", \"#{pane_dead}\")\n \tout, err := cmd.Output()\n \tif err != nil {\n-\t\treturn false\n+\t\t// If tmux itself fails (e.g. session/pane no longer exists),\n+\t\t// treat it as dead so WaitFor doesn't poll until timeout.\n+\t\treturn true\n \t}\n \treturn strings.TrimSpace(string(out)) == \"1\"\n }\ndiff --git a/e2e/testutil/repo.go b/e2e/testutil/repo.go\nindex 1766096..fc635f8 100644\n--- a/e2e/testutil/repo.go\n+++ b/e2e/testutil/repo.go\n@@ -164,7 +164,11 @@ func mergeDroidCustomModels(globalSettingsPath, repoSettingsPath string) error {\n \t// Set the active custom model so interactive mode uses the BYOK model\n \t// instead of prompting for selection. The value must match the Model\n \t// field from the customModels entry (not the displayName).\n-\trepoSettings[\"model\"] = json.RawMessage(`\"` + agents.DefaultDroidModel() + `\"`)\n+\tmodelJSON, err := json.Marshal(agents.DefaultDroidModel())\n+\tif err != nil {\n+\t\treturn fmt.Errorf(\"marshal model setting: %w\", err)\n+\t}\n+\trepoSettings[\"model\"] = json.RawMessage(modelJSON)\n \n \t// High autonomy prevents Droid from asking for confirmation during\n \t// interactive E2E tests, which would cause hangs waiting for input.\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "cli",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
@@ -22,10 +23,18 @@
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-46c118",
   "_n_mutating_ops": 4,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ab",
+    "date": "2026-05-14",
+    "note": "exact via tool_replay (4 ops, 0 warn); 3 files coherent; install_config F2P empty (overall pass-rate fallback).",
+    "checks_passed": [
+      "schema_keys_present",
+      "diff_headers_match_files_changed_count",
+      "line_counts_match_totals",
+      "no_phantom_files",
+      "fidelity_provenance_consistent",
+      "test_gate_alignment"
+    ]
   }
 }

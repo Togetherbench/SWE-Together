@@ -156,4 +156,4 @@ Delete lines 209-218 (`.export.json` copying logic). The transcript IS the expor
 4. **Run**: `mise run fmt && mise run lint && mise run test:ci`
 
 
-If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: ~/.REDACTED.jsonl
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

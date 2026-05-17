@@ -1,3 +1,13 @@
+You are working on the hyperswitch repository (Rust payment processing system).
+
+REPOSITORY SETUP:
+- Repository: juspay/hyperswitch
+- Working directory: ./repos/hyperswitch_pool_2 (already cloned)
+- Base commit: 305ca9bda9d3c5bf3cc97458b7ed07b79e894154
+- Task ID: juspay__hyperswitch-8377
+- Version: v1.114.0
+
+TASK DESCRIPTION:
 Bug: feat(router): Add v2 endpoint to list payment attempts by intent_id
 
 
@@ -136,4 +146,60 @@ curl --location 'http://localhost:8080/v2/payments/12345_pay_01978809316e7850b05
             "payment_method_type": "card",
             "connector_reference_id": null,
             "payment_method_subtype": "credit",
+            "connector_payment_id": {
+                "TxnId": "ch_3RYW3N06IkU6uKNZ01mrX2tD"
+            },
+            "payment_method_id": null,
+            "client_source": null,
+            "client_version": null,
+            "feature_metadata": {
+                "revenue_recovery": {
+                    "attempt_triggered_by": "external"
+                }
+            }
+        }
+    ]
+}
+```
 
+## Checklist
+<!-- Put an `x` in the boxes that apply -->
+
+- [x] I formatted the code `cargo +nightly fmt --all`
+- [x] I addressed lints thrown by `cargo clippy`
+- [x] I reviewed the submitted code
+- [ ] I added unit tests for my changes where possible
+
+CRITICAL INSTRUCTIONS - WORK FAST AND EFFICIENTLY:
+
+1. Create DENSE, ACTION-FOCUSED todos IMMEDIATELY
+   - Make todos specific and actionable
+   - Focus on HIGH-IMPACT actions only
+   - 5-8 todos maximum - be surgical, not exhaustive
+
+2. Execute aggressively:
+   - Use bash commands to search efficiently
+   - Read multiple related files in quick succession
+   - Make ALL related changes in one edit
+   - Skip unnecessary exploration
+
+3. File operations:
+   - All repo files: './repos/hyperswitch_pool_2/<path>'
+   - Use targeted edits over whole file rewrites
+
+4. COMMIT YOUR WORK BEFORE FINISHING:
+   - Stage meaningful changes with `git add -A`
+   - Create a single commit using `git commit -m "task juspay__hyperswitch-8377"`
+   - Do NOT push changes
+   - If no changes were required, explicitly state that and skip the commit
+
+5. NO TESTING UNLESS CRITICAL:
+   - Focus on making the actual code changes
+   - Only test if explicitly required
+
+6. Maximize information density:
+   - Each turn should accomplish significant work
+   - Batch file reads when examining related code
+   - Use search commands to locate code quickly
+
+EFFICIENCY IS CRITICAL. Make substantial progress every turn. REMEMBER YOU CAN MAKE EDITS AND USE THE EDIT TOOL SO PLEASE MAKE EDITS

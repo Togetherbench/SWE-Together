@@ -1,6 +1,6 @@
 Hello,
 
-Google has received a trademark complaint regarding your item, "Gemini Voyager"
+Google has received a trademark complaint regarding your item, “Gemini Voyager"
 
 "https://chromewebstore.google.com/detail/gemini-voyager/kjdpnimcnfinmilocccippmododhceol.  
 

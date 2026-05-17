@@ -85,7 +85,7 @@ RUN claude plugin marketplace add desplega-ai/ai-toolbox || true \
     && claude plugin install agent-swarm@desplega-ai-toolbox --scope user || true \
     && claude plugin install wts@desplega-ai-toolbox --scope user || true \
     && claude plugin marketplace add desplega-ai/qa-use || true \
-    && claude plugin install qa-use@desplega.ai --scope user || true \
+    && claude plugin install <EMAIL> --scope user || true \
     && claude plugin marketplace add mksglu/claude-context-mode || true \
     && claude plugin install context-mode@claude-context-mode --scope user || true
 ```
@@ -97,8 +97,8 @@ Remove the entire marketplace block (lines 214-241) from `docker-entrypoint.sh`.
 Currently in entrypoint lines 423-433. Move to Dockerfile after user creation:
 
 ```dockerfile
-RUN mkdir -p /home/worker/.wts \
-    && echo '{"defaults":{"autoTmux":false,"autoClaude":false}}' > /home/worker/.wts/config.json
+RUN mkdir -p <HOST_PATH> \
+    && echo '{"defaults":{"autoTmux":false,"autoClaude":false}}' > <HOST_PATH>
 ```
 
 Remove lines 423-433 from `docker-entrypoint.sh`.
@@ -164,7 +164,7 @@ touch src/cli.tsx && docker build -f Dockerfile.worker -t agent-swarm-worker:tes
 
 # 3. Run container and check build-time setup
 docker run --rm -it --entrypoint bash agent-swarm-worker:test -c \
-  "ls -la /home/worker/.wts/config.json && \
+  "ls -la <HOST_PATH> && \
    ls -d /workspace/personal /workspace/shared/memory && \
    claude plugin list 2>/dev/null || echo 'plugin check done'"
 
@@ -175,3 +175,6 @@ docker run --rm \
   -e AGENT_ROLE=worker \
   agent-swarm-worker:test
 ```
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

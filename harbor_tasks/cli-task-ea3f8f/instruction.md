@@ -99,6 +99,9 @@ This reuses the existing `handleLifecycleTurnEnd` (now resilient to missing tran
 ## Verification
 
 1. `mise run fmt && mise run lint && mise run test:ci`
-2. Rebuild binary: `go build ./cmd/entire/`
+2. Rebuild binary: `go build -o <HOST_PATH> ./cmd/entire/`
 3. Re-test with test_cursor2 wrapper to confirm stop hook succeeds (EXIT=0)
 4. Verify shadow branch is created after a Cursor agent session
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

@@ -70,3 +70,6 @@ if len(prompts) == 0 {
 ## Verification
 
 `mise run fmt && mise run test:ci`
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

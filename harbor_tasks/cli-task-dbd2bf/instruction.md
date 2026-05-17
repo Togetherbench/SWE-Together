@@ -98,3 +98,6 @@ The review notes that external agents aren't discoverable during `entire enable`
 2. `mise run test:ci` — all unit + integration tests pass
 3. Manual verification: `entire version` no longer triggers external agent discovery (check with `ENTIRE_LOG_LEVEL=debug`)
 4. Manual verification: `entire hooks <external-agent> <hook>` still works via the RunE fallback
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

@@ -5,7 +5,7 @@ Goal:
 2) Propose multiple solution options, with tradeoffs, and consult oracle for architecture feedback.
 
 Scope and constraints:
-- Repo: /Users/alioudiallo/code/src/github.com/aliou/pi-mono
+- Repo: <HOST_PATH>
 - Do not implement code changes yet.
 - Produce an investigation + design memo only.
 - Be concise but technically complete.

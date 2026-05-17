@@ -1,1 +1,1 @@
-Refactor it to remove duplicate code in reg imag balancing. Handle the edge case of zero reg images. Also fix the redundant double call to update_dataset_image_counts() in the DreamBooth filter override — the base class already calls it, so the override shouldn't call it again after rebalancing.
+Read `git diff HEAD~`. Do we really need `rebalance_regularization_images`?

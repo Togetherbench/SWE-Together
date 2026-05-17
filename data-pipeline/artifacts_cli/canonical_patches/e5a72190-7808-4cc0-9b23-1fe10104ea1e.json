@@ -1,6 +1,5 @@
 {
   "session_id": "e5a72190-7808-4cc0-9b23-1fe10104ea1e",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "entireio/cli",
@@ -10,10 +9,11 @@
   "total_deletions": 3,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tcmd/entire/cli/agent/geminicli/transcript.go\nM\tcmd/entire/cli/strategy/manual_commit_rewind.go\n",
-  "numstat": "3\t1\tcmd/entire/cli/agent/geminicli/transcript.go\n70\t2\tcmd/entire/cli/strategy/manual_commit_rewind.go\n",
+  "numstat": [
+    "3\t1\tcmd/entire/cli/agent/geminicli/transcript.go",
+    "70\t2\tcmd/entire/cli/strategy/manual_commit_rewind.go"
+  ],
   "patch": "diff --git a/cmd/entire/cli/agent/geminicli/transcript.go b/cmd/entire/cli/agent/geminicli/transcript.go\nindex 39c2a82..9692828 100644\n--- a/cmd/entire/cli/agent/geminicli/transcript.go\n+++ b/cmd/entire/cli/agent/geminicli/transcript.go\n@@ -19,7 +19,9 @@ const (\n \n // GeminiTranscript represents the top-level structure of a Gemini session file\n type GeminiTranscript struct {\n-\tMessages []GeminiMessage `json:\"messages\"`\n+\tProjectHash string          `json:\"projectHash,omitempty\"`\n+\tStartTime   string          `json:\"startTime,omitempty\"`\n+\tMessages    []GeminiMessage `json:\"messages\"`\n }\n \n // GeminiMessage represents a single message in the transcript\ndiff --git a/cmd/entire/cli/strategy/manual_commit_rewind.go b/cmd/entire/cli/strategy/manual_commit_rewind.go\nindex 6023dcb..a9f6b2d 100644\n--- a/cmd/entire/cli/strategy/manual_commit_rewind.go\n+++ b/cmd/entire/cli/strategy/manual_commit_rewind.go\n@@ -2,6 +2,7 @@ package strategy\n \n import (\n \t\"context\"\n+\t\"encoding/json\"\n \t\"errors\"\n \t\"fmt\"\n \t\"os\"\n@@ -710,7 +711,20 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(point RewindPoint, force bool) ([\n \t\t\tcontinue\n \t\t}\n \n-\t\tsessionFile := ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n+\t\t// Override for Gemini: use projectHash for dir, session-<startTime>-<shortid>.json for filename\n+\t\tvar sessionFile string\n+\t\tif sessionAgent.Type() == agent.AgentTypeGemini && len(content.Transcript) > 0 {\n+\t\t\tmeta := extractGeminiMeta(content.Transcript)\n+\t\t\tif meta.ProjectHash != \"\" {\n+\t\t\t\tif home, homeErr := os.UserHomeDir(); homeErr == nil {\n+\t\t\t\t\tsessionAgentDir = filepath.Join(home, \".gemini\", \"tmp\", meta.ProjectHash, \"chats\")\n+\t\t\t\t}\n+\t\t\t}\n+\t\t\tagentSessionID := sessionAgent.ExtractAgentSessionID(sessionID)\n+\t\t\tsessionFile = filepath.Join(sessionAgentDir, geminiSessionFileName(agentSessionID, meta.StartTime))\n+\t\t} else {\n+\t\t\tsessionFile = ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n+\t\t}\n \n \t\t// Get first prompt for display\n \t\tpromptPreview := ExtractFirstPrompt(content.Prompts)\n@@ -862,7 +876,20 @@ func (s *ManualCommitStrategy) classifySessionsForRestore(ctx context.Context, r\n \t\t\tcontinue\n \t\t}\n \n-\t\tlocalPath := ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n+\t\t// Override for Gemini: use projectHash for dir, session-<startTime>-<shortid>.json for filename\n+\t\tvar localPath string\n+\t\tif sessionAgent.Type() == agent.AgentTypeGemini && len(content.Transcript) > 0 {\n+\t\t\tmeta := extractGeminiMeta(content.Transcript)\n+\t\t\tif meta.ProjectHash != \"\" {\n+\t\t\t\tif home, homeErr := os.UserHomeDir(); homeErr == nil {\n+\t\t\t\t\tsessionAgentDir = filepath.Join(home, \".gemini\", \"tmp\", meta.ProjectHash, \"chats\")\n+\t\t\t\t}\n+\t\t\t}\n+\t\t\tagentSessionID := sessionAgent.ExtractAgentSessionID(sessionID)\n+\t\t\tlocalPath = filepath.Join(sessionAgentDir, geminiSessionFileName(agentSessionID, meta.StartTime))\n+\t\t} else {\n+\t\t\tlocalPath = ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n+\t\t}\n \n \t\tlocalTime := paths.GetLastTimestampFromFile(localPath)\n \t\tcheckpointTime := paths.GetLastTimestampFromBytes(content.Transcript)\n@@ -918,6 +945,47 @@ func StatusToText(status SessionRestoreStatus) string {\n \t}\n }\n \n+// geminiTranscriptMeta holds the fields we need from a Gemini transcript JSON\n+// to reconstruct the correct session file path during restore.\n+type geminiTranscriptMeta struct {\n+\tProjectHash string `json:\"projectHash\"`\n+\tStartTime   string `json:\"startTime\"`\n+}\n+\n+// extractGeminiMeta extracts projectHash and startTime from raw Gemini transcript JSON.\n+func extractGeminiMeta(transcript []byte) geminiTranscriptMeta {\n+\tvar meta geminiTranscriptMeta\n+\t_ = json.Unmarshal(transcript, &meta) //nolint:errcheck // best-effort extraction\n+\treturn meta\n+}\n+\n+// geminiSessionFileName constructs the Gemini session filename from the agent session ID and start time.\n+// Gemini uses the format: session-<YYYY-MM-DDTHH-MM>-<shortid>.json\n+func geminiSessionFileName(agentSessionID string, startTime string) string {\n+\tshortID := agentSessionID\n+\tif len(shortID) > 8 {\n+\t\tshortID = shortID[:8]\n+\t}\n+\n+\tif startTime == \"\" {\n+\t\treturn agentSessionID + \".json\"\n+\t}\n+\n+\t// startTime from transcript is like \"2026-02-10T23:57:30.123Z\"\n+\t// Gemini filename uses \"2026-02-10T23-57\" (colons replaced with dashes, truncated to minute)\n+\tt, err := time.Parse(time.RFC3339, startTime)\n+\tif err != nil {\n+\t\t// Try parsing just the date+time portion without timezone\n+\t\tif len(startTime) >= 16 {\n+\t\t\tt, err = time.Parse(\"2006-01-02T15:04\", startTime[:16])\n+\t\t}\n+\t\tif err != nil {\n+\t\t\treturn agentSessionID + \".json\"\n+\t\t}\n+\t}\n+\treturn fmt.Sprintf(\"session-%s-%s.json\", t.Format(\"2006-01-02T15-04\"), shortID)\n+}\n+\n // PromptOverwriteNewerLogs asks the user for confirmation to overwrite local\n // session logs that have newer timestamps than the checkpoint versions.\n func PromptOverwriteNewerLogs(sessions []SessionRestoreInfo) (bool, error) {\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "cli",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
@@ -22,10 +22,17 @@
   "_repo_url": "https://github.com/entireio/cli",
   "_task_name": "cli-task-e5a721",
   "_n_mutating_ops": 7,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ac",
+    "date": "2026-05-14",
+    "note": "tool_replay exact 0 warnings; 2 files +73/-3 matches; both files referenced in test.sh.",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "files_in_test_sh",
+      "no_phantom",
+      "fidelity_honest"
+    ]
   }
 }

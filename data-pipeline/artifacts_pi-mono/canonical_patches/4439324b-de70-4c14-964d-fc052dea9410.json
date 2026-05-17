@@ -1,6 +1,5 @@
 {
   "session_id": "4439324b-de70-4c14-964d-fc052dea9410",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "badlogic/pi-mono",
@@ -10,28 +9,20 @@
   "total_deletions": 3,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tpackages/ai/CHANGELOG.md\nM\tpackages/ai/src/providers/openai-responses-shared.ts\nA\tpackages/ai/test/openai-responses-foreign-toolcall-id.test.ts\n",
-  "numstat": "4\t0\tpackages/ai/CHANGELOG.md\n9\t3\tpackages/ai/src/providers/openai-responses-shared.ts\n70\t0\tpackages/ai/test/openai-responses-foreign-toolcall-id.test.ts\n",
+  "numstat": [
+    "4\t0\tpackages/ai/CHANGELOG.md",
+    "9\t3\tpackages/ai/src/providers/openai-responses-shared.ts",
+    "70\t0\tpackages/ai/test/openai-responses-foreign-toolcall-id.test.ts"
+  ],
   "patch": "diff --git a/packages/ai/CHANGELOG.md b/packages/ai/CHANGELOG.md\nindex 59a7fae..132ef08 100644\n--- a/packages/ai/CHANGELOG.md\n+++ b/packages/ai/CHANGELOG.md\n@@ -2,6 +2,10 @@\n \n ## [Unreleased]\n \n+### Fixed\n+\n+- Fixed OpenAI Responses replay for foreign tool-call item IDs by hashing foreign `function_call.id` values into bounded `fc_<hash>` IDs instead of preserving backend-specific normalized shapes that OpenAI Codex rejects.\n+\n ## [0.61.1] - 2026-03-20\n \n ### Changed\ndiff --git a/packages/ai/src/providers/openai-responses-shared.ts b/packages/ai/src/providers/openai-responses-shared.ts\nindex e74e6d1..6385853 100644\n--- a/packages/ai/src/providers/openai-responses-shared.ts\n+++ b/packages/ai/src/providers/openai-responses-shared.ts\n@@ -97,14 +97,20 @@ export function convertResponsesMessages<TApi extends Api>(\n \t\treturn normalized.replace(/_+$/, \"\");\n \t};\n \n-\tconst normalizeToolCallId = (id: string): string => {\n+\tconst buildForeignResponsesItemId = (itemId: string): string => {\n+\t\tconst normalized = `fc_${shortHash(itemId)}`;\n+\t\treturn normalized.length > 64 ? normalized.slice(0, 64) : normalized;\n+\t};\n+\n+\tconst normalizeToolCallId = (id: string, _targetModel: Model<TApi>, source: AssistantMessage): string => {\n \t\tif (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);\n \t\tif (!id.includes(\"|\")) return normalizeIdPart(id);\n \t\tconst [callId, itemId] = id.split(\"|\");\n \t\tconst normalizedCallId = normalizeIdPart(callId);\n-\t\tlet normalizedItemId = normalizeIdPart(itemId);\n+\t\tconst isForeignToolCall = source.provider !== model.provider || source.api !== model.api;\n+\t\tlet normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);\n \t\t// OpenAI Responses API requires item id to start with \"fc\"\n-\t\tif (!normalizedItemId.startsWith(\"fc\")) {\n+\t\tif (!normalizedItemId.startsWith(\"fc_\")) {\n \t\t\tnormalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);\n \t\t}\n \t\treturn `${normalizedCallId}|${normalizedItemId}`;\ndiff --git a/packages/ai/test/openai-responses-foreign-toolcall-id.test.ts b/packages/ai/test/openai-responses-foreign-toolcall-id.test.ts\nnew file mode 100644\nindex 0000000..a27426d\n--- /dev/null\n+++ b/packages/ai/test/openai-responses-foreign-toolcall-id.test.ts\n@@ -0,0 +1,70 @@\n+import { describe, expect, it } from \"vitest\";\n+import { getModel } from \"../src/models.js\";\n+import { convertResponsesMessages } from \"../src/providers/openai-responses-shared.js\";\n+import type { AssistantMessage, Context, ToolResultMessage, Usage } from \"../src/types.js\";\n+import { shortHash } from \"../src/utils/hash.js\";\n+\n+const COPILOT_RAW_TOOL_CALL_ID =\n+\t\"call_4VnzVawQXPB9MgYib7CiQFEY|I9b95oN1wD/cHXKTw3PpRkL6KkCtzTJhUxMouMWYwHeTo2j3htzfSk7YPx2vifiIM4g3A8XXyOj8q4Bt6SLUG7gqY1E3ELkrkVQNHglRfUmWj84lqxJY+Puieb3VKyX0FB+83TUzn91cDMF/4gzt990IzqVrc+nIb9RRscRD070Du16q1glydVjWR0SBJsE6TbY/esOjFpqplogQqrajm1eI++f3eLi73R6q7hVusY0QbeFySVxABCjhN0lXB04caBe1rzHjYzul6MAXj7uq+0r17VLq+yrtyYhN12wkmFqHeqTyEei6EFPbMy24Nc+IbJlkP0OCg02W+gOnyBFcbi2ctvJFSOhSjt1CqBdqCnnhwUqXjbWiT0wh3DmLScRgTHmGkaI+oAcQQjfic65nxj+TnEkReA==\";\n+\n+const usage: Usage = {\n+\tinput: 0,\n+\toutput: 0,\n+\tcacheRead: 0,\n+\tcacheWrite: 0,\n+\ttotalTokens: 0,\n+\tcost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },\n+};\n+\n+describe(\"OpenAI Responses foreign tool call ID normalization\", () => {\n+\tit(\"hashes foreign Copilot tool item IDs into a bounded Codex-safe fc_<hash> shape\", () => {\n+\t\tconst model = getModel(\"openai-codex\", \"gpt-5.3-codex\");\n+\t\tconst assistant: AssistantMessage = {\n+\t\t\trole: \"assistant\",\n+\t\t\tcontent: [\n+\t\t\t\t{\n+\t\t\t\t\ttype: \"toolCall\",\n+\t\t\t\t\tid: COPILOT_RAW_TOOL_CALL_ID,\n+\t\t\t\t\tname: \"edit\",\n+\t\t\t\t\targuments: { path: \"src/styles/app.css\" },\n+\t\t\t\t},\n+\t\t\t],\n+\t\t\tapi: \"openai-responses\",\n+\t\t\tprovider: \"github-copilot\",\n+\t\t\tmodel: \"gpt-5.3-codex\",\n+\t\t\tusage,\n+\t\t\tstopReason: \"toolUse\",\n+\t\t\ttimestamp: Date.now() - 2000,\n+\t\t};\n+\t\tconst toolResult: ToolResultMessage = {\n+\t\t\trole: \"toolResult\",\n+\t\t\ttoolCallId: COPILOT_RAW_TOOL_CALL_ID,\n+\t\t\ttoolName: \"edit\",\n+\t\t\tcontent: [{ type: \"text\", text: \"ok\" }],\n+\t\t\tisError: false,\n+\t\t\ttimestamp: Date.now() - 1000,\n+\t\t};\n+\t\tconst context: Context = {\n+\t\t\tsystemPrompt: \"You are concise.\",\n+\t\t\tmessages: [\n+\t\t\t\t{ role: \"user\", content: \"Use the tool.\", timestamp: Date.now() - 3000 },\n+\t\t\t\tassistant,\n+\t\t\t\ttoolResult,\n+\t\t\t],\n+\t\t};\n+\n+\t\tconst input = convertResponsesMessages(model, context, new Set([\"openai\", \"openai-codex\", \"opencode\"]));\n+\t\tconst functionCall = input.find((item) => item.type === \"function_call\");\n+\n+\t\texpect(functionCall).toBeDefined();\n+\t\texpect(functionCall?.type).toBe(\"function_call\");\n+\t\tif (!functionCall || functionCall.type !== \"function_call\") {\n+\t\t\tthrow new Error(\"Expected function_call item\");\n+\t\t}\n+\n+\t\tconst expectedItemId = `fc_${shortHash(COPILOT_RAW_TOOL_CALL_ID.split(\"|\")[1]!)}`;\n+\t\texpect(functionCall.id).toBe(expectedItemId);\n+\t\texpect(functionCall.id?.length ?? 0).toBeLessThanOrEqual(64);\n+\t\texpect(functionCall.id).toMatch(/^fc_[A-Za-z0-9]+$/);\n+\t});\n+});\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "pi-mono",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
   "_reconstruction_warnings": [
-    "candidate: stripped 4 repo-root scratch reproducer files (pi-codex-id-charset.ts, pi-codex-id-length.ts, pi-codex-id-variant.ts, pi-codex-repro.ts) that were session debris \u2014 exploratory scripts with hardcoded /Users/badlogic absolute imports, never intended for commit. Kept the 3-file canonical fix (CHANGELOG + openai-responses-shared.ts + test) which matches upstream commit b21b42d0 'fix(ai): hash foreign responses tool item ids' (Mar 22 2026) exactly."
+    "candidate: stripped 4 repo-root scratch reproducer files (pi-codex-id-charset.ts, pi-codex-id-length.ts, pi-codex-id-variant.ts, pi-codex-repro.ts) that were session debris — exploratory scripts with hardcoded /Users/badlogic absolute imports, never intended for commit. Kept the 3-file canonical fix (CHANGELOG + openai-responses-shared.ts + test) which matches upstream commit b21b42d0 'fix(ai): hash foreign responses tool item ids' (Mar 22 2026) exactly."
   ],
   "_base_commit": "235b247f1f09dd177062e2f9ce0d6983e1876c6d",
   "_repo_url": "https://github.com/badlogic/pi-mono",
   "_task_name": "pi-mono-foreign-toolcall-fix",
-  "_n_mutating_ops": 9,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
-  },
-  "_candidate_strategy": "strip_session_debris",
-  "_candidate_upstream_commit": "b21b42d032919de2f2e6920a76fa9a37c3920c0a",
-  "_candidate_upstream_verified": true,
-  "_candidate_date": "2026-05-15"
+  "_n_mutating_ops": 9
 }

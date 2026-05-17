@@ -1,6 +1,5 @@
 {
   "session_id": "aa4038a5-34b6-41e4-8541-9cca654dcbc5",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": "ef4d2e380cc7a540ff25c96ee86b5e0499e13148",
   "repo_id": "entireio/cli",
@@ -10,10 +9,14 @@
   "total_deletions": 11,
   "commit_message": "store transcript_path into session metadata and use it to restore it later on\n\nEntire-Checkpoint: 769ddf2969b6",
   "files_changed": "M\tcmd/entire/cli/checkpoint/checkpoint.go\nM\tcmd/entire/cli/checkpoint/committed.go\nM\tcmd/entire/cli/strategy/common.go\nM\tcmd/entire/cli/strategy/manual_commit_condensation.go\nM\tcmd/entire/cli/strategy/manual_commit_rewind.go",
-  "numstat": "10\t0\tcmd/entire/cli/checkpoint/checkpoint.go\n1\t0\tcmd/entire/cli/checkpoint/committed.go\n18\t0\tcmd/entire/cli/strategy/common.go\n1\t0\tcmd/entire/cli/strategy/manual_commit_condensation.go\n35\t11\tcmd/entire/cli/strategy/manual_commit_rewind.go",
+  "numstat": [
+    "10\t0\tcmd/entire/cli/checkpoint/checkpoint.go",
+    "1\t0\tcmd/entire/cli/checkpoint/committed.go",
+    "18\t0\tcmd/entire/cli/strategy/common.go",
+    "1\t0\tcmd/entire/cli/strategy/manual_commit_condensation.go",
+    "35\t11\tcmd/entire/cli/strategy/manual_commit_rewind.go"
+  ],
   "patch": "diff --git a/cmd/entire/cli/checkpoint/checkpoint.go b/cmd/entire/cli/checkpoint/checkpoint.go\nindex 407c80dd2a..e79fe83bf9 100644\n--- a/cmd/entire/cli/checkpoint/checkpoint.go\n+++ b/cmd/entire/cli/checkpoint/checkpoint.go\n@@ -276,6 +276,11 @@ type WriteCommittedOptions struct {\n \t//   - the transcript was empty or too short to summarize\n \t//   - the checkpoint predates the summarization feature\n \tSummary *Summary\n+\n+\t// SessionTranscriptPath is the home-relative path to the session transcript file.\n+\t// Persisted in CommittedMetadata so restore can write the transcript back to\n+\t// the correct location without reconstructing agent-specific paths.\n+\tSessionTranscriptPath string\n }\n \n // CommittedInfo contains summary information about a committed checkpoint.\n@@ -359,6 +364,11 @@ type CommittedMetadata struct {\n \n \t// InitialAttribution is line-level attribution calculated at commit time\n \tInitialAttribution *InitialAttribution `json:\"initial_attribution,omitempty\"`\n+\n+\t// TranscriptPath is the home-relative path to the session transcript file.\n+\t// Persisted so restore can write the transcript back to the correct location\n+\t// without needing to reconstruct agent-specific paths (e.g. SHA-256 hashed dirs for Gemini).\n+\tTranscriptPath string `json:\"transcript_path,omitempty\"`\n }\n \n // GetTranscriptStart returns the transcript line offset at which this checkpoint's data begins.\ndiff --git a/cmd/entire/cli/checkpoint/committed.go b/cmd/entire/cli/checkpoint/committed.go\nindex a05a463b10..67cf6947ca 100644\n--- a/cmd/entire/cli/checkpoint/committed.go\n+++ b/cmd/entire/cli/checkpoint/committed.go\n@@ -348,6 +348,7 @@ func (s *GitStore) writeSessionToSubdirectory(opts WriteCommittedOptions, sessio\n \t\tInitialAttribution:          opts.InitialAttribution,\n \t\tSummary:                     opts.Summary,\n \t\tCLIVersion:                  buildinfo.Version,\n+\t\tTranscriptPath:              opts.SessionTranscriptPath,\n \t}\n \n \tmetadataJSON, err := jsonutil.MarshalIndentWithNewline(sessionMetadata, \"\", \"  \")\ndiff --git a/cmd/entire/cli/strategy/common.go b/cmd/entire/cli/strategy/common.go\nindex 7a98d7b7ea..b8d09fc479 100644\n--- a/cmd/entire/cli/strategy/common.go\n+++ b/cmd/entire/cli/strategy/common.go\n@@ -223,6 +223,24 @@ var (\n \tprotectedDirsCache []string\n )\n \n+// homeRelativePath strips the $HOME/ prefix from an absolute path,\n+// returning a home-relative path suitable for persisting in metadata.\n+// Returns \"\" if the path is empty or not under $HOME.\n+func homeRelativePath(absPath string) string {\n+\tif absPath == \"\" {\n+\t\treturn \"\"\n+\t}\n+\thome, err := os.UserHomeDir()\n+\tif err != nil || home == \"\" {\n+\t\treturn \"\"\n+\t}\n+\tprefix := home + string(filepath.Separator)\n+\tif !strings.HasPrefix(absPath, prefix) {\n+\t\treturn \"\"\n+\t}\n+\treturn absPath[len(prefix):]\n+}\n+\n // isSpecificAgentType returns true if the agent type is a known, specific value\n // (not empty and not the generic \"Agent\" fallback).\n func isSpecificAgentType(t agent.AgentType) bool {\ndiff --git a/cmd/entire/cli/strategy/manual_commit_condensation.go b/cmd/entire/cli/strategy/manual_commit_condensation.go\nindex 32e19da0b7..6f74756947 100644\n--- a/cmd/entire/cli/strategy/manual_commit_condensation.go\n+++ b/cmd/entire/cli/strategy/manual_commit_condensation.go\n@@ -193,6 +193,7 @@ func (s *ManualCommitStrategy) CondenseSession(repo *git.Repository, checkpointI\n \t\tTokenUsage:                  sessionData.TokenUsage,\n \t\tInitialAttribution:          attribution,\n \t\tSummary:                     summary,\n+\t\tSessionTranscriptPath:       homeRelativePath(state.TranscriptPath),\n \t}); err != nil {\n \t\treturn nil, fmt.Errorf(\"failed to write checkpoint metadata: %w\", err)\n \t}\ndiff --git a/cmd/entire/cli/strategy/manual_commit_rewind.go b/cmd/entire/cli/strategy/manual_commit_rewind.go\nindex 6023dcb36d..867e206c8a 100644\n--- a/cmd/entire/cli/strategy/manual_commit_rewind.go\n+++ b/cmd/entire/cli/strategy/manual_commit_rewind.go\n@@ -704,14 +704,20 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(point RewindPoint, force bool) ([\n \t\t\tcontinue\n \t\t}\n \n-\t\tsessionAgentDir, dirErr := sessionAgent.GetSessionDir(repoRoot)\n-\t\tif dirErr != nil {\n-\t\t\tfmt.Fprintf(os.Stderr, \"  Warning: failed to get session dir for session %d: %v\\n\", i, dirErr)\n-\t\t\tcontinue\n+\t\t// Prefer transcript path from checkpoint metadata (works for all agents).\n+\t\t// Fall back to agent-based resolution for old checkpoints without this field.\n+\t\tvar sessionFile string\n+\t\tif resolved := resolveTranscriptPathFromMetadata(content.Metadata.TranscriptPath); resolved != \"\" {\n+\t\t\tsessionFile = resolved\n+\t\t} else {\n+\t\t\tsessionAgentDir, dirErr := sessionAgent.GetSessionDir(repoRoot)\n+\t\t\tif dirErr != nil {\n+\t\t\t\tfmt.Fprintf(os.Stderr, \"  Warning: failed to get session dir for session %d: %v\\n\", i, dirErr)\n+\t\t\t\tcontinue\n+\t\t\t}\n+\t\t\tsessionFile = ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n \t\t}\n \n-\t\tsessionFile := ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n-\n \t\t// Get first prompt for display\n \t\tpromptPreview := ExtractFirstPrompt(content.Prompts)\n \n@@ -753,6 +759,19 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(point RewindPoint, force bool) ([\n \treturn restored, nil\n }\n \n+// resolveTranscriptPathFromMetadata expands a home-relative transcript path\n+// from checkpoint metadata to an absolute path. Returns \"\" if the path is empty.\n+func resolveTranscriptPathFromMetadata(homeRelPath string) string {\n+\tif homeRelPath == \"\" {\n+\t\treturn \"\"\n+\t}\n+\thome, err := os.UserHomeDir()\n+\tif err != nil || home == \"\" {\n+\t\treturn \"\"\n+\t}\n+\treturn filepath.Join(home, homeRelPath)\n+}\n+\n // ResolveAgentForRewind resolves the agent from checkpoint metadata.\n // Falls back to the default agent (Claude) for old checkpoints that lack agent info.\n func ResolveAgentForRewind(agentType agent.AgentType) (agent.Agent, error) {\n@@ -857,13 +876,18 @@ func (s *ManualCommitStrategy) classifySessionsForRestore(ctx context.Context, r\n \t\t\tcontinue\n \t\t}\n \n-\t\tsessionAgentDir, dirErr := sessionAgent.GetSessionDir(repoRoot)\n-\t\tif dirErr != nil {\n-\t\t\tcontinue\n+\t\t// Prefer transcript path from checkpoint metadata, fall back to agent-based resolution.\n+\t\tvar localPath string\n+\t\tif resolved := resolveTranscriptPathFromMetadata(content.Metadata.TranscriptPath); resolved != \"\" {\n+\t\t\tlocalPath = resolved\n+\t\t} else {\n+\t\t\tsessionAgentDir, dirErr := sessionAgent.GetSessionDir(repoRoot)\n+\t\t\tif dirErr != nil {\n+\t\t\t\tcontinue\n+\t\t\t}\n+\t\t\tlocalPath = ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n \t\t}\n \n-\t\tlocalPath := ResolveSessionFilePath(sessionID, sessionAgent, sessionAgentDir)\n-\n \t\tlocalTime := paths.GetLastTimestampFromFile(localPath)\n \t\tcheckpointTime := paths.GetLastTimestampFromBytes(content.Transcript)\n \t\tstatus := ClassifyTimestamps(localTime, checkpointTime)\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "cli",
   "_reconstruction": "upstream_commit_diff",
   "_fidelity": "exact",
@@ -23,10 +26,17 @@
   "_task_name": "cli-task-aa4038",
   "_n_mutating_ops": 0,
   "_install_config_commit_sha": "ef4d2e380cc7a540ff25c96ee86b5e0499e13148",
-  "_extraction": {
-    "method": "upstream_commit_diff",
-    "source": "gh api repos/entireio/cli/commits/ef4d2e380cc7a540ff25c96ee86b5e0499e13148",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ac",
+    "date": "2026-05-14",
+    "note": "upstream_commit_diff with real commit_sha; 5 files, +65/-11 matches numstat exactly; all 5 changed files referenced in test.sh.",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "files_in_test_sh",
+      "no_phantom",
+      "fidelity_honest"
+    ]
   }
 }

@@ -105,7 +105,9 @@ if db_cls:
         cache["db_filter_source"] = seg
         update_calls = 0
         super_calls_with_update_false = 0
+        super_calls_with_update_nontrue = 0
         rebalance_calls = 0
+        helper_invocations = 0
         for n in ast.walk(db_filter_fn):
             if isinstance(n, ast.Call):
                 fn_name = None
@@ -117,15 +119,32 @@ if db_cls:
                     update_calls += 1
                 if fn_name and "rebalance" in fn_name.lower():
                     rebalance_calls += 1
-                # super().filter_...(update_counts=False)?
+                # Behavioral signal: override invokes the dedup helper (any name that suggests
+                # balanced reg registration / rebalance).
+                if fn_name and any(s in fn_name.lower() for s in ("rebalance", "register_balanced", "register_regularization", "balance_reg")):
+                    helper_invocations += 1
+                # super().filter_...(update_counts=<anything-not-literal-True>)?
                 if isinstance(n.func, ast.Attribute) and n.func.attr == "filter_registered_images_by_orig_resolution":
                     if isinstance(n.func.value, ast.Call) and isinstance(n.func.value.func, ast.Name) and n.func.value.func.id == "super":
                         for kw in n.keywords:
-                            if kw.arg == "update_counts" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
-                                super_calls_with_update_false += 1
+                            if kw.arg == "update_counts":
+                                # Strict-False (legacy literal) accept
+                                if isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                                    super_calls_with_update_false += 1
+                                    super_calls_with_update_nontrue += 1
+                                # Accept any expression that is NOT a literal True
+                                # (UnaryOp(Not, ...), Name, BoolOp, Attribute, Compare, etc.)
+                                else:
+                                    is_literal_true = (
+                                        isinstance(kw.value, ast.Constant) and kw.value.value is True
+                                    )
+                                    if not is_literal_true:
+                                        super_calls_with_update_nontrue += 1
         cache["db_filter_update_count_calls"] = update_calls
         cache["db_filter_super_update_false"] = super_calls_with_update_false
+        cache["db_filter_super_update_nontrue"] = super_calls_with_update_nontrue
         cache["db_filter_rebalance_calls"] = rebalance_calls
+        cache["db_filter_helper_invocations"] = helper_invocations
     else:
         cache["db_filter_found"] = False
 
@@ -222,10 +241,17 @@ fi
 
 # ===========================================================================
 # F2P 3 (0.15): DreamBooth filter override doesn't redundantly call
-# update_dataset_image_counts (the explicit instruction).
-# Override must exist AND have 0 direct calls to update_dataset_image_counts.
+# update_dataset_image_counts. Behavioral signal: rebalance path is invoked,
+# and direct update calls in the override body are <= 1 (since the helper
+# / rebalance manages the count update internally).
+#
+# RELAXED 2026-05-16: previously required 0 direct calls, which rejected valid
+# solutions that invoke rebalance+update once explicitly in the override. Per
+# the SWE-bench Verified critique, accept either:
+#   (a) <= 1 direct update call AND rebalance/helper invocation present, OR
+#   (b) 0 direct update calls (canonical form: rebalance helper handles it).
 # ===========================================================================
-echo "--- F2P 3 (0.15): DB filter override doesn't double-call update_dataset_image_counts ---"
+echo "--- F2P 3 (0.15): DB filter override defers update via helper (no redundant double-call) ---"
 timeout 10 python3 << 'PYEOF' > /tmp/t3.log 2>&1
 import json, sys
 c = json.load(open("/tmp/test_cache.json"))
@@ -233,10 +259,31 @@ if not c.get("db_filter_found", False):
     print("FAIL: no DreamBooth filter override exists")
     sys.exit(1)
 calls = c.get("db_filter_update_count_calls", 99)
-if calls >= 1:
-    print(f"FAIL: override still has {calls} direct update_dataset_image_counts call(s)")
+helper_invocations = c.get("db_filter_helper_invocations", 0)
+rebalance_calls = c.get("db_filter_rebalance_calls", 0)
+
+# Hard fail: more than one direct call is the double-call regression we forbid.
+if calls > 1:
+    print(f"FAIL: override still has {calls} direct update_dataset_image_counts call(s) (double-call regression)")
     sys.exit(1)
-print(f"PASS (direct update calls in override = {calls})")
+
+# Canonical form: 0 direct calls + rebalance helper invoked. Pass.
+if calls == 0 and (helper_invocations >= 1 or rebalance_calls >= 1):
+    print(f"PASS (no direct update; rebalance/helper invoked: helper={helper_invocations}, rebalance={rebalance_calls})")
+    sys.exit(0)
+
+# Alternative form: exactly one direct call + rebalance/helper present (helper
+# does NOT internally update_dataset_image_counts; override does it once after).
+if calls == 1 and (helper_invocations >= 1 or rebalance_calls >= 1):
+    print(f"PASS (1 direct update + rebalance/helper invoked: helper={helper_invocations}, rebalance={rebalance_calls})")
+    sys.exit(0)
+
+# Degenerate form: 0 direct calls, no rebalance helper => override is a no-op stub.
+if calls == 0 and helper_invocations == 0 and rebalance_calls == 0:
+    print("FAIL: override has neither rebalance/helper invocation nor any update call (stubbed?)")
+    sys.exit(1)
+
+print(f"PASS (calls={calls}, helper={helper_invocations}, rebalance={rebalance_calls})")
 PYEOF
 T3=$?
 cat /tmp/t3.log
@@ -246,12 +293,20 @@ if [ $T3 -eq 0 ]; then
 fi
 
 # ===========================================================================
-# F2P 4 (0.10): Override calls super with update_counts=False AND triggers a
-# rebalance. This proves the override is structurally complete: it suppresses
-# the base's count-update so it can rebalance, then lets the (now single)
-# count-update path run via the helper.
+# F2P 4 (0.10): Override calls super with update_counts=<non-True> AND triggers
+# a rebalance. The override is structurally complete: it suppresses the base's
+# count-update so the rebalance/helper path can manage the single count-update.
+#
+# RELAXED 2026-05-16: previously required literal `update_counts=False`, which
+# rejected the canonical `update_counts=not self.is_training_dataset` (UnaryOp).
+# Per the SWE-bench Verified critique, accept ANY expression passed to the
+# `update_counts` kwarg that is not a literal True. Valid forms include:
+#   - Constant(False)                   (legacy literal)
+#   - UnaryOp(Not, Attribute(...))      (canonical: not self.is_training_dataset)
+#   - Name(...)                         (variable)
+#   - BoolOp/Compare/Attribute          (any non-True expression)
 # ===========================================================================
-echo "--- F2P 4 (0.10): override defers count update via super(update_counts=False) and rebalances ---"
+echo "--- F2P 4 (0.10): override defers count update via super(update_counts=<non-True>) and rebalances ---"
 timeout 10 python3 << 'PYEOF' > /tmp/t4.log 2>&1
 import json, sys
 c = json.load(open("/tmp/test_cache.json"))
@@ -259,15 +314,18 @@ if not c.get("db_filter_found", False):
     print("FAIL: no override")
     sys.exit(1)
 sf = c.get("db_filter_super_update_false", 0)
+snt = c.get("db_filter_super_update_nontrue", 0)
 rb = c.get("db_filter_rebalance_calls", 0)
+helper_inv = c.get("db_filter_helper_invocations", 0)
 seg = c.get("db_filter_source", "")
-if sf < 1:
-    print(f"FAIL: super(...).filter_registered_images_by_orig_resolution(update_counts=False) not present")
+if snt < 1:
+    print(f"FAIL: super(...).filter_registered_images_by_orig_resolution(update_counts=<non-True>) not present "
+          f"(super_update_false={sf}, super_update_nontrue={snt})")
     sys.exit(1)
-if rb < 1 and "rebalance" not in seg.lower() and "register_regularization" not in seg.lower():
+if rb < 1 and helper_inv < 1 and "rebalance" not in seg.lower() and "register_regularization" not in seg.lower() and "register_balanced" not in seg.lower():
     print("FAIL: override does not invoke a rebalance/re-register helper")
     sys.exit(1)
-print(f"PASS (super-update-false={sf}, rebalance-call-like={rb})")
+print(f"PASS (super-update-nontrue={snt} [of which literal-False={sf}], rebalance-call-like={rb}, helper-invocations={helper_inv})")
 PYEOF
 T4=$?
 cat /tmp/t4.log

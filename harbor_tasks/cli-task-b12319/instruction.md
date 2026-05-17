@@ -204,3 +204,6 @@ mise run fmt && mise run lint && mise run test:ci
 - **Migrating other agents** (Gemini, OpenCode, Factory AI Droid) to external binaries
 - **Batch subcommand** — Optimizing warm-path (turn-end) by combining multiple operations into one exec
 - **Long-running daemon mode** — Future protocol extension for latency-sensitive scenarios
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: <HOST_PATH>

@@ -1,6 +1,5 @@
 {
   "session_id": "5c798024-05d0-4206-87d8-e9d0d6d25cb8",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": "beb5d8d0b",
   "repo_id": "marin-community/marin",
@@ -9,11 +8,11 @@
   "total_additions": 38,
   "total_deletions": 0,
   "commit_message": "Add _write_executor_info(step) to step_runner.py: writes .executor_info JSON at step.output_path with name/fn_name/config/dependencies; called before launching step in StepRunner",
-  "files_changed": "lib/marin/src/marin/execution/step_runner.py",
-  "numstat": "38\t0\tlib/marin/src/marin/execution/step_runner.py",
+  "files_changed": "M\tlib/marin/src/marin/execution/step_runner.py\n",
+  "numstat": [
+    "38\t0\tlib/marin/src/marin/execution/step_runner.py"
+  ],
   "patch": "diff --git a/lib/marin/src/marin/execution/step_runner.py b/lib/marin/src/marin/execution/step_runner.py\nindex 7d4b66803..8d5a5575a 100644\n--- a/lib/marin/src/marin/execution/step_runner.py\n+++ b/lib/marin/src/marin/execution/step_runner.py\n@@ -19,6 +19,7 @@ for completion.\n \n from __future__ import annotations\n \n+import json\n import logging\n import os\n import re\n@@ -29,6 +30,9 @@ from typing import TYPE_CHECKING, Any\n if TYPE_CHECKING:\n     from fray.v2.types import ResourceConfig\n \n+import fsspec\n+import levanter.utils.fsspec_utils as fsspec_utils\n+\n from fray.v2 import client as fray_client\n from fray.v2.client import JobHandle, JobStatus\n from marin.execution.executor_step_status import (\n@@ -38,24 +42,28 @@ from marin.execution.executor_step_status import (\n     StatusFile,\n )\n from marin.execution.step_spec import StepSpec\n+from marin.utilities.json_encoder import CustomJsonEncoder\n \n # Re-export for backward compatibility\n from marin.execution.executor_step_status import PreviousTaskFailedError, should_run, worker_id  # noqa: F401\n \n logger = logging.getLogger(__name__)\n \n+\n # ---------------------------------------------------------------------------\n # Helpers\n # ---------------------------------------------------------------------------\n \n DEFAULT_JOB_NAME = \"fray_exec_job\"\n \n+\n def _sanitize_job_name(name: str) -> str:\n     \"\"\"Ensure job names are compatible with Iris and Docker image tags.\"\"\"\n     sanitized = re.sub(r\"[^a-z0-9_.-]+\", \"-\", name.lower())\n     sanitized = sanitized.strip(\"-.\")\n     return sanitized or DEFAULT_JOB_NAME\n \n+\n def fray_exec(\n     fn: Callable[[], Any],\n     *,\n@@ -90,10 +98,38 @@ def fray_exec(\n     )\n     return job\n \n+\n+def _write_executor_info(step: StepSpec) -> None:\n+    \"\"\"Write a ``.executor_info`` JSON file matching the legacy ExecutorStepInfo schema.\n+\n+    Skips writing if the file already exists (e.g. Executor.write_infos() wrote\n+    a richer version before StepRunner launched the step).\n+    \"\"\"\n+    info_path = os.path.join(step.output_path, \".executor_info\")\n+    fs = fsspec.core.url_to_fs(info_path, use_listings_cache=False)[0]\n+    if fs.exists(info_path):\n+        return\n+    info = {\n+        \"executor_version\": \"step_runner\",\n+        \"name\": step.name,\n+        \"fn_name\": str(step.fn) if step.fn is not None else \"None\",\n+        \"config\": step.hash_attrs,\n+        \"description\": None,\n+        \"override_output_path\": step.override_output_path,\n+        \"version\": {},\n+        \"dependencies\": list(step.dep_paths),\n+        \"output_path\": step.output_path,\n+    }\n+    fsspec_utils.mkdirs(step.output_path)\n+    with fsspec.open(info_path, \"w\") as f:\n+        f.write(json.dumps(info, indent=2, cls=CustomJsonEncoder))\n+\n+\n # ---------------------------------------------------------------------------\n # Step runner\n # ---------------------------------------------------------------------------\n \n+\n class StepRunner:\n     \"\"\"Runs ``StepSpec`` objects as fray jobs, respecting dependencies.\n \n@@ -246,6 +282,8 @@ class StepRunner:\n             logger.info(f\"[DRY RUN] Would run {step_name} (status: {status})\")\n             return None\n \n+        _write_executor_info(step)\n+\n         if step.fn is None:\n             raise ValueError(f\"Step {step_name} has no callable fn\")\n \n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "hand_curated",
   "_reconstruction": "buggy_state_vs_upstream_diff",
   "_fidelity": "high",
@@ -27,26 +26,23 @@
   "_n_mutating_ops": 4,
   "_curation_method": "hand_curate_from_session",
   "_curation_source": "Dockerfile's regex-based mutation of step_runner.py at beb5d8d (removes _write_executor_info + 4 imports). Canonical fix is the inverse: restoring the function and imports. Session's 4 edits exactly restore those same imports + the function body + the call-site, with content matching upstream beb5d8d.",
-  "_curation_notes": "Auto-extractor flagged anchor mismatches because session edits use abs path /Users/rav/projects/marin/lib/marin/src/marin/execution/step_runner.py and anchor against a slightly older version (missing 'Callable,' / 'Event, Thread' in imports). The Dockerfile's buggy-state synthesis removes EXACTLY the lines the session's edits add back (4 imports + _write_executor_info function + call site). So the canonical end-state \u2248 upstream beb5d8d (pre-mutation). Diff produced = (mutated buggy state) \u2192 (upstream beb5d8d) restored.",
+  "_curation_notes": "Auto-extractor flagged anchor mismatches because session edits use abs path /Users/rav/projects/marin/lib/marin/src/marin/execution/step_runner.py and anchor against a slightly older version (missing 'Callable,' / 'Event, Thread' in imports). The Dockerfile's buggy-state synthesis removes EXACTLY the lines the session's edits add back (4 imports + _write_executor_info function + call site). So the canonical end-state ≈ upstream beb5d8d (pre-mutation). Diff produced = (mutated buggy state) → (upstream beb5d8d) restored.",
   "_curation_verified_against_test_sh": true,
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-15",
   "_verification_note": "test.sh gates assert .executor_info JSON file is written at output_path with expected schema (name, fn_name, config, dependencies). Patch adds _write_executor_info(step) which writes that exact JSON via fsspec.open.",
-  "_extraction": {
-    "method": "hand_curate_from_session",
-    "source": "Compose buggy state (Dockerfile regex mutation) + upstream beb5d8d0b state; diff = canonical fix. Verified semantic alignment with session's 4 Edit ops (add 'import json'/'import fsspec'/'import levanter.utils.fsspec_utils'/'from marin.utilities.json_encoder import CustomJsonEncoder', insert _write_executor_info function before PreviousTaskFailedError, insert _write_executor_info(step) call before step.fn check).",
-    "fidelity": "high",
-    "verified": true,
-    "note": "Anchor-recovery via inverse-of-buggy-state: the Dockerfile's regex mutation deletes exactly what the session's edits add back. The session's anchor strings reference a stale local snapshot, but the *intent* matches upstream perfectly. Patch generated from `git diff buggy_state HEAD` after replaying the Dockerfile mutation.",
-    "dated": "2026-05-15"
-  },
   "_canonical_source_path": "/tmp/hand-curate-B/marin-task-5c7980.json",
   "_sync_note": "Hand-curated candidate.",
   "_review": {
-    "status": "APPROVED",
-    "reviewer": "post-promote-backfill",
-    "date": "2026-05-15",
-    "note": "Promoted from stub via hand_curate_from_session. Round-2 r2-af AGREE: single-file +38/-0 matches numstat; _curation_verified_against_test_sh=true.",
-    "supersedes_pre_promote": false
+    "status": "APPROVED_BACKFILL",
+    "reviewer": "backfill-agent-2026-05-16",
+    "date": "2026-05-16",
+    "note": "Backfilled post-promotion review. Hand-curated patch. Content: single-file edit to lib/marin/src/marin/execution/step_runner.py (+38/-0) that adds a _write_executor_info(step) helper and invokes it before launching each step in StepRunner. The helper writes a `.executor_info` JSON at step.output_path with the legacy ExecutorStepInfo schema (executor_version, name, fn_name, config, description, override_output_path, version, dependencies, output_path), gated on `fs.exists(info_path)` to avoid clobbering richer Executor.write_infos() output. Adds imports for json, fsspec, levanter.utils.fsspec_utils, and CustomJsonEncoder. The diff is the inverse of the Dockerfile's regex-based buggy-state mutation (which strips exactly these imports + function + call site). _curation_verified_against_test_sh=true.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "curation_documented"
+    ],
+    "supersedes_pre_promote": true
   }
 }

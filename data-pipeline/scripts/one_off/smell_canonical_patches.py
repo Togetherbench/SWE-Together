@@ -15,6 +15,12 @@ Bucket meanings:
 Exits nonzero if any of {DIRECTIONAL_UNVERIFIED, LOSSY_UNFIXED, EMPTY_PATCH,
 ZERO_FILES, PARSE_FAIL} has items. Skips files under `_dropped/` and
 `_pre_promote_*/`.
+
+Documented `_fidelity` tier vocabulary (see notes/README.md `_fidelity` section):
+  exact, directional, lossy, verifier_aligned, upstream_canonical, reconstructed,
+  clean, high, curated.
+The last three (`clean`, `high`, `curated`) are curator-set after manual
+verification and treated the same as `exact`.
 """
 import argparse
 import glob
@@ -67,6 +73,18 @@ FAIL_BUCKETS = {
     "ZERO_FILES",
     "PARSE_FAIL",
 }
+
+
+# Curator-set tiers (manual verification); treated identically to "exact".
+# See notes/README.md `_fidelity` section.
+CURATOR_TIERS = {"clean", "high", "curated"}
+
+# Full documented tier vocabulary. Used by the schema-vocab check below.
+VALID_FIDELITY = {
+    "exact", "directional", "lossy",
+    "verifier_aligned", "upstream_canonical", "reconstructed",
+    "unknown",
+} | CURATOR_TIERS
 
 
 def main() -> int:

@@ -1,12 +1,4 @@
-Fix and extend the GGUF IQ dequantization functions in `qwen3_moe_fused/quantize_gguf/dequant.py`:
-
-1. **Fix `dequantize_blocks_IQ3_XXS`**: The existing implementation produces incorrect results. Debug and fix it. The fix should use elemental torch operations (direct tensor indexing) instead of `F.embedding` for lookup tables.
-
-2. **Implement 5 new dequantization functions**: `dequantize_blocks_IQ3_S`, `dequantize_blocks_IQ1_S`, `dequantize_blocks_IQ2_S`, `dequantize_blocks_IQ2_XXS`, and `dequantize_blocks_IQ1_M`. Register each in the `dequantize_functions` dict.
-
-All functions must pass the verification test. Run `python test_gguf_dequant.py` in `/workspace` to verify.
-
-The numpy reference implementations (quants.py) and existing PyTorch code (dequant.py) are included below for reference.
+Fix `dequantize_blocks_IQ3_XXS` in @qwen3_moe_fused/quantize_gguf/dequant.py and pass the test @test_gguf_dequant.py . See @..\llama.cpp\gguf-py\gguf\quants.py for the reference implementation.
 --- Content from referenced files ---
 Content from @..\llama.cpp\gguf-py\gguf\quants.py:
 from __future__ import annotations
@@ -1771,7 +1763,7 @@ def main():
     n_blocks = 32
     device = "cuda"
 
-    dll_path = r"C:\llama.cpp\build\bin\ggml-base.dll"
+    dll_path = r"<HOST_PATH>
     ggml_quants = GGMLQuants(dll_path)
 
     for qtype in dequantize_functions.keys():

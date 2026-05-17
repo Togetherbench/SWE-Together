@@ -1,6 +1,5 @@
 {
   "session_id": "c3f74ad9-f358-40e5-bd43-7ffeec60f1e3",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "badlogic/pi-mono",
@@ -10,10 +9,11 @@
   "total_deletions": 0,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\tpackages/coding-agent/CHANGELOG.md\nM\tpackages/coding-agent/src/modes/interactive/components/tool-execution.ts\n",
-  "numstat": "4\t0\tpackages/coding-agent/CHANGELOG.md\n8\t0\tpackages/coding-agent/src/modes/interactive/components/tool-execution.ts\n",
+  "numstat": [
+    "4\t0\tpackages/coding-agent/CHANGELOG.md",
+    "8\t0\tpackages/coding-agent/src/modes/interactive/components/tool-execution.ts"
+  ],
   "patch": "diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md\nindex a4462a0..4e23c0b 100644\n--- a/packages/coding-agent/CHANGELOG.md\n+++ b/packages/coding-agent/CHANGELOG.md\n@@ -2,6 +2,10 @@\n \n ## [Unreleased]\n \n+### Fixed\n+\n+- Fixed `write` tool not displaying errors in the UI when execution fails ([#856](https://github.com/badlogic/pi-mono/issues/856))\n+\n ## [0.49.2] - 2026-01-19\n \n ### Added\ndiff --git a/packages/coding-agent/src/modes/interactive/components/tool-execution.ts b/packages/coding-agent/src/modes/interactive/components/tool-execution.ts\nindex cacd459..0df2f4d 100644\n--- a/packages/coding-agent/src/modes/interactive/components/tool-execution.ts\n+++ b/packages/coding-agent/src/modes/interactive/components/tool-execution.ts\n@@ -542,6 +542,14 @@ export class ToolExecutionComponent extends Container {\n \t\t\t\t\t\t` ${keyHint(\"expandTools\", \"to expand\")})`;\n \t\t\t\t}\n \t\t\t}\n+\n+\t\t\t// Show error if tool execution failed\n+\t\t\tif (this.result?.isError) {\n+\t\t\t\tconst errorText = this.getTextOutput();\n+\t\t\t\tif (errorText) {\n+\t\t\t\t\ttext += `\\n\\n${theme.fg(\"error\", errorText)}`;\n+\t\t\t\t}\n+\t\t\t}\n \t\t} else if (this.toolName === \"edit\") {\n \t\t\tconst rawPath = this.args?.file_path || this.args?.path || \"\";\n \t\t\tconst path = shortenPath(rawPath);\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "pi-mono",
   "_reconstruction": "tool_replay",
   "_fidelity": "directional",
@@ -29,13 +29,17 @@
   ],
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-14",
-  "_verification_note": "Single warning 'op[3] edit: old text not found in .../tool-execution.ts', otherwise clean. mut/file=3.0 (6 ops over 2 files), warn/mut=0.17. Files are CHANGELOG.md (4+/0-) and tool-execution.ts (8+/0-) \u2014 both pure additions. Base d37b5a5 resolves upstream. Formatter ran once between Edits; nothing dropped.",
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "directional",
-    "verified": true,
-    "note": "Single warning 'op[3] edit: old text not found in .../tool-execution.ts', otherwise clean. mut/file=3.0 (6 ops over 2 files), warn/mut=0.17. Files are CHANGELOG.md (4+/0-) and tool-execution.ts (8+/0-) \u2014 both pure additions. Base d37b5a5 resolves upstream. Formatter ran once between Edits; nothing dropped.",
-    "dated": "2026-05-14"
+  "_verification_note": "Single warning 'op[3] edit: old text not found in .../tool-execution.ts', otherwise clean. mut/file=3.0 (6 ops over 2 files), warn/mut=0.17. Files are CHANGELOG.md (4+/0-) and tool-execution.ts (8+/0-) — both pure additions. Base d37b5a5 resolves upstream. Formatter ran once between Edits; nothing dropped.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ah",
+    "date": "2026-05-14",
+    "note": "Real canonical, directional. 12 lines across CHANGELOG + tool-execution.ts (isError branch). Aligned with test.sh's tool-execution.ts focus.",
+    "checks_passed": [
+      "schema_intact",
+      "diff_coherent",
+      "test_alignment",
+      "fidelity_honest"
+    ]
   }
 }

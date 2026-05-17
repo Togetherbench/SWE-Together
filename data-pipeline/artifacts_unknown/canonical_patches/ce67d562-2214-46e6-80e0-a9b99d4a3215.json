@@ -1,6 +1,5 @@
 {
   "session_id": "ce67d562-2214-46e6-80e0-a9b99d4a3215",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "Mathews-Tom/no-magic",
@@ -10,10 +9,10 @@
   "total_deletions": 12,
   "commit_message": "[reconstructed from session messages]",
   "files_changed": "M\t01-foundations/microtokenizer.py\n",
-  "numstat": "0\t12\t01-foundations/microtokenizer.py\n",
+  "numstat": [
+    "0\t12\t01-foundations/microtokenizer.py"
+  ],
   "patch": "diff --git a/01-foundations/microtokenizer.py b/01-foundations/microtokenizer.py\nindex 5861c7c..bb0c88b 100644\n--- a/01-foundations/microtokenizer.py\n+++ b/01-foundations/microtokenizer.py\n@@ -7,18 +7,6 @@ adjacent token pairs, then encodes new text by replaying those merges in priorit\n # GPT-2's byte-level BPE variant (Radford et al., 2019) starts from raw bytes\n # rather than characters -- that's the version implemented here.\n \n-# === TRADEOFFS ===\n-# + Data-driven vocabulary: adapts to any language or domain without linguistic rules\n-# + Compresses common patterns into single tokens, reducing sequence lengths\n-# + Byte-level fallback guarantees encoding of any input (no unknown tokens)\n-# - Merge order is corpus-dependent: different data yields different tokenizations\n-# - Encoding is O(n * vocab_size) per merge step without optimized data structures\n-# - Subword boundaries rarely align with morpheme boundaries (linguistic blindness)\n-# WHEN TO USE: Preprocessing text for any neural language model. BPE is the\n-#   standard tokenizer for GPT-family models.\n-# WHEN NOT TO: Character-level tasks where token boundaries matter (e.g., spelling),\n-#   or languages where word segmentation is well-solved by existing tools.\n-\n from __future__ import annotations\n \n import os\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "unknown",
   "_reconstruction": "tool_replay",
   "_fidelity": "exact",
@@ -22,10 +21,15 @@
   "_repo_url": "https://github.com/Mathews-Tom/no-magic",
   "_task_name": "no-magic-task-ce67d5",
   "_n_mutating_ops": 1,
-  "_extraction": {
-    "method": "tool_replay",
-    "source": "messages_replay against original_session.json",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-af",
+    "date": "2026-05-14",
+    "note": "_fidelity:exact tool_replay, 0 warnings, single-file 1288-byte patch; minimal+focused.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "no_phantom_files"
+    ]
   }
 }

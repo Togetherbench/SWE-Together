@@ -4,31 +4,32 @@ turns:
     message: "legacy"
     deliverable: "see instruction.md"
 gates:
-  # Existing F2P gates from test.sh (scaled down from 0.50 to 0.30 each)
-  - id: f2p_gate1_reload_no_guard
+  # F2P gates — match the upstream fix (commit 5dbeadae) which makes
+  # session.bindExtensions(...) eager in all three mode entry points so
+  # the UI context is registered before any /reload cycle.
+  - id: f2p_interactive_eager_bind
     kind: F2P
     turn: 1
     weight: 0.30
-    description: "AST check: reload() no longer gated on UI-binding presence"
-  - id: f2p_gate2_behavioral_sim
+    description: "interactive-mode.ts initExtensions() calls bindExtensions before the extensionRunner early-return"
+  - id: f2p_print_mode_unconditional_bind
     kind: F2P
     turn: 1
-    weight: 0.30
-    description: "Behavioral simulation: reload() emits session_start without prior bindings"
-  # Upstream F2P gates
-  - id: f2p_upstream_reload_structure
+    weight: 0.25
+    description: "print-mode.ts runPrintMode calls session.bindExtensions unconditionally (no if-extensionRunner wrapper)"
+  - id: f2p_rpc_mode_unconditional_bind
     kind: F2P
-    turn: null
-    weight: 0.20
-    description: "Structural check: reload() has _applyExtensionBindings and no hasBindings guard"
-  - id: f2p_upstream_changelog_entry
+    turn: 1
+    weight: 0.25
+    description: "rpc-mode.ts runRpcMode calls session.bindExtensions unconditionally (no if-extensionRunner wrapper)"
+  - id: f2p_changelog_entry
     kind: F2P
-    turn: null
+    turn: 1
     weight: 0.20
-    description: "CHANGELOG documents the reload extension bindings fix"
-  # Upstream P2P gates
-  - id: p2p_upstream_tsgo
+    description: "CHANGELOG documents the extension UI bindings + /reload fix"
+  # P2P regression: informational only (does not zero reward)
+  - id: p2p_tsgo
     kind: P2P_REGRESSION
     turn: null
     weight: 0
-    description: "TypeScript type-checking passes with tsgo --noEmit"
+    description: "tsgo --noEmit clean on agent-changed .ts/.tsx files"

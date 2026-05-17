@@ -1,6 +1,5 @@
 {
   "session_id": "hyperswitch-8228",
-  "checkpoint_pk": null,
   "commits_in_checkpoint": 1,
   "commit_sha": null,
   "repo_id": "juspay/hyperswitch",
@@ -10,10 +9,13 @@
   "total_deletions": 7,
   "commit_message": "[gold patch from juspay/hyperswitch#8227 closing #8228]",
   "files_changed": "M\tcrates/analytics/src/routing_events/events.rs\nM\tcrates/api_models/src/routing.rs\nM\tcrates/router/src/core/payments/routing.rs\nM\tcrates/router/src/core/routing/helpers.rs",
-  "numstat": "1\t0\tcrates/analytics/src/routing_events/events.rs\n1\t1\tcrates/api_models/src/routing.rs\n4\t4\tcrates/router/src/core/payments/routing.rs\n2\t2\tcrates/router/src/core/routing/helpers.rs",
+  "numstat": [
+    "1\t0\tcrates/analytics/src/routing_events/events.rs",
+    "1\t1\tcrates/api_models/src/routing.rs",
+    "4\t4\tcrates/router/src/core/payments/routing.rs",
+    "2\t2\tcrates/router/src/core/routing/helpers.rs"
+  ],
   "patch": "diff --git a/crates/analytics/src/routing_events/events.rs b/crates/analytics/src/routing_events/events.rs\nindex 27b2f251627..b6090a588d2 100644\n--- a/crates/analytics/src/routing_events/events.rs\n+++ b/crates/analytics/src/routing_events/events.rs\n@@ -70,4 +70,5 @@ pub struct RoutingEventsResult {\n     pub created_at: PrimitiveDateTime,\n     pub method: String,\n     pub routing_engine: String,\n+    pub routing_approach: Option<String>,\n }\ndiff --git a/crates/api_models/src/routing.rs b/crates/api_models/src/routing.rs\nindex 46cd37bc68a..e416bf4bae9 100644\n--- a/crates/api_models/src/routing.rs\n+++ b/crates/api_models/src/routing.rs\n@@ -1339,7 +1339,7 @@ pub struct LabelWithScoreEventResponse {\n #[serde(rename_all = \"snake_case\")]\n pub struct CalSuccessRateEventResponse {\n     pub labels_with_score: Vec<LabelWithScoreEventResponse>,\n-    pub routing_apporach: RoutingApproach,\n+    pub routing_approach: RoutingApproach,\n }\n \n #[derive(Clone, Debug, Serialize, Deserialize)]\ndiff --git a/crates/router/src/core/payments/routing.rs b/crates/router/src/core/payments/routing.rs\nindex fa161efb212..219eef52073 100644\n--- a/crates/router/src/core/payments/routing.rs\n+++ b/crates/router/src/core/payments/routing.rs\n@@ -2087,7 +2087,7 @@ pub async fn perform_success_based_routing(\n                 \"unable to calculate/fetch success rate from dynamic routing service\",\n             )?;\n \n-        let event_resposne = api_routing::CalSuccessRateEventResponse {\n+        let event_response = api_routing::CalSuccessRateEventResponse {\n             labels_with_score: success_based_connectors\n                 .labels_with_score\n                 .iter()\n@@ -2098,7 +2098,7 @@ pub async fn perform_success_based_routing(\n                     },\n                 )\n                 .collect(),\n-            routing_apporach: match success_based_connectors.routing_approach {\n+            routing_approach: match success_based_connectors.routing_approach {\n                 0 => api_routing::RoutingApproach::Exploration,\n                 1 => api_routing::RoutingApproach::Exploitation,\n                 _ => {\n@@ -2113,8 +2113,8 @@ pub async fn perform_success_based_routing(\n             },\n         };\n \n-        routing_event.set_response_body(&event_resposne);\n-        routing_event.set_routing_approach(event_resposne.routing_apporach.to_string());\n+        routing_event.set_response_body(&event_response);\n+        routing_event.set_routing_approach(event_response.routing_approach.to_string());\n \n         let mut connectors = Vec::with_capacity(success_based_connectors.labels_with_score.len());\n         for label_with_score in success_based_connectors.labels_with_score {\ndiff --git a/crates/router/src/core/routing/helpers.rs b/crates/router/src/core/routing/helpers.rs\nindex 4798cce9b02..f568aff55b1 100644\n--- a/crates/router/src/core/routing/helpers.rs\n+++ b/crates/router/src/core/routing/helpers.rs\n@@ -1452,7 +1452,7 @@ pub async fn push_metrics_with_update_window_for_contract_based_routing(\n                     routing_events::RoutingEngine::IntelligentRouter,\n                 );\n \n-                let update_respose = client\n+                let update_response = client\n                     .update_contracts(\n                         profile_id.get_string_repr().into(),\n                         vec![request_label_info],\n@@ -1474,7 +1474,7 @@ pub async fn push_metrics_with_update_window_for_contract_based_routing(\n                     )?;\n \n                 let event_response = routing_types::UpdateContractEventResponse {\n-                        status: match update_respose.status {\n+                        status: match update_response.status {\n                             0 => routing_types::ContractUpdationStatusEventResponse::ContractUpdationSucceeded,\n                             1 => routing_types::ContractUpdationStatusEventResponse::ContractUpdationFailed,\n                             _ => {\n",
-  "patch_truncated": false,
-  "agent_percentage": null,
   "_source": "hyperswitch",
   "_reconstruction": "github_pr_diff",
   "_fidelity": "exact",
@@ -25,10 +27,17 @@
   "_upstream_issue": 8228,
   "_upstream_pr": 8227,
   "_pr_lookup_status": "earliest of 1 merged closing PRs",
-  "_extraction": {
-    "method": "github_pr_diff",
-    "source": "gh pr diff 8227 --repo juspay/hyperswitch",
-    "fidelity": "exact",
-    "verified": false
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ae",
+    "date": "2026-05-14",
+    "note": "github_pr_diff; 4 hdrs/+8/-7 coherent; all 4 changed files appear in both test.sh and manifest.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "test_alignment",
+      "upstream_pr_diff",
+      "no_phantom"
+    ]
   }
 }
