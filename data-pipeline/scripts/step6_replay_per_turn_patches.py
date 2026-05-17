@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Step 6 — augment per-turn ops with cumulative replay patches.
 
-For each harbor task with `per_turn_coding_agent_action.json` (from step5),
+For each harbor task with `per_turn_coding_agent_action.jsonl` (from step5),
 clone the upstream repo at base_commit, replay each turn's mutating ops in
 order against the work tree, and capture cumulative `git diff HEAD` at every
-turn boundary. Diffs are embedded back into the same JSON, with a JSONL
-companion emitted alongside.
+turn boundary. Diffs are written back into the same JSONL.
 
 Reuses step4 verbatim for Dockerfile parsing, repo cloning, op replay, and
 diff capture. The only new piece is `normalize_messages_with_idx`, which
@@ -17,7 +16,7 @@ Output schema bumps to 1.1. Per-turn additions:
   cumulative_deletions, replay_warnings_this_turn,
   _cumulative_patch_truncated (only when the 256 KB cap kicks in).
 
-Top-level additions:
+Header (denormalized into every row) additions:
   repo_url, base_commit, replay_status ("ok" | "skip:<reason>"),
   total_replay_warnings.
 
@@ -25,7 +24,6 @@ Usage:
   python data-pipeline/scripts/step6_replay_per_turn_patches.py
   python data-pipeline/scripts/step6_replay_per_turn_patches.py --tasks 'cli-task-*'
   python data-pipeline/scripts/step6_replay_per_turn_patches.py --workers 8 --force
-  python data-pipeline/scripts/step6_replay_per_turn_patches.py --jsonl-only
 """
 
 from __future__ import annotations
@@ -60,13 +58,18 @@ ALL_MUTATING = step4.ALL_MUTATING
 MAX_PATCH_BYTES = 256 * 1024  # match step4's cap
 SCHEMA_VERSION_OUT = "1.1"
 
-SUMMARY_FILE = "per_turn_coding_agent_action.json"
+SUMMARY_FILE = "per_turn_coding_agent_action.jsonl"
 
-# Denormalized into every JSONL row so each line is self-contained.
-JSONL_HEADER_FIELDS = (
-    "task_name", "session_id", "repo_url", "base_commit",
-    "replay_status", "schema_version",
+# Every key that may appear at the row level as a denormalized header
+# rather than per-turn data. Used both for writing (these go on every row)
+# and reading (these get split off into the summary's top-level fields).
+# step5 only populates the first three; step6 adds the rest.
+HEADER_FIELDS = (
+    "task_name", "session_id", "schema_version",
+    "repo_url", "base_commit", "replay_status",
+    "total_replay_warnings",
 )
+_HEADER_SET = frozenset(HEADER_FIELDS)
 
 CUMULATIVE_FIELDS = (
     "cumulative_patch", "cumulative_files_changed_count",
@@ -136,18 +139,14 @@ def _turn_could_mutate(turn_ops: list[dict]) -> bool:
     """True iff some op in this turn might touch the work tree.
 
     Lets us skip `git diff` on read-only turns (~half of long sessions).
-    Conservative: anything in step4's mutating set, plus `bash` with
-    `sed -i` (step4 replays those literally).
+    Conservative: anything in step4's mutating set, plus any `bash` op —
+    step4 replays `sed -i` literally and flags other shell mutations
+    (`cat >`, `tee`) as sneak edits, so it's not safe to fast-path bash.
     """
     for op in turn_ops:
         tool = (op.get("tool") or "").lower()
-        if tool in ALL_MUTATING:
+        if tool in ALL_MUTATING or tool == "bash":
             return True
-        if tool == "bash":
-            inp = op.get("input") if isinstance(op.get("input"), dict) else {}
-            cmd = inp.get("command") or inp.get("_str") or ""
-            if isinstance(cmd, str) and SED_I_RE.search(cmd):
-                return True
     return False
 
 
@@ -158,27 +157,38 @@ def _zero_fill_turns(turns: list[dict]):
         t["replay_warnings_this_turn"] = []
 
 
+def _read_summary(jsonl_path: Path) -> dict:
+    """Reconstruct an in-memory summary from a JSONL emitted by step5 or
+    step6. Header fields are read off the first row (they're denormalized
+    identically on every row); everything else becomes turn data."""
+    with open(jsonl_path, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    if not rows:
+        return {"turns": []}
+    summary = {k: rows[0][k] for k in HEADER_FIELDS if k in rows[0]}
+    summary["turns"] = [
+        {k: v for k, v in r.items() if k not in _HEADER_SET}
+        for r in rows
+    ]
+    return summary
+
+
 def _write_jsonl(summary: dict, jsonl_path: Path):
-    header = {k: summary.get(k) for k in JSONL_HEADER_FIELDS}
-    with open(jsonl_path, "w", encoding="utf-8") as f:
+    header = {k: summary[k] for k in HEADER_FIELDS if k in summary}
+    tmp = jsonl_path.with_suffix(jsonl_path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         for t in summary.get("turns", []):
             f.write(json.dumps({**header, **t}, ensure_ascii=False) + "\n")
-
-
-def _persist(summary: dict, summary_path: Path):
-    """Write JSON + JSONL together so the two formats can't drift."""
-    json.dump(summary, open(summary_path, "w"), indent=2, ensure_ascii=False)
-    _write_jsonl(summary, summary_path.with_suffix(".jsonl"))
+    tmp.replace(jsonl_path)
 
 
 def _finalize(summary: dict, turns: list[dict], summary_path: Path, *,
               replay_status: str, repo_url: str | None = None,
               base_commit: str | None = None,
               total_warnings: int | None = None):
-    """Stamp the summary's top-level fields and write both file formats.
-    When `total_warnings` is None this is a skip path — the per-turn
-    cumulative_* fields get zero-filled to keep the schema stable for
-    downstream consumers."""
+    """Stamp header fields and write the JSONL atomically. `total_warnings
+    is None` marks a skip path — the per-turn cumulative_* fields get
+    zero-filled so the schema stays uniform for downstream consumers."""
     summary["repo_url"] = repo_url
     summary["base_commit"] = base_commit
     summary["replay_status"] = replay_status
@@ -187,21 +197,7 @@ def _finalize(summary: dict, turns: list[dict], summary_path: Path, *,
         _zero_fill_turns(turns)
     else:
         summary["total_replay_warnings"] = total_warnings
-    _persist(summary, summary_path)
-
-
-def _backfill_jsonl(task_dir: Path) -> dict:
-    """--jsonl-only worker: regenerate the JSONL companion without
-    re-running replay. Cheap (pure file IO)."""
-    summary_path = task_dir / SUMMARY_FILE
-    if not summary_path.exists():
-        return {"task": task_dir.name, "status": "skip",
-                "reason": f"no {SUMMARY_FILE}"}
-    summary = json.load(open(summary_path))
-    _write_jsonl(summary, summary_path.with_suffix(".jsonl"))
-    return {"task": task_dir.name, "status": "ok",
-            "turns": len(summary.get("turns") or []),
-            "final_files": 0, "warnings": 0}
+    _write_jsonl(summary, summary_path)
 
 
 def replay_for_task(task_dir: Path, force: bool) -> dict:
@@ -217,7 +213,7 @@ def replay_for_task(task_dir: Path, force: bool) -> dict:
         return {"task": task_name, "status": "skip",
                 "reason": "no original_session.json"}
 
-    summary = json.load(open(summary_path))
+    summary = _read_summary(summary_path)
     if summary.get("schema_version") == SCHEMA_VERSION_OUT and not force:
         return {"task": task_name, "status": "cached"}
 
@@ -234,7 +230,8 @@ def replay_for_task(task_dir: Path, force: bool) -> dict:
         return {"task": task_name, "status": "skip",
                 "reason": f"no repo_url/sha (repo={repo_url}, sha={base_commit})"}
 
-    session = json.load(open(session_path))
+    with open(session_path, encoding="utf-8") as f:
+        session = json.load(f)
     ops = normalize_messages_with_idx(session)
 
     with tempfile.TemporaryDirectory(prefix="step6-replay-") as td:
@@ -330,10 +327,6 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--force", action="store_true",
                     help="Re-replay even when schema_version is already 1.1")
-    ap.add_argument("--jsonl-only", action="store_true",
-                    help="Regenerate the JSONL companion from the existing "
-                         "JSON without re-replaying. Use to backfill after a "
-                         "JSON-only run.")
     ap.add_argument("--workers", type=int, default=1,
                     help="Cross-task parallel workers. Safe once step4's bare-"
                          "clone cache (~/.cache/canonical-patches/repos/) is "
@@ -353,10 +346,7 @@ def main() -> int:
     t0 = time.time()
     n = len(candidates)
 
-    if args.jsonl_only:
-        for i, d in enumerate(candidates, 1):
-            _print_result(i, n, _safe(_backfill_jsonl, d), counts)
-    elif args.workers <= 1:
+    if args.workers <= 1:
         for i, d in enumerate(candidates, 1):
             _print_result(i, n, _safe(replay_for_task, d, args.force), counts)
     else:

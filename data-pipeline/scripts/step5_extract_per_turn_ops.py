@@ -16,7 +16,10 @@ content is plain text (or list-of-text blocks) with NO `tool_result`
 blocks. Tool-result messages are agent activity, not user turns.
 
 Input:  harbor_tasks/<task>/original_session.json
-Output: harbor_tasks/<task>/per_turn_coding_agent_action.json (default)
+Output: harbor_tasks/<task>/per_turn_coding_agent_action.jsonl (default)
+        One JSON-encoded row per turn, prefixed with task_name / session_id /
+        schema_version so each line stands alone. step6 reads the same file
+        and augments it with cumulative replay patches.
         --output-dir overrides the destination root.
 
 Usage:
@@ -390,7 +393,8 @@ def _accumulate(turn: dict, msg: dict):
 def extract_one(task_dir: Path, output_dir: Path | None, force: bool) -> dict:
     task_name = task_dir.name
     session_path = task_dir / "original_session.json"
-    out_path = (output_dir or task_dir) / "per_turn_coding_agent_action.json" if output_dir else (task_dir / "per_turn_coding_agent_action.json")
+    base = output_dir or task_dir
+    out_path = base / "per_turn_coding_agent_action.jsonl"
     result = {"task": task_name, "status": "?"}
 
     if not session_path.exists():
@@ -402,7 +406,8 @@ def extract_one(task_dir: Path, output_dir: Path | None, force: bool) -> dict:
         return result
 
     try:
-        session = json.load(open(session_path))
+        with open(session_path) as f:
+            session = json.load(f)
     except Exception as e:
         result.update(status="error", reason=f"session load: {e}")
         return result
@@ -418,29 +423,27 @@ def extract_one(task_dir: Path, output_dir: Path | None, force: bool) -> dict:
         return result
 
     n_mut = sum(t["n_mutating_ops"] for t in turns)
+    n_calls = sum(t["n_tool_calls"] for t in turns)
     if n_mut == 0:
-        # Still emit — the intention graph builder may still use the
-        # conversational structure even when no file edits survived export.
-        # Just flag it.
+        # Still emit — the intention graph builder may use the conversational
+        # structure even when no file edits survived export. Just flag it.
         result["zero_mutating_warning"] = True
 
-    out = {
-        "session_id": session.get("session_id") or task_name,
+    header = {
         "task_name": task_name,
-        "turn_count": len(turns),
-        "total_tool_calls": sum(t["n_tool_calls"] for t in turns),
-        "total_mutating_ops": n_mut,
+        "session_id": session.get("session_id") or task_name,
         "schema_version": "1.0",
-        "turns": turns,
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    json.dump(out, open(out_path, "w"), indent=2, ensure_ascii=False)
+    with open(out_path, "w", encoding="utf-8") as f:
+        for t in turns:
+            f.write(json.dumps({**header, **t}, ensure_ascii=False) + "\n")
 
     result.update(
         status="ok",
         path=str(out_path),
         turns=len(turns),
-        tool_calls=out["total_tool_calls"],
+        tool_calls=n_calls,
         mutating=n_mut,
     )
     return result
@@ -456,10 +459,10 @@ def main() -> int:
     ap.add_argument("--force", action="store_true",
                     help="Re-extract even if cached")
     ap.add_argument("--output-dir", default=None,
-                    help="Write per_turn_coding_agent_action.json under this "
+                    help="Write per_turn_coding_agent_action.jsonl under this "
                          "dir instead of the task dir (preserves a sidecar "
                          "layout). When set, files land at "
-                         "<output-dir>/<task>/per_turn_coding_agent_action.json.")
+                         "<output-dir>/<task>/per_turn_coding_agent_action.jsonl.")
     args = ap.parse_args()
 
     candidates = [d for d in HARBOR_TASKS.iterdir()
@@ -473,7 +476,7 @@ def main() -> int:
     if args.output_dir:
         print(f"Output root: {args.output_dir}/")
     else:
-        print(f"Output: per_turn_coding_agent_action.json in each task dir")
+        print(f"Output: per_turn_coding_agent_action.jsonl in each task dir")
 
     counts: dict[str, int] = {}
     t0 = time.time()
