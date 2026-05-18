@@ -1,0 +1,35 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ac",
+    "date": "2026-05-14",
+    "note": "upstream_commit_diff with real commit_sha; 5 files, +65/-11 matches numstat exactly; all 5 changed files referenced in test.sh.",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "files_in_test_sh",
+      "no_phantom",
+      "fidelity_honest"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ac",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Re-check confirms diff coherence (fcc == diff_headers == numstat_lines == files_changed_lines; total_additions == +lines == numstat_adds; total_deletions == -lines == numstat_dels). All hunk headers count-consistent. No hallucination smells. Prior _review APPROVED stands.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-curated",
+      "date": "2026-05-15",
+      "check_performed": "Fetched gh api repos/entireio/cli/commits/ef4d2e38 (_install_config_commit_sha) as unified diff; byte-compared.",
+      "evidence": "156 lines == 156 lines; 5 files == 5 files; exact byte match",
+      "note": "Exact byte match to upstream commit ef4d2e38. _extraction.method=upstream_commit_diff verified.",
+      "kind": "round1"
+    }
+  ]
+}

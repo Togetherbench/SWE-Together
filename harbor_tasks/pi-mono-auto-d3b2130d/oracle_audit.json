@@ -1,0 +1,34 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "_curation_method=hand_reconstruction_verified_against_tool_replay; docs-only patch (README + extensions.md) for pi-package keyword. test grades docs content. Aligned.",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "test_alignment",
+      "curation_method_documented"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ag",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Diff coherent: 2 hdrs/+18/-0 match; docs-only README + extensions.md; fidelity high; hand_reconstruction_verified_against_tool_replay documented.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-curated",
+      "date": "2026-05-15",
+      "check_performed": "Parsed patch as unified diff; verified both files referenced in test.sh; confirmed curation note that tool_replay was byte-identical to hand reconstruction of session turn 6+8 Edit ops; 6 dropped warnings refer to OUT-OF-TREE sibling repos.",
+      "evidence": "2 diff headers, 2 hunks, both files (packages/coding-agent/README.md, docs/extensions.md) referenced in test.sh",
+      "note": "Hand-verified vs tool_replay. Sibling-repo paths correctly stripped. Concise docs change aligned with test gates.",
+      "kind": "round1"
+    }
+  ]
+}

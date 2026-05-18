@@ -1,0 +1,34 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "_curation_method=upstream_commit; patch adds clipboard-native.ts + modifies clipboard-image.ts + test. test.sh references clipboard-native.ts. Aligned and upstream-verifiable.",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "test_alignment",
+      "curation_method_documented"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ag",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Diff coherent: 3 hdrs/+28/-21 match meta; exact, 0 warnings; new clipboard-native.ts file (1 A marker) matches test target.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-curated",
+      "date": "2026-05-15",
+      "check_performed": "Fetched gh api repos/earendil-works/pi/commits/287a0b60 as unified diff; byte-compared.",
+      "evidence": "103 lines == 103 lines; 3 files == 3 files; exact byte match",
+      "note": "Exact byte match to upstream commit 287a0b60. _curation_method=upstream_commit verified.",
+      "kind": "round1"
+    }
+  ]
+}

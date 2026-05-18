@@ -1,0 +1,36 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ab",
+    "date": "2026-05-14",
+    "note": "directional tool_replay, verified=True; 4 files coherent; F2P empty (overall pass-rate fallback).",
+    "checks_passed": [
+      "schema_keys_present",
+      "diff_headers_match_files_changed_count",
+      "line_counts_match_totals",
+      "no_phantom_files",
+      "fidelity_provenance_consistent",
+      "test_gate_alignment"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ab",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Directional tool_replay, 2 warnings. 4 files / 4 headers / +52/-4 exact. install_config F2P=[] but custom 232-line test.sh with 5 weighted F2P gates (sum=1.00) targeting check_ast.py-based behavioral checks on opencode.go ReadSession + strategy/* logging spread. Real verifier, not bun-test fallback. APPROVED holds.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-set1",
+      "date": "2026-05-15",
+      "check_performed": "Cross-validated against upstream commit 4beb60c7",
+      "evidence": "gh api repos/entireio/cli/commits/4beb60c7: 1 file / +4/-0 (opencode.go). Canonical files_changed = 4 (opencode.go + strategy/common.go, manual_commit_logs.go, session.go). Upstream file set IS a subset of canonical = superset confirmed.",
+      "note": "Canonical is true superset of upstream (4 files vs 1). Session extended scope beyond merged PR. 2 anchor-mismatch warnings on session.go/common.go are formatter noise.",
+      "kind": "round1"
+    }
+  ]
+}

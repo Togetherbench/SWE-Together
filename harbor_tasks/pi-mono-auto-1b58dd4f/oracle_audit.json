@@ -1,0 +1,35 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "BROKEN",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "Canonical patches interactive-mode.ts/print-mode.ts/rpc-mode.ts/CHANGELOG (per session) but test.sh grades agent-session.ts reload() body. File-level mismatch — verifier cannot score this canonical.",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "fidelity_honest"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE_CANONICAL_DISAGREE_REVIEW",
+      "reviewer": "round2-batch-ag",
+      "date": "2026-05-15",
+      "found_issues": [
+        "round1_status_misattributes_test_sh_bug_to_canonical"
+      ],
+      "note": "Canonical confirmed matches upstream commit 5dbeadae exactly (4 files: CHANGELOG, interactive-mode.ts, print-mode.ts, rpc-mode.ts). Round1 BROKEN status reflects test.sh mismatch (test.sh asks for strings absent from entire upstream history) — a TEST_SH_WRONG verifier bug, not a canonical defect. Canonical itself is correct.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-set2",
+      "date": "2026-05-15",
+      "check_performed": "Cross-validated against upstream commit 5dbeadae",
+      "evidence": "gh api repos/badlogic/pi-mono/commits/5dbeadae returns exact 4 files matching canonical files_changed. Searched full git --all history: NO commits contain \"_applyExtensionBindings\" or \"reload re-applies bindings\" strings test.sh requires.",
+      "note": "Canonical matches upstream exactly. test.sh is wrong (TEST_SH_WRONG verified) — expects strings absent from entire repo history. Bug in verifier, not canonical.",
+      "kind": "round1"
+    }
+  ]
+}

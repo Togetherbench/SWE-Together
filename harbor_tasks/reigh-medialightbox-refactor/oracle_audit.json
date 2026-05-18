@@ -1,0 +1,23 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ah",
+    "date": "2026-05-14",
+    "note": "Stub correct: pi-share export has tool_uses with bare-string inputs (path only, no content).",
+    "checks_passed": [
+      "category_matches_session",
+      "no_phantom_patch"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ah",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Stub category 'stripped_export' VALIDATED: spot-checked original_session.json — 693 tool_uses all with bare-string inputs (paths only, no content). Edit/Write tool calls do not exist as structured ops in pi-share export. Reason is accurate; no phantom patch.",
+      "kind": "round2"
+    }
+  ]
+}

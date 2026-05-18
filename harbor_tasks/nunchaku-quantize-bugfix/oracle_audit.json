@@ -1,0 +1,19 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-af",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Post-promotion re-review: canonical was hand-reconstructed (per _audit_note / _triple_check_response) to recover the dropped quantize.py edit. Now 4 files (M quantize.py + 3 A scratch); numstat (12+23+61+61)=157 matches total_additions=157, deletions (15+0+0+0)=15 matches total_deletions=15. The 4 documented fixes (.values on max/min, single-loop AST, f-string .weight/.bias) are present. _candidate_status remains PENDING_HUMAN_REVIEW per author; round2 verifies the patch now contains the actual fix that test.sh grades.",
+      "kind": "round2"
+    }
+  ],
+  "_reliability": {
+    "status": "RESOLVED_ROUND5",
+    "note": "Round-5 oracle triage hand-curated the missing quantize.py fixes per fix_summary.md.",
+    "resolved_date": "2026-05-17",
+    "previously_flagged": true
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ae",
+    "date": "2026-05-14",
+    "note": "github_pr_diff; 1 hdr/+10/-12 coherent; locale.js in test+manifest.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "test_alignment",
+      "upstream_pr_diff",
+      "no_phantom"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ae",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "github_pr_diff PR#9064; coherent (1 hdrs == fcc, +10/-12 matches totals); fidelity=exact.",
+      "kind": "round2"
+    }
+  ]
+}

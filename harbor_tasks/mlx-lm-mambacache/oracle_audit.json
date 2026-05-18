@@ -1,0 +1,23 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-af",
+    "date": "2026-05-14",
+    "note": "Valid stub: _status:no_canonical, _category:stripped_export (bare-string tool inputs), _reason clear.",
+    "checks_passed": [
+      "stub_category",
+      "stub_reason"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-af",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Valid no_canonical stub with category stripped_export. Schema fields _task_name/_status/_category/_reason/_extraction/_sync_note all present and self-consistent. No patch claimed.",
+      "kind": "round2"
+    }
+  ]
+}

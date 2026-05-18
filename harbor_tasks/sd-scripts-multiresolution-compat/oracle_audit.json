@@ -1,0 +1,46 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ai",
+    "date": "2026-05-14",
+    "note": "High-fidelity upstream_commit reconstruction (14e6ed93, PR #2269); gate-by-gate test alignment verified; curator notes thorough; cleanest patch in batch.",
+    "checks_passed": [
+      "schema_ok",
+      "diff_coherent",
+      "no_phantom_files",
+      "test_alignment_ok",
+      "fidelity_honest",
+      "upstream_verified"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ai",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "High-fidelity upstream_commit reconstruction (14e6ed93). 2 files, +73/-23 matches body exactly. No warnings. Round-2 clean.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-curated",
+      "date": "2026-05-15",
+      "check_performed": "Fetched gh api repos/kohya-ss/sd-scripts/commits/14e6ed93 (PR #2269 commit 2) as unified diff; compared additions/deletions and file headers against canonical.",
+      "evidence": "Same 2 files; identical core +/- semantic content. Canonical 173 lines vs upstream 210 lines: difference is 3 trailing-whitespace-only delta lines in a docstring tuple plus a 'Returns:' line canonical omits via tighter hunk context.",
+      "note": "Same files, same semantic change (PR #2269 commit 2 'fallback to legacy key without resolution suffix'). Trivial whitespace-only delta in docstring context.",
+      "kind": "round1"
+    }
+  ],
+  "_reliability": {
+    "status": "FLAGGED_UNRELIABLE",
+    "note": "oracle triage 2026-05-17: the thin-child Dockerfile checks out base_commit e21a7736 and does NOT synthesize the strategy_sd.py multi_resolution=True / load_latents_from_disk override that the verifier's P2P regression gate requires (per fix_summary.md the original Dockerfile had a synthesize_sd.py step that was lost in the FROM-base-image rewrite). The canonical patch only touches strategy_base.py. The verifier's P2P gate `p2p_suffixed_path_regression` fails because the SD strategy at base lacks multi_resolution=True forwarding, so suffixed-key cache reads return False and the test exits early with reward=0. Needs either (a) Dockerfile to restore the synthesis step, OR (b) canonical to include the strategy_sd.py modifications too.",
+    "issues": [
+      "dockerfile_missing_synthesis",
+      "canonical_does_not_satisfy_p2p_regression"
+    ],
+    "flagged_date": "2026-05-17",
+    "flagged_by": "oracle-triage-batch1"
+  }
+}

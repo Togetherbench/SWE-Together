@@ -1,0 +1,36 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ab",
+    "date": "2026-05-14",
+    "note": "exact via upstream_commit_diff (sha=ade9120be74c, GH-verifiable); 20 files, headers and line counts match; F2P empty in install_config so test-gate alignment by overall pass rate.",
+    "checks_passed": [
+      "schema_keys_present",
+      "diff_headers_match_files_changed_count",
+      "line_counts_match_totals",
+      "no_phantom_files",
+      "fidelity_provenance_consistent",
+      "test_gate_alignment"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ab",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Exact upstream_commit_diff (sha=ade9120be74c, GH-verifiable). 20 files, 20 headers, +296/-270 match totals exactly. 76 hunks valid, 465 ctx lines. install_config F2P=[] but custom 246-line test.sh + 12 manifest gates (11 F2P weighted) — not degenerate-ceiling fallback. APPROVED holds.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-curated",
+      "date": "2026-05-15",
+      "check_performed": "Fetched gh api repos/entireio/cli/commits/ade9120b (the _install_config_commit_sha) as unified diff; byte-compared against canonical patch.",
+      "evidence": "1187 lines == 1187 lines; 20 files == 20 files; exact byte match",
+      "note": "Exact byte match to upstream commit ade9120b. _extraction.method=upstream_commit_diff verified.",
+      "kind": "round1"
+    }
+  ]
+}

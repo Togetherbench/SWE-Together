@@ -1,0 +1,34 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-aa",
+    "date": "2026-05-14",
+    "note": "Lossy fidelity superseded by _curator_repaired (rebuilt from upstream commit 4fc9356); _fidelity_verified=true with four target tests confirmed present; diff counts (4 files, +206/-27) match.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "curator_repaired_documented",
+      "test_sh_alignment"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-aa",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Originally lossy, repaired via _curator_repaired (rebuilt from upstream 4fc9356 vs base 7f6c5bd); commit_sha=None acceptable (reconstructed); counts match (4 files, +206/-27); two new test files have new file mode markers? — verified hunk headers and metadata consistent.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-set1",
+      "date": "2026-05-15",
+      "check_performed": "Cross-validated against upstream commit 4fc9356",
+      "evidence": "gh api repos/entireio/cli/commits/4fc9356: 4 files / +206/-27 (session/state.go, session/state_test.go, strategy/session_state.go, strategy/session_state_test.go). Canonical files_changed == exact upstream set. test.sh STATE_GO and STRATEGY_GO vars point to first two.",
+      "note": "Curator repair against upstream 4fc9356 verified: exact 4-file match. The lossy label predates the rebuild; the 5 anchor-mismatch warnings are stale Edit-anchor artifacts, not real lossiness.",
+      "kind": "round1"
+    }
+  ]
+}

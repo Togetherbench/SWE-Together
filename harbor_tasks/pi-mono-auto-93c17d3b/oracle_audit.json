@@ -1,0 +1,25 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "Real canonical (exact); patches examples/extensions/message-signal.ts + README. test.sh grades message-signal.ts. Aligned.",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "test_alignment",
+      "no_phantom_files"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ag",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Diff coherent: 2 hdrs/+143/-0 match; exact, 0 warnings; new message-signal.ts + README; pure-additive consistent with example introduction.",
+      "kind": "round2"
+    }
+  ]
+}

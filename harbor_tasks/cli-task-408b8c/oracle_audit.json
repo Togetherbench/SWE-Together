@@ -1,0 +1,36 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ab",
+    "date": "2026-05-14",
+    "note": "directional tool_replay, verified=True; 2 files, 3/3 F2P names appear in patch.",
+    "checks_passed": [
+      "schema_keys_present",
+      "diff_headers_match_files_changed_count",
+      "line_counts_match_totals",
+      "no_phantom_files",
+      "fidelity_provenance_consistent",
+      "test_gate_alignment"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ab",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Directional tool_replay, 1 warning (anchor mismatch on common.go). 2 files / 2 headers / +86/-4 exact. F2P=3, all 3 found as `func TestX(` in patch. APPROVED holds.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-set1",
+      "date": "2026-05-15",
+      "check_performed": "Cross-validated against upstream commit 956d9d43",
+      "evidence": "gh api repos/entireio/cli/commits/956d9d43: 2 files / +82/-40 (strategy/common.go, common_test.go). Canonical files_changed == same 2 files. Single warning is anchor mismatch on common.go.",
+      "note": "Exact 2-file footprint match with upstream. Single anchor-mismatch warning is classic formatter-between-Edits noise.",
+      "kind": "round1"
+    }
+  ]
+}

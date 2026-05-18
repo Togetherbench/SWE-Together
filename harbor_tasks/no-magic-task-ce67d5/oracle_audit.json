@@ -1,0 +1,25 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-fix-ce67d5",
+    "date": "2026-05-17",
+    "note": "Replaced incorrect 12-deletion patch with the actual Write op from msg 12 (228-line file creation). Dockerfile rm's microtokenizer.py at build time so canonical must CREATE the file.",
+    "checks_passed": [
+      "schema",
+      "diff_coherence",
+      "matches_session_write_op",
+      "docker_rm_aligned"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "oracle-fix-ce67d5",
+      "date": "2026-05-17",
+      "found_issues": [],
+      "note": "Rebuilt as new-file creation patch (227 additions) matching original_session.json msg 12 Write tool_use. Old patch (TRADEOFFS-block deletion) was incoherent with Dockerfile state (file rm'd) and didn't reflect actual session work.",
+      "kind": "round2"
+    }
+  ]
+}

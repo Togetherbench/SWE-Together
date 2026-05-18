@@ -1,0 +1,49 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ab",
+    "date": "2026-05-14",
+    "note": "directional tool_replay, verified=True; 2 files coherent; 2/2 F2P in patch.",
+    "checks_passed": [
+      "schema_keys_present",
+      "diff_headers_match_files_changed_count",
+      "line_counts_match_totals",
+      "no_phantom_files",
+      "fidelity_provenance_consistent",
+      "test_gate_alignment"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ab",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "resolved_date": "2026-05-16",
+      "note": "Reference patch itself is clean: directional tool_replay (1 anchor warn on explain.go), 2 files, 2 headers, +34/-1, 2 hunks. The install_config F2P/patch mismatch was resolved on 2026-05-16 — see `_reliability._fix_applied` (TestExplainSession_NotFound removed from F2P, it is actually a P2P existing at the base commit; the locally-redacted test name corresponds to upstream's TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag). `_reliability.status` is now RESOLVED.",
+      "kind": "round2"
+    },
+    {
+      "status": "AGREE",
+      "reviewer": "triple-check-set1",
+      "date": "2026-05-15",
+      "check_performed": "Cross-validated against upstream commit 4993e6e3",
+      "evidence": "gh api repos/entireio/cli/commits/4993e6e3: 2 files / +34/-1 (explain.go, explain_test.go). Canonical files_changed == identical 2 files. Single warning anchor-mismatch on explain.go.",
+      "note": "Exact 2-file/+34-line footprint match with upstream. Within reviewer's claimed 5% tolerance. Single anchor-mismatch is formatter noise.",
+      "kind": "round1"
+    }
+  ],
+  "_reliability": {
+    "status": "RESOLVED",
+    "reason": "install_config_f2p_mismatch",
+    "note": "install_config.json F2P lists TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag but canonical only adds TestExplainSession_NotFound. Perfect canonical caps at 0.5. Bug is in install_config, not canonical.",
+    "flagged_date": "2026-05-15",
+    "flagged_by": "round-2 audit",
+    "_fix_applied": {
+      "date": "2026-05-16",
+      "fix": "Removed TestExplainSession_NotFound from install_config.json FAIL_TO_PASS. The round-2 audit had it inverted: TestExplainSession_NotFound already exists at base commit b386f5fa (verified via gh api repos/entireio/cli/contents/cmd/entire/cli/explain_test.go?ref=b386f5fa — 45 test functions present including TestExplainSession_NotFound), so it is pass-to-pass, not fail-to-pass. The local canonical patch shows the new test as `func REDACTED(t *testing.T)` because test names are scrubbed in this benchmark's stored patches (REDACTED appears throughout original_session.json) — but upstream commit 4993e6e3 confirms the actual added test is named `TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag` (verified via gh api repos/entireio/cli/commits/4993e6e3). So the genuinely fabricated F2P entry was TestExplainSession_NotFound (existed at baseline), not TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag (which is the real new test, just locally redacted). Canonical patch will now score 1/1 = 1.0.",
+      "verified": "TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag confirmed added by upstream 4993e6e3; TestExplainSession_NotFound confirmed existing at base b386f5fa."
+    }
+  }
+}

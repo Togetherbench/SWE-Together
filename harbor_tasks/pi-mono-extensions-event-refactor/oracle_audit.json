@@ -1,0 +1,25 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ah",
+    "date": "2026-05-14",
+    "note": "Real canonical: tool_replay, exact fidelity. 5 files in packages/coding-agent/extensions/. Aligned with test.sh source-file focus. No phantom files.",
+    "checks_passed": [
+      "schema_intact",
+      "diff_coherent",
+      "test_alignment",
+      "no_phantom_files"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ah",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Real canonical via tool_replay/exact. 5 hunks match files_changed_count; total_additions=202 matches counted_plus=202; total_deletions=23 matches counted_minus=23. Single edit_anchor_mismatch warning at op[32] is benign formatter drift. Stub categorization N/A. Aligned with round1.",
+      "kind": "round2"
+    }
+  ]
+}

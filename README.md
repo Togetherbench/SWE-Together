@@ -224,19 +224,28 @@ Each task under `harbor_tasks/<name>/` contains:
 | `tests/test.sh` | Deterministic verifier returning 0.0–1.0 reward |
 | `test_manifest.yaml` | Weighted F2P/P2P gate declarations (when the manifest verifier is used) |
 | `user_simulation_prompt.md` | Drives the user simulator — per-turn triggers, calibration, behavioral description |
-| `reference_patch.json` | Per-task pointer to the canonical patch in `data-pipeline/artifacts_<source>/canonical_patches/` (or a `_status: no_canonical` stub) |
+| `oracle_session.jsonl` | Canonical session in unified [`agent_session/2.0` schema](data-pipeline/agent_session.schema.json) — JSONL with header row + per-turn rows. Header carries `_grading_patch` (authoritative diff for scoring) plus extraction metadata; turn rows carry per-turn `cumulative_patch` snapshots. Replaces `reference_patch.json` + `per_turn_coding_agent_action.jsonl`. |
+| `oracle_audit.json` | Human-edited review sidecar (`_review`, `_review_history`, `_reliability`). The pipeline never overwrites this — re-running extraction clobbers `oracle_session.jsonl` but leaves audit alone, retiring the legacy bidirectional sync. |
 | `original_session.json` | Raw session data (provenance) |
 
 ---
 
 ## Canonical patches + `instruction.md`
 
-The benchmark ships two layers of patch storage:
+The benchmark ships canonical (oracle) sessions in the unified [`agent_session/2.0`](data-pipeline/agent_session.schema.json) JSONL schema — same shape as model trial outputs (see [Trial Output](#trial-output) below).
 
-- **Source layer** — `data-pipeline/artifacts_<source>/canonical_patches/<session_id>.json`. The extractor writes here. 147 source artifacts across 11 source dirs.
-- **Reference layer** — `harbor_tasks/<task>/reference_patch.json`. Per-task pointer with `_canonical_source_path` back-link. 166 total: 144 real + 22 stubs.
+- **Per-task oracle** — `harbor_tasks/<task>/oracle_session.jsonl`. JSONL with one header row + N turn rows. Header carries `_grading_patch` (authoritative diff for scoring), `_extraction.method`, `_fidelity`, `_source`, base/repo metadata. Turn rows carry per-turn `cumulative_patch` snapshots from message replay. 166 total: 144 with grading patches (`_status: canonical`) + 22 stubs (`_status: no_canonical`).
+- **Audit sidecar** — `harbor_tasks/<task>/oracle_audit.json`. Human-edited only: `_review`, `_review_history[*kind=round1|round2|...]`, `_reliability`. The extraction pipeline never writes this file, so the legacy bidirectional `sync_reference_to_source.py` is retired.
+- **Extraction staging** — `data-pipeline/artifacts_<source>/canonical_patches/<session_id>.json` (147 source artifacts). Step4 writes here; `migrate_oracle_to_v2.py` promotes to the per-task `oracle_session.jsonl` form.
 
-Sync direction: patch content flows source → reference; review metadata flows reference → source via [`data-pipeline/scripts/one_off/sync_reference_to_source.py`](data-pipeline/scripts/one_off/sync_reference_to_source.py). One script owns the invariant.
+**Read API** (used by every scoring/replay script):
+```python
+from agent_session import AgentSession
+session = AgentSession.load(path)
+patch   = session.grading_patch  # returns None for no_canonical stubs
+```
+
+The `grading_patch` property is policy-aware: returns `None` for stubs (so they can't accidentally participate in scoring) and walks turn rows backward past empty trailing turns for trials (matches `replay_all_against_latest`'s `_has_substantive_diff` logic — fixes the empty-`final.patch` bug from issue #146). CI-enforced by [`tests/test_agent_session_conformance.py`](tests/test_agent_session_conformance.py) (7 invariants × 166 tasks = 1162 cases) + [`tests/test_agent_session_negative.py`](tests/test_agent_session_negative.py) (18 reject-bad-input cases).
 
 ### Verbatim policy (CI-locked)
 
@@ -306,10 +315,16 @@ See `src/user_agent/CHANGELOG.md` for full per-version details.
 ## Trial Output
 
 ```
-trials/<task>__<id>/
+trials/<cohort>/<task>__<id>/
 ├── config.json                     # Serialized trial config
 ├── user_simulation_prompt.md       # Copy of the sim prompt used
 ├── agent/
+│   ├── claude-code.txt             # Raw CC CLI transcript (JSONL appended by Harbor)
+│   ├── patches/turn-N.patch        # Cumulative diff vs harbor-base, per turn
+│   ├── patches/turn-N.incremental.patch  # Delta between turn N-1 and N
+│   ├── final.patch                 # Last cumulative diff (UNRELIABLE — overwritten per turn,
+│                                   #   can end up empty when wrap-up turns produce no diff;
+│                                   #   see issue #146 + the session.jsonl derivative below)
 │   ├── trajectory.json             # Enriched ATIF trajectory (pre-built for fast viewing)
 │   ├── episode-N/
 │   │   ├── prompt.txt              # Terminal output the agent saw
@@ -317,10 +332,34 @@ trials/<task>__<id>/
 │   │   ├── debug.json              # Token/parsing debug info
 │   │   └── user_decision.json      # Sim decision (action, content, version, stats)
 │   └── recording.cast              # asciinema terminal recording
+├── session.jsonl                   # NEW: derived agent_session/2.0 view of the trial — produced
+│                                   #   by `python data-pipeline/scripts/step5_trials.py <trial_dir>`.
+│                                   #   Same JSONL shape as harbor_tasks/<task>/oracle_session.jsonl;
+│                                   #   load via AgentSession(...).grading_patch to get the
+│                                   #   real diff (walks past empty trailing turns, fixes #146).
 └── verifier/
     ├── test-stdout.txt             # test.sh stdout
+    ├── gates.json                  # Per-gate verdicts (when test_manifest.yaml is used)
     └── reward.txt                  # Final score (0.0–1.0)
 ```
+
+---
+
+## Scoring + replay scripts
+
+The same `agent_session/2.0` schema covers oracle (canonical) sessions and model trial outputs, so a single read API drives every replay/scoring path:
+
+| Script | Layer | What it does | Retry |
+|---|---|---|---|
+| [`src/run_eval.py`](src/run_eval.py) | Orchestrator | Production eval — Harbor LocalOrchestrator + user-sim + per-trial concurrency | `RetryConfig` (PR #149): `RateLimitException`, `TimeoutException`, `ConnectTimeout`, `AddTestsDirError`; backoff 60→300s × 5 |
+| [`scripts/oracle_replay.py`](scripts/oracle_replay.py) | Direct E2B SDK | Score every `harbor_tasks/*/oracle_session.jsonl::_grading_patch` against the latest verifier in fresh E2B sandboxes. Answers "can the oracle actually score 1.0?" | `_sandbox_create_with_retry` — strict superset of PR #149 (10 exception classes, same backoff). Permanent-pattern short-circuit on E2B 404 ("template not found", "404:") |
+| [`scripts/candidate_replay.py`](scripts/candidate_replay.py) | Direct E2B SDK | Unified-schema analog of `replay_all_against_latest.py`. Scores each trial's `session.jsonl::grading_patch` instead of walking `agent/patches/turn-N.patch` | Inherits from `oracle_score_one` |
+| [`scripts/replay_all_against_latest.py`](scripts/replay_all_against_latest.py) | Direct E2B SDK | Legacy bulk replay against `agent/patches/turn-N.patch` (pre-schema) | Same retry shim |
+| [`data-pipeline/scripts/step5_trials.py`](data-pipeline/scripts/step5_trials.py) | Local | Derives `session.jsonl` per trial from captured `agent/patches/` + `agent/claude-code.txt`. Use `--all <cohort_root>` to batch | N/A (local-only, no E2B) |
+
+**Retry layering**: orchestrator-side (`src/run_eval.py`) and direct-SDK (`oracle_replay.py` / `candidate_replay.py`) are parallel call paths — never nested. `tests/test_oracle_replay_retry.py` covers the full decision matrix (11 cases including the v0.4.4 transient failure modes: `SandboxException: 400 i/o timeout`, `ConnectError SSL: UNEXPECTED_EOF`, `RemoteProtocolError: Server disconnected`).
+
+**E2B template aliasing** — `HARBOR_TEAM_PREFIX="tb"` (default since PR #149; mirrored by `candidate_replay._resolve_alias`). Aliases are `tb-<task>__<dirhash(env_dir, sha256)[:8]>` with `.` → `-` substitution, scoped to togetherbench's E2B namespace (no shichaopei collision).
 
 ---
 

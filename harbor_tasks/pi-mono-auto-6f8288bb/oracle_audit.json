@@ -1,0 +1,25 @@
+{
+  "schema": "oracle_audit/1.0",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "Real canonical (exact); 5 files in patch incl. openai-completions.ts/types.ts/tests/docs. SWE-rebench-style test.sh with FAIL_TO_PASS=2 entries matching patched behaviour.",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "test_alignment",
+      "no_phantom_files"
+    ]
+  },
+  "_review_history": [
+    {
+      "status": "AGREE",
+      "reviewer": "round2-batch-ag",
+      "date": "2026-05-15",
+      "found_issues": [],
+      "note": "Diff coherent: 5 hdrs/+91/-3 match; exact, 0 warnings; openai-completions + types + tests + docs all consistent with test.sh F2P=2 entries.",
+      "kind": "round2"
+    }
+  ]
+}
