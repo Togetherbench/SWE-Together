@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from checksumdir import dirhash
+from dirhash import dirhash
 from e2b import AsyncSandbox
 
 log = logging.getLogger(__name__)
@@ -199,6 +199,7 @@ async def run_judge_in_e2b(
         # via auto-detection independent of cwd.
         judge_cmd = (
             f"timeout {timeout_sec} claude --print --max-turns {max_turns} "
+            f"--model claude-opus-4-6 "
             f"--dangerously-skip-permissions "
             f"--setting-sources user "
             f"--append-system-prompt \"$(cat {inputs_dir}/judge_system.md)\" "
