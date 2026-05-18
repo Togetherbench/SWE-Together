@@ -95,7 +95,7 @@ gates:
 
   - id: F2P_TOOLTIP_MIGRATION
     kind: F2P
-    weight: 0.15
+    weight: 0.20
     description: "At least 2 of {LearningsTrendChart, ModelTokensChart, UsageTrendChart} import and use <ChartTooltip />"
     command: |-
       python3 -c "

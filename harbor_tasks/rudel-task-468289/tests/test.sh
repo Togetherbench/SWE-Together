@@ -178,15 +178,16 @@ with open(gates_file, "w") as f:
 PYEOF
 
 # ── Weighted-replace reward formula ──────────────────────────────────────────
-# Weights sum to 0.95; the inner remainder (0.05) is unused since there is no
-# legacy/inner reward source for this task (no upstream chart tests).
+# Weights sum to 1.00. There is no legacy/inner reward source for this task
+# (no upstream chart tests), so complete F2P coverage must be able to score 1.0
+# without relying on /logs/verifier/base_reward.txt.
 declare -A WEIGHTS
 WEIGHTS[F2P_CHARTTOOLTIP_FILE]=0.10
 WEIGHTS[F2P_COLOR_MAPS]=0.20
 WEIGHTS[F2P_SORTED_LEGEND]=0.20
 WEIGHTS[F2P_STABLE_COLORS]=0.20
 WEIGHTS[F2P_DIMENSION_SORT]=0.10
-WEIGHTS[F2P_TOOLTIP_MIGRATION]=0.15
+WEIGHTS[F2P_TOOLTIP_MIGRATION]=0.20
 
 declare -A VERDICTS
 VERDICTS[F2P_CHARTTOOLTIP_FILE]=$G1_PASS
@@ -215,7 +216,7 @@ if $p2p_failed || (! $f2p_any_pass && [[ $(python3 -c "print(float('$base_reward
 else
     reward=$(python3 -c "
 existing = float('$base_reward')
-weights = {'F2P_CHARTTOOLTIP_FILE': 0.10, 'F2P_COLOR_MAPS': 0.20, 'F2P_SORTED_LEGEND': 0.20, 'F2P_STABLE_COLORS': 0.20, 'F2P_DIMENSION_SORT': 0.10, 'F2P_TOOLTIP_MIGRATION': 0.15}
+weights = {'F2P_CHARTTOOLTIP_FILE': 0.10, 'F2P_COLOR_MAPS': 0.20, 'F2P_SORTED_LEGEND': 0.20, 'F2P_STABLE_COLORS': 0.20, 'F2P_DIMENSION_SORT': 0.10, 'F2P_TOOLTIP_MIGRATION': 0.20}
 verdicts = {'F2P_CHARTTOOLTIP_FILE': '$G1_PASS', 'F2P_COLOR_MAPS': '$G2_PASS', 'F2P_SORTED_LEGEND': '$G3_PASS', 'F2P_STABLE_COLORS': '$G4_PASS', 'F2P_DIMENSION_SORT': '$G5_PASS', 'F2P_TOOLTIP_MIGRATION': '$G6_PASS'}
 weight_sum = sum(weights.values())
 inner = max(0.0, 1.0 - weight_sum)
