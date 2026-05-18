@@ -35,7 +35,7 @@
   "_n_mutating_ops": 25,
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-14",
-  "_verification_note": "Six warnings all of kind 'edit: old text not found' across CHANGELOG.md (x2), interactive-mode.ts (x2), editor.ts, and tui/CHANGELOG.md. 25 mutating ops on 6 files (mut/file=4.2, warn/mut=0.24) — within expected range for a multi-file iterative session where formatters ran between edits. No file-not-found warnings; all warnings target files that ARE in files_changed. Base 5c59cae resolves upstream.",
+  "_verification_note": "Six warnings all of kind 'edit: old text not found' across CHANGELOG.md (x2), interactive-mode.ts (x2), editor.ts, and tui/CHANGELOG.md. 25 mutating ops on 6 files (mut/file=4.2, warn/mut=0.24) \u2014 within expected range for a multi-file iterative session where formatters ran between edits. No file-not-found warnings; all warnings target files that ARE in files_changed. Base 5c59cae resolves upstream.",
   "_review": {
     "status": "APPROVED",
     "reviewer": "subagent-batch-ag",
@@ -47,5 +47,8 @@
       "test_alignment",
       "fidelity_verified_prior"
     ]
-  }
+  },
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "5c59caee4e2906e467081cb7c48c212b77e59707"
 }

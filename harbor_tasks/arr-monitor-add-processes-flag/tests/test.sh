@@ -346,3 +346,4 @@ with open('/logs/verifier/reward.txt', 'w') as f:
 PYEOF
 # ---- end ----
 exit 0
+

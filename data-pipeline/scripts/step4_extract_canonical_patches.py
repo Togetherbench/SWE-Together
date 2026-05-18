@@ -1081,6 +1081,12 @@ def extract_one(task_dir: Path, output_root: Path, force: bool) -> dict:
     if len(patch) > MAX_PATCH_BYTES:
         patch = patch[:MAX_PATCH_BYTES] + f"\n…[truncated at {MAX_PATCH_BYTES} bytes]"
         truncated = True
+    # POSIX patch parsers require a trailing newline (git's `\ No newline at
+    # end of file` marker handles content-without-terminator, but the diff
+    # stream itself must end with \n or `git apply` raises "corrupt patch at
+    # line N". Caught by moltis-task-ffe9ec in PR #147 oracle audit.
+    if patch and not patch.endswith("\n"):
+        patch += "\n"
 
     # Fidelity tier: how much can downstream trust this as a textual gold patch?
     #   exact       — ≤2 warnings; cross-validated cases (cc-backend, amytis)
@@ -1182,6 +1188,8 @@ def try_hyperswitch_issue_pr_diff(task_name: str, repo_url: str,
     if len(diff_text) > MAX_PATCH_BYTES:
         diff_text = diff_text[:MAX_PATCH_BYTES] + f"\n…[truncated at {MAX_PATCH_BYTES} bytes]"
         truncated = True
+    if diff_text and not diff_text.endswith("\n"):
+        diff_text += "\n"  # POSIX patch parsers require trailing \n
 
     summary = _summarize_unified_diff(diff_text)
     return {
@@ -1327,6 +1335,8 @@ def try_upstream_commit_diff(task_dir: Path, repo_url: str, base_commit: str,
     if len(diff_text) > MAX_PATCH_BYTES:
         diff_text = diff_text[:MAX_PATCH_BYTES] + f"\n…[truncated at {MAX_PATCH_BYTES} bytes]"
         truncated = True
+    if diff_text and not diff_text.endswith("\n"):
+        diff_text += "\n"  # POSIX patch parsers require trailing \n
 
     # Commit message (best-effort; not fatal if it fails)
     commit_message = ""

@@ -90,4 +90,11 @@ RUN rm -f /workspace/AGENTS.md /workspace/CLAUDE.md /workspace/nunchaku/AGENTS.m
 # Git config for agent user too
 RUN su - agent -c 'git config --global user.email "agent@test.com" && git config --global user.name "Test Agent"'
 
+# Initialize git in /workspace so oracle_replay discovers /workspace as the
+# repo dir (the canonical patch targets /workspace/quantize.py, which lives
+# OUTSIDE the cloned /workspace/nunchaku git repo). Without this, repo
+# discovery falls back to /workspace/nunchaku and `git apply` resolves
+# quantize.py relative to that wrong dir.
+RUN cd /workspace && git init -q && git add -A 2>/dev/null && git -c user.email=t@e -c user.name=t commit -q -m "baseline" || true
+
 WORKDIR /workspace

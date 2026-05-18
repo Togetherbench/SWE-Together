@@ -49,5 +49,8 @@
     "note": "Diff coherent: 7 hdrs/+138/-31 match; exact, 0 warnings; extensions loader/runner/types + main + tests; FAIL_TO_PASS=3 align."
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": false
+  "_instruction_pii_redacted": false,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "dc1ceb4dd0dee7524510f03a71d58b8f49f2e454"
 }

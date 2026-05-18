@@ -100,10 +100,13 @@ try:
     ids = torch.zeros(1, 4, 4, dtype=torch.long)
     out = e(ids)
     assert torch.isfinite(out).all()
+    import comfy.ops
+    ops = comfy.ops.disable_weight_init
     m = lm.NextDiT(
         patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
         n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
         axes_dims=[16,16,16], axes_lens=[300, 512, 512],
+        operations=ops, dtype=torch.float32, device="cpu",
     )
     assert hasattr(m, "rope_embedder")
 except Exception as ex:
@@ -142,10 +145,13 @@ try:
     axes_lens = [128, 64, 64]
     theta = 10000
 
+    import comfy.ops
+    ops = comfy.ops.disable_weight_init
     m = lm.NextDiT(
         patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
         n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
         axes_dims=axes_dims, axes_lens=axes_lens,
+        operations=ops, dtype=torch.float32, device="cpu",
     )
     emb = m.rope_embedder
     cls = type(emb)
@@ -250,6 +256,7 @@ try:
             patch_size=2, in_channels=4, dim=48, n_layers=1, n_heads=1,
             n_kv_heads=1, qk_norm=True, cap_feat_dim=16,
             axes_dims=axes_dims, axes_lens=small_lens,
+            operations=ops, dtype=torch.float32, device="cpu",
         )
         emb2 = m2.rope_embedder
         # check buffers OR axes_lens attr matches small_lens
@@ -353,25 +360,30 @@ echo "$REWARD" > "$REWARD_FILE"
 mkdir -p /logs/verifier
 GATES_JSON="/logs/verifier/gates.json"
 
-# F2P gate: LuminaRopeEmbedder class defined in model.py
-if grep -q "class LuminaRopeEmbedder" /workspace/ComfyUI/comfy/ldm/lumina/model.py 2>/dev/null; then
-    echo '{"id": "f2p_upstream_lumina_class", "passed": true, "detail": "LuminaRopeEmbedder class found in model.py"}' >> "$GATES_JSON"
+# F2P gate: a custom Lumina rope/embed class defined in model.py.
+# 2026-05-17: relaxed from "LuminaRopeEmbedder" — the canonical session named
+# the class "LuminaEmbedND". Either class signals the same architectural intent
+# (a Lumina-specific rope embedder that accepts axes_lens).
+if grep -qE "class (LuminaRopeEmbedder|LuminaEmbedND)" /workspace/ComfyUI/comfy/ldm/lumina/model.py 2>/dev/null; then
+    echo '{"id": "f2p_upstream_lumina_class", "passed": true, "detail": "Lumina rope class (LuminaRopeEmbedder|LuminaEmbedND) found in model.py"}' >> "$GATES_JSON"
 else
-    echo '{"id": "f2p_upstream_lumina_class", "passed": false, "detail": "LuminaRopeEmbedder class NOT found in model.py"}' >> "$GATES_JSON"
+    echo '{"id": "f2p_upstream_lumina_class", "passed": false, "detail": "Lumina rope class NOT found in model.py"}' >> "$GATES_JSON"
 fi
 
-# F2P gate: LuminaRopeEmbedder used as rope_embedder
+# F2P gate: the custom rope class is assigned as rope_embedder
 if /workspace/venv/bin/python3 -c "
-import sys
+import re, sys
 content = open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read()
-if 'class LuminaRopeEmbedder' not in content:
+class_m = re.search(r'\bclass\s+(LuminaRopeEmbedder|LuminaEmbedND)\b', content)
+if not class_m:
     sys.exit(1)
-if 'rope_embedder = LuminaRopeEmbedder' not in content:
+cls = class_m.group(1)
+if f'rope_embedder = {cls}' not in content:
     sys.exit(1)
 " 2>/dev/null; then
-    echo '{"id": "f2p_upstream_lumina_usage", "passed": true, "detail": "LuminaRopeEmbedder defined and used as rope_embedder"}' >> "$GATES_JSON"
+    echo '{"id": "f2p_upstream_lumina_usage", "passed": true, "detail": "Lumina rope class defined and used as rope_embedder"}' >> "$GATES_JSON"
 else
-    echo '{"id": "f2p_upstream_lumina_usage", "passed": false, "detail": "LuminaRopeEmbedder NOT defined or not used as rope_embedder"}' >> "$GATES_JSON"
+    echo '{"id": "f2p_upstream_lumina_usage", "passed": false, "detail": "Lumina rope class NOT defined or not used as rope_embedder"}' >> "$GATES_JSON"
 fi
 
 # P2P gate: model.py is valid Python (AST parse)

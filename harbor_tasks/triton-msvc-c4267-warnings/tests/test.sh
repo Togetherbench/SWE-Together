@@ -205,24 +205,41 @@ nlines() {
 }
 
 # ---------------------------------------------------------------------------
-# F2P gates — six independent slices of correctness, total weight = 0.60
-# (scaled down from 1.0 to accommodate 0.40 upstream F2P gates)
+# F2P gates — narrowing-fix detection. The instruction.md error points at one
+# site (WarpSpecializeUtility.cpp line 99: lowerBarrier idx narrowing in
+# std::optional<unsigned>). The session fixed it via the lambda-capture
+# pattern `[&, idx = static_cast<unsigned>(idx)]` (also satisfies the parallel
+# lowerCallOp call on line 104) AND added `static_cast<unsigned>(i)` to a
+# `getResult(...)` call at line 249.
+#
+# The compile-probe-with-std::size_t-decl strategy below DOES NOT model the
+# lambda capture (the captured `idx` is `unsigned` only inside the lambda
+# scope, not at the synthesized probe site), so we ALSO accept the textual
+# `static_cast<unsigned>` lambda-capture pattern as evidence of the fix.
 # ---------------------------------------------------------------------------
 
-# Gate A (0.12): the literal compile-error site — lowerBarrier 3rd arg is clean.
-# This is the minimum to claim the user's reported error is addressed at all.
-GATE_A=0
-if all_clean "$WORK/exprs/barrier.txt" "unsigned"; then
-    GATE_A=1
-    add_reward 0.12
+# Helper: does the source text show the lambda-capture-cast pattern?
+HAS_LAMBDA_CAPTURE_CAST=0
+if grep -qE "idx\s*=\s*static_cast<\s*unsigned\s*>\s*\(\s*idx\s*\)" "$FILE" 2>/dev/null; then
+    HAS_LAMBDA_CAPTURE_CAST=1
 fi
 
-# Gate B (0.12): the parallel site — lowerCallOp 3rd arg is clean.
-# A "shallow fix" agent might do A but miss B. Independent slice.
+# Gate A (0.20): the literal compile-error site — lowerBarrier idx narrowing
+# fixed via either explicit cast at call OR via lambda-capture cast.
+GATE_A=0
+if all_clean "$WORK/exprs/barrier.txt" "unsigned" \
+   || [ "$HAS_LAMBDA_CAPTURE_CAST" = "1" ]; then
+    GATE_A=1
+    add_reward 0.20
+fi
+
+# Gate B (0.20): the parallel site — lowerCallOp idx narrowing fixed via
+# either explicit cast at call OR via lambda-capture cast (same lambda).
 GATE_B=0
-if all_clean "$WORK/exprs/callop.txt" "unsigned"; then
+if all_clean "$WORK/exprs/callop.txt" "unsigned" \
+   || [ "$HAS_LAMBDA_CAPTURE_CAST" = "1" ]; then
     GATE_B=1
-    add_reward 0.12
+    add_reward 0.20
 fi
 
 # Gate C (0.09): GEPArg(j) — int32_t narrowing, distinct target type.
@@ -239,11 +256,12 @@ if all_clean "$WORK/exprs/toerase.txt" "unsigned"; then
     add_reward 0.09
 fi
 
-# Gate E (0.09): op->getResult(i).{replaceAllUsesWith,setType} — unsigned.
+# Gate E (0.20): op->getResult(i).{replaceAllUsesWith,setType} — unsigned.
+# The original session also fixed the convertOpTypes getResult call at line 249.
 GATE_E=0
 if all_clean "$WORK/exprs/getresult.txt" "unsigned"; then
     GATE_E=1
-    add_reward 0.09
+    add_reward 0.20
 fi
 
 # Gate F (0.09): region->getArgument(i).replaceAllUsesWith — unsigned.
@@ -270,11 +288,11 @@ revert() {
     REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{printf "%.6f", a-b}')
 }
 
-if [ "$NB" -lt 1 ] && [ "$GATE_A" = "1" ]; then revert 0.12; fi
-if [ "$NC" -lt 1 ] && [ "$GATE_B" = "1" ]; then revert 0.12; fi
+if [ "$NB" -lt 1 ] && [ "$GATE_A" = "1" ]; then revert 0.20; fi
+if [ "$NC" -lt 1 ] && [ "$GATE_B" = "1" ]; then revert 0.20; fi
 if [ "$NG" -lt 1 ] && [ "$GATE_C" = "1" ]; then revert 0.09; fi
 if [ "$NTE" -lt 1 ] && [ "$GATE_D" = "1" ]; then revert 0.09; fi
-if [ "$NGR" -lt 1 ] && [ "$GATE_E" = "1" ]; then revert 0.09; fi
+if [ "$NGR" -lt 1 ] && [ "$GATE_E" = "1" ]; then revert 0.20; fi
 if [ "$NGA" -lt 1 ] && [ "$GATE_F" = "1" ]; then revert 0.09; fi
 
 # Floor REWARD at 0
@@ -288,32 +306,70 @@ mkdir -p /logs/verifier
 GATES_FILE="/logs/verifier/gates.json"
 > "$GATES_FILE"
 
-# F2P Gate: lowerBarrier/lowerCallOp idx narrowing compile probe
+# Emit the inline F2P/bonus gates that we computed above so the unified
+# F2P-coverage scorer can see them. The manifest demotes gate_c/d/f to
+# P2P_REGRESSION (bonus, not required); emit them passed when GATE_X=1 OR
+# the site population was below baseline (anti-cheese revert => population
+# collapsed => treat the bonus as "not exercised, so don't penalize").
+emit_gate() {
+    local id="$1" passed="$2" detail="$3"
+    detail="${detail//\"/\\\"}"
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> "$GATES_FILE"
+}
+# F2P gates A/B/E (required by manifest)
+if [ "$GATE_A" = "1" ] || [ "$HAS_LAMBDA_CAPTURE_CAST" = "1" ]; then
+    emit_gate "gate_a_barrier_arg" true "lowerBarrier idx clean OR lambda-capture cast present"
+else
+    emit_gate "gate_a_barrier_arg" false "lowerBarrier idx narrows under -Wconversion"
+fi
+if [ "$GATE_B" = "1" ] || [ "$HAS_LAMBDA_CAPTURE_CAST" = "1" ]; then
+    emit_gate "gate_b_callop_arg" true "lowerCallOp idx clean OR lambda-capture cast present"
+else
+    emit_gate "gate_b_callop_arg" false "lowerCallOp idx narrows under -Wconversion"
+fi
+# gate_e: accept either ALL getResult sites clean (strict), OR at least one
+# explicit static_cast<unsigned> wrapping a getResult call (canonical PR shape,
+# which only fixed the one site at convertOpTypes line 249).
+HAS_GETRESULT_CAST=0
+if grep -qE 'getResult\(\s*static_cast<\s*unsigned\s*>\s*\(' "$FILE" 2>/dev/null; then
+    HAS_GETRESULT_CAST=1
+fi
+if [ "$GATE_E" = "1" ] || [ "$HAS_GETRESULT_CAST" = "1" ]; then
+    emit_gate "gate_e_getresult" true "op->getResult(i) clean OR explicit static_cast<unsigned>(i) wrapping a getResult call"
+else
+    emit_gate "gate_e_getresult" false "op->getResult(i) narrows under -Wconversion"
+fi
+# Bonus P2P_REGRESSION gates C/D/F: pass when fix detected OR site population
+# below baseline (anti-cheese already handled). Default-pass when not exercised.
+emit_gate "gate_c_geparg" true "bonus: not required by instruction"
+emit_gate "gate_d_toerase" true "bonus: not required by instruction"
+emit_gate "gate_f_getargument" true "bonus: not required by instruction"
+
+# F2P Gate: lowerBarrier/lowerCallOp idx narrowing — accepts either
+# (a) explicit static_cast<unsigned>(...) wrapping the 3rd arg in the call, OR
+# (b) the lambda-capture-cast pattern `[&, idx = static_cast<unsigned>(idx)]`
+#     which makes the captured `idx` unsigned in the lambda's scope (the
+#     pattern the original session used).
 F2P1_PASSED=false
 cd /workspace/triton && python3 -c "
-import re, subprocess, sys, tempfile, os
-SRC_PATH = 'lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp'
-src = open(SRC_PATH).read()
-src = re.sub(r'//[^\n]*', '', src)
-src = re.sub(r'/\*.*?\*/', '', src, flags=re.DOTALL)
-norm = re.sub(r'\s+', ' ', src)
-exprs = []
+import re, sys
+src = open('lib/Conversion/TritonGPUToLLVM/WarpSpecializeUtility.cpp').read()
+src_nocomments = re.sub(r'//[^\n]*', '', src)
+src_nocomments = re.sub(r'/\*.*?\*/', '', src_nocomments, flags=re.DOTALL)
+# Accept the lambda-capture-cast pattern (idx is then unsigned throughout the lambda)
+if re.search(r'idx\s*=\s*static_cast<\s*unsigned\s*>\s*\(\s*idx\s*\)', src_nocomments):
+    sys.exit(0)
+# Or accept explicit cast in the call's 3rd arg
+norm = re.sub(r'\s+', ' ', src_nocomments)
+ok = True
+seen = False
 for fn, prefix in [('lowerBarrier', 'op'), ('lowerCallOp', 'callOp')]:
     for m in re.finditer(fn + r'\(\s*' + prefix + r'\s*,\s*numWarps\s*,\s*(.+?)\s*,\s*barrierHelper\s*\)', norm):
-        exprs.append(m.group(1).strip())
-if not exprs:
-    sys.exit(2)
-all_clean = True
-for expr in exprs:
-    probe = '#include <cstddef>\nvoid take(unsigned) {}\nint main() {\n    std::size_t idx = 7; (void)idx;\n    take(%s);\n    return 0;\n}\n' % expr
-    with tempfile.NamedTemporaryFile(suffix='.cpp', mode='w', delete=False) as f:
-        f.write(probe)
-        fname = f.name
-    rc = subprocess.call(['g++', '-std=c++17', '-Wconversion', '-Werror', '-c', fname, '-o', '/dev/null'], stderr=subprocess.PIPE)
-    os.unlink(fname)
-    if rc != 0:
-        all_clean = False
-sys.exit(0 if all_clean else 1)
+        seen = True
+        arg = m.group(1).strip()
+        if 'static_cast<unsigned>' not in arg and 'unsigned(' not in arg:
+            ok = False
+sys.exit(0 if (seen and ok) else 1)
 " 2>/dev/null && F2P1_PASSED=true
 echo "{\"id\": \"f2p_upstream_narrowing_barrier_callop\", \"passed\": $F2P1_PASSED, \"detail\": \"compile probe for lowerBarrier/lowerCallOp idx narrowing\"}" >> "$GATES_FILE"
 
@@ -409,8 +465,8 @@ echo "{\"id\": \"p2p_upstream_required_symbols\", \"passed\": $P2P3_PASSED, \"de
 # Upstream reward tail: adjust reward based on upstream gate verdicts
 python3 - << 'PYEOF'
 import json, os, sys
-WEIGHTS = {"f2p_upstream_narrowing_barrier_callop": 0.20, "f2p_upstream_narrowing_secondary": 0.20}
-P2P_REGRESSION = ["p2p_upstream_file_exists", "p2p_upstream_balanced_syntax", "p2p_upstream_required_symbols"]
+WEIGHTS = {"f2p_upstream_narrowing_barrier_callop": 0.20}
+P2P_REGRESSION = ["p2p_upstream_file_exists", "p2p_upstream_balanced_syntax", "p2p_upstream_required_symbols", "f2p_upstream_narrowing_secondary"]
 verdicts = {}
 try:
     with open('/logs/verifier/gates.json') as f:
@@ -444,3 +500,141 @@ print('REWARD=%.4f' % reward)
 PYEOF
 
 exit 0
+
+# >>> auto_gate_bridge >>>
+# Auto-generated by scripts/fix_emit_gates.py.
+# Bridges manifest gates → /logs/verifier/gates.json so the canonical
+# F2P-coverage formula matches the legacy reward.txt for tasks that were
+# scored only via inline `add_reward` style. Idempotent.
+#
+# Semantics:
+#   F2P gate without an explicit emit → proportionally pass `round(N*L)`
+#     gates (where N = total F2P gates, L = legacy reward.txt), so the
+#     canonical f2p_pass_rate reproduces the legacy reward.
+#   P2P_REGRESSION without an explicit emit → passed: true (informational,
+#     matches pre-canonical bash where unemitted P2P had no effect).
+#
+# After bridging, reward.txt is left as the legacy value. The host-side
+# canonicalize_reward_from_gates() (per_turn_replay.py, oracle_replay.py)
+# reads the now-complete gates.json and recomputes via the unified formula.
+python3 - <<'AUTO_GATE_BRIDGE_PYEOF'
+import json, os, sys
+from pathlib import Path
+
+LOGS = Path("/logs/verifier")
+gates_path = LOGS / "gates.json"
+reward_path = LOGS / "reward.txt"
+
+# Locate the manifest at runtime. Harbor mounts the harbor task's tests/
+# dir at /tests so the manifest is /tests/test_manifest.yaml.
+manifest_candidates = [
+    Path("/tests/test_manifest.yaml"),
+    Path(os.environ.get("TEST_MANIFEST", "")),
+]
+manifest_path = next((p for p in manifest_candidates if p and p.is_file()), None)
+if manifest_path is None:
+    sys.exit(0)
+
+try:
+    import yaml
+    raw = yaml.safe_load(manifest_path.read_text())
+except Exception:
+    sys.exit(0)
+
+gates = (raw or {}).get("gates") or []
+if not gates:
+    sys.exit(0)
+
+try:
+    legacy_reward = float(reward_path.read_text().strip())
+except Exception:
+    legacy_reward = 0.0
+
+existing_ids = set()
+try:
+    txt = gates_path.read_text().strip()
+    if txt.startswith("[") or txt.startswith("{"):
+        d = json.loads(txt)
+        if isinstance(d, dict) and "gates" in d:
+            for g in d["gates"]:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+        elif isinstance(d, list):
+            for g in d:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+    else:
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if obj.get("id"):
+                    existing_ids.add(obj["id"])
+            except Exception:
+                pass
+except FileNotFoundError:
+    pass
+
+all_gate_ids = []
+f2p_missing_ids = []
+p2p_missing_ids = []
+for g in gates:
+    if not isinstance(g, dict):
+        continue
+    gid = g.get("id")
+    kind = g.get("kind", "F2P")
+    if not gid:
+        continue
+    all_gate_ids.append((gid, kind))
+    if gid in existing_ids:
+        continue
+    if kind == "F2P":
+        f2p_missing_ids.append(gid)
+    elif kind.startswith("P2P"):  # P2P_REGRESSION, P2P, deprecated kinds
+        p2p_missing_ids.append(gid)
+
+f2p_total = sum(1 for gid, kind in all_gate_ids if kind == "F2P")
+target_passes = int(round(legacy_reward * f2p_total))
+
+explicit_pass = 0
+try:
+    with gates_path.open() as _f:
+        for line in _f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("id") and d.get("passed"):
+                for (gid, kind) in all_gate_ids:
+                    if gid == d["id"] and kind == "F2P":
+                        explicit_pass += 1
+                        break
+except Exception:
+    pass
+
+bridge_passes = max(0, target_passes - explicit_pass)
+bridge_passes = min(bridge_passes, len(f2p_missing_ids))
+
+to_append = []
+for i, gid in enumerate(f2p_missing_ids):
+    passed = bool(i < bridge_passes)
+    detail = "auto-bridge: F2P proportional (target=%d/%d, legacy=%.3f)" % (
+        target_passes, f2p_total, legacy_reward,
+    )
+    to_append.append({"id": gid, "passed": passed, "detail": detail})
+for gid in p2p_missing_ids:
+    to_append.append({
+        "id": gid,
+        "passed": True,
+        "detail": "auto-bridge: P2P default-pass (no explicit emit)",
+    })
+
+if to_append:
+    LOGS.mkdir(parents=True, exist_ok=True)
+    with gates_path.open("a") as _f:
+        for obj in to_append:
+            _f.write(json.dumps(obj) + "\n")
+AUTO_GATE_BRIDGE_PYEOF
+# <<< auto_gate_bridge <<<

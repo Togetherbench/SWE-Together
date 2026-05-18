@@ -1,95 +1,108 @@
-version: 1.0
+version: '1.0'
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
 gates:
-  # Existing F2P gates from test.sh (scaled down to make room for upstream gates)
-  - id: f2p_isImageLine_export_removed
-    kind: F2P
-    turn: 1
-    weight: 0.09
-    label: "isImageLine export removed from terminal-image.ts"
-  - id: f2p_tui_no_import_isImageLine
-    kind: F2P
-    turn: 1
-    weight: 0.06
-    label: "tui.ts does not import isImageLine"
-  - id: f2p_markdown_no_import_isImageLine
-    kind: F2P
-    turn: 1
-    weight: 0.06
-    label: "markdown.ts does not import isImageLine"
-  - id: f2p_containsImage_behavior
-    kind: F2P
-    turn: 1
-    weight: 0.15
-    label: "containsImage detects image sequences correctly"
-  - id: f2p_containsImage_pure_check
-    kind: F2P
-    turn: 1
-    weight: 0.09
-    label: "containsImage is pure string check, not capability-gated"
-  - id: f2p_box_cache_reverted
-    kind: F2P
-    turn: 1
-    weight: 0.09
-    label: "Box cache uses explicit fields, no RenderCache type"
-  - id: f2p_markdown_wraps_unconditionally
-    kind: F2P
-    turn: 1
-    weight: 0.06
-    label: "markdown.ts wraps lines unconditionally"
-  # Upstream F2P gates
-  - id: f2p_upstream_isImageLine_removed
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "isImageLine export removed from terminal-image (runtime check)"
-  - id: f2p_upstream_containsImage_exists
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "containsImage method exists in TUI class (runtime check)"
-  # P2P gates (diagnostic, weight 0)
-  - id: p2p_no_merge_conflicts
-    kind: P2P_REGRESSION
-    turn: 1
-    weight: 0
-    label: "No unresolved merge conflict markers"
-  - id: p2p_tui_parses
-    kind: P2P_REGRESSION
-    turn: 1
-    weight: 0
-    label: "tui.ts parses/imports successfully"
-  - id: p2p_terminal_image_parses
-    kind: P2P_REGRESSION
-    turn: 1
-    weight: 0
-    label: "terminal-image.ts parses/imports successfully"
-  - id: p2p_markdown_parses
-    kind: P2P_REGRESSION
-    turn: 1
-    weight: 0
-    label: "markdown.ts parses/imports successfully"
-  - id: p2p_box_parses
-    kind: P2P_REGRESSION
-    turn: 1
-    weight: 0
-    label: "box.ts parses/imports successfully"
-  # Upstream P2P gates
-  - id: p2p_upstream_tui_build
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "TUI package builds successfully"
-  - id: p2p_upstream_terminal_image_tests
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "terminal-image tests pass"
-  - id: p2p_upstream_markdown_tests
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "markdown tests pass"
+- id: f2p_isImageLine_export_removed
+  kind: F2P
+  turn: 1
+  weight: 0.09
+  label: isImageLine export removed from terminal-image.ts
+  description: isImageLine export removed from terminal-image.ts
+- id: f2p_tui_no_import_isImageLine
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: tui.ts does not import isImageLine
+  description: tui.ts does not import isImageLine
+- id: f2p_markdown_no_import_isImageLine
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: markdown.ts does not import isImageLine
+  description: markdown.ts does not import isImageLine
+- id: f2p_containsImage_behavior
+  kind: F2P
+  turn: 1
+  weight: 0.15
+  label: containsImage detects image sequences correctly
+  description: containsImage detects image sequences correctly
+- id: f2p_containsImage_pure_check
+  kind: F2P
+  turn: 1
+  weight: 0.09
+  label: containsImage is pure string check, not capability-gated
+  description: containsImage is pure string check, not capability-gated
+- id: f2p_box_cache_reverted
+  kind: F2P
+  turn: 1
+  weight: 0.09
+  label: Box cache uses explicit fields, no RenderCache type
+  description: Box cache uses explicit fields, no RenderCache type
+- id: f2p_markdown_wraps_unconditionally
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: markdown.ts wraps lines unconditionally
+  description: markdown.ts wraps lines unconditionally
+- id: f2p_upstream_isImageLine_removed
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: isImageLine export removed from terminal-image (runtime check)
+  description: isImageLine export removed from terminal-image (runtime check)
+- id: f2p_upstream_containsImage_exists
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: containsImage method exists in TUI class (runtime check)
+  description: containsImage method exists in TUI class (runtime check)
+- id: p2p_no_merge_conflicts
+  kind: P2P_REGRESSION
+  turn: 1
+  weight: 0
+  label: No unresolved merge conflict markers
+  description: No unresolved merge conflict markers
+- id: p2p_tui_parses
+  kind: P2P_REGRESSION
+  turn: 1
+  weight: 0
+  label: tui.ts parses/imports successfully
+  description: tui.ts parses/imports successfully
+- id: p2p_terminal_image_parses
+  kind: P2P_REGRESSION
+  turn: 1
+  weight: 0
+  label: terminal-image.ts parses/imports successfully
+  description: terminal-image.ts parses/imports successfully
+- id: p2p_markdown_parses
+  kind: P2P_REGRESSION
+  turn: 1
+  weight: 0
+  label: markdown.ts parses/imports successfully
+  description: markdown.ts parses/imports successfully
+- id: p2p_box_parses
+  kind: P2P_REGRESSION
+  turn: 1
+  weight: 0
+  label: box.ts parses/imports successfully
+  description: box.ts parses/imports successfully
+- id: p2p_upstream_tui_build
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: TUI package builds successfully
+  description: TUI package builds successfully
+- id: p2p_upstream_terminal_image_tests
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: terminal-image tests pass
+  description: terminal-image tests pass
+- id: p2p_upstream_markdown_tests
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: markdown tests pass
+  description: markdown tests pass

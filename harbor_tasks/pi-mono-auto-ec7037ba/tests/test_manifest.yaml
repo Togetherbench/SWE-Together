@@ -41,7 +41,7 @@ turns:
 gates:
 - id: p2p_changelog_structure_intact
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: All three CHANGELOG.md files retain valid markdown structure.
 - id: t1_f2p_changelog_unreleased_grew

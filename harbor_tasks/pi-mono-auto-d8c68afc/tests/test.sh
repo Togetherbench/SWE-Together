@@ -30,6 +30,12 @@ if [ ! -f "$TARGET_FILE" ]; then
     write_reward; exit 0
 fi
 
+emit_gate() {
+    local id="$1" passed="$2" detail="$3"
+    detail="${detail//\"/\\\"}"
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> /logs/verifier/gates.json
+}
+
 # ============================================================
 # F2P Gate 1: shutdownHandler sets shutdownRequested=true (weight 0.15)
 # Buggy base: handler is `shutdown: () => { this.shutdownRequested = true; }`
@@ -43,9 +49,20 @@ const fs = require('fs');
 const src = fs.readFileSync('$TARGET_FILE', 'utf-8');
 
 // Must be keyed as 'shutdownHandler' (the bug uses 'shutdown:')
-const m = src.match(/shutdownHandler\s*:\s*(?:async\s*)?\(\s*\)\s*=>\s*\{([\s\S]*?)\n\s*\}/);
-if (!m) { console.log('FAIL: no shutdownHandler key'); process.exit(1); }
-const body = m[1];
+// Brace-balanced body extraction: regex \{([\s\S]*?)\n\s*\} stops at the FIRST
+// closing brace, which mismatches when the canonical handler body contains an
+// inner if-block. Walk braces from the '{' to find the true matching '}'.
+const startMatch = src.match(/shutdownHandler\s*:\s*(?:async\s*)?\(\s*\)\s*=>\s*\{/);
+if (!startMatch) { console.log('FAIL: no shutdownHandler key'); process.exit(1); }
+const startPos = src.indexOf(startMatch[0]) + startMatch[0].length;
+let depth = 1, endPos = -1;
+for (let i = startPos; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { endPos = i; break; } }
+}
+if (endPos < 0) { console.log('FAIL: brace mismatch in handler'); process.exit(1); }
+const body = src.slice(startPos, endPos);
 
 let shutdownCalled = false;
 const mockSelf = {
@@ -77,7 +94,7 @@ if (mockSelf.shutdownRequested !== true) {
 console.log('PASS');
 process.exit(0);
 "
-if [ $? -eq 0 ]; then add_score 0.12; fi
+if [ $? -eq 0 ]; then add_score 0.12; emit_gate "f2p_shutdown_handler_key" true "shutdownHandler key sets shutdownRequested"; else emit_gate "f2p_shutdown_handler_key" false "shutdownHandler missing or doesn't set flag"; fi
 
 # ============================================================
 # F2P Gate 2: There is a path from shutdownRequested -> actual shutdown
@@ -111,7 +128,7 @@ if (directPath || loopPath) {
 console.log('FAIL: no shutdownRequested -> shutdown drain path');
 process.exit(1);
 "
-if [ $? -eq 0 ]; then add_score 0.24; fi
+if [ $? -eq 0 ]; then add_score 0.24; emit_gate "f2p_deferred_shutdown_drain" true "drain path exists"; else emit_gate "f2p_deferred_shutdown_drain" false "no drain path"; fi
 
 # ============================================================
 # F2P Gate 3: handler does NOT call shutdown synchronously while streaming
@@ -124,9 +141,17 @@ node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$TARGET_FILE', 'utf-8');
 
-const m = src.match(/shutdownHandler\s*:\s*(?:async\s*)?\(\s*\)\s*=>\s*\{([\s\S]*?)\n\s*\}/);
-if (!m) { console.log('FAIL: no shutdownHandler'); process.exit(1); }
-const body = m[1];
+const startMatch = src.match(/shutdownHandler\s*:\s*(?:async\s*)?\(\s*\)\s*=>\s*\{/);
+if (!startMatch) { console.log('FAIL: no shutdownHandler'); process.exit(1); }
+const startPos = src.indexOf(startMatch[0]) + startMatch[0].length;
+let depth = 1, endPos = -1;
+for (let i = startPos; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { endPos = i; break; } }
+}
+if (endPos < 0) { console.log('FAIL: brace mismatch'); process.exit(1); }
+const body = src.slice(startPos, endPos);
 
 let shutdownCalledSync = false;
 const sessionProxy = { isStreaming: true, isIdle: false };
@@ -164,7 +189,7 @@ if (mockSelf.shutdownRequested !== true) {
 console.log('PASS: shutdown deferred when streaming');
 process.exit(0);
 "
-if [ $? -eq 0 ]; then add_score 0.16; fi
+if [ $? -eq 0 ]; then add_score 0.16; emit_gate "f2p_shutdown_deferred_streaming" true "shutdown deferred when streaming"; else emit_gate "f2p_shutdown_deferred_streaming" false "shutdown called while streaming or not deferred"; fi
 
 # ============================================================
 # F2P Gate 4: when idle, handler triggers actual shutdown (sync or via setImmediate)
@@ -176,9 +201,17 @@ node -e "
 const fs = require('fs');
 const src = fs.readFileSync('$TARGET_FILE', 'utf-8');
 
-const m = src.match(/shutdownHandler\s*:\s*(?:async\s*)?\(\s*\)\s*=>\s*\{([\s\S]*?)\n\s*\}/);
-if (!m) { console.log('FAIL: no shutdownHandler'); process.exit(1); }
-const body = m[1];
+const startMatch = src.match(/shutdownHandler\s*:\s*(?:async\s*)?\(\s*\)\s*=>\s*\{/);
+if (!startMatch) { console.log('FAIL: no shutdownHandler'); process.exit(1); }
+const startPos = src.indexOf(startMatch[0]) + startMatch[0].length;
+let depth = 1, endPos = -1;
+for (let i = startPos; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { endPos = i; break; } }
+}
+if (endPos < 0) { console.log('FAIL: brace mismatch'); process.exit(1); }
+const body = src.slice(startPos, endPos);
 
 // Skip if handler doesn't try to call this.shutdown directly — the loop-path
 // covers that case in Gate 2; this gate verifies the direct path when present.
@@ -226,7 +259,7 @@ setTimeout(() => {
 }, 60);
 " 
 RES=$?
-if [ $RES -eq 0 ]; then add_score 0.12; fi
+if [ $RES -eq 0 ]; then add_score 0.12; emit_gate "f2p_shutdown_invoked_idle" true "shutdown invoked when idle"; else emit_gate "f2p_shutdown_invoked_idle" false "shutdown not invoked when idle"; fi
 
 # ============================================================
 # F2P Gate 5: example extension renamed/exists with /shutdown (or other) command
@@ -280,7 +313,7 @@ if (builtins.has(registeredName) && !extPriority) {
 console.log('PASS: example registers reachable /' + registeredName + ' (extPriority=' + extPriority + ')');
 process.exit(0);
 "
-if [ $? -eq 0 ]; then add_score 0.16; fi
+if [ $? -eq 0 ]; then add_score 0.16; emit_gate "f2p_example_reachable_cmd" true "example registers reachable slash command"; else emit_gate "f2p_example_reachable_cmd" false "example missing or registers conflicting built-in"; fi
 
 echo ""
 echo "=== Final reward: $REWARD ==="
@@ -410,3 +443,141 @@ PYEOF
 # ---- end ----
 
 exit 0
+
+# >>> auto_gate_bridge >>>
+# Auto-generated by scripts/fix_emit_gates.py.
+# Bridges manifest gates → /logs/verifier/gates.json so the canonical
+# F2P-coverage formula matches the legacy reward.txt for tasks that were
+# scored only via inline `add_reward` style. Idempotent.
+#
+# Semantics:
+#   F2P gate without an explicit emit → proportionally pass `round(N*L)`
+#     gates (where N = total F2P gates, L = legacy reward.txt), so the
+#     canonical f2p_pass_rate reproduces the legacy reward.
+#   P2P_REGRESSION without an explicit emit → passed: true (informational,
+#     matches pre-canonical bash where unemitted P2P had no effect).
+#
+# After bridging, reward.txt is left as the legacy value. The host-side
+# canonicalize_reward_from_gates() (per_turn_replay.py, oracle_replay.py)
+# reads the now-complete gates.json and recomputes via the unified formula.
+python3 - <<'AUTO_GATE_BRIDGE_PYEOF'
+import json, os, sys
+from pathlib import Path
+
+LOGS = Path("/logs/verifier")
+gates_path = LOGS / "gates.json"
+reward_path = LOGS / "reward.txt"
+
+# Locate the manifest at runtime. Harbor mounts the harbor task's tests/
+# dir at /tests so the manifest is /tests/test_manifest.yaml.
+manifest_candidates = [
+    Path("/tests/test_manifest.yaml"),
+    Path(os.environ.get("TEST_MANIFEST", "")),
+]
+manifest_path = next((p for p in manifest_candidates if p and p.is_file()), None)
+if manifest_path is None:
+    sys.exit(0)
+
+try:
+    import yaml
+    raw = yaml.safe_load(manifest_path.read_text())
+except Exception:
+    sys.exit(0)
+
+gates = (raw or {}).get("gates") or []
+if not gates:
+    sys.exit(0)
+
+try:
+    legacy_reward = float(reward_path.read_text().strip())
+except Exception:
+    legacy_reward = 0.0
+
+existing_ids = set()
+try:
+    txt = gates_path.read_text().strip()
+    if txt.startswith("[") or txt.startswith("{"):
+        d = json.loads(txt)
+        if isinstance(d, dict) and "gates" in d:
+            for g in d["gates"]:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+        elif isinstance(d, list):
+            for g in d:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+    else:
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if obj.get("id"):
+                    existing_ids.add(obj["id"])
+            except Exception:
+                pass
+except FileNotFoundError:
+    pass
+
+all_gate_ids = []
+f2p_missing_ids = []
+p2p_missing_ids = []
+for g in gates:
+    if not isinstance(g, dict):
+        continue
+    gid = g.get("id")
+    kind = g.get("kind", "F2P")
+    if not gid:
+        continue
+    all_gate_ids.append((gid, kind))
+    if gid in existing_ids:
+        continue
+    if kind == "F2P":
+        f2p_missing_ids.append(gid)
+    elif kind.startswith("P2P"):  # P2P_REGRESSION, P2P, deprecated kinds
+        p2p_missing_ids.append(gid)
+
+f2p_total = sum(1 for gid, kind in all_gate_ids if kind == "F2P")
+target_passes = int(round(legacy_reward * f2p_total))
+
+explicit_pass = 0
+try:
+    with gates_path.open() as _f:
+        for line in _f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("id") and d.get("passed"):
+                for (gid, kind) in all_gate_ids:
+                    if gid == d["id"] and kind == "F2P":
+                        explicit_pass += 1
+                        break
+except Exception:
+    pass
+
+bridge_passes = max(0, target_passes - explicit_pass)
+bridge_passes = min(bridge_passes, len(f2p_missing_ids))
+
+to_append = []
+for i, gid in enumerate(f2p_missing_ids):
+    passed = bool(i < bridge_passes)
+    detail = "auto-bridge: F2P proportional (target=%d/%d, legacy=%.3f)" % (
+        target_passes, f2p_total, legacy_reward,
+    )
+    to_append.append({"id": gid, "passed": passed, "detail": detail})
+for gid in p2p_missing_ids:
+    to_append.append({
+        "id": gid,
+        "passed": True,
+        "detail": "auto-bridge: P2P default-pass (no explicit emit)",
+    })
+
+if to_append:
+    LOGS.mkdir(parents=True, exist_ok=True)
+    with gates_path.open("a") as _f:
+        for obj in to_append:
+            _f.write(json.dumps(obj) + "\n")
+AUTO_GATE_BRIDGE_PYEOF
+# <<< auto_gate_bridge <<<

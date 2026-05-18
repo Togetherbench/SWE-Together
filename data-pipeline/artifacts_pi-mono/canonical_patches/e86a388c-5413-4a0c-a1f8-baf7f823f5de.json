@@ -38,7 +38,7 @@
   "_n_mutating_ops": 30,
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-14",
-  "_verification_note": "Highest warn/mut ratio of the batch (0.40, 12/30), but all 12 warnings concentrate on two files heavily reworked during the session: openai-responses.ts (23+/1-) and openai-responses-reasoning-replay-e2e.test.ts (141+/2-). Large test-file builds produce many anchor mismatches as the file grows — each new test reshapes prior anchors. All warnings are pure 'edit: old text not found' (formatter-noise signature); zero file-not-found. The 168-line addition is consistent with files_changed numstat.",
+  "_verification_note": "Highest warn/mut ratio of the batch (0.40, 12/30), but all 12 warnings concentrate on two files heavily reworked during the session: openai-responses.ts (23+/1-) and openai-responses-reasoning-replay-e2e.test.ts (141+/2-). Large test-file builds produce many anchor mismatches as the file grows \u2014 each new test reshapes prior anchors. All warnings are pure 'edit: old text not found' (formatter-noise signature); zero file-not-found. The 168-line addition is consistent with files_changed numstat.",
   "_review": {
     "status": "APPROVED",
     "reviewer": "subagent-batch-ag",
@@ -50,5 +50,8 @@
       "test_alignment",
       "fidelity_verified_prior"
     ]
-  }
+  },
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "b7cef51f3f5068f61f144bd5c5130a295a3e0c16"
 }

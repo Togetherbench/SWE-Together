@@ -27,17 +27,17 @@ turns:
 gates:
 - id: p2p_segment_output_strip_intact
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: SegmentOutputStrip.tsx still exists and references shotId.
 - id: p2p_task_utils_exports_intact
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: task-utils still exports key helpers used downstream.
 - id: p2p_enhance_prompt_default_unchanged
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: JoinClipsPage / JoinModeContent enhancePrompt defaults remain false.
 - id: t1_f2p_is_segment_video_task_field

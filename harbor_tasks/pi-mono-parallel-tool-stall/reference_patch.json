@@ -47,5 +47,8 @@
     "note": "Real canonical, exact fidelity. 2 hunks; +185/-0 line counts match. 2 edit_anchor_mismatch warnings on the new test file are expected (file created by Write then later Edits couldn't find old anchors). All-A/M markers consistent. Aligned with round1."
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": true
+  "_instruction_pii_redacted": true,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4)",
+  "_canonical_anchor_commit": "05c17cfbfeedd8099dad88b342457bfeb261b458",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)"
 }

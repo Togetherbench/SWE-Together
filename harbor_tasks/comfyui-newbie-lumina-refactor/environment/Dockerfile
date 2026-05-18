@@ -30,4 +30,17 @@ RUN /usr/bin/python3 -m pip install --break-system-packages --no-cache-dir \
         nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12 triton 2>/dev/null || true \
     && /usr/bin/python3 -c "import torch; print('system torch', torch.__version__)"
 
+# Synthesize the buggy NewBie* class state in model_base.py / supported_models.py /
+# model_detection.py (and CPU patch on model_management.py). The script
+# intentionally does NOT modify lumina/model.py or pre-create comfy/ldm/newbie/*,
+# so the canonical reference_patch.json's hunks for those targets apply cleanly
+# at oracle-replay time. See script header for full rationale.
+COPY synthesize_buggy_state.py /tmp/synthesize_buggy_state.py
+RUN cd /workspace/ComfyUI && \
+    python3 /tmp/synthesize_buggy_state.py && \
+    git add -A && \
+    git -c user.email=agent@test.com -c user.name="Test Agent" \
+        commit -m "initial workspace state" && \
+    rm /tmp/synthesize_buggy_state.py
+
 WORKDIR /workspace/ComfyUI

@@ -46,5 +46,8 @@
     "note": "Diff coherent: 4 hdrs/+32/-8 match; exact, 0 warnings; tui autocomplete.ts + 3 CHANGELOGs."
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": false
+  "_instruction_pii_redacted": false,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4)",
+  "_canonical_anchor_commit": "69d02b8a5fce07041f77aba64c6ebbc8589827ab",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)"
 }

@@ -4,7 +4,7 @@
 |-------|-------|
 | Source session | `c4c7e905-d2bf-4366-99c5-b3c2a0948d8a` |
 | Repo | entireio/cli (2213 stars) |
-| Base commit | `47a2e9108ef12085250dce717559a5abd6bc7368` (main) |
+| Base commit | `cef3938d6f9a678a364567482033a219dc0d22db` (parent of `8b01d8e0` "Remove trail title generation") |
 | Difficulty | easy |
 | Category | bugfix |
 | Real user msgs | 3 |

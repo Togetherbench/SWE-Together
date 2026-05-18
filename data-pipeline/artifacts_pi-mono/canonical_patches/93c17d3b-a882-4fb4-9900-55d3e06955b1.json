@@ -33,5 +33,7 @@
       "test_alignment",
       "no_phantom_files"
     ]
-  }
+  },
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "5133697bc454da5595655cf4b0c70d3c2c725677"
 }

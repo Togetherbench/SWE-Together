@@ -11,6 +11,21 @@ add_reward() {
     REWARD=$(awk "BEGIN {printf \"%.2f\", $REWARD + $1}")
 }
 
+# Emit a per-gate verdict line (JSONL) for the canonical_gates scoring path.
+# 2026-05-17: prior versions only used add_reward; manifest had 6 inner F2P
+# gate IDs that were never written to /logs/verifier/gates.json, so canonical
+# scoring saw 0/6 inner + 2/2 upstream → 2/8 = 0.25 even when the inner gates
+# all passed.
+emit_gate() {
+    local gid="$1" passed="$2"
+    mkdir -p /logs/verifier
+    if [ "$passed" = "true" ]; then
+        echo "{\"id\":\"${gid}\",\"passed\":true}" >> /logs/verifier/gates.json
+    else
+        echo "{\"id\":\"${gid}\",\"passed\":false}" >> /logs/verifier/gates.json
+    fi
+}
+
 finalize() {
     echo "REWARD=$REWARD"
     echo "$REWARD" > /logs/verifier/reward.txt
@@ -151,27 +166,41 @@ SEARCH_DIRS=(
     /workspace/pi-mono/.pi/extensions
     /workspace/pi-mono/packages/coding-agent/examples/extensions
 )
+# Canonical-aware preferred names: the upstream PR ships message-signal.ts.
+# Try those first so the verifier doesn't accidentally pick another non-baseline
+# example file (e.g. auto-commit-on-exit.ts which is in the base repo but
+# absent from BASELINE_EXTENSIONS) when the canonical patch is applied.
 for d in "${SEARCH_DIRS[@]}"; do
-    [ -d "$d" ] || continue
-    for f in "$d"/*.ts; do
-        [ -f "$f" ] || continue
-        BN=$(basename "$f")
-        SKIP=0
-        for b in $BASELINE_EXTENSIONS; do
-            [ "$BN" = "$b" ] && SKIP=1 && break
-        done
-        [ $SKIP -eq 1 ] && continue
-        if ! git -C /workspace/pi-mono ls-files --error-unmatch "${f#/workspace/pi-mono/}" >/dev/null 2>&1; then
-            EXT_ABS="$f"
-            break 2
-        fi
-        # also accept modified
-        if git -C /workspace/pi-mono diff --name-only HEAD -- "${f#/workspace/pi-mono/}" 2>/dev/null | grep -q .; then
-            EXT_ABS="$f"
+    for preferred in message-signal.ts; do
+        if [ -s "$d/$preferred" ]; then
+            EXT_ABS="$d/$preferred"
             break 2
         fi
     done
 done
+if [ -z "$EXT_ABS" ]; then
+    for d in "${SEARCH_DIRS[@]}"; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*.ts; do
+            [ -f "$f" ] || continue
+            BN=$(basename "$f")
+            SKIP=0
+            for b in $BASELINE_EXTENSIONS; do
+                [ "$BN" = "$b" ] && SKIP=1 && break
+            done
+            [ $SKIP -eq 1 ] && continue
+            if ! git -C /workspace/pi-mono ls-files --error-unmatch "${f#/workspace/pi-mono/}" >/dev/null 2>&1; then
+                EXT_ABS="$f"
+                break 2
+            fi
+            # also accept modified
+            if git -C /workspace/pi-mono diff --name-only HEAD -- "${f#/workspace/pi-mono/}" 2>/dev/null | grep -q .; then
+                EXT_ABS="$f"
+                break 2
+            fi
+        done
+    done
+fi
 
 echo "Extension: ${EXT_ABS:-<none>}"
 
@@ -479,9 +508,10 @@ if echo "$SUMMARY" | grep "^EVENTS=" | grep -qE "message_end|message_update"; th
 fi
 if [ "$HAS_CMD" -eq 1 ] && [ "$HAS_MSG_HANDLER" -eq 1 ]; then
     echo "GATE1 PASS: command + message handler registered"
-    add_reward 0.15
+    add_reward 0.15; emit_gate f2p_gate1_cmd_and_handler true
 else
     echo "GATE1 FAIL: HAS_CMD=$HAS_CMD HAS_MSG_HANDLER=$HAS_MSG_HANDLER"
+    emit_gate f2p_gate1_cmd_and_handler false
 fi
 
 # ============================================================
@@ -514,9 +544,10 @@ fi
 
 if [ "$PROTOCOL_INJECTED" -eq 1 ]; then
     echo "GATE2 PASS: signal protocol injected (via session msg or system prompt)"
-    add_reward 0.20
+    add_reward 0.20; emit_gate f2p_gate2_protocol_injected true
 else
     echo "GATE2 FAIL: no signal protocol injected on activation"
+    emit_gate f2p_gate2_protocol_injected false
 fi
 
 # ============================================================
@@ -534,9 +565,10 @@ EVT_COUNT=$(echo "$ROUNDTRIP_OUT" | grep "^EVENTS_EMITTED=" | head -1 | sed 's/^
 REACTED_TOTAL=$((NOTIFY_COUNT + WIDGET_CALLS + EVT_COUNT))
 if [ "$REACTED_TOTAL" -ge 1 ]; then
     echo "GATE3 PASS: extension reacted to signals (notifs=$NOTIFY_COUNT widgets=$WIDGET_CALLS events=$EVT_COUNT)"
-    add_reward 0.20
+    add_reward 0.20; emit_gate f2p_gate3_reacts_to_signals true
 else
     echo "GATE3 FAIL: no observable reaction to any signal"
+    emit_gate f2p_gate3_reacts_to_signals false
 fi
 
 # ============================================================
@@ -575,9 +607,10 @@ fi
 DISTINCT=$((OPEN_REACTED + CLOSE_REACTED + DONE_REACTED))
 if [ "$DISTINCT" -ge 2 ]; then
     echo "GATE4 PASS: distinct signal kinds reacted: open=$OPEN_REACTED close=$CLOSE_REACTED done=$DONE_REACTED"
-    add_reward 0.15
+    add_reward 0.15; emit_gate f2p_gate4_distinct_signals true
 else
     echo "GATE4 FAIL: only $DISTINCT distinct signal kinds reacted"
+    emit_gate f2p_gate4_distinct_signals false
 fi
 
 # ============================================================
@@ -595,9 +628,10 @@ PASSIVE_WIDGET=$(echo "$PASSIVE_OUT" | grep "^SET_WIDGET_CALLS_PRE=" | head -1 |
 
 if [ "$PASSIVE_NOTIFY" -eq 0 ] && [ "$PASSIVE_WIDGET" -eq 0 ]; then
     echo "GATE5 PASS: extension is inert before activation"
-    add_reward 0.15
+    add_reward 0.15; emit_gate f2p_gate5_inactive_no_reaction true
 else
     echo "GATE5 FAIL: pre-activation reaction notifs=$PASSIVE_NOTIFY widgets=$PASSIVE_WIDGET"
+    emit_gate f2p_gate5_inactive_no_reaction false
 fi
 
 # ============================================================
@@ -622,9 +656,10 @@ fi
 
 if [ "$PATTERN_REGEX" -eq 1 ] && [ "$NO_TOOLS" -eq 1 ]; then
     echo "GATE6 PASS: signal-token pattern present, no tool registration"
-    add_reward 0.15
+    add_reward 0.15; emit_gate f2p_gate6_pattern_fidelity true
 else
     echo "GATE6 FAIL: PATTERN_REGEX=$PATTERN_REGEX NO_TOOLS=$NO_TOOLS"
+    emit_gate f2p_gate6_pattern_fidelity false
 fi
 
 echo "FINAL REWARD=$REWARD"

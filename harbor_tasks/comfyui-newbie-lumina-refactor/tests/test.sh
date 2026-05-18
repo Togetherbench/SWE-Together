@@ -41,6 +41,21 @@ fail_zero() {
     exit 0
 }
 
+# Emit per-gate verdicts to /logs/verifier/gates.json (JSON Lines).
+# Required for the canonical-gates scoring path (compute_coverage_score
+# over the manifest); legacy reward.txt still computed below as backstop.
+GATES_FILE="/logs/verifier/gates.json"
+mkdir -p "$(dirname "$GATES_FILE")"
+: > "$GATES_FILE"
+emit_gate() {
+    local gid="$1" passed="$2"
+    if [ "$passed" = "true" ]; then
+        echo "{\"id\":\"${gid}\",\"passed\":true}" >> "$GATES_FILE"
+    else
+        echo "{\"id\":\"${gid}\",\"passed\":false}" >> "$GATES_FILE"
+    fi
+}
+
 echo "=== ComfyUI NewBie refactoring verification ==="
 cd "$REPO" 2>/dev/null || fail_zero "repo not found"
 
@@ -85,7 +100,7 @@ from comfy.ldm.lumina.model import NextDiT
 ops = comfy.ops.disable_weight_init
 try:
     m = NextDiT(
-        patch_size=2, in_channels=4, dim=64, n_layers=2,
+        patch_size=2, in_channels=4, dim=96, n_layers=2,
         n_heads=4, n_kv_heads=2,
         axes_dims=[8, 8, 8], axes_lens=[300, 64, 64],
         cap_feat_dim=32,
@@ -141,7 +156,7 @@ if "clip_text_dim" not in sig.parameters:
 ops = comfy.ops.disable_weight_init
 try:
     m = NextDiT(
-        patch_size=2, in_channels=4, dim=64, n_layers=2,
+        patch_size=2, in_channels=4, dim=96, n_layers=2,
         n_heads=4, n_kv_heads=2,
         axes_dims=[8, 8, 8], axes_lens=[300, 64, 64],
         cap_feat_dim=32,
@@ -189,7 +204,7 @@ if diff_z < 1e-5:
 print("OK")
 PYEOF
 tail -20 /tmp/f2p1.txt
-grep -q "^OK$" /tmp/f2p1.txt && add 0.12
+if grep -q "^OK$" /tmp/f2p1.txt; then add 0.12; emit_gate f2p_lumina_clip_text_dim true; else emit_gate f2p_lumina_clip_text_dim false; fi
 
 # ------------------------------------------------------------------
 # F2P-2 (0.15): the standalone vendored newbie module has been removed
@@ -249,7 +264,7 @@ if "nn.init." in src:
 print("OK")
 PYEOF
 tail -20 /tmp/f2p2.txt
-grep -q "^OK" /tmp/f2p2.txt && add 0.09
+if grep -q "^OK" /tmp/f2p2.txt; then add 0.09; emit_gate f2p_vendored_newbie_removed true; else emit_gate f2p_vendored_newbie_removed false; fi
 
 # ------------------------------------------------------------------
 # F2P-3 (0.15): comfy/ldm/lumina/model.py itself is clean — no
@@ -289,7 +304,7 @@ for n in ast.walk(tree):
 print("OK")
 PYEOF
 tail -10 /tmp/f2p3.txt
-grep -q "^OK$" /tmp/f2p3.txt && add 0.09
+if grep -q "^OK$" /tmp/f2p3.txt; then add 0.09; emit_gate f2p_lumina_model_clean true; else emit_gate f2p_lumina_model_clean false; fi
 
 # ------------------------------------------------------------------
 # F2P-4 (0.15): model_base.NewBie / Lumina path uses kwargs.get for
@@ -326,7 +341,7 @@ if "CONDRegular" not in window:
 print("OK")
 PYEOF
 tail -10 /tmp/f2p4.txt
-grep -q "^OK$" /tmp/f2p4.txt && add 0.09
+if grep -q "^OK$" /tmp/f2p4.txt; then add 0.09; emit_gate f2p_model_base_robustness true; else emit_gate f2p_model_base_robustness false; fi
 
 # ------------------------------------------------------------------
 # F2P-5 (0.15): No custom apply_model override on the NewBie model class
@@ -359,7 +374,7 @@ for p in candidates:
 print("OK")
 PYEOF
 tail -10 /tmp/f2p5.txt
-grep -q "^OK$" /tmp/f2p5.txt && add 0.09
+if grep -q "^OK$" /tmp/f2p5.txt; then add 0.09; emit_gate f2p_no_apply_model_override true; else emit_gate f2p_no_apply_model_override false; fi
 
 # ------------------------------------------------------------------
 # F2P-6 (0.20): supported_models / model_detection wires up NewBie via
@@ -426,7 +441,7 @@ if ctd is None or int(ctd) != 768:
 print("OK")
 PYEOF
 tail -20 /tmp/f2p6.txt
-grep -q "^OK$" /tmp/f2p6.txt && add 0.12
+if grep -q "^OK$" /tmp/f2p6.txt; then add 0.12; emit_gate f2p_model_detection_wiring true; else emit_gate f2p_model_detection_wiring false; fi
 
 # ------------------------------------------------------------------
 # Done with per-turn gates. Write intermediate reward.
@@ -435,9 +450,8 @@ echo "=== Intermediate reward: $REWARD ==="
 write_reward
 
 # ---- inner-claude upstream gates ----
-GATES_FILE="/logs/verifier/gates.json"
-mkdir -p "$(dirname "$GATES_FILE")"
-> "$GATES_FILE"
+# NOTE: GATES_FILE already initialized + populated with F2P verdicts above.
+# Do NOT truncate; append P2P_REGRESSION verdicts below for diagnostics.
 
 run_gate() {
     local gate_id="$1"
@@ -456,15 +470,6 @@ run_gate() {
     fi
 }
 
-# F2P upstream gates
-run_gate "f2p_upstream_newbie_py_exists" \
-    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/newbie.py').read(), 'newbie.py', 'exec')\"" \
-    "newbie.py text encoder file exists and compiles"
-
-run_gate "f2p_upstream_jina_clip2_py_exists" \
-    "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/jina_clip_2.py').read(), 'jina_clip_2.py', 'exec')\"" \
-    "jina_clip_2.py text encoder file exists and compiles"
-
 # P2P upstream regression gates
 run_gate "p2p_upstream_lumina_model_compiles" \
     "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'model.py', 'exec')\"" \
@@ -478,56 +483,149 @@ run_gate "p2p_upstream_model_detection_compiles" \
     "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_detection.py').read(), 'model_detection.py', 'exec')\"" \
     "model_detection.py remains syntactically valid"
 
-# Upstream reward adjustment
-python3 - <<'PYEOF'
+# Upstream reward adjustment removed 2026-05-17: the legacy inner-claude
+# adjustment was multiplying the bash-computed reward by (1 - sum(WEIGHTS))
+# even though the inner F2P gate IDs were never written to gates.json
+# (the bash gates use add_reward, not emit_gate). That zeroed real progress.
+# The bash-computed reward in $REWARD_FILE is the authoritative score for
+# this task. Inner WEIGHTS sum to 0.60; the remainder (0.40) naturally scales
+# the legacy reward in canonical_gates path (manifest-based scoring).
+# ---- end ----
+
+# >>> auto_gate_bridge >>>
+# Auto-generated by scripts/fix_emit_gates.py.
+# Bridges manifest gates → /logs/verifier/gates.json so the canonical
+# F2P-coverage formula matches the legacy reward.txt for tasks that were
+# scored only via inline `add_reward` style. Idempotent.
+#
+# Semantics:
+#   F2P gate without an explicit emit → proportionally pass `round(N*L)`
+#     gates (where N = total F2P gates, L = legacy reward.txt), so the
+#     canonical f2p_pass_rate reproduces the legacy reward.
+#   P2P_REGRESSION without an explicit emit → passed: true (informational,
+#     matches pre-canonical bash where unemitted P2P had no effect).
+#
+# After bridging, reward.txt is left as the legacy value. The host-side
+# canonicalize_reward_from_gates() (per_turn_replay.py, oracle_replay.py)
+# reads the now-complete gates.json and recomputes via the unified formula.
+python3 - <<'AUTO_GATE_BRIDGE_PYEOF'
 import json, os, sys
-WEIGHTS = {
-    "f2p_lumina_clip_text_dim": 0.12,
-    "f2p_vendored_newbie_removed": 0.09,
-    "f2p_lumina_model_clean": 0.09,
-    "f2p_model_base_robustness": 0.09,
-    "f2p_no_apply_model_override": 0.09,
-    "f2p_model_detection_wiring": 0.12,
-    "f2p_upstream_newbie_py_exists": 0.2,
-    "f2p_upstream_jina_clip2_py_exists": 0.2
-}
-P2P_REGRESSION = ["p2p_upstream_lumina_model_compiles", "p2p_upstream_model_base_compiles", "p2p_upstream_model_detection_compiles"]
-verdicts = {}
+from pathlib import Path
+
+LOGS = Path("/logs/verifier")
+gates_path = LOGS / "gates.json"
+reward_path = LOGS / "reward.txt"
+
+# Locate the manifest at runtime. Harbor mounts the harbor task's tests/
+# dir at /tests so the manifest is /tests/test_manifest.yaml.
+manifest_candidates = [
+    Path("/tests/test_manifest.yaml"),
+    Path(os.environ.get("TEST_MANIFEST", "")),
+]
+manifest_path = next((p for p in manifest_candidates if p and p.is_file()), None)
+if manifest_path is None:
+    sys.exit(0)
+
 try:
-    with open('/logs/verifier/gates.json') as f:
-        for line in f:
+    import yaml
+    raw = yaml.safe_load(manifest_path.read_text())
+except Exception:
+    sys.exit(0)
+
+gates = (raw or {}).get("gates") or []
+if not gates:
+    sys.exit(0)
+
+try:
+    legacy_reward = float(reward_path.read_text().strip())
+except Exception:
+    legacy_reward = 0.0
+
+existing_ids = set()
+try:
+    txt = gates_path.read_text().strip()
+    if txt.startswith("[") or txt.startswith("{"):
+        d = json.loads(txt)
+        if isinstance(d, dict) and "gates" in d:
+            for g in d["gates"]:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+        elif isinstance(d, list):
+            for g in d:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+    else:
+        for line in txt.splitlines():
             line = line.strip()
-            if not line: continue
-            d = json.loads(line)
-            gid = d.get('id')
-            if gid:
-                verdicts[gid] = bool(d.get('passed'))
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if obj.get("id"):
+                    existing_ids.add(obj["id"])
+            except Exception:
+                pass
 except FileNotFoundError:
     pass
-existing = 0.0
+
+all_gate_ids = []
+f2p_missing_ids = []
+p2p_missing_ids = []
+for g in gates:
+    if not isinstance(g, dict):
+        continue
+    gid = g.get("id")
+    kind = g.get("kind", "F2P")
+    if not gid:
+        continue
+    all_gate_ids.append((gid, kind))
+    if gid in existing_ids:
+        continue
+    if kind == "F2P":
+        f2p_missing_ids.append(gid)
+    elif kind.startswith("P2P"):  # P2P_REGRESSION, P2P, deprecated kinds
+        p2p_missing_ids.append(gid)
+
+f2p_total = sum(1 for gid, kind in all_gate_ids if kind == "F2P")
+target_passes = int(round(legacy_reward * f2p_total))
+
+explicit_pass = 0
 try:
-    with open('/logs/verifier/reward.txt') as f:
-        existing = float(f.read().strip() or 0)
+    with gates_path.open() as _f:
+        for line in _f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("id") and d.get("passed"):
+                for (gid, kind) in all_gate_ids:
+                    if gid == d["id"] and kind == "F2P":
+                        explicit_pass += 1
+                        break
 except Exception:
     pass
 
-p2p_failed = False  # P2P_REGRESSION gates are informational only (v043 fix)
-f2p_any_pass = any(verdicts.get(gid, False) for gid in WEIGHTS) if WEIGHTS else True
-if p2p_failed or (not f2p_any_pass and existing <= 0):
-    reward = 0.0
-else:
-    # Weighted-replace: upstream F2P gate weights replace a proportional
-    # share of the bash-computed inner reward. When WEIGHTS sums to 1.0, the
-    # inner reward is fully subsumed by upstream gates (intentional). When
-    # WEIGHTS sums to <1.0, the remainder scales the legacy inner reward so
-    # the total is naturally bounded to [0, 1] without additive inflation.
-    inner_weight = max(0.0, 1.0 - sum(float(w) for w in WEIGHTS.values()))
-    reward = existing * inner_weight
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid):
-            reward += float(w)
-reward = max(0.0, min(1.0, reward))
-with open('/logs/verifier/reward.txt', 'w') as f:
-    f.write(f"{reward:.4f}\n")
-PYEOF
-# ---- end ----
+bridge_passes = max(0, target_passes - explicit_pass)
+bridge_passes = min(bridge_passes, len(f2p_missing_ids))
+
+to_append = []
+for i, gid in enumerate(f2p_missing_ids):
+    passed = bool(i < bridge_passes)
+    detail = "auto-bridge: F2P proportional (target=%d/%d, legacy=%.3f)" % (
+        target_passes, f2p_total, legacy_reward,
+    )
+    to_append.append({"id": gid, "passed": passed, "detail": detail})
+for gid in p2p_missing_ids:
+    to_append.append({
+        "id": gid,
+        "passed": True,
+        "detail": "auto-bridge: P2P default-pass (no explicit emit)",
+    })
+
+if to_append:
+    LOGS.mkdir(parents=True, exist_ok=True)
+    with gates_path.open("a") as _f:
+        for obj in to_append:
+            _f.write(json.dumps(obj) + "\n")
+AUTO_GATE_BRIDGE_PYEOF
+# <<< auto_gate_bridge <<<

@@ -35,7 +35,7 @@
     "status": "BROKEN",
     "reviewer": "subagent-batch-ag",
     "date": "2026-05-14",
-    "note": "Canonical patches interactive-mode.ts/print-mode.ts/rpc-mode.ts/CHANGELOG (per session) but test.sh grades agent-session.ts reload() body. File-level mismatch — verifier cannot score this canonical.",
+    "note": "Canonical patches interactive-mode.ts/print-mode.ts/rpc-mode.ts/CHANGELOG (per session) but test.sh grades agent-session.ts reload() body. File-level mismatch \u2014 verifier cannot score this canonical.",
     "checks_passed": [
       "schema",
       "files_match_meta",
@@ -48,7 +48,7 @@
     "date": "2026-05-15",
     "check_performed": "Cross-validated against upstream commit 5dbeadae",
     "evidence": "gh api repos/badlogic/pi-mono/commits/5dbeadae returns exact 4 files matching canonical files_changed. Searched full git --all history: NO commits contain \"_applyExtensionBindings\" or \"reload re-applies bindings\" strings test.sh requires.",
-    "note": "Canonical matches upstream exactly. test.sh is wrong (TEST_SH_WRONG verified) — expects strings absent from entire repo history. Bug in verifier, not canonical."
+    "note": "Canonical matches upstream exactly. test.sh is wrong (TEST_SH_WRONG verified) \u2014 expects strings absent from entire repo history. Bug in verifier, not canonical."
   },
   "_triple_check_round2": {
     "status": "AGREE_CANONICAL_DISAGREE_REVIEW",
@@ -57,16 +57,7 @@
     "found_issues": [
       "round1_status_misattributes_test_sh_bug_to_canonical"
     ],
-    "note": "Canonical confirmed matches upstream commit 5dbeadae exactly (4 files: CHANGELOG, interactive-mode.ts, print-mode.ts, rpc-mode.ts). Round1 BROKEN status reflects test.sh mismatch (test.sh asks for strings absent from entire upstream history) — a TEST_SH_WRONG verifier bug, not a canonical defect. Canonical itself is correct."
-  },
-  "_reliability": {
-    "status": "RELIABLE",
-    "reason": "test_sh_repaired",
-    "note": "Previously flagged test_sh_misdesigned. 2026-05-16: test.sh rewritten to grade the actual upstream fix surface (eager bindExtensions in interactive-mode.ts initExtensions / print-mode.ts runPrintMode / rpc-mode.ts runRpcMode + CHANGELOG entry). Fabricated strings (_applyExtensionBindings, 'reload.*re-applies bindings') removed; gates now use AST-walks scoped to the 3 mode files the canonical actually touches.",
-    "flagged_date": "2026-05-15",
-    "flagged_by": "round-2 audit",
-    "resolved_date": "2026-05-16",
-    "resolved_by": "test_sh rewrite agent"
+    "note": "Canonical confirmed matches upstream commit 5dbeadae exactly (4 files: CHANGELOG, interactive-mode.ts, print-mode.ts, rpc-mode.ts). Round1 BROKEN status reflects test.sh mismatch (test.sh asks for strings absent from entire upstream history) \u2014 a TEST_SH_WRONG verifier bug, not a canonical defect. Canonical itself is correct."
   },
   "_fix_applied": {
     "date": "2026-05-16",
@@ -78,5 +69,8 @@
     ]
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": false
+  "_instruction_pii_redacted": false,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4)",
+  "_canonical_anchor_commit": "f86e3c31033c0fe18cb5305c5fa7cf54ab1475d9",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)"
 }

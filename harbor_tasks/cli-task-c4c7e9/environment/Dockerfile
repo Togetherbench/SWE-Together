@@ -15,16 +15,17 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
 
-# Clone repo at main HEAD (commit with trail infrastructure but WITHOUT trail title generation)
-ARG REPO_COMMIT=47a2e9108ef12085250dce717559a5abd6bc7368
+# Clone repo at the natural pre-fix commit (parent of 8b01d8e0 "Remove trail title generation").
+# This commit ships the real buggy state — trail_title.go exists, summarize import +
+# generateTrailTitleForTrail are wired into manual_commit_hooks.go — so no synthesis
+# step is needed and the canonical patch (reference_patch.json) applies cleanly.
+# Previously this Dockerfile checked out 47a2e9108e (post-fix on main, hundreds of
+# commits later) and used reconstruct_buggy.py to reinject the deleted code; that
+# produced a structurally divergent state where 2 of 3 canonical hunks failed.
+ARG REPO_COMMIT=cef3938d6f9a678a364567482033a219dc0d22db
 RUN git clone https://github.com/entireio/cli.git /workspace/repo \
     && cd /workspace/repo \
     && git checkout ${REPO_COMMIT}
-
-# Reconstruct the buggy state: add trail title generation code
-COPY reconstruct_buggy.py /tmp/reconstruct_buggy.py
-RUN python3 /tmp/reconstruct_buggy.py /workspace/repo \
-    && rm /tmp/reconstruct_buggy.py
 
 # Download Go module dependencies (offline prep, speeds up agent work)
 WORKDIR /workspace/repo

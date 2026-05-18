@@ -59,12 +59,12 @@ gates:
     \ format/value."
 - id: p2p_src_unmodified
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: dataclaw/ source tree must be unchanged (this is a write-tests task).
 - id: p2p_baseline_sane
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Baseline test run is collectable and not catastrophically broken.
 - id: f2p_upstream_8138ab05

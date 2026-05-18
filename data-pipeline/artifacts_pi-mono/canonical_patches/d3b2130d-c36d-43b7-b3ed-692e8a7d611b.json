@@ -37,5 +37,8 @@
       "test_alignment",
       "curation_method_documented"
     ]
-  }
+  },
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "353ac792ebb99931c640ee55af90881d3a45c4d9"
 }

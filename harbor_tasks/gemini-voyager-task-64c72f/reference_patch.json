@@ -17,7 +17,7 @@
   "_reconstruction": "upstream_commit_diff",
   "_fidelity": "exact",
   "_reconstruction_warnings": [],
-  "_base_commit": "b44f33836f1d53cdb3e6dab5cc2c92d84ab9f13a",
+  "_base_commit": "66ad6e36eb151a5ef88beef777a69a7afdbf7d72",
   "_repo_url": "https://github.com/Nagi-ovo/gemini-voyager",
   "_task_name": "gemini-voyager-task-64c72f",
   "_n_mutating_ops": 0,

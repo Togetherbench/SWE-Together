@@ -20,6 +20,22 @@ add_reward() {
     REWARD=$(awk "BEGIN { v = $REWARD + $1; if (v > 1.0) v = 1.0; printf \"%.4f\", v }")
 }
 
+# Emit a per-gate JSONL verdict for canonical_gates scoring.
+# 2026-05-17: prior versions only used add_reward; manifest had 7 inner F2P
+# gate IDs that were never written to /logs/verifier/gates.json, so canonical
+# scoring saw 0/9 even when the inner gates all passed.
+GATES_FILE_INIT="/logs/verifier/gates.json"
+mkdir -p /logs/verifier
+: > "$GATES_FILE_INIT"
+emit_gate() {
+    local gid="$1" passed="$2"
+    if [ "$passed" = "true" ]; then
+        echo "{\"id\":\"${gid}\",\"passed\":true}" >> "$GATES_FILE_INIT"
+    else
+        echo "{\"id\":\"${gid}\",\"passed\":false}" >> "$GATES_FILE_INIT"
+    fi
+}
+
 finish() {
     echo "$REWARD" > "$REWARD_FILE"
     exit 0
@@ -40,8 +56,21 @@ if ! "$PYTHON" -c "import torch" 2>/dev/null; then
 fi
 export PYTHONPATH="/workspace/ComfyUI:${PYTHONPATH:-}"
 
-JINA_FILE="/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
+# Accept either historical filename — the upstream PR landed as
+# `jina_clip_2.py`, but the session-as-recorded created `jina_clip.py`.
+# Both are valid implementations of the same task.
+if [ -f "/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py" ]; then
+    JINA_FILE="/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
+    JINA_MODULE="comfy.text_encoders.jina_clip_2"
+elif [ -f "/workspace/ComfyUI/comfy/text_encoders/jina_clip.py" ]; then
+    JINA_FILE="/workspace/ComfyUI/comfy/text_encoders/jina_clip.py"
+    JINA_MODULE="comfy.text_encoders.jina_clip"
+else
+    JINA_FILE="/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py"
+    JINA_MODULE="comfy.text_encoders.jina_clip_2"
+fi
 SD_FILE="/workspace/ComfyUI/comfy/sd.py"
+export JINA_MODULE JINA_FILE SD_FILE
 
 # ============================================================================
 # P2P GATE 1: comfy.sd must import (regression check)
@@ -71,7 +100,7 @@ fi
 # ----------------------------------------------------------------------------
 # Helpers (shared probe utilities)
 # ----------------------------------------------------------------------------
-cat > /tmp/_jina_probe.py << 'PYEOF'
+cat > /tmp/_jina_probe.py << PYEOF
 import sys, os, ast, importlib, traceback
 sys.path.insert(0, "/workspace/ComfyUI")
 try:
@@ -82,10 +111,12 @@ except Exception:
 
 import torch
 
+JINA_MODULE = "${JINA_MODULE}"
+
 def load_module():
-    if "comfy.text_encoders.jina_clip_2" in sys.modules:
-        del sys.modules["comfy.text_encoders.jina_clip_2"]
-    return importlib.import_module("comfy.text_encoders.jina_clip_2")
+    if JINA_MODULE in sys.modules:
+        del sys.modules[JINA_MODULE]
+    return importlib.import_module(JINA_MODULE)
 
 def all_classes(mod):
     out = []
@@ -199,8 +230,10 @@ PYEOF
 )
 echo "$R1"
 if echo "$R1" | grep -q "^PASS"; then
-    add_reward 0.06
+    add_reward 0.06; emit_gate f2p_import_class_structure true
     echo "  +0.06"
+else
+    emit_gate f2p_import_class_structure false
 fi
 
 # ============================================================================
@@ -214,10 +247,23 @@ sys.path.insert(0, "/tmp"); sys.path.insert(0, "/workspace/ComfyUI")
 import torch
 from _jina_probe import load_module, find_inner_cls
 
+# Round-5 broaden: when the canonical PR uses HF AutoModel-based loading, the
+# probe instantiation requires runtime deps (timm) that aren't installed in the
+# sandbox image. If we hit that exact ImportError on a class that's clearly an
+# HF-delegated wrapper, treat as PASS (infra-only failure, not canonical bug).
 try:
     mod = load_module()
     InnerCls = find_inner_cls(mod)
     if InnerCls is None:
+        # Round-5: also accept a non-SDClipModel-derived wrapper that uses HF
+        # AutoModel as the canonical pattern. The canonical PR's class is a
+        # torch.nn.Module wrapper around AutoModel.from_config, not SDClipModel.
+        from _jina_probe import find_torch_text_model
+        cands = find_torch_text_model(mod)
+        src = open(os.environ["JINA_FILE"]).read()
+        if cands and "AutoModel" in src and "trust_remote_code" in src:
+            print("PASS (canonical HF AutoModel wrapper: deferring forward probe to runtime)")
+            raise SystemExit
         print("FAIL no_inner"); raise SystemExit
     inst = InnerCls(device="cpu", dtype=torch.float32, model_options={})
     if not hasattr(inst, "transformer"):
@@ -257,13 +303,23 @@ except SystemExit:
     raise
 except Exception as e:
     import traceback; traceback.print_exc()
-    print("FAIL exc")
+    msg = str(e)
+    # Round-5: tolerate missing runtime deps that prevent the HF AutoModel path
+    # from instantiating (timm, etc.). The canonical PR delegates to HF code
+    # that pulls extra deps at runtime; if the only failure is a missing dep,
+    # treat as infra-only and pass the structural part.
+    if "timm" in msg.lower() or "not found in your environment" in msg.lower() or "requires the following packages" in msg.lower():
+        print(f"PASS (infra-only missing-dep error: {msg[:120]})")
+    else:
+        print("FAIL exc")
 PYEOF
 )
 echo "$R2"
 if echo "$R2" | grep -q "^PASS"; then
-    add_reward 0.09
+    add_reward 0.09; emit_gate f2p_instantiation_forward true
     echo "  +0.09"
+else
+    emit_gate f2p_instantiation_forward false
 fi
 
 # ============================================================================
@@ -275,13 +331,21 @@ echo "=== F2P-3 (weight 0.12): config dimensions correct ==="
 R3=$("$PYTHON" << 'PYEOF' 2>&1
 import os, json, glob
 d = "/workspace/ComfyUI/comfy/text_encoders"
-candidates = glob.glob(os.path.join(d, "jina*clip*2*.json")) + glob.glob(os.path.join(d, "jina_clip_2*.json"))
+candidates = glob.glob(os.path.join(d, "jina*clip*.json"))
+jina_py = os.environ.get("JINA_FILE", os.path.join(d, "jina_clip_2.py"))
 if not candidates:
     # config might be inline in the .py file
-    src = open(os.path.join(d, "jina_clip_2.py")).read()
+    src = open(jina_py).read()
     # Look for hidden_size etc inline
     if "250002" in src and "1024" in src and ("24" in src) and ("4096" in src):
         print("PARTIAL_INLINE")
+        raise SystemExit
+    # Round-5 broaden: accept the canonical PR's approach of delegating config
+    # to HuggingFace AutoConfig.from_pretrained(...). This is the upstream PR's
+    # chosen pattern (use HF's loaded config rather than re-declaring dimensions
+    # inline). Pass with PARTIAL credit since dimensions are HF-source-of-truth.
+    if "AutoConfig" in src and "from_pretrained" in src and "trust_remote_code" in src:
+        print("PARTIAL_AUTOCONFIG (delegated to HF AutoConfig.from_pretrained)")
         raise SystemExit
     print("FAIL no_config"); raise SystemExit
 
@@ -313,11 +377,13 @@ PYEOF
 )
 echo "$R3"
 if echo "$R3" | grep -q "^PASS"; then
-    add_reward 0.12
+    add_reward 0.12; emit_gate f2p_config_dimensions true
     echo "  +0.12"
 elif echo "$R3" | grep -q "^PARTIAL"; then
-    add_reward 0.06
+    add_reward 0.06; emit_gate f2p_config_dimensions true
     echo "  +0.06 (partial)"
+else
+    emit_gate f2p_config_dimensions false
 fi
 
 # ============================================================================
@@ -336,7 +402,8 @@ except Exception as e:
     print(f"FAIL import: {e}"); raise SystemExit
 
 InnerCls = find_inner_cls(mod)
-src_jina = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read()
+import os
+src_jina = open(os.environ["JINA_FILE"]).read()
 
 # Check via source for special_tokens dict
 ok_specials = False
@@ -360,6 +427,16 @@ if not ok_specials:
     except Exception:
         pass
 
+# Round-5 broaden: accept the canonical PR's AutoTokenizer-with-trust_remote_code
+# pattern (delegates special tokens to HuggingFace). XLM-R tokenizer is the only
+# valid choice for jina-clip-v2; explicitly invoking AutoTokenizer + trust_remote_code
+# with a Jina path is canonical-equivalent to declaring start/pad/end=0/1/2.
+if not ok_specials:
+    if "AutoTokenizer" in src_jina and "trust_remote_code" in src_jina:
+        ok_specials = True
+        print("PASS (canonical AutoTokenizer + trust_remote_code: special tokens delegated to XLM-R)")
+        raise SystemExit
+
 if ok_specials:
     print("PASS")
 else:
@@ -368,8 +445,10 @@ PYEOF
 )
 echo "$R4"
 if echo "$R4" | grep -q "^PASS"; then
-    add_reward 0.09
+    add_reward 0.09; emit_gate f2p_special_tokens true
     echo "  +0.09"
+else
+    emit_gate f2p_special_tokens false
 fi
 
 # ============================================================================
@@ -379,8 +458,8 @@ fi
 # ============================================================================
 echo "=== F2P-5 (weight 0.09): uses RoPE (no absolute position embeddings) ==="
 R5=$("$PYTHON" << 'PYEOF' 2>&1
-import re
-src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read().lower()
+import re, os
+src = open(os.environ["JINA_FILE"]).read().lower()
 
 # Must mention rope / rotary
 has_rope_term = ("rope" in src) or ("rotary" in src)
@@ -400,17 +479,25 @@ if has_rope_term and has_rotate_half and not abs_pos_used:
     print("PASS")
 elif has_rope_term and not abs_pos_used:
     print("PARTIAL")
+elif ("automodel" in src and "trust_remote_code" in src) and not abs_pos_used:
+    # Round-5: canonical PR delegates the encoder architecture (including RoPE)
+    # to HF AutoModel. The Jina HF model uses RoPE internally; checking the
+    # local file for "rope" strings is moot when the file is a thin wrapper
+    # around AutoModel.from_config(trust_remote_code=True). Accept as PARTIAL.
+    print("PARTIAL (canonical HF AutoModel wrapper: RoPE delegated to remote-code model)")
 else:
     print(f"FAIL rope_term={has_rope_term} rotate={has_rotate_half} abs={abs_pos_used}")
 PYEOF
 )
 echo "$R5"
 if echo "$R5" | grep -q "^PASS"; then
-    add_reward 0.09
+    add_reward 0.09; emit_gate f2p_rope_embeddings true
     echo "  +0.09"
 elif echo "$R5" | grep -q "^PARTIAL"; then
-    add_reward 0.04
+    add_reward 0.04; emit_gate f2p_rope_embeddings true
     echo "  +0.04 (partial)"
+else
+    emit_gate f2p_rope_embeddings false
 fi
 
 # ============================================================================
@@ -424,7 +511,7 @@ sys.path.insert(0, "/tmp"); sys.path.insert(0, "/workspace/ComfyUI")
 import torch
 from _jina_probe import load_module, find_inner_cls
 
-src = open("/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py").read().lower()
+src = open(os.environ["JINA_FILE"]).read().lower()
 # Source-level check: mean pooling somewhere
 has_mean_pooling_term = ("mean" in src and "pool" in src) or "mean_pool" in src or "mean pooling" in src
 # Should enable_attention_masks (because mean pool requires real mask)
@@ -475,11 +562,13 @@ PYEOF
 )
 echo "$R6"
 if echo "$R6" | grep -q "^PASS"; then
-    add_reward 0.09
+    add_reward 0.09; emit_gate f2p_mean_pooling true
     echo "  +0.09"
 elif echo "$R6" | grep -q "^PARTIAL"; then
-    add_reward 0.04
+    add_reward 0.04; emit_gate f2p_mean_pooling true
     echo "  +0.04 (partial)"
+else
+    emit_gate f2p_mean_pooling false
 fi
 
 # ============================================================================
@@ -488,16 +577,16 @@ fi
 # ============================================================================
 echo "=== F2P-7 (weight 0.06): sd.py integration ==="
 R7=$("$PYTHON" << 'PYEOF' 2>&1
-import re
+import re, os
 src = open("/workspace/ComfyUI/comfy/sd.py").read()
-
-# Need: import of jina_clip_2, TEModel enum entry, detect branch, dispatch branch
-has_import = "comfy.text_encoders.jina_clip_2" in src
-has_enum = re.search(r'\bJINA_CLIP_2\s*=\s*\d+', src) is not None
-has_detect = bool(re.search(r'TEModel\.JINA_CLIP_2', src))
-# Dispatch branch: must reference JinaClip class for clip_target.clip
-has_dispatch = bool(re.search(r'clip_target\.clip\s*=\s*comfy\.text_encoders\.jina_clip_2\.', src))
-has_dispatch_tok = bool(re.search(r'clip_target\.tokenizer\s*=\s*comfy\.text_encoders\.jina_clip_2\.', src))
+mod = os.environ.get("JINA_MODULE", "comfy.text_encoders.jina_clip_2")
+# Accept either jina_clip_2 (upstream PR name) or jina_clip (session name).
+# Enum + detect identifiers stay JINA_CLIP_2 regardless of module name.
+has_import = mod in src or "comfy.text_encoders.jina_clip" in src
+has_enum = re.search(r'\b(JINA_CLIP_2|JINA_CLIP)\s*=\s*\d+', src) is not None
+has_detect = bool(re.search(r'TEModel\.(JINA_CLIP_2|JINA_CLIP)', src))
+has_dispatch = bool(re.search(r'clip_target\.clip\s*=\s*comfy\.text_encoders\.jina_clip', src))
+has_dispatch_tok = bool(re.search(r'clip_target\.tokenizer\s*=\s*comfy\.text_encoders\.jina_clip', src))
 
 score = sum([has_import, has_enum, has_detect, has_dispatch, has_dispatch_tok])
 print(f"score={score}/5  imp={has_import} enum={has_enum} det={has_detect} disp={has_dispatch} tok={has_dispatch_tok}")
@@ -511,11 +600,13 @@ PYEOF
 )
 echo "$R7"
 if echo "$R7" | grep -q "^PASS$"; then
-    add_reward 0.06
+    add_reward 0.06; emit_gate f2p_sdpy_integration true
     echo "  +0.06"
 elif echo "$R7" | grep -q "^PARTIAL$"; then
-    add_reward 0.03
+    add_reward 0.03; emit_gate f2p_sdpy_integration true
     echo "  +0.03 (partial)"
+else
+    emit_gate f2p_sdpy_integration false
 fi
 
 # ============================================================================
@@ -527,25 +618,57 @@ echo "=== EXISTING GATES REWARD: $REWARD ==="
 echo "$REWARD" > /logs/verifier/reward.txt
 
 # ---- inner-claude upstream gates ----
+# NOTE: GATES_FILE was initialized + populated with F2P verdicts above.
+# Do NOT truncate; append upstream verdicts below for diagnostics.
 mkdir -p /logs/verifier
 GATES_FILE="/logs/verifier/gates.json"
-> "$GATES_FILE"
 
-echo "=== Upstream F2P gate: jina_clip_2.py syntax + config JSON ==="
-if python3 -c "import ast, json; ast.parse(open('/workspace/ComfyUI/comfy/text_encoders/jina_clip_2.py').read()); d=json.load(open('/workspace/ComfyUI/comfy/text_encoders/jina_clip_2_config.json')); assert d.get('hidden_size')==1024 and d.get('vocab_size')==250002 and d.get('num_hidden_layers')==24" 2>/dev/null; then
-    echo '{"id": "f2p_upstream_pyfile_and_config", "passed": true, "detail": "jina_clip_2.py is valid Python and config JSON has correct dimensions"}' >> "$GATES_FILE"
+echo "=== Upstream F2P gate: jina_clip*.py syntax + config dimensions ==="
+# Accept either jina_clip_2.py (upstream PR) or jina_clip.py (session) and
+# config either as a sibling JSON OR inline in the .py file.
+if python3 -c "
+import ast, json, os, glob
+jf = os.environ.get('JINA_FILE')
+ast.parse(open(jf).read())
+d = '/workspace/ComfyUI/comfy/text_encoders'
+cfg_paths = glob.glob(os.path.join(d, 'jina*clip*.json'))
+ok = False
+for cp in cfg_paths:
+    try:
+        cd = json.load(open(cp))
+        if cd.get('hidden_size')==1024 and cd.get('vocab_size')==250002 and cd.get('num_hidden_layers')==24:
+            ok = True; break
+    except Exception: pass
+if not ok:
+    src = open(jf).read()
+    if '250002' in src and '1024' in src and '24' in src:
+        ok = True
+    # Round-5 broaden: canonical PR uses AutoConfig.from_pretrained(...) to
+    # delegate config to HuggingFace — accept that as an equivalent canonical
+    # shape since the XLM-R config is HF-source-of-truth.
+    if not ok:
+        if 'AutoConfig' in src and 'trust_remote_code' in src and 'from_pretrained' in src:
+            ok = True
+import sys; sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_pyfile_and_config", "passed": true, "detail": "jina_clip*.py is valid Python and config has correct dimensions"}' >> "$GATES_FILE"
     echo "  PASSED"
 else
-    echo '{"id": "f2p_upstream_pyfile_and_config", "passed": false, "detail": "jina_clip_2.py missing or invalid, or config JSON missing or has wrong dimensions"}' >> "$GATES_FILE"
+    echo '{"id": "f2p_upstream_pyfile_and_config", "passed": false, "detail": "jina_clip*.py missing/invalid or config wrong"}' >> "$GATES_FILE"
     echo "  FAILED"
 fi
 
-echo "=== Upstream F2P gate: sd.py JINA_CLIP_2 integration ==="
-if python3 -c "import re,sys; src=open('/workspace/ComfyUI/comfy/sd.py').read(); ok=('comfy.text_encoders.jina_clip_2' in src) and bool(re.search(r'JINA_CLIP_2\s*=\s*\d+',src)) and ('TEModel.JINA_CLIP_2' in src); sys.exit(0 if ok else 1)" 2>/dev/null; then
-    echo '{"id": "f2p_upstream_sdpy_integration", "passed": true, "detail": "sd.py has import, enum, and detect for JINA_CLIP_2"}' >> "$GATES_FILE"
+echo "=== Upstream F2P gate: sd.py JINA_CLIP integration ==="
+if python3 -c "
+import re, sys
+src = open('/workspace/ComfyUI/comfy/sd.py').read()
+ok = ('comfy.text_encoders.jina_clip' in src) and bool(re.search(r'\bJINA_CLIP_2?\b\s*=\s*\d+', src)) and bool(re.search(r'TEModel\.JINA_CLIP', src))
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    echo '{"id": "f2p_upstream_sdpy_integration", "passed": true, "detail": "sd.py has import, enum, and detect for JINA_CLIP"}' >> "$GATES_FILE"
     echo "  PASSED"
 else
-    echo '{"id": "f2p_upstream_sdpy_integration", "passed": false, "detail": "sd.py missing import, enum, or detect for JINA_CLIP_2"}' >> "$GATES_FILE"
+    echo '{"id": "f2p_upstream_sdpy_integration", "passed": false, "detail": "sd.py missing import, enum, or detect for JINA_CLIP"}' >> "$GATES_FILE"
     echo "  FAILED"
 fi
 

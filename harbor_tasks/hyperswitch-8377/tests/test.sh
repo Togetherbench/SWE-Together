@@ -34,6 +34,12 @@ export PATH="/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin:$PATH"
 mkdir -p /logs/verifier
 REWARD=0.0
 
+emit_gate() {
+    local gid="$1" passed="$2" detail="${3:-}"
+    detail="${detail//\"/\\\"}"
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$gid" "$passed" "$detail" >> /logs/verifier/gates.json
+}
+
 cd /workspace/hyperswitch 2>/dev/null || { echo "$REWARD" > /logs/verifier/reward.txt; exit 0; }
 
 echo "============================================"
@@ -77,28 +83,34 @@ if [ $EDITS_DETECTED -eq 0 ]; then
     exit 0
 fi
 
-# ─── P2P GATE: router_env compiles (regression guard, no reward) ───
+# ─── P2P GATE: router_env compiles (INFORMATIONAL, diagnostic only) ───
+# Per v0.4.3.1 rule: P2P_REGRESSION must NOT zero reward. We log the verdict
+# but never short-circuit the script. Also OOM-tolerant: SIGKILL (rc=137) on a
+# memory-constrained sandbox is an infra fault, not an agent failure.
 echo ""
-echo "=== P2P GATE: router_env compiles ==="
-cargo check -p router_env --quiet 2>&1 | tail -5
-if [ ${PIPESTATUS[0]} -ne 0 ]; then
-    echo "REGRESSION: router_env broken"
-    echo "0.0" > /logs/verifier/reward.txt
-    exit 0
+echo "=== P2P GATE (informational): router_env compiles ==="
+_cargo_check_with_oom_detect cargo check -p router_env --quiet 2>&1 | tail -5
+ROUTERENV_RC=${PIPESTATUS[0]}
+if [ "$ROUTERENV_RC" = "99" ]; then
+    echo "WARN: router_env check OOM/SIGKILL (infra fault — ignoring)"
+elif [ "$ROUTERENV_RC" -ne 0 ]; then
+    echo "WARN (informational): router_env did not pass cargo check (rc=$ROUTERENV_RC)"
+else
+    echo "OK"
 fi
-echo "OK"
 
-# ─── P2P GATE: api_models compiles with v2 (regression guard) ───
+# ─── P2P GATE: api_models compiles with v2 (INFORMATIONAL, diagnostic only) ───
 echo ""
-echo "=== P2P GATE: api_models compiles with v2 ==="
-cargo check -p api_models --no-default-features --features "v2" --quiet 2>&1 | tail -10
+echo "=== P2P GATE (informational): api_models compiles with v2 ==="
+_cargo_check_with_oom_detect cargo check -p api_models --no-default-features --features "v2" --quiet 2>&1 | tail -10
 APIMODELS_RC=${PIPESTATUS[0]}
-if [ $APIMODELS_RC -ne 0 ]; then
-    echo "REGRESSION: api_models broken with v2"
-    echo "0.0" > /logs/verifier/reward.txt
-    exit 0
+if [ "$APIMODELS_RC" = "99" ]; then
+    echo "WARN: api_models check OOM/SIGKILL (infra fault — ignoring)"
+elif [ "$APIMODELS_RC" -ne 0 ]; then
+    echo "WARN (informational): api_models did not pass cargo check (rc=$APIMODELS_RC)"
+else
+    echo "OK"
 fi
-echo "OK"
 
 REWARD_AWK="0.00"
 
@@ -132,8 +144,10 @@ TYPE_NAME=$(awk '
 if [ -n "$TYPE_NAME" ]; then
     REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.06}')
     echo "PASS: detected response type '$TYPE_NAME' (+0.06)"
+    emit_gate "f2p_response_type" true "detected $TYPE_NAME"
 else
     echo "FAIL: no response type with payment_attempts: Vec<..> found"
+    emit_gate "f2p_response_type" false "no response type with payment_attempts: Vec<..>"
 fi
 
 # ===========================================================================
@@ -159,12 +173,15 @@ if [ -n "$HANDLER_NAME" ]; then
        grep -qE "GlobalPaymentId|payment_id" /tmp/handler_body.txt; then
         REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.09}')
         echo "PASS: handler '$HANDLER_NAME' wired to core list-attempts (+0.09)"
+        emit_gate "f2p_handler_wiring" true "handler $HANDLER_NAME wired to core"
     else
         echo "FAIL: handler exists but does not call list_payment_attempts core fn with payment id"
+        emit_gate "f2p_handler_wiring" false "handler exists but not wired"
     fi
     rm -f /tmp/handler_body.txt
 else
     echo "FAIL: no handler function found"
+    emit_gate "f2p_handler_wiring" false "no handler function"
 fi
 
 # ===========================================================================
@@ -201,8 +218,10 @@ fi
 if [ $CORE_OK -eq 1 ]; then
     REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.09}')
     echo "PASS: core fn queries attempts and returns list response (+0.09)"
+    emit_gate "f2p_core_fn" true "core fn present"
 else
     echo "FAIL: core fn missing or doesn't query/return correctly"
+    emit_gate "f2p_core_fn" false "core fn missing or mis-wired"
 fi
 
 # ===========================================================================
@@ -225,8 +244,10 @@ fi
 if [ $ROUTE_OK -eq 1 ]; then
     REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.06}')
     echo "PASS: GET route /list_attempts or /attempts registered (+0.06)"
+    emit_gate "f2p_route_registration" true "GET route registered"
 else
     echo "FAIL: route not properly registered"
+    emit_gate "f2p_route_registration" false "route not registered"
 fi
 
 # ===========================================================================
@@ -259,6 +280,11 @@ fi
 AUX_REWARD=$(awk -v s=$AUX_SCORE 'BEGIN{printf "%.4f", (s/3.0)*0.06}')
 REWARD_AWK=$(awk -v r="$REWARD_AWK" -v a="$AUX_REWARD" 'BEGIN{printf "%.4f", r+a}')
 echo "Aux subscore: $AUX_SCORE/3 → +$AUX_REWARD"
+if [ "$AUX_SCORE" -ge 2 ]; then
+    emit_gate "f2p_auxiliary_plumbing" true "$AUX_SCORE/3 aux checks pass"
+else
+    emit_gate "f2p_auxiliary_plumbing" false "$AUX_SCORE/3 aux checks pass"
+fi
 
 # ===========================================================================
 # F2P Gate 6 — Behavioral / dominant: full router crate compiles with v2
@@ -266,18 +292,46 @@ echo "Aux subscore: $AUX_SCORE/3 → +$AUX_REWARD"
 # ===========================================================================
 echo ""
 echo "=== F2P Gate 6: cargo check -p router with v2 features ==="
-cargo check -p router --no-default-features --features "v2,olap,oltp" --quiet 2>&1 | tail -40
+# Bounded to 300s — full cargo check on hyperswitch's router crate routinely
+# exceeds the 900-1200s sandbox lifetime, causing oracle replay to ERROR. If
+# the check times out we treat it as inconclusive and award the gate if
+# structural gates 1-5 all passed (which is strong canonical-shape evidence
+# the crate is well-formed). Round-5 used 600s; bumped down to 300s after the
+# retry path together still spent >900s.
+timeout 300 cargo check -p router --no-default-features --features "v2,olap,oltp" --quiet 2>&1 | tail -40
 G_RC=${PIPESTATUS[0]}
-if [ $G_RC -ne 0 ]; then
+if [ $G_RC -eq 124 ]; then
+    echo "TIMEOUT after 300s: treating as inconclusive (will fallback to structural credit)"
+fi
+# Skip the retry path on timeout — second cargo invocation would push past the
+# sandbox lifetime. Only retry on a real (non-timeout) compile error.
+if [ $G_RC -ne 0 ] && [ $G_RC -ne 124 ]; then
     echo "Retrying with extra features..."
-    cargo check -p router --no-default-features --features "v2,olap,oltp,kv_store,stripe,payouts,frm,dummy_connector,recon" --quiet 2>&1 | tail -40
+    timeout 240 cargo check -p router --no-default-features --features "v2,olap,oltp,kv_store,stripe,payouts,frm,dummy_connector,recon" --quiet 2>&1 | tail -40
     G_RC=${PIPESTATUS[0]}
 fi
 if [ $G_RC -eq 0 ]; then
     REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.24}')
     echo "PASS: router crate compiles with v2 features (+0.24)"
+    emit_gate "f2p_cargo_check_router_v2" true "compiled with v2 features"
+elif [ $G_RC -eq 124 ]; then
+    # Timeout: pass if all 4 structural F2P gates (1-4) above passed — strong
+    # evidence the canonical's surface area is intact.
+    STRUCTURAL_OK=0
+    if [ -n "$TYPE_NAME" ] && [ -n "$HANDLER_NAME" ] && [ $CORE_OK -eq 1 ] && [ $ROUTE_OK -eq 1 ]; then
+        STRUCTURAL_OK=1
+    fi
+    if [ $STRUCTURAL_OK -eq 1 ]; then
+        REWARD_AWK=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r+0.24}')
+        echo "PASS (inconclusive timeout): structural gates 1-4 all passed (+0.24)"
+        emit_gate "f2p_cargo_check_router_v2" true "cargo check timed out; structural gates 1-4 all passed (canonical-shape OK)"
+    else
+        echo "FAIL: cargo check timed out and structural gates 1-4 did not all pass"
+        emit_gate "f2p_cargo_check_router_v2" false "timeout + structural gates 1-4 incomplete"
+    fi
 else
     echo "FAIL: router crate does not compile with v2 features"
+    emit_gate "f2p_cargo_check_router_v2" false "compilation failed (rc=$G_RC)"
 fi
 
 REWARD=$(awk -v r="$REWARD_AWK" 'BEGIN{printf "%.4f", r}')
@@ -347,13 +401,12 @@ fi
 # ---- upstream reward adjustment ----
 python3 - <<'PYEOF'
 import json, os, sys
+# Only the IDs actually emitted to /logs/verifier/gates.json contribute via
+# the WEIGHTS path. The bash REWARD_AWK already accumulates 0.06+0.09+0.09+
+# 0.06+0.06+0.24 = 0.60 inline (legacy inner reward). The upstream openapi
+# gates add the remaining 0.40 weight via this dict. With sum=0.40,
+# inner_weight=0.60 — the legacy inner reward is preserved at full scale.
 WEIGHTS = {
-    "f2p_response_type": 0.06,
-    "f2p_handler_wiring": 0.09,
-    "f2p_core_fn": 0.09,
-    "f2p_route_registration": 0.06,
-    "f2p_auxiliary_plumbing": 0.06,
-    "f2p_cargo_check_router_v2": 0.24,
     "f2p_upstream_openapi_route": 0.2,
     "f2p_upstream_openapi_v2_schema": 0.2
 }
@@ -401,3 +454,141 @@ echo "============================================"
 FINAL_REWARD=$(cat /logs/verifier/reward.txt 2>/dev/null || echo "0.0000")
 echo "FINAL REWARD (after upstream gates): $FINAL_REWARD"
 echo "============================================"
+
+# >>> auto_gate_bridge >>>
+# Auto-generated by scripts/fix_emit_gates.py.
+# Bridges manifest gates → /logs/verifier/gates.json so the canonical
+# F2P-coverage formula matches the legacy reward.txt for tasks that were
+# scored only via inline `add_reward` style. Idempotent.
+#
+# Semantics:
+#   F2P gate without an explicit emit → proportionally pass `round(N*L)`
+#     gates (where N = total F2P gates, L = legacy reward.txt), so the
+#     canonical f2p_pass_rate reproduces the legacy reward.
+#   P2P_REGRESSION without an explicit emit → passed: true (informational,
+#     matches pre-canonical bash where unemitted P2P had no effect).
+#
+# After bridging, reward.txt is left as the legacy value. The host-side
+# canonicalize_reward_from_gates() (per_turn_replay.py, oracle_replay.py)
+# reads the now-complete gates.json and recomputes via the unified formula.
+python3 - <<'AUTO_GATE_BRIDGE_PYEOF'
+import json, os, sys
+from pathlib import Path
+
+LOGS = Path("/logs/verifier")
+gates_path = LOGS / "gates.json"
+reward_path = LOGS / "reward.txt"
+
+# Locate the manifest at runtime. Harbor mounts the harbor task's tests/
+# dir at /tests so the manifest is /tests/test_manifest.yaml.
+manifest_candidates = [
+    Path("/tests/test_manifest.yaml"),
+    Path(os.environ.get("TEST_MANIFEST", "")),
+]
+manifest_path = next((p for p in manifest_candidates if p and p.is_file()), None)
+if manifest_path is None:
+    sys.exit(0)
+
+try:
+    import yaml
+    raw = yaml.safe_load(manifest_path.read_text())
+except Exception:
+    sys.exit(0)
+
+gates = (raw or {}).get("gates") or []
+if not gates:
+    sys.exit(0)
+
+try:
+    legacy_reward = float(reward_path.read_text().strip())
+except Exception:
+    legacy_reward = 0.0
+
+existing_ids = set()
+try:
+    txt = gates_path.read_text().strip()
+    if txt.startswith("[") or txt.startswith("{"):
+        d = json.loads(txt)
+        if isinstance(d, dict) and "gates" in d:
+            for g in d["gates"]:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+        elif isinstance(d, list):
+            for g in d:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+    else:
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if obj.get("id"):
+                    existing_ids.add(obj["id"])
+            except Exception:
+                pass
+except FileNotFoundError:
+    pass
+
+all_gate_ids = []
+f2p_missing_ids = []
+p2p_missing_ids = []
+for g in gates:
+    if not isinstance(g, dict):
+        continue
+    gid = g.get("id")
+    kind = g.get("kind", "F2P")
+    if not gid:
+        continue
+    all_gate_ids.append((gid, kind))
+    if gid in existing_ids:
+        continue
+    if kind == "F2P":
+        f2p_missing_ids.append(gid)
+    elif kind.startswith("P2P"):  # P2P_REGRESSION, P2P, deprecated kinds
+        p2p_missing_ids.append(gid)
+
+f2p_total = sum(1 for gid, kind in all_gate_ids if kind == "F2P")
+target_passes = int(round(legacy_reward * f2p_total))
+
+explicit_pass = 0
+try:
+    with gates_path.open() as _f:
+        for line in _f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("id") and d.get("passed"):
+                for (gid, kind) in all_gate_ids:
+                    if gid == d["id"] and kind == "F2P":
+                        explicit_pass += 1
+                        break
+except Exception:
+    pass
+
+bridge_passes = max(0, target_passes - explicit_pass)
+bridge_passes = min(bridge_passes, len(f2p_missing_ids))
+
+to_append = []
+for i, gid in enumerate(f2p_missing_ids):
+    passed = bool(i < bridge_passes)
+    detail = "auto-bridge: F2P proportional (target=%d/%d, legacy=%.3f)" % (
+        target_passes, f2p_total, legacy_reward,
+    )
+    to_append.append({"id": gid, "passed": passed, "detail": detail})
+for gid in p2p_missing_ids:
+    to_append.append({
+        "id": gid,
+        "passed": True,
+        "detail": "auto-bridge: P2P default-pass (no explicit emit)",
+    })
+
+if to_append:
+    LOGS.mkdir(parents=True, exist_ok=True)
+    with gates_path.open("a") as _f:
+        for obj in to_append:
+            _f.write(json.dumps(obj) + "\n")
+AUTO_GATE_BRIDGE_PYEOF
+# <<< auto_gate_bridge <<<

@@ -1,7 +1,7 @@
-version: 1.0
+version: "1.0"
 turns:
   - turn: 1
-    message: "legacy"
+    user_message: "legacy"
     deliverable: "see instruction.md"
 gates:
   # --- existing F2P gates (from test.sh, scaled to fit total F2P = 1.0) ---

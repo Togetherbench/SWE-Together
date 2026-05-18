@@ -19,9 +19,12 @@ RUN git init /workspace/nunchaku && \
     git checkout FETCH_HEAD
 
 # Install CPU-only PyTorch + minimal deps (no CUDA required)
+# pyyaml is required by the verifier's auto_gate_bridge to load
+# test_manifest.yaml — without it, F2P gates aren't registered in
+# /logs/verifier/gates.json and canonical reward drops to 0.
 RUN pip install --no-cache-dir --break-system-packages \
     torch==2.6.0+cpu --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir --break-system-packages safetensors==0.7.0
+    pip install --no-cache-dir --break-system-packages safetensors==0.7.0 pyyaml==6.0.2
 
 # Set PYTHONPATH so nunchaku package is importable
 ENV PYTHONPATH=/workspace/nunchaku

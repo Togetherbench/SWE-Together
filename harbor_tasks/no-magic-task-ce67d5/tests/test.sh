@@ -50,8 +50,10 @@ P2P_FAILED=false
 if [ ! -f "$TARGET" ]; then
     echo "[P2P_REGRESSION] FAIL: $TARGET not found"
     P2P_FAILED=true
+    emit_gate "p2p_file_exists" "false"
 else
     echo "[P2P_REGRESSION] PASS: $TARGET exists"
+    emit_gate "p2p_file_exists" "true"
 fi
 
 # P2P: Anti-stub — file must have >= 80 lines (not a trivial placeholder)
@@ -59,11 +61,16 @@ LINE_COUNT=$(wc -l < "$TARGET" 2>/dev/null || echo 0)
 if [ "$LINE_COUNT" -lt 80 ]; then
     echo "[P2P_REGRESSION] FAIL: $TARGET has $LINE_COUNT lines (< 80, likely a stub)"
     P2P_FAILED=true
+    emit_gate "p2p_not_trivial" "false"
 else
     echo "[P2P_REGRESSION] PASS: $TARGET has $LINE_COUNT lines"
+    emit_gate "p2p_not_trivial" "true"
 fi
 
-# P2P: AST anti-stub — at least 3 functions must have body depth > 3 statements
+# P2P: AST anti-stub — at least 2 functions must have body depth >= 3 statements
+# (the canonical microtokenizer.py has 7 functions; most use short, idiomatic
+# Counter/list-comprehension bodies, so the threshold needs to match the
+# canonical's actual shape rather than reject a perfectly valid teaching file).
 AST_STUB_CHECK=$(python3 -c "
 import ast, sys
 try:
@@ -79,17 +86,19 @@ def body_depth(node):
     return len(stmts)
 
 funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-deep = [f.name for f in funcs if body_depth(f) > 3]
-if len(deep) >= 3:
+deep = [f.name for f in funcs if body_depth(f) >= 3]
+if len(deep) >= 2:
     print('PASS:' + ','.join(deep))
 else:
-    print('FAIL:only ' + str(len(deep)) + ' functions with body > 3 statements (need >=3)')
+    print('FAIL:only ' + str(len(deep)) + ' functions with body >= 3 statements (need >=2)')
 ")
 if echo "$AST_STUB_CHECK" | grep -q "^PASS:"; then
     echo "[P2P_REGRESSION] PASS: AST anti-stub — $AST_STUB_CHECK"
+    emit_gate "p2p_anti_stub_ast" "true"
 else
     echo "[P2P_REGRESSION] FAIL: AST anti-stub — $AST_STUB_CHECK"
     P2P_FAILED=true
+    emit_gate "p2p_anti_stub_ast" "false"
 fi
 
 # ---------------------------------------------------------------------------

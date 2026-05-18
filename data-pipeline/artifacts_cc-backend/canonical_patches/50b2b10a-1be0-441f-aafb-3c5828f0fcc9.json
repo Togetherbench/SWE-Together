@@ -28,7 +28,7 @@
     "Curation kept ONLY the README diff using msg 84's new_string verbatim. Removed: cmd/cc-backend/main.go, internal/config/config.go, internal/config/schema.go, internal/repository/config.go, internal/repository/dbConnection.go (all reverted by user mid-session).",
     "candidate: replaced session-final README-only patch with upstream commit 00d2f97 'fix: Large heap allocations in sqlite driver. Sanitize sqlite config and make it configurablex.' (Mar 11 2026). The session worked on this fix iteratively (Go code: db-config, DbCacheSizeMB, setupSqlite signature, schema.go db-config block), then the user reverted all Go-code changes mid-session (msgs 64-83 in original_session.json), leaving only README documentation. test.sh grades the Go-code implementation that the session abandoned. Either the upstream commit is reinstated (this candidate) or the task is unbenchmarkable as-is."
   ],
-  "_base_commit": "5c726641629df4c51077d24d58065d04ded8e9f4",
+  "_base_commit": "c8d8f7084a4a8ac39bd3ff9650d9ba305da14f8c",
   "_repo_url": "https://github.com/ClusterCockpit/cc-backend",
   "_task_name": "cc-backend-implement-50b2b1",
   "_n_mutating_ops": 1

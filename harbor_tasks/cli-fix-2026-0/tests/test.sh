@@ -25,18 +25,35 @@ verdicts_json="{}"
 emit_gate() {
     local gid="$1"
     local pass="$2"
-    verdicts_json=$(echo "$verdicts_json" | python3 -c "
+    # Normalize bash-style true/false to Python True/False so the heredoc is
+    # valid Python source (bare `true` is a NameError; this used to silently
+    # blank out verdicts_json and cascade JSONDecodeError on every subsequent
+    # call, leaving gates.json a single newline and reward.txt unwritten).
+    local py_bool
+    case "$pass" in
+        true|True|TRUE|1) py_bool="True" ;;
+        *) py_bool="False" ;;
+    esac
+    local new_json
+    new_json=$(echo "$verdicts_json" | python3 -c "
 import json,sys
-d = json.load(sys.stdin)
-d['$gid'] = ${pass,,}
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+d['$gid'] = $py_bool
 print(json.dumps(d))
 ")
+    if [ -n "$new_json" ]; then
+        verdicts_json="$new_json"
+    fi
 }
 
 # ------------------------------------------------------------------
 # Write a Go AST checker script (reusable runner)
 # ------------------------------------------------------------------
-cat > /tmp/ast_check_runner.go << 'GOEOF'
+mkdir -p /tmp/ast_check_runner_pkg
+cat > /tmp/ast_check_runner_pkg/main.go << 'GOEOF'
 package main
 
 import (
@@ -272,6 +289,12 @@ func checkCheckpointGuardRemoved(f *ast.File) {
 }
 GOEOF
 
+# Pre-build the AST checker once so we can invoke it as a binary
+# (go run on a .go file plus extra .go args confuses go's source-file parser
+# with "named files must all be in one directory; have /tmp and .")
+cd /tmp/ast_check_runner_pkg && go mod init astcheck 2>/dev/null && go build -o /tmp/ast_check_runner_bin main.go 2>/dev/null
+cd "$STRATEGY_DIR"
+
 # ------------------------------------------------------------------
 # GATE: F2P_BUILDS — code compiles without errors
 # ------------------------------------------------------------------
@@ -303,7 +326,7 @@ fi
 # Weights: 0.22 (core ask from instruction.md)
 # ------------------------------------------------------------------
 echo "=== GATE: F2P_DEBUG_LOGS_EXIST ==="
-RESULT=$(cd "$STRATEGY_DIR" && go run /tmp/ast_check_runner.go manual_commit_hooks.go debug_logs 2>&1)
+RESULT=$(cd "$STRATEGY_DIR" && /tmp/ast_check_runner_bin manual_commit_hooks.go debug_logs 2>&1)
 RC=$?
 echo "$RESULT"
 if [ $RC -eq 0 ]; then
@@ -318,7 +341,7 @@ fi
 # Weights: 0.10 (performance improvement discovery)
 # ------------------------------------------------------------------
 echo "=== GATE: F2P_HASH_BASED_DIFF ==="
-RESULT=$(cd "$STRATEGY_DIR" && go run /tmp/ast_check_runner.go manual_commit_attribution.go no_getfilecontent_in_diff 2>&1)
+RESULT=$(cd "$STRATEGY_DIR" && /tmp/ast_check_runner_bin manual_commit_attribution.go no_getfilecontent_in_diff 2>&1)
 RC=$?
 echo "$RESULT"
 if [ $RC -eq 0 ]; then
@@ -333,7 +356,7 @@ fi
 # Weights: 0.08 (deep bug fix discovery)
 # ------------------------------------------------------------------
 echo "=== GATE: F2P_CP_GUARD_REMOVED ==="
-RESULT=$(cd "$STRATEGY_DIR" && go run /tmp/ast_check_runner.go manual_commit_hooks.go checkpoint_guard_removed 2>&1)
+RESULT=$(cd "$STRATEGY_DIR" && /tmp/ast_check_runner_bin manual_commit_hooks.go checkpoint_guard_removed 2>&1)
 RC=$?
 echo "$RESULT"
 if [ $RC -eq 0 ]; then
@@ -397,10 +420,14 @@ echo "Verdicts: $verdicts_json"
 # Compute weighted-replace reward
 # ------------------------------------------------------------------
 python3 << 'PYEOF'
-import json
+import json, traceback
 
-with open("/logs/verifier/gates.json") as f:
-    verdicts = json.load(f)
+try:
+    with open("/logs/verifier/gates.json") as f:
+        verdicts = json.load(f)
+except Exception:
+    traceback.print_exc()
+    verdicts = {}
 
 # F2P weights (must sum ≤ 1.0, each ≤ 0.30 per R006)
 WEIGHTS = {
@@ -439,5 +466,13 @@ print(f"Final reward: {reward:.4f}")
 with open("/logs/verifier/reward.txt", "w") as f:
     f.write(f"{reward:.6f}\n")
 PYEOF
+
+# Defensive fallback: if for any reason the Python block did not write a
+# numeric reward (e.g. import error, traceback before the write), guarantee
+# a valid file so the orchestrator never sees MISSING / non-numeric content.
+if ! [ -s /logs/verifier/reward.txt ] || ! grep -Eq '^[0-9]+\.?[0-9]*$' /logs/verifier/reward.txt; then
+    echo "WARN: reward.txt missing or non-numeric — writing 0.0 fallback" >&2
+    echo "0.000000" > /logs/verifier/reward.txt
+fi
 
 echo "Done. Reward written to /logs/verifier/reward.txt"

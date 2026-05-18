@@ -1,7 +1,7 @@
-version: 1.0
+version: '1.0'
 turns:
 - turn: 1
-  message: legacy
+  user_message: legacy
   deliverable: see instruction.md
 gates:
 - id: f2p_upstream_intersection_observer
@@ -10,9 +10,11 @@ gates:
   weight: 0.5
   label: TopGenerations uses IntersectionObserver for lazy video loading
   command: cd /workspace/banodoco-wrapped && grep -q 'IntersectionObserver' components/TopGenerations.tsx
+  description: TopGenerations uses IntersectionObserver for lazy video loading
 - id: f2p_upstream_yaxis_domain
   kind: F2P
   turn: null
   weight: 0.5
   label: ModelTrends YAxis domain fixed to [0, 100]
   command: cd /workspace/banodoco-wrapped && grep -qF 'domain={[0, 100]}' components/ModelTrends.tsx
+  description: ModelTrends YAxis domain fixed to [0, 100]

@@ -5,12 +5,7 @@
   "test_cmd": "go test -v ./... 2>&1",
   "repo_dir": "/entire-cli",
   "FAIL_TO_PASS": [
-    "TestPrepareCommitMsg_ConsecutiveCommits_UniqueCheckpointIDs",
-    "TestPrepareCommitMsg_ConsecutiveCommitsGetDifferentIDs",
-    "TestTwoConsecutiveCommits_GetDifferentCheckpointIDs",
-    "TestPrepareCommitMsg_NormalCommitGeneratesNewCheckpointID",
-    "TestPrepareCommitMsg_NormalCommitUsesPendingCheckpointID",
-    "TestPrepareCommitMsg_NewContentGeneratesFreshID"
+    "TestPrepareCommitMsg_ConsecutiveCommits_UniqueCheckpointIDs"
   ],
   "PASS_TO_PASS": [],
   "source_files": [

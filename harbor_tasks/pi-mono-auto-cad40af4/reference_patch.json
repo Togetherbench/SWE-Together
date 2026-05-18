@@ -46,5 +46,8 @@
     "note": "Diff coherent: 2 hdrs/+22/-6 match; 1 minor warning (editor.ts anchor); fidelity exact appropriate."
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": false
+  "_instruction_pii_redacted": false,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "0f0c54b812042f1c138479553d11a77e32d07f36"
 }

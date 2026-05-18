@@ -29,5 +29,9 @@
     "note": "Valid no_canonical stub. Category replay_no_diff consistent with anchor-mismatch failure mode. All stub-schema fields present."
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": false
+  "_instruction_pii_redacted": false,
+  "_reliability": "FLAGGED_UNRELIABLE",
+  "_reliability_reason": "replay against _base_commit 2cee7e17de produced empty diff (3 mutating ops attempted, 4 warnings)",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5) - FLAGGED",
+  "_canonical_anchor_commit": "2cee7e17de7cfbefb50d20e7c46bbf6ff6130c2b"
 }

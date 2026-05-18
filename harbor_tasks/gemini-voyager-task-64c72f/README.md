@@ -4,7 +4,7 @@
 |-------|-------|
 | Source session | `64c72f02-bd94-45d3-9334-74fbb19bdba7` |
 | Repo | Nagi-ovo/gemini-voyager (7668 stars) |
-| Base commit | `b44f33836f1d53cdb3e6dab5cc2c92d84ab9f13a` (v0.2.8 tag) |
+| Base commit | `66ad6e36eb151a5ef88beef777a69a7afdbf7d72` (direct parent of fix 23a513c) |
 | Difficulty | medium |
 | Category | bugfix |
 | Real user msgs | 3 |

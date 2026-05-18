@@ -1,7 +1,7 @@
-version: 1.0
+version: "1.0"
 turns:
   - turn: 1
-    message: "legacy"
+    user_message: "legacy"
     deliverable: "see instruction.md"
 gates:
   # Existing per-turn F2P gates (scaled to 0.60 total)
@@ -9,51 +9,51 @@ gates:
     kind: F2P
     turn: 1
     weight: 0.06
-    label: "module imports + wrapper/tokenizer classes"
+    description: "module imports + wrapper/tokenizer classes"
   - id: f2p_instantiation_forward
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "wrapper instantiates + forward pass"
+    description: "wrapper instantiates + forward pass"
   - id: f2p_config_dimensions
     kind: F2P
     turn: 1
     weight: 0.12
-    label: "config has correct XLM-RoBERTa-large dimensions"
+    description: "config has correct XLM-RoBERTa-large dimensions"
   - id: f2p_special_tokens
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "special tokens BOS=0 PAD=1 EOS=2"
+    description: "special tokens BOS=0 PAD=1 EOS=2"
   - id: f2p_rope_embeddings
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "uses RoPE positional embeddings"
+    description: "uses RoPE positional embeddings"
   - id: f2p_mean_pooling
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "mean pooling over masked tokens"
+    description: "mean pooling over masked tokens"
   - id: f2p_sdpy_integration
     kind: F2P
     turn: 1
     weight: 0.06
-    label: "sd.py integration (import + enum + detect + dispatch)"
+    description: "sd.py integration (import + enum + detect + dispatch)"
   # Upstream F2P gates (0.40 total)
   - id: f2p_upstream_pyfile_and_config
     kind: F2P
     turn: null
     weight: 0.20
-    label: "jina_clip_2.py syntax + config JSON validation"
+    description: "jina_clip_2.py syntax + config JSON validation"
   - id: f2p_upstream_sdpy_integration
     kind: F2P
     turn: null
     weight: 0.20
-    label: "sd.py JINA_CLIP_2 integration check"
+    description: "sd.py JINA_CLIP_2 integration check"
   # P2P regression gates
   - id: p2p_upstream_sdpy_syntax
     kind: P2P_REGRESSION
     turn: null
     weight: 0
-    label: "sd.py valid Python syntax"
+    description: "sd.py valid Python syntax"

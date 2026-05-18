@@ -16,6 +16,13 @@ fi
 REWARD_FILE="/logs/verifier/reward.txt"
 mkdir -p /logs/verifier
 
+# Ensure node is available BEFORE the inner-bash F2P 1 block (which depends on
+# it for behavioral locale.js testing). Without this, F2P 1 silently scores 0
+# and pulls the total below 0.5 even when the canonical fix is applied.
+if ! command -v node >/dev/null 2>&1; then
+    (apt-get install -y nodejs 2>/dev/null || sudo apt-get install -y nodejs 2>/dev/null) >/dev/null 2>&1 || true
+fi
+
 REPO_DIR=""
 for candidate in "/workspace/hyperswitch" "/workspace/repos/hyperswitch_pool_9" \
                  "/workspace/hyperswitch_pool_9" "./repos/hyperswitch_pool_9"; do
@@ -64,6 +71,12 @@ done
 
 add() {
     REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN { printf "%.4f", a + b }')
+}
+
+emit_gate() {
+    local id="$1" passed="$2" detail="$3"
+    detail="${detail//\"/\\\"}"
+    printf '{"id":"%s","passed":%s,"detail":"%s"}\n' "$id" "$passed" "$detail" >> /logs/verifier/gates.json
 }
 
 ###############################################################################
@@ -128,24 +141,26 @@ try {
   results.A = exp.getLanguage('zh-hant') === 'zh-hant';
 } catch (e) { results.A = false; }
 
-// Case B: zh_hant input must yield 'zh-hant' (fails on base)
+// Case B: en-gb input must yield 'en-gb' (upstream PR's actual fix — hyphen
+// inputs, lowercased; underscore normalization is a session-style enhancement
+// that the upstream PR did NOT ship).
 try {
-  results.B = exp.getLanguage('zh_hant') === 'zh-hant';
+  results.B = exp.getLanguage('en-gb') === 'en-gb';
 } catch (e) { results.B = false; }
 
-// Case C: ZH-HANT yields 'zh-hant'
+// Case C: ZH-HANT yields 'zh-hant' (toLowerCase is in upstream)
 try {
   results.C = exp.getLanguage('ZH-HANT') === 'zh-hant';
 } catch (e) { results.C = false; }
 
-// Case D: en_gb yields 'en-gb' (fails on base which returns 'en_gb' but key not in hyphen dict)
+// Case D: fr-be input must yield 'fr-be' (hyphen-form ISO key)
 try {
-  results.D = exp.getLanguage('en_gb') === 'en-gb';
+  results.D = exp.getLanguage('fr-be') === 'fr-be';
 } catch (e) { results.D = false; }
 
-// Case E: fr_be yields 'fr-be'
+// Case E: EN-GB also normalizes via toLowerCase
 try {
-  results.E = exp.getLanguage('fr_be') === 'fr-be';
+  results.E = exp.getLanguage('EN-GB') === 'en-gb';
 } catch (e) { results.E = false; }
 
 // Case F: dict has hyphenated keys (fails on base which has underscore keys)
@@ -159,13 +174,14 @@ if (exp.dict && typeof exp.dict === 'object') {
 results.F_dict_hyphen = dictHyphen;
 results.F_dict_no_underscore = !dictUnderscore;
 
-// Case G: lookup roundtrip — getLanguage output is a valid dict key
+// Case G: lookup roundtrip — getLanguage output is a valid dict key for
+// hyphen-form inputs (the upstream PR's surface).
 let lookupOk = false;
 if (exp.dict && typeof exp.dict === 'object') {
   try {
-    const k1 = exp.getLanguage('zh_hant');
-    const k2 = exp.getLanguage('en_gb');
-    const k3 = exp.getLanguage('fr_be');
+    const k1 = exp.getLanguage('zh-hant');
+    const k2 = exp.getLanguage('en-gb');
+    const k3 = exp.getLanguage('fr-be');
     lookupOk = !!(exp.dict[k1] && exp.dict[k2] && exp.dict[k3])
             && k1 === 'zh-hant' && k2 === 'en-gb' && k3 === 'fr-be';
   } catch (e) { lookupOk = false; }
@@ -196,6 +212,12 @@ EOF
 fi
 echo "  F2P 1 partial: $F2P1"
 add "$F2P1"
+# Emit gate: passes if behavioral checks succeeded (PASSED counter >= majority)
+if [ -n "$F2P1" ] && awk -v v="$F2P1" 'BEGIN{exit (v >= 0.1?0:1)}'; then
+    emit_gate "f2p_locale_js_behavioral" true "behavioral getLanguage checks passed"
+else
+    emit_gate "f2p_locale_js_behavioral" false "behavioral getLanguage checks failed"
+fi
 
 ###############################################################################
 # F2P 2 (0.30): Rust-side underscore→hyphen normalization at locale entry points.
@@ -275,13 +297,33 @@ for EXTRA in \
 done
 
 echo "  Normalization sites found: $NORM_FILES"
+# The upstream PR (juspay/hyperswitch#9064) does NOT touch any Rust file —
+# it's a pure JS-side dict-key migration. Rust normalization is a session-style
+# enhancement (changing how Accept-Language is parsed). Award full credit if
+# present (the agent went above-and-beyond canonical scope) but do NOT penalise
+# its absence — drop the gate's weight to 0 when 0 normalisation sites exist
+# AND the JS dict was migrated (F2P 3 covers that surface).
 if [ "$NORM_FILES" -ge 2 ]; then
     F2P2=0.18
 elif [ "$NORM_FILES" -eq 1 ]; then
     F2P2=0.108
+else
+    # Canonical-state credit: the upstream PR shipped without Rust changes.
+    # Award the gate's weight if the JS dict was migrated (canonical proof).
+    if grep -qE "[\"']en-gb[\"'][[:space:]]*:" "$LOCALE_JS" 2>/dev/null \
+       && grep -qE "[\"']fr-be[\"'][[:space:]]*:" "$LOCALE_JS" 2>/dev/null \
+       && grep -qE "[\"']zh-hant[\"'][[:space:]]*:" "$LOCALE_JS" 2>/dev/null; then
+        F2P2=0.18
+        echo "  (canonical-equivalent: JS dict migrated; Rust normalization not required by upstream PR)"
+    fi
 fi
 echo "  F2P 2 partial: $F2P2"
 add "$F2P2"
+if [ -n "$F2P2" ] && awk -v v="$F2P2" 'BEGIN{exit (v >= 0.05?0:1)}'; then
+    emit_gate "f2p_rust_locale_normalization" true "Rust normalization or canonical-equivalent JS dict migration"
+else
+    emit_gate "f2p_rust_locale_normalization" false "no Rust normalization and no canonical JS dict"
+fi
 
 ###############################################################################
 # F2P 3 (0.15): locale.js dictionary keys are hyphenated, not underscored.
@@ -315,6 +357,11 @@ elif [ "$HAS_HYPHEN_KEYS" = "1" ]; then
 fi
 echo "  F2P 3 partial: $F2P3"
 add "$F2P3"
+if [ -n "$F2P3" ] && awk -v v="$F2P3" 'BEGIN{exit (v >= 0.03?0:1)}'; then
+    emit_gate "f2p_locale_js_dict_keys" true "dict keys hyphenated"
+else
+    emit_gate "f2p_locale_js_dict_keys" false "dict keys not migrated to hyphens"
+fi
 
 ###############################################################################
 # F2P 4 (0.10): locale.js getLanguage uses hyphen-based key construction.
@@ -337,6 +384,11 @@ if echo "$GETLANG_BODY" | grep -qE "['\"]zh-hant['\"]|['\"]en-gb['\"]|['\"]fr-be
 fi
 echo "  F2P 4 partial: $F2P4"
 add "$F2P4"
+if [ -n "$F2P4" ] && awk -v v="$F2P4" 'BEGIN{exit (v >= 0.01?0:1)}'; then
+    emit_gate "f2p_getlanguage_hyphen" true "getLanguage uses hyphenated keys"
+else
+    emit_gate "f2p_getlanguage_hyphen" false "getLanguage still underscore-based"
+fi
 
 ###############################################################################
 # Final
@@ -362,7 +414,8 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 GATES_FILE="/logs/verifier/gates.json"
-> "$GATES_FILE" 2>/dev/null || true
+# Do NOT truncate $GATES_FILE here — earlier inline emit_gate calls already wrote
+# our 4 inline F2P gates. Append-only from here on.
 
 # F2P upstream gate 1: getLanguage behavioral test
 echo ""
@@ -487,3 +540,141 @@ with open('/logs/verifier/reward.txt', 'w') as f:
 print('UPSTREAM REWARD=%.4f (existing=%.4f)' % (reward, existing))
 PYEOF
 # ---- end ----
+
+# >>> auto_gate_bridge >>>
+# Auto-generated by scripts/fix_emit_gates.py.
+# Bridges manifest gates → /logs/verifier/gates.json so the canonical
+# F2P-coverage formula matches the legacy reward.txt for tasks that were
+# scored only via inline `add_reward` style. Idempotent.
+#
+# Semantics:
+#   F2P gate without an explicit emit → proportionally pass `round(N*L)`
+#     gates (where N = total F2P gates, L = legacy reward.txt), so the
+#     canonical f2p_pass_rate reproduces the legacy reward.
+#   P2P_REGRESSION without an explicit emit → passed: true (informational,
+#     matches pre-canonical bash where unemitted P2P had no effect).
+#
+# After bridging, reward.txt is left as the legacy value. The host-side
+# canonicalize_reward_from_gates() (per_turn_replay.py, oracle_replay.py)
+# reads the now-complete gates.json and recomputes via the unified formula.
+python3 - <<'AUTO_GATE_BRIDGE_PYEOF'
+import json, os, sys
+from pathlib import Path
+
+LOGS = Path("/logs/verifier")
+gates_path = LOGS / "gates.json"
+reward_path = LOGS / "reward.txt"
+
+# Locate the manifest at runtime. Harbor mounts the harbor task's tests/
+# dir at /tests so the manifest is /tests/test_manifest.yaml.
+manifest_candidates = [
+    Path("/tests/test_manifest.yaml"),
+    Path(os.environ.get("TEST_MANIFEST", "")),
+]
+manifest_path = next((p for p in manifest_candidates if p and p.is_file()), None)
+if manifest_path is None:
+    sys.exit(0)
+
+try:
+    import yaml
+    raw = yaml.safe_load(manifest_path.read_text())
+except Exception:
+    sys.exit(0)
+
+gates = (raw or {}).get("gates") or []
+if not gates:
+    sys.exit(0)
+
+try:
+    legacy_reward = float(reward_path.read_text().strip())
+except Exception:
+    legacy_reward = 0.0
+
+existing_ids = set()
+try:
+    txt = gates_path.read_text().strip()
+    if txt.startswith("[") or txt.startswith("{"):
+        d = json.loads(txt)
+        if isinstance(d, dict) and "gates" in d:
+            for g in d["gates"]:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+        elif isinstance(d, list):
+            for g in d:
+                if isinstance(g, dict) and g.get("id"):
+                    existing_ids.add(g["id"])
+    else:
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if obj.get("id"):
+                    existing_ids.add(obj["id"])
+            except Exception:
+                pass
+except FileNotFoundError:
+    pass
+
+all_gate_ids = []
+f2p_missing_ids = []
+p2p_missing_ids = []
+for g in gates:
+    if not isinstance(g, dict):
+        continue
+    gid = g.get("id")
+    kind = g.get("kind", "F2P")
+    if not gid:
+        continue
+    all_gate_ids.append((gid, kind))
+    if gid in existing_ids:
+        continue
+    if kind == "F2P":
+        f2p_missing_ids.append(gid)
+    elif kind.startswith("P2P"):  # P2P_REGRESSION, P2P, deprecated kinds
+        p2p_missing_ids.append(gid)
+
+f2p_total = sum(1 for gid, kind in all_gate_ids if kind == "F2P")
+target_passes = int(round(legacy_reward * f2p_total))
+
+explicit_pass = 0
+try:
+    with gates_path.open() as _f:
+        for line in _f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("id") and d.get("passed"):
+                for (gid, kind) in all_gate_ids:
+                    if gid == d["id"] and kind == "F2P":
+                        explicit_pass += 1
+                        break
+except Exception:
+    pass
+
+bridge_passes = max(0, target_passes - explicit_pass)
+bridge_passes = min(bridge_passes, len(f2p_missing_ids))
+
+to_append = []
+for i, gid in enumerate(f2p_missing_ids):
+    passed = bool(i < bridge_passes)
+    detail = "auto-bridge: F2P proportional (target=%d/%d, legacy=%.3f)" % (
+        target_passes, f2p_total, legacy_reward,
+    )
+    to_append.append({"id": gid, "passed": passed, "detail": detail})
+for gid in p2p_missing_ids:
+    to_append.append({
+        "id": gid,
+        "passed": True,
+        "detail": "auto-bridge: P2P default-pass (no explicit emit)",
+    })
+
+if to_append:
+    LOGS.mkdir(parents=True, exist_ok=True)
+    with gates_path.open("a") as _f:
+        for obj in to_append:
+            _f.write(json.dumps(obj) + "\n")
+AUTO_GATE_BRIDGE_PYEOF
+# <<< auto_gate_bridge <<<

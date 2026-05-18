@@ -67,7 +67,7 @@ gates:
   description: make_mask honors _lengths to mask right-padded positions (positions >= length must be False).
 - id: p2p_cache_module_loads
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: cache.py loads, ArraysCache/MambaCache/CacheList/KVCache present, _merge_caches importable from generate.py.
 - id: f2p_upstream_bd8a7d6f

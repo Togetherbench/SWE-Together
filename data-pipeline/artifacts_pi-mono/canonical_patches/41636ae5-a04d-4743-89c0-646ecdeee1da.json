@@ -4,17 +4,15 @@
   "commit_sha": "287a0b606ddfd055489007ef385123dda0fb0077",
   "repo_id": "badlogic/pi-mono",
   "is_agent_author": true,
-  "files_changed_count": 3,
-  "total_additions": 28,
-  "total_deletions": 21,
+  "files_changed_count": 1,
+  "total_additions": 21,
+  "total_deletions": 0,
   "commit_message": "fix(coding-agent): guard clipboard native load",
-  "files_changed": "M\tpackages/coding-agent/src/utils/clipboard-image.ts\nA\tpackages/coding-agent/src/utils/clipboard-native.ts\nM\tpackages/coding-agent/test/clipboard-image.test.ts\n",
+  "files_changed": "A\tpackages/coding-agent/src/utils/clipboard-native.ts\n",
   "numstat": [
-    "3\t17\tpackages/coding-agent/src/utils/clipboard-image.ts",
-    "21\t0\tpackages/coding-agent/src/utils/clipboard-native.ts",
-    "4\t4\tpackages/coding-agent/test/clipboard-image.test.ts"
+    "21\t0\tpackages/coding-agent/src/utils/clipboard-native.ts"
   ],
-  "patch": "diff --git a/packages/coding-agent/src/utils/clipboard-image.ts b/packages/coding-agent/src/utils/clipboard-image.ts\nindex 96905a6f84..58cd5913fb 100644\n--- a/packages/coding-agent/src/utils/clipboard-image.ts\n+++ b/packages/coding-agent/src/utils/clipboard-image.ts\n@@ -1,22 +1,8 @@\n import { spawnSync } from \"child_process\";\n-import { createRequire } from \"module\";\n \n+import { clipboard } from \"./clipboard-native.js\";\n import { loadPhoton } from \"./photon.js\";\n \n-type ClipboardModule = {\n-\thasImage: () => boolean;\n-\tgetImageBinary: () => Promise<Array<number>>;\n-};\n-\n-const require = createRequire(import.meta.url);\n-let Clipboard: ClipboardModule | null = null;\n-\n-try {\n-\tClipboard = require(\"@mariozechner/clipboard\") as ClipboardModule;\n-} catch {\n-\tClipboard = null;\n-}\n-\n export type ClipboardImage = {\n \tbytes: Uint8Array;\n \tmimeType: string;\n@@ -191,11 +177,11 @@ export async function readClipboardImage(options?: {\n \tif (platform === \"linux\" && isWaylandSession(env)) {\n \t\timage = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();\n \t} else {\n-\t\tif (!Clipboard || !Clipboard.hasImage()) {\n+\t\tif (!clipboard || !clipboard.hasImage()) {\n \t\t\treturn null;\n \t\t}\n \n-\t\tconst imageData = await Clipboard.getImageBinary();\n+\t\tconst imageData = await clipboard.getImageBinary();\n \t\tif (!imageData || imageData.length === 0) {\n \t\t\treturn null;\n \t\t}\ndiff --git a/packages/coding-agent/src/utils/clipboard-native.ts b/packages/coding-agent/src/utils/clipboard-native.ts\nnew file mode 100644\nindex 0000000000..e176d47c33\n--- /dev/null\n+++ b/packages/coding-agent/src/utils/clipboard-native.ts\n@@ -0,0 +1,21 @@\n+import { createRequire } from \"module\";\n+\n+export type ClipboardModule = {\n+\thasImage: () => boolean;\n+\tgetImageBinary: () => Promise<Array<number>>;\n+};\n+\n+const require = createRequire(import.meta.url);\n+let clipboard: ClipboardModule | null = null;\n+\n+const hasDisplay = process.platform !== \"linux\" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);\n+\n+if (!process.env.TERMUX_VERSION && hasDisplay) {\n+\ttry {\n+\t\tclipboard = require(\"@mariozechner/clipboard\") as ClipboardModule;\n+\t} catch {\n+\t\tclipboard = null;\n+\t}\n+}\n+\n+export { clipboard };\ndiff --git a/packages/coding-agent/test/clipboard-image.test.ts b/packages/coding-agent/test/clipboard-image.test.ts\nindex a146820ced..ad2ba5de49 100644\n--- a/packages/coding-agent/test/clipboard-image.test.ts\n+++ b/packages/coding-agent/test/clipboard-image.test.ts\n@@ -17,9 +17,9 @@ vi.mock(\"child_process\", () => {\n \t};\n });\n \n-vi.mock(\"@mariozechner/clipboard\", () => {\n+vi.mock(\"../src/utils/clipboard-native.js\", () => {\n \treturn {\n-\t\tdefault: mocks.clipboard,\n+\t\tclipboard: mocks.clipboard,\n \t};\n });\n \n@@ -54,7 +54,7 @@ describe(\"readClipboardImage\", () => {\n \t\tmocks.clipboard.getImageBinary.mockReset();\n \t});\n \n-\ttest(\"Wayland: uses wl-paste and never calls @mariozechner/clipboard\", async () => {\n+\ttest(\"Wayland: uses wl-paste and never calls clipboard\", async () => {\n \t\tmocks.clipboard.hasImage.mockImplementation(() => {\n \t\t\tthrow new Error(\"clipboard.hasImage should not be called on Wayland\");\n \t\t});\n@@ -107,7 +107,7 @@ describe(\"readClipboardImage\", () => {\n \t\texpect(Array.from(result?.bytes ?? [])).toEqual([9, 8]);\n \t});\n \n-\ttest(\"Non-Wayland: uses @mariozechner/clipboard\", async () => {\n+\ttest(\"Non-Wayland: uses clipboard\", async () => {\n \t\tmocks.spawnSync.mockImplementation(() => {\n \t\t\tthrow new Error(\"spawnSync should not be called for non-Wayland sessions\");\n \t\t});\n",
+  "patch": "diff --git a/packages/coding-agent/src/utils/clipboard-native.ts b/packages/coding-agent/src/utils/clipboard-native.ts\nnew file mode 100644\nindex 0000000..e176d47\n--- /dev/null\n+++ b/packages/coding-agent/src/utils/clipboard-native.ts\n@@ -0,0 +1,21 @@\n+import { createRequire } from \"module\";\n+\n+export type ClipboardModule = {\n+\thasImage: () => boolean;\n+\tgetImageBinary: () => Promise<Array<number>>;\n+};\n+\n+const require = createRequire(import.meta.url);\n+let clipboard: ClipboardModule | null = null;\n+\n+const hasDisplay = process.platform !== \"linux\" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);\n+\n+if (!process.env.TERMUX_VERSION && hasDisplay) {\n+\ttry {\n+\t\tclipboard = require(\"@mariozechner/clipboard\") as ClipboardModule;\n+\t} catch {\n+\t\tclipboard = null;\n+\t}\n+}\n+\n+export { clipboard };\n",
   "_source": "pi-mono",
   "_reconstruction": "upstream_commit",
   "_fidelity": "exact",
@@ -25,7 +23,7 @@
   "_n_mutating_ops": 22,
   "_curation_method": "upstream_commit",
   "_curation_source": "https://github.com/earendil-works/pi/commit/287a0b606ddfd055489007ef385123dda0fb0077",
-  "_curation_notes": "Original canonical was 'lossy' tool_replay capturing only 1/22 mutating ops (the Write of clipboard-native.ts). Session-replay confused 'path' vs 'file_path' field name causing 21 Edit ops on clipboard-image.ts and clipboard-image.test.ts to be dropped as 'file not found'. Found the exact upstream commit 287a0b6 'fix(coding-agent): guard clipboard native load' by badlogic on 2026-02-01T23:23:12Z (matches session end_time 2026-02-01T23:23:23Z within 11 sec). Repo redirects badlogic/pi-mono -> earendil-works/pi. Commit modifies the 3 files the session ran `git add` on (clipboard-image.ts, clipboard-native.ts, clipboard-image.test.ts). Replaced the partial 21-line patch with the full 3-file 103-line diff. NOTE: the Dockerfile BASE_COMMIT 9063a71f predates this commit by 958 commits and the affected files did not even exist at BASE_COMMIT — the patch applies to the tree state the session worked on (parent ad8026f8), not directly to BASE_COMMIT. Verifier test.sh GATES 1-3 only assert behavioral properties of the new clipboard-native.ts which this patch creates.",
+  "_curation_notes": "Original canonical was 'lossy' tool_replay capturing only 1/22 mutating ops (the Write of clipboard-native.ts). Session-replay confused 'path' vs 'file_path' field name causing 21 Edit ops on clipboard-image.ts and clipboard-image.test.ts to be dropped as 'file not found'. Found the exact upstream commit 287a0b6 'fix(coding-agent): guard clipboard native load' by badlogic on 2026-02-01T23:23:12Z (matches session end_time 2026-02-01T23:23:23Z within 11 sec). Repo redirects badlogic/pi-mono -> earendil-works/pi. Commit modifies the 3 files the session ran `git add` on (clipboard-image.ts, clipboard-native.ts, clipboard-image.test.ts). Replaced the partial 21-line patch with the full 3-file 103-line diff. NOTE: the Dockerfile BASE_COMMIT 9063a71f predates this commit by 958 commits and the affected files did not even exist at BASE_COMMIT \u2014 the patch applies to the tree state the session worked on (parent ad8026f8), not directly to BASE_COMMIT. Verifier test.sh GATES 1-3 only assert behavioral properties of the new clipboard-native.ts which this patch creates.",
   "_curation_verified_against_test_sh": true,
   "_review": {
     "status": "APPROVED",
@@ -38,5 +36,8 @@
       "test_alignment",
       "curation_method_documented"
     ]
-  }
+  },
+  "_re_extracted_2026_05_17": "tool_replay_rebased",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "9063a71fe64114174894e0ff364e00b386a7431a"
 }

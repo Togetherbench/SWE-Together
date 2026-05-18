@@ -29,24 +29,18 @@
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-15",
   "_verification_note": "Investigation 2026-05-15: canonical matches upstream commit 5dbeadae exactly (4 files, CHANGELOG verbatim). The reviewer-flagged file-level mismatch is TEST_SH_WRONG: tests/test.sh checks for strings (`_applyExtensionBindings`, `reload.*re-applies bindings`) that have ZERO matches in pi-mono's entire git history. Canonical is correct; test.sh expects a fictional fix surface. See sibling .investigation.md.",
-  "_reliability": {
-    "status": "RELIABLE",
-    "reason": "test_sh_repaired",
-    "note": "Previously flagged test_sh_misdesigned. 2026-05-16: test.sh rewritten to grade the actual upstream fix surface (eager bindExtensions in interactive-mode.ts initExtensions / print-mode.ts runPrintMode / rpc-mode.ts runRpcMode + CHANGELOG entry). Fabricated strings (_applyExtensionBindings, 'reload.*re-applies bindings') removed; gates now use AST-walks scoped to the 3 mode files the canonical actually touches.",
-    "flagged_date": "2026-05-15",
-    "flagged_by": "round-2 audit",
-    "resolved_date": "2026-05-16",
-    "resolved_by": "test_sh rewrite agent"
-  },
   "_review": {
     "status": "BROKEN",
     "reviewer": "subagent-batch-ag",
     "date": "2026-05-14",
-    "note": "Canonical patches interactive-mode.ts/print-mode.ts/rpc-mode.ts/CHANGELOG (per session) but test.sh grades agent-session.ts reload() body. File-level mismatch — verifier cannot score this canonical.",
+    "note": "Canonical patches interactive-mode.ts/print-mode.ts/rpc-mode.ts/CHANGELOG (per session) but test.sh grades agent-session.ts reload() body. File-level mismatch \u2014 verifier cannot score this canonical.",
     "checks_passed": [
       "schema",
       "files_match_meta",
       "fidelity_honest"
     ]
-  }
+  },
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4)",
+  "_canonical_anchor_commit": "f86e3c31033c0fe18cb5305c5fa7cf54ab1475d9",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)"
 }

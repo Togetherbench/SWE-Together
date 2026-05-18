@@ -1,61 +1,66 @@
-version: 1.0
+version: '1.0'
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
 gates:
-  # Existing F2P gates (from current_test.sh bench tests)
-  - id: f2p_install_local_nothrow
-    kind: F2P
-    turn: 1
-    weight: 0.15
-    label: "install() accepts local path without Unsupported error"
-  - id: f2p_remove_local_nothrow
-    kind: F2P
-    turn: 1
-    weight: 0.15
-    label: "remove() accepts local path without Unsupported error"
-  - id: f2p_install_local_completes
-    kind: F2P
-    turn: 1
-    weight: 0.15
-    label: "install() completes successfully for existing local path"
-  - id: f2p_remove_local_completes
-    kind: F2P
-    turn: 1
-    weight: 0.15
-    label: "remove() completes successfully for local path"
-
-  # Upstream F2P gates
-  - id: f2p_upstream_vitest_local_install_tests
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "Vitest local path install/remove tests exist and pass"
-  - id: f2p_upstream_vitest_test_count_gt91
-    kind: F2P
-    turn: null
-    weight: 0.20
-    label: "Package-manager test count increased beyond 91"
-
-  # P2P regression gates
-  - id: p2p_existing_tests_pass
-    kind: P2P_REGRESSION
-    turn: 1
-    weight: 0
-    label: "Existing package-manager tests must pass"
-  - id: p2p_upstream_vitest_pm_pass
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Existing package-manager tests pass (upstream)"
-  - id: p2p_upstream_tsgo_noEmit
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "TypeScript type-checking passes"
-  - id: p2p_upstream_biome_pm
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Biome lint passes on package-manager.ts"
+- id: f2p_install_local_nothrow
+  kind: F2P
+  turn: 1
+  weight: 0.15
+  label: install() accepts local path without Unsupported error
+  description: install() accepts local path without Unsupported error
+- id: f2p_remove_local_nothrow
+  kind: F2P
+  turn: 1
+  weight: 0.15
+  label: remove() accepts local path without Unsupported error
+  description: remove() accepts local path without Unsupported error
+- id: f2p_install_local_completes
+  kind: F2P
+  turn: 1
+  weight: 0.15
+  label: install() completes successfully for existing local path
+  description: install() completes successfully for existing local path
+- id: f2p_remove_local_completes
+  kind: F2P
+  turn: 1
+  weight: 0.15
+  label: remove() completes successfully for local path
+  description: remove() completes successfully for local path
+- id: f2p_upstream_vitest_local_install_tests
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: Vitest local path install/remove tests exist and pass
+  description: Vitest local path install/remove tests exist and pass
+- id: f2p_upstream_vitest_test_count_gt91
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: Package-manager test count increased beyond 91
+  description: Package-manager test count increased beyond 91
+- id: p2p_existing_tests_pass
+  kind: P2P_REGRESSION
+  turn: 1
+  weight: 0
+  label: Existing package-manager tests must pass
+  description: Existing package-manager tests must pass
+- id: p2p_upstream_vitest_pm_pass
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Existing package-manager tests pass (upstream)
+  description: Existing package-manager tests pass (upstream)
+- id: p2p_upstream_tsgo_noEmit
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: TypeScript type-checking passes
+  description: TypeScript type-checking passes
+- id: p2p_upstream_biome_pm
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Biome lint passes on package-manager.ts
+  description: Biome lint passes on package-manager.ts

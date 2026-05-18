@@ -38,7 +38,7 @@ turns:
 gates:
 - id: p2p_existing_tests_pass
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
   description: Existing model-registry and extensions-runner tests still pass
 - id: t1_f2p_invalid_registration_safe

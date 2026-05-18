@@ -3,7 +3,7 @@
 FROM ghcr.io/togetherbench/togetherbench/sd-scripts-dev:latest
 ARG REBUILD_TOKEN=v042-20260430  # cache-bust to force rebuild on top of new base layers
 
-ARG BASE_COMMIT=34e7138b6a80c2d88f40c99fd68879c6e683f639
+ARG BASE_COMMIT=af3a55b21d8efa03307153c66d07842bca211391
 
 RUN cd /workspace/sd-scripts && \
     git fetch --depth=1 origin ${BASE_COMMIT} && \

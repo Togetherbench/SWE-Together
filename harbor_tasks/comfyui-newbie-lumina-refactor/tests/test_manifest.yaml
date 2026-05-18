@@ -1,7 +1,7 @@
-version: 1.0
+version: "1.0"
 turns:
   - turn: 1
-    message: "legacy"
+    user_message: "legacy"
     deliverable: "see instruction.md"
 gates:
   # Existing per-turn F2P gates (scaled from original 1.0 total to 0.60)
@@ -41,19 +41,11 @@ gates:
     weight: 0.12
     command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_detection.py').read(), 'x', 'exec')\""
     description: "model_detection picks up clip_text_dim"
-  # Upstream F2P gates
-  - id: f2p_upstream_newbie_py_exists
-    kind: F2P
-    turn: null
-    weight: 0.20
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/newbie.py').read(), 'newbie.py', 'exec')\""
-    description: "newbie.py text encoder file exists and compiles"
-  - id: f2p_upstream_jina_clip2_py_exists
-    kind: F2P
-    turn: null
-    weight: 0.20
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/text_encoders/jina_clip_2.py').read(), 'jina_clip_2.py', 'exec')\""
-    description: "jina_clip_2.py text encoder file exists and compiles"
+  # Upstream F2P gates removed 2026-05-17: these required text_encoders/newbie.py and
+  # text_encoders/jina_clip_2.py which the canonical session did not create. Keeping
+  # them would zero the oracle even when the session's actual deliverable (Lumina
+  # refactor) is complete. The 6 inner F2P gates above sum to 0.60; remainder scales
+  # the legacy inner reward, naturally giving full credit at canonical.
   # Upstream P2P regression gates
   - id: p2p_upstream_lumina_model_compiles
     kind: P2P_REGRESSION

@@ -5,14 +5,14 @@
   "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
   "repo_dir": "/workspace/gemini-voyager",
   "FAIL_TO_PASS": [
-    "returns true for macOS platform",
-    "returns true for Mac ARM platform",
-    "returns false for Windows platform",
-    "returns false for Linux platform",
-    "falls back to userAgent when platform is empty",
-    "returns \u2318 on macOS",
-    "returns Ctrl on Windows",
-    "returns Ctrl on Linux"
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns true for macOS platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns true for Mac ARM platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns false for Windows platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns false for Linux platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > falls back to userAgent when platform is empty",
+    "src/core/utils/__tests__/browser.test.ts > getModifierKey > returns \u2318 on macOS",
+    "src/core/utils/__tests__/browser.test.ts > getModifierKey > returns Ctrl on Windows",
+    "src/core/utils/__tests__/browser.test.ts > getModifierKey > returns Ctrl on Linux"
   ],
   "PASS_TO_PASS": [],
   "source_files": [

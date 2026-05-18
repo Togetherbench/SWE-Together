@@ -38,7 +38,7 @@
   "_n_mutating_ops": 30,
   "_fidelity_verified": true,
   "_fidelity_verified_date": "2026-05-14",
-  "_verification_note": "Highest warn/mut ratio of the batch (0.40, 12/30), but all 12 warnings concentrate on two files heavily reworked during the session: openai-responses.ts (23+/1-) and openai-responses-reasoning-replay-e2e.test.ts (141+/2-). Large test-file builds produce many anchor mismatches as the file grows — each new test reshapes prior anchors. All warnings are pure 'edit: old text not found' (formatter-noise signature); zero file-not-found. The 168-line addition is consistent with files_changed numstat.",
+  "_verification_note": "Highest warn/mut ratio of the batch (0.40, 12/30), but all 12 warnings concentrate on two files heavily reworked during the session: openai-responses.ts (23+/1-) and openai-responses-reasoning-replay-e2e.test.ts (141+/2-). Large test-file builds produce many anchor mismatches as the file grows \u2014 each new test reshapes prior anchors. All warnings are pure 'edit: old text not found' (formatter-noise signature); zero file-not-found. The 168-line addition is consistent with files_changed numstat.",
   "_canonical_source_path": "data-pipeline/artifacts_pi-mono/canonical_patches/e86a388c-5413-4a0c-a1f8-baf7f823f5de.json",
   "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
   "_review": {
@@ -58,7 +58,7 @@
     "reviewer": "triple-check-set2",
     "date": "2026-05-15",
     "check_performed": "warnings formatter-noise",
-    "evidence": "12 anchor warnings: 8 on openai-responses.ts + 4 on openai-responses-reasoning-replay-e2e.test.ts — both in canonical files_changed. 0 file_not_found.",
+    "evidence": "12 anchor warnings: 8 on openai-responses.ts + 4 on openai-responses-reasoning-replay-e2e.test.ts \u2014 both in canonical files_changed. 0 file_not_found.",
     "note": "All warnings target files INSIDE canonical. Classic large-test-file build with formatter passes reshaping anchors. _fidelity=directional appropriate."
   },
   "_triple_check_round2": {
@@ -69,5 +69,8 @@
     "note": "Diff coherent: 3 hdrs/+168/-3 match; 12 warnings all formatter-anchor noise on openai-responses.ts (8) + reasoning-replay test (4), both inside canonical files_changed; directional fidelity honest."
   },
   "_instruction_verbatim_enforced": true,
-  "_instruction_pii_redacted": false
+  "_instruction_pii_redacted": false,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "b7cef51f3f5068f61f144bd5c5130a295a3e0c16"
 }

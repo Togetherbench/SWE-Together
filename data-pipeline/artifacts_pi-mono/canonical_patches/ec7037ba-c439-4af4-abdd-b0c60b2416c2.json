@@ -35,5 +35,8 @@
       "test_alignment",
       "no_phantom_files"
     ]
-  }
+  },
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4)",
+  "_canonical_anchor_commit": "69d02b8a5fce07041f77aba64c6ebbc8589827ab",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)"
 }

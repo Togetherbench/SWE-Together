@@ -623,11 +623,19 @@ def patch_model_management_cpu():
 
 
 if __name__ == "__main__":
+    # NOTE: only synthesize buggy state for files the canonical patch's
+    # block-replacement hunks expect to ALREADY contain buggy classes.
+    # That is model_base.py + supported_models.py (+ model_detection.py for
+    # wiring) + model_management.py (CPU fallback unrelated to the task).
+    #
+    # We intentionally DO NOT pre-synth lumina/model.py or comfy/ldm/newbie/*.
+    # The canonical patch's lumina hunk uses pre-synth anchors (line ~380
+    # `clip_text_dim=None,`), and its newbie/model.py hunk is a NEW-FILE
+    # hunk. Pre-synth'ing either would conflict at oracle-replay time
+    # with "does not match index" / "file already exists" — see
+    # analysis/ORACLE_AUDIT.md PATCH_ERR for this task.
     patch_model_management_cpu()
-    patch_lumina_model()
-    create_newbie_components()
-    create_newbie_model()
     patch_model_base()
     patch_supported_models()
     patch_model_detection()
-    print("Synthesis complete.")
+    print("Synthesis complete (buggy state limited to model_base + supported_models + model_detection).")

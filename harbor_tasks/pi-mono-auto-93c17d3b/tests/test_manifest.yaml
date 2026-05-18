@@ -1,7 +1,7 @@
-version: 1.0
+version: "1.0"
 turns:
   - turn: 1
-    message: "legacy"
+    user_message: "legacy"
     deliverable: "see instruction.md"
 gates:
   # Existing per-turn F2P gates (scaled from 1.0 total to 0.60 total)
@@ -9,51 +9,51 @@ gates:
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "Extension registers command + message handler"
+    description: "Extension registers command + message handler"
   - id: f2p_gate2_protocol_injected
     kind: F2P
     turn: 1
     weight: 0.12
-    label: "Signal protocol injected on activation"
+    description: "Signal protocol injected on activation"
   - id: f2p_gate3_reacts_to_signals
     kind: F2P
     turn: 1
     weight: 0.12
-    label: "Extension reacts to assistant signal output"
+    description: "Extension reacts to assistant signal output"
   - id: f2p_gate4_distinct_signals
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "Recognizes both open-UI and close-UI signals"
+    description: "Recognizes both open-UI and close-UI signals"
   - id: f2p_gate5_inactive_no_reaction
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "Extension is inert before activation"
+    description: "Extension is inert before activation"
   - id: f2p_gate6_pattern_fidelity
     kind: F2P
     turn: 1
     weight: 0.09
-    label: "Signal-token pattern present, no tool registration"
+    description: "Signal-token pattern present, no tool registration"
   # Upstream F2P gates (0.40 total)
   - id: f2p_upstream_file_exists
     kind: F2P
     turn: null
     weight: 0.20
-    label: "Extension file exists and is non-empty"
+    description: "Extension file exists and is non-empty"
   - id: f2p_upstream_ext_loadable
     kind: F2P
     turn: null
     weight: 0.20
-    label: "Extension loads via bun and exports a function"
+    description: "Extension loads via bun and exports a function"
   # Upstream P2P regression gates
   - id: p2p_upstream_extensions_dir
     kind: P2P_REGRESSION
     turn: null
     weight: 0
-    label: "Extensions directory exists"
+    description: "Extensions directory exists"
   - id: p2p_upstream_existing_ext_compiles
     kind: P2P_REGRESSION
     turn: null
     weight: 0
-    label: "Existing extension tps.ts compiles"
+    description: "Existing extension tps.ts compiles"

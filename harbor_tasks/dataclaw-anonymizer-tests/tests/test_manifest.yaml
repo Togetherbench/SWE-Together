@@ -1,30 +1,34 @@
-version: 1.0
+version: '1.0'
 turns:
-  - turn: 1
-    message: "legacy"
-    deliverable: "see instruction.md"
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
 gates:
-  - id: f2p_upstream_case_insensitive
-    kind: F2P
-    turn: null
-    weight: 0.50
-    label: "anonymize_text case-insensitive long username"
-    command: "cd /workspace/repo && python3 -c \"from dataclaw.anonymizer import anonymize_text; r = anonymize_text('Hello Alice!', 'alice', 'HASH'); assert 'Alice' not in r and 'HASH' in r, f'case insensitive bug: {r!r}'\""
-  - id: f2p_upstream_substring_safety
-    kind: F2P
-    turn: null
-    weight: 0.50
-    label: "_replace_username no substring match"
-    command: "cd /workspace/repo && python3 -c \"from dataclaw.anonymizer import _replace_username; r = _replace_username('alexis is here', 'alex', 'HASH'); assert r == 'alexis is here', f'substring bug: {r!r}'\""
-  - id: p2p_upstream_basic_functionality
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Basic anonymize_text and hash sanity"
-    command: "cd /workspace/repo && python3 -c \"from dataclaw.anonymizer import anonymize_text, _hash_username; assert anonymize_text('hello alice', 'alice', 'HASH') == 'hello HASH'; assert _hash_username('test').startswith('user_'); print('OK')\""
-  - id: p2p_upstream_import
-    kind: P2P_REGRESSION
-    turn: null
-    weight: 0
-    label: "Import all public symbols"
-    command: "cd /workspace/repo && python3 -c \"from dataclaw.anonymizer import anonymize_text, anonymize_path, Anonymizer, _hash_username, _replace_username; print('OK')\""
+- id: f2p_upstream_case_insensitive
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: anonymize_text case-insensitive long username
+  command: 'cd /workspace/repo && python3 -c "from dataclaw.anonymizer import anonymize_text; r = anonymize_text(''Hello Alice!'', ''alice'', ''HASH''); assert ''Alice'' not in r and ''HASH'' in r, f''case insensitive bug: {r!r}''"'
+  description: anonymize_text case-insensitive long username
+- id: f2p_upstream_substring_safety
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: _replace_username no substring match
+  command: 'cd /workspace/repo && python3 -c "from dataclaw.anonymizer import _replace_username; r = _replace_username(''alexis is here'', ''alex'', ''HASH''); assert r == ''alexis is here'', f''substring bug: {r!r}''"'
+  description: _replace_username no substring match
+- id: p2p_upstream_basic_functionality
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Basic anonymize_text and hash sanity
+  command: cd /workspace/repo && python3 -c "from dataclaw.anonymizer import anonymize_text, _hash_username; assert anonymize_text('hello alice', 'alice', 'HASH') == 'hello HASH'; assert _hash_username('test').startswith('user_'); print('OK')"
+  description: Basic anonymize_text and hash sanity
+- id: p2p_upstream_import
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Import all public symbols
+  command: cd /workspace/repo && python3 -c "from dataclaw.anonymizer import anonymize_text, anonymize_path, Anonymizer, _hash_username, _replace_username; print('OK')"
+  description: Import all public symbols

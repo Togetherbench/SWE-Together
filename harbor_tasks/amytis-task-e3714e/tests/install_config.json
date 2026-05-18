@@ -5,14 +5,14 @@
   "test_cmd": "bun test 2>&1",
   "repo_dir": "/opt/amytis",
   "FAIL_TO_PASS": [
-    "[slug]/page throws when redirectFrom alias conflicts with ",
-    "[slug]/page includes Unicode single-segment redirectFrom slug as param",
-    "[slug]/page includes auto-path series slug when autoPaths enabled",
-    "[slug]/page includes Unicode auto-path series slug when autoPaths enabled",
-    "[slug]/page uses customPaths prefix for series with override, not the series slug",
-    "[slug]/[postSlug] includes encoded Unicode postSlug variants in non-production",
-    "[slug]/[postSlug] does not include encoded Unicode postSlug variants in production",
-    "[slug]/page/[page]/page returns placeholder when no custom paths"
+    "generateStaticParams — placeholder when content is empty > autoPaths series routing > [slug]/page throws when redirectFrom alias conflicts with \"posts\" (RESERVED_ROUTE_SEGMENTS)",
+    "generateStaticParams — placeholder when content is empty > autoPaths series routing > [slug]/page includes Unicode single-segment redirectFrom slug as param",
+    "generateStaticParams — placeholder when content is empty > autoPaths series routing > autoPaths enabled > [slug]/page includes auto-path series slug when autoPaths enabled",
+    "generateStaticParams — placeholder when content is empty > autoPaths series routing > autoPaths enabled > [slug]/page includes Unicode auto-path series slug when autoPaths enabled",
+    "generateStaticParams — placeholder when content is empty > autoPaths series routing > autoPaths enabled > [slug]/page uses customPaths prefix for series with override, not the series slug",
+    "generateStaticParams — placeholder when content is empty > custom path routes > [slug]/[postSlug] includes encoded Unicode postSlug variants in non-production",
+    "generateStaticParams — placeholder when content is empty > custom path routes > [slug]/[postSlug] does not include encoded Unicode postSlug variants in production",
+    "generateStaticParams — placeholder when content is empty > custom path routes > [slug]/page/[page]/page returns placeholder when no custom paths"
   ],
   "PASS_TO_PASS": [],
   "source_files": [

@@ -59,10 +59,20 @@ class Turn(BaseModel):
 
 
 class TestManifest(BaseModel):
-    """Top-level manifest. Lives at tests/test_manifest.yaml."""
+    """Top-level manifest. Lives at tests/test_manifest.yaml.
+
+    `task` and `turns` were made optional in PR #147 round-3 (2026-05-17): the
+    143 existing manifests in this benchmark were written when the schema only
+    required `gates`. Hard-requiring `task`/`turns` broke
+    `per_turn_replay.canonicalize_reward_from_gates()` silently on 68/112
+    scored tasks (validation failed → bare `except` → fallback to legacy
+    reward.txt parsing instead of the unified F2P-coverage formula). Making
+    these optional restores canonical scoring for the existing corpus while
+    new manifests can still populate them.
+    """
     version: str = "1.0"
-    task: str
-    turns: list[Turn]
+    task: str = ""
+    turns: list[Turn] = Field(default_factory=list)
     gates: list[Gate]
     notes: Optional[str] = None
 
