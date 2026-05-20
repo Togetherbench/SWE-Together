@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "task": "sd-scripts-reg-image-dedup",
+  "n_oracle_turns_in": 6,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Is regularization image balance correct after filtering in all dataset types?",
+      "verbatim_excerpt": "Is the regularization image balance correct after the filtering"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Refactor to remove duplicate code in regularization image balancing.",
+      "verbatim_excerpt": "Refactor it to remove duplicate code in reg imag balancing"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "question",
+      "text": "Why register balanced regularization images at two places then rebalance? Can't we always register after filtering?",
+      "verbatim_excerpt": "Why do we need to call register_balanced_regularization_images at two places"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "verification",
+      "text": "Check whether every conditioning image correctly matches the main image after filtering in every dataset type.",
+      "verbatim_excerpt": "does every conditioning image correctly match the main image after the filtering"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Why ignore missing conditioning images when filter is enabled in ControlNetDataset.__init__?",
+      "verbatim_excerpt": "why can we ignore missing conditioning images when the filter is enabled"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Do we really need to check missing conditioning images again in ControlNetDataset.make_buckets?",
+      "verbatim_excerpt": "Do we really need to check missing images again in ControlNetDataset.make_buckets"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 6,
+      "intent_kind": "question",
+      "text": "Can we avoid calling update_dataset_image_counts twice when reg image count needs updating?",
+      "verbatim_excerpt": "Can we avoid calling `self.update_dataset_image_counts()` two times"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 8.3
+}

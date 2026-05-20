@@ -8,7 +8,7 @@ reward.txt intact (write to a parallel file) so polluted vs clean can be
 compared side-by-side.
 
 Usage:
-    .venv/bin/python -m eval.agentic.clean_replay \
+    .venv/bin/python -m eval.correctness.clean_replay \
         --trial-list /tmp/eligible_trials.txt \
         --workers 5
 """
@@ -26,8 +26,8 @@ from typing import Optional
 
 from e2b import AsyncSandbox
 
-from eval.agentic.judge_one import load_dotenv
-from eval.agentic.sandbox import template_alias, SANDBOX_BUFFER_SEC
+from eval.correctness.judge_one import load_dotenv
+from eval.correctness.sandbox import template_alias, SANDBOX_BUFFER_SEC
 
 log = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[2]

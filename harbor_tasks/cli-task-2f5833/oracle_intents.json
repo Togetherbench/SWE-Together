@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-2f5833",
+  "n_oracle_turns_in": 3,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "When carry over files exist, do not delete prompt.txt from the metadata.",
+      "verbatim_excerpt": "carry over files, we should not delete the prompt.txt from the metadata"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 4,
+      "intent_kind": "workflow",
+      "text": "Commit the changes.",
+      "verbatim_excerpt": "commit those changes"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 3.8
+}
