@@ -31,6 +31,114 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4  # allow agent to continue N times without user input before stopping
 
+# Allowlist of roots searched for `.git` dirs during per-turn patch capture.
+# Covers every task layout observed in `harbor_tasks/` as of issue #159:
+#   - /workspace (default base-image + most task-level clones)
+#   - /opt, /home, /app, /repo, /tmp (27 outside-/workspace clones)
+#   - /entire-cli, /entireio-cli, /no-magic (3 filesystem-root oddballs)
+# Tasks that need additional paths can set HARBOR_REPO_PATHS=/a:/b:/c
+# (colon-separated) in the Dockerfile or runtime env.
+_DEFAULT_REPO_ROOTS = (
+    "/workspace /opt /home /app /repo /tmp "
+    "/entire-cli /entireio-cli /no-magic"
+)
+
+
+def _repo_discovery_cmd(
+    *, action: str, turn: int | None = None, prev_turn: int | None = None
+) -> str:
+    """Build a bash command that discovers git repos and runs `action`.
+
+    `action="tag"` writes the `harbor-base` snapshot tag in every repo found.
+    `action="diff"` writes per-turn cumulative + incremental diffs to stdout
+    framed by ===HARBOR_DIFF_BEGIN_*===/END markers.
+
+    Discovery: union of `_DEFAULT_REPO_ROOTS` and `HARBOR_REPO_PATHS`
+    (colon-separated env var). For each root that exists, `find -maxdepth 3
+    -type d -name .git` locates repos; dirname is the repo root. Symlinked
+    `.git` files (git worktrees) also work since `find` follows the path,
+    and the per-repo git ops use `-c safe.directory="$PWD"` so they don't
+    blow up on differing ownership.
+    """
+    if action == "tag":
+        per_repo = (
+            '  (cd "$d" && \\\n'
+            '     git -c safe.directory="$PWD" add -A 2>/dev/null && \\\n'
+            '     git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
+            '       commit --allow-empty -m "harbor-base" --quiet 2>/dev/null && \\\n'
+            '     git -c safe.directory="$PWD" tag -f harbor-base HEAD 2>/dev/null) || true\n'
+        )
+        return (
+            'set +e\n'
+            f'ROOTS="{_DEFAULT_REPO_ROOTS}"\n'
+            'if [ -n "${HARBOR_REPO_PATHS:-}" ]; then\n'
+            '  ROOTS="$ROOTS $(echo "$HARBOR_REPO_PATHS" | tr ":" " ")"\n'
+            'fi\n'
+            'EXISTING=""\n'
+            'for r in $ROOTS; do [ -e "$r" ] && EXISTING="$EXISTING $r"; done\n'
+            '[ -z "$EXISTING" ] && exit 0\n'
+            'REPOS=$(find $EXISTING -maxdepth 3 \\( -type d -o -type f \\) -name .git 2>/dev/null | sort -u)\n'
+            'for gitdir in $REPOS; do\n'
+            '  d=$(dirname "$gitdir")\n'
+            f'{per_repo}'
+            'done\n'
+        )
+
+    assert action == "diff" and turn is not None and prev_turn is not None
+    per_repo = (
+        '  d=$(dirname "$gitdir")\n'
+        '  cd "$d" || continue\n'
+        '  HEAD_BEFORE=$(git -c safe.directory="$PWD" rev-parse --verify HEAD 2>/dev/null)\n'
+        '  if [ "$PREV_TURN" -ge 0 ] && git -c safe.directory="$PWD" rev-parse --verify "harbor-turn-$PREV_TURN" >/dev/null 2>&1; then\n'
+        '    PREV_REF="harbor-turn-$PREV_TURN"\n'
+        '  elif git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
+        '    PREV_REF=harbor-base\n'
+        '  elif [ -n "$HEAD_BEFORE" ]; then\n'
+        '    PREV_REF="$HEAD_BEFORE"\n'
+        '  else\n'
+        '    PREV_REF=HEAD\n'
+        '  fi\n'
+        '  git -c safe.directory="$PWD" add -A 2>/dev/null\n'
+        '  git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
+        '    commit --allow-empty -m "harbor-turn-$TURN" --quiet 2>/dev/null\n'
+        '  git -c safe.directory="$PWD" tag -f "harbor-turn-$TURN" HEAD 2>/dev/null\n'
+        '  if git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
+        '    printf "=== %s (cumulative vs harbor-base) ===\\n" "$d" >> /tmp/harbor_cum.diff\n'
+        '    git -c safe.directory="$PWD" --no-pager diff harbor-base HEAD 2>/dev/null >> /tmp/harbor_cum.diff\n'
+        '    printf "\\n" >> /tmp/harbor_cum.diff\n'
+        '  fi\n'
+        '  printf "=== %s (incremental vs %s) ===\\n" "$d" "$PREV_REF" >> /tmp/harbor_inc.diff\n'
+        '  git -c safe.directory="$PWD" --no-pager diff "$PREV_REF" HEAD 2>/dev/null >> /tmp/harbor_inc.diff\n'
+        '  printf "\\n" >> /tmp/harbor_inc.diff\n'
+    )
+    return (
+        'set +e\n'
+        f'TURN={turn}\n'
+        f'PREV_TURN={prev_turn}\n'
+        f'ROOTS="{_DEFAULT_REPO_ROOTS}"\n'
+        'if [ -n "${HARBOR_REPO_PATHS:-}" ]; then\n'
+        '  ROOTS="$ROOTS $(echo "$HARBOR_REPO_PATHS" | tr ":" " ")"\n'
+        'fi\n'
+        ': > /tmp/harbor_cum.diff\n'
+        ': > /tmp/harbor_inc.diff\n'
+        'EXISTING=""\n'
+        'for r in $ROOTS; do [ -e "$r" ] && EXISTING="$EXISTING $r"; done\n'
+        'if [ -n "$EXISTING" ]; then\n'
+        '  REPOS=$(find $EXISTING -maxdepth 3 \\( -type d -o -type f \\) -name .git 2>/dev/null | sort -u)\n'
+        '  for gitdir in $REPOS; do\n'
+        f'{per_repo}'
+        '    cd - >/dev/null\n'
+        '  done\n'
+        'fi\n'
+        'echo "===HARBOR_DIFF_BEGIN_CUM==="\n'
+        'cat /tmp/harbor_cum.diff 2>/dev/null\n'
+        'echo "===HARBOR_DIFF_END_CUM==="\n'
+        'echo "===HARBOR_DIFF_BEGIN_INC==="\n'
+        'cat /tmp/harbor_inc.diff 2>/dev/null\n'
+        'echo "===HARBOR_DIFF_END_INC==="\n'
+        'rm -f /tmp/harbor_cum.diff /tmp/harbor_inc.diff\n'
+    )
+
 
 class UserEnabledClaudeCode(BaseAgent):
     """Claude Code + simulated user via sequential --resume invocations."""
@@ -371,34 +479,33 @@ server.serve_forever()
             else:
                 log.info("Header-strip proxy started successfully")
 
-        # Tag every git repo under /workspace as `harbor-base` so per-turn
-        # `git diff` can compare against the pre-agent state even after the
-        # agent runs `git commit` mid-trial.  Without this, `git diff HEAD`
-        # returns empty after the first commit, silently black-holing all
-        # subsequent agent work from our patch capture.
+        # Tag every git repo as `harbor-base` so per-turn `git diff` can
+        # compare against the pre-agent state even after the agent runs
+        # `git commit` mid-trial.  Without this, `git diff HEAD` returns
+        # empty after the first commit, silently black-holing all subsequent
+        # agent work from our patch capture.
         #
         # v0.4.3 audit refinement: snapshot the WORKING TREE state before
         # tagging.  ~10-20% of task Dockerfiles do post-checkout mutations
         # (`rm -f AGENTS.md CLAUDE.md`, `sed -i`, etc.) without a follow-up
         # `git commit`.  Without the pre-tag snapshot, those Dockerfile
         # mutations show up as phantom "agent edits" in every per-turn diff.
-        tag_cmd = (
-            'set +e\n'
-            'cd /workspace 2>/dev/null || exit 0\n'
-            'for d in */; do\n'
-            '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
-            '    (cd "$d" && \\\n'
-            '       git -c safe.directory="$PWD" add -A 2>/dev/null && \\\n'
-            '       git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
-            '         commit --allow-empty -m "harbor-base" --quiet 2>/dev/null && \\\n'
-            '       git -c safe.directory="$PWD" tag -f harbor-base HEAD 2>/dev/null) || true\n'
-            '  fi\n'
-            'done\n'
-        )
+        #
+        # Repo discovery (issue #159): the original loop only walked
+        # `/workspace/<sub>/.git`, missing 29 tasks whose Dockerfiles clone
+        # outside that layout (2 at `/workspace` root, 27 under `/opt`,
+        # `/home`, `/app`, `/repo`, `/tmp`, or filesystem-root dirs like
+        # `/entire-cli`). Those tasks silently produced no `patches/` and
+        # no `final.patch`. We now `find` over a fixed allowlist of roots
+        # (maxdepth 3) plus any extra paths in `HARBOR_REPO_PATHS`.
         try:
-            await environment.exec(command=tag_cmd, cwd="/workspace",
-                                   env={}, timeout_sec=30)
-            log.debug("harbor-base tagged in /workspace git repos")
+            await environment.exec(
+                command=_repo_discovery_cmd(action="tag"),
+                cwd="/",
+                env={},
+                timeout_sec=30,
+            )
+            log.debug("harbor-base tagged in discovered git repos")
         except Exception as e:
             log.debug("harbor-base tagging failed (best-effort): %s", e)
 
@@ -645,53 +752,11 @@ server.serve_forever()
         and mark capture failures explicitly.
         """
         prev_turn = turn - 1
-        cmd = (
-            'set +e\n'
-            'cd /workspace 2>/dev/null || exit 0\n'
-            f'TURN={turn}\n'
-            f'PREV_TURN={prev_turn}\n'
-            ': > /tmp/harbor_cum.diff\n'
-            ': > /tmp/harbor_inc.diff\n'
-            'for d in */; do\n'
-            '  if [ -d "$d/.git" ] || [ -f "$d/.git" ]; then\n'
-            '    cd "$d" || continue\n'
-            '    HEAD_BEFORE=$(git -c safe.directory="$PWD" rev-parse --verify HEAD 2>/dev/null)\n'
-            '    if [ "$PREV_TURN" -ge 0 ] && git -c safe.directory="$PWD" rev-parse --verify "harbor-turn-$PREV_TURN" >/dev/null 2>&1; then\n'
-            '      PREV_REF="harbor-turn-$PREV_TURN"\n'
-            '    elif git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
-            '      PREV_REF=harbor-base\n'
-            '    elif [ -n "$HEAD_BEFORE" ]; then\n'
-            '      PREV_REF="$HEAD_BEFORE"\n'
-            '    else\n'
-            '      PREV_REF=HEAD\n'
-            '    fi\n'
-            '    git -c safe.directory="$PWD" add -A 2>/dev/null\n'
-            '    git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
-            '      commit --allow-empty -m "harbor-turn-$TURN" --quiet 2>/dev/null\n'
-            '    git -c safe.directory="$PWD" tag -f "harbor-turn-$TURN" HEAD 2>/dev/null\n'
-            '    if git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
-            '      printf "=== %s (cumulative vs harbor-base) ===\\n" "$d" >> /tmp/harbor_cum.diff\n'
-            '      git -c safe.directory="$PWD" --no-pager diff harbor-base HEAD 2>/dev/null >> /tmp/harbor_cum.diff\n'
-            '      printf "\\n" >> /tmp/harbor_cum.diff\n'
-            '    fi\n'
-            '    printf "=== %s (incremental vs %s) ===\\n" "$d" "$PREV_REF" >> /tmp/harbor_inc.diff\n'
-            '    git -c safe.directory="$PWD" --no-pager diff "$PREV_REF" HEAD 2>/dev/null >> /tmp/harbor_inc.diff\n'
-            '    printf "\\n" >> /tmp/harbor_inc.diff\n'
-            '    cd - >/dev/null\n'
-            '  fi\n'
-            'done\n'
-            'echo "===HARBOR_DIFF_BEGIN_CUM==="\n'
-            'cat /tmp/harbor_cum.diff 2>/dev/null\n'
-            'echo "===HARBOR_DIFF_END_CUM==="\n'
-            'echo "===HARBOR_DIFF_BEGIN_INC==="\n'
-            'cat /tmp/harbor_inc.diff 2>/dev/null\n'
-            'echo "===HARBOR_DIFF_END_INC==="\n'
-            'rm -f /tmp/harbor_cum.diff /tmp/harbor_inc.diff\n'
-        )
+        cmd = _repo_discovery_cmd(action="diff", turn=turn, prev_turn=prev_turn)
         try:
             result = await environment.exec(
                 command=cmd,
-                cwd="/workspace",
+                cwd="/",
                 env={},
                 timeout_sec=90,
             )
