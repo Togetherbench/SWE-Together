@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task": "gemini-voyager-task-4a5730",
+  "n_oracle_turns_in": 1,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "workflow",
+      "text": "Push the fixes for that issue.",
+      "verbatim_excerpt": "push Fixes 那个 issue"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 2.3
+}

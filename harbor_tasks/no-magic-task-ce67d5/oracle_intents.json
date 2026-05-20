@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task": "no-magic-task-ce67d5",
+  "n_oracle_turns_in": 1,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "workflow",
+      "text": "Commit the current changes.",
+      "verbatim_excerpt": "commit this"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 2.1
+}

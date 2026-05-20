@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-parallel-tool-stall",
+  "n_oracle_turns_in": 15,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Add a failing test to reproduce the bug where parallel tool calls hang.",
+      "verbatim_excerpt": "start by adding a failing test"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 1,
+      "intent_kind": "context",
+      "text": "Describes observed behavior: first tool call works but submission hangs; force-quitting shows both failed; sequential with timeout works.",
+      "verbatim_excerpt": "one tool call is useable (the first one it seems) but on submission / end of that tool call, nothing happens"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 2,
+      "intent_kind": "workflow",
+      "text": "Pull and rebase main branch, install the package, then re-run the tests.",
+      "verbatim_excerpt": "pull and rebase the main branch + install the package and try again to run the tests"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 3,
+      "intent_kind": "question",
+      "text": "Ask whether the same test failure occurs on the main branch.",
+      "verbatim_excerpt": "is it the same in the main branch?"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 4,
+      "intent_kind": "question",
+      "text": "Are tests passing in CI in production? Does the class still exist after the keybind refactor?",
+      "verbatim_excerpt": "are test passing in the ci in production ? does that class still exist after that keybind refactor"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Ask what is wrong with the local setup causing test failures.",
+      "verbatim_excerpt": "what is wrong on my local setup then"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 6,
+      "intent_kind": "verification",
+      "text": "Verify that the reproducing test fails as expected.",
+      "verbatim_excerpt": "does it fail as expected?"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 8,
+      "intent_kind": "question",
+      "text": "Ask what the proposed fix suggestions are.",
+      "verbatim_excerpt": "what were your fix suggestions?"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 9,
+      "intent_kind": "request",
+      "text": "Do not implement the `interactive` metadata approach.",
+      "verbatim_excerpt": "let's not do the `interactive` metadata one"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 10,
+      "intent_kind": "request",
+      "text": "Make parallel tool calls run sequentially instead of throwing an error.",
+      "verbatim_excerpt": "let's not throw, just have them run sequentially"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 11,
+      "intent_kind": "workflow",
+      "text": "Rebuild all workspace packages and re-run vitest.",
+      "verbatim_excerpt": "re-build all packages from the workspace and try again to run vitest"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 12,
+      "intent_kind": "request",
+      "text": "Override the lint/eslint rule in the current context.",
+      "verbatim_excerpt": "yes override that rule here"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 13,
+      "intent_kind": "context",
+      "text": "Making tool calls sequential didn't fix the issue.",
+      "verbatim_excerpt": "making tool calls sequential doesn't fix it then"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 14,
+      "intent_kind": "correction",
+      "text": "Rewrite the failing test to use real code paths instead of mocking/recreating too much.",
+      "verbatim_excerpt": "rewrite the failing test to use as much stuff from the code as possible and not mock/recrete shit"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 15,
+      "intent_kind": "correction",
+      "text": "The test should attempt to complete both tool call submissions, not skip them.",
+      "verbatim_excerpt": "the test should complete both submissions or at least try to"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 15.3
+}

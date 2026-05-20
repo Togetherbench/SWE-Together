@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "task": "banodoco-video-perf-optimize",
+  "n_oracle_turns_in": 27,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Can you see the videos on the page?",
+      "verbatim_excerpt": "Can you see the videos on it?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Virtualize the top generations section to only load four rows at a time, releasing previous rows while scrolling.",
+      "verbatim_excerpt": "only load that four rows at a time"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "Is the code well structured and will it work well on mobile and other devices?",
+      "verbatim_excerpt": "Will it work well on mobile and other devices?"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 3,
+      "intent_kind": "workflow",
+      "text": "Stash changes and git pull.",
+      "verbatim_excerpt": "stash and git pull"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 4,
+      "intent_kind": "workflow",
+      "text": "Git pull to get the latest changes.",
+      "verbatim_excerpt": "git pull to get latest"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "'The Rise & Fall of Models' animation should play when entering the section and complete before the section ends.",
+      "verbatim_excerpt": "should probably play when you go in into the section"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 5,
+      "intent_kind": "correction",
+      "text": "The animation doesn't run the whole way; it feels like it completes before it's actually finished.",
+      "verbatim_excerpt": "it feels like it completes before it's completed"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 6,
+      "intent_kind": "correction",
+      "text": "Animation still completes too early.",
+      "verbatim_excerpt": "it feels like it completes too early"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 6,
+      "intent_kind": "question",
+      "text": "Why on first load does the animation not play from the left like it does on subsequent loads?",
+      "verbatim_excerpt": "why on the first load does it not 'play from the left'"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 7,
+      "intent_kind": "question",
+      "text": "Is there a max duration on the animation?",
+      "verbatim_excerpt": "is there a max duration on the aniamtion"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 8,
+      "intent_kind": "request",
+      "text": "Make the animation ease out smoothly in terms of speed.",
+      "verbatim_excerpt": "make it ease out smoothly in terms of the speed"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 9,
+      "intent_kind": "correction",
+      "text": "Animation looks choppy/low frame rate.",
+      "verbatim_excerpt": "looks a bit choppy/;ow frame rate"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 10,
+      "intent_kind": "correction",
+      "text": "The animation is now too wavy.",
+      "verbatim_excerpt": "now it's too wavy"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 11,
+      "intent_kind": "question",
+      "text": "Why do values add up to 100% at the beginning but not afterwards?",
+      "verbatim_excerpt": "why at the begining does it add up to 100% and then not"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 12,
+      "intent_kind": "correction",
+      "text": "Values now add up to 99% instead of 100%.",
+      "verbatim_excerpt": "adds up to 99% now"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 13,
+      "intent_kind": "correction",
+      "text": "Lines fluctuate and jump up and down weirdly as data loads.",
+      "verbatim_excerpt": "the lines jump up and down"
+    },
+    {
+      "intent_id": 16,
+      "source_turn": 13,
+      "intent_kind": "context",
+      "text": "ReferenceError: Cannot access 'normalizedData' before initialization in ModelTrends.tsx:128.",
+      "verbatim_excerpt": "Cannot access 'normalizedData' before initialization"
+    },
+    {
+      "intent_id": 17,
+      "source_turn": 14,
+      "intent_kind": "question",
+      "text": "Is the code well-structured and easy to reason about?",
+      "verbatim_excerpt": "is this well-structured? easy to reason about?"
+    },
+    {
+      "intent_id": 18,
+      "source_turn": 15,
+      "intent_kind": "correction",
+      "text": "Data feels like it's coming into view rather than appearing as it loads; should appear as it loads.",
+      "verbatim_excerpt": "data is more coming into view rather than appearing as it loads"
+    },
+    {
+      "intent_id": 19,
+      "source_turn": 17,
+      "intent_kind": "request",
+      "text": "Only show time points on the axis that actually have data entries.",
+      "verbatim_excerpt": "only show the times that actually have entries"
+    },
+    {
+      "intent_id": 20,
+      "source_turn": 19,
+      "intent_kind": "request",
+      "text": "The timeline should reveal progressively as data comes in.",
+      "verbatim_excerpt": "the tiemline should reveal as the data comes in"
+    },
+    {
+      "intent_id": 21,
+      "source_turn": 20,
+      "intent_kind": "request",
+      "text": "Make the animation half the speed.",
+      "verbatim_excerpt": "make it half the speed"
+    },
+    {
+      "intent_id": 22,
+      "source_turn": 21,
+      "intent_kind": "request",
+      "text": "Make the Y axis transitions feel smooth.",
+      "verbatim_excerpt": "make the transitions of the Y axis feel smooth"
+    },
+    {
+      "intent_id": 23,
+      "source_turn": 22,
+      "intent_kind": "request",
+      "text": "Try adding easing to the transitions.",
+      "verbatim_excerpt": "try easing"
+    },
+    {
+      "intent_id": 24,
+      "source_turn": 23,
+      "intent_kind": "request",
+      "text": "Apply more easing to the transitions.",
+      "verbatim_excerpt": "more easssing"
+    },
+    {
+      "intent_id": 25,
+      "source_turn": 24,
+      "intent_kind": "request",
+      "text": "When a new model appears, show a white label with the model's name on top of the graph for a period.",
+      "verbatim_excerpt": "show a label in white surrounded by that models name for X months"
+    },
+    {
+      "intent_id": 26,
+      "source_turn": 26,
+      "intent_kind": "correction",
+      "text": "The label should appear on the model's segment in the chart.",
+      "verbatim_excerpt": "ideally appearing on its segment"
+    },
+    {
+      "intent_id": 27,
+      "source_turn": 27,
+      "intent_kind": "request",
+      "text": "Make the label last long and follow the center of that model's segment along the X axis.",
+      "verbatim_excerpt": "make it last long and then 'follow' the centre of that model"
+    },
+    {
+      "intent_id": 28,
+      "source_turn": 28,
+      "intent_kind": "context",
+      "text": "ReferenceError: Cannot access 'displayData' before initialization in ModelTrends.tsx:260.",
+      "verbatim_excerpt": "Cannot access 'displayData' before initialization"
+    },
+    {
+      "intent_id": 29,
+      "source_turn": 29,
+      "intent_kind": "context",
+      "text": "Background Vite dev server task was killed; read the output file for results.",
+      "verbatim_excerpt": "Background command \"Start Vite dev server\" was killed"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 26.6
+}

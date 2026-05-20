@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "comfyui-lumina2-lora-prefix",
+  "n_oracle_turns_in": 2,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "correction",
+      "text": "Don't use grep because the repo is too large.",
+      "verbatim_excerpt": "Don't use grep because it's a large repo"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Implement key mapping for Lumina2 LoRA where LoRA keys have `base_model.model.` prefix but base model keys do not.",
+      "verbatim_excerpt": "base model does not have `base_model.model.` in the keys, but the lora does"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 4.4
+}

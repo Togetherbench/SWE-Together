@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task": "reigh-preset-data-flow",
+  "n_oracle_turns_in": 4,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "correction",
+      "text": "Ensure the ID is included in the correct format when sent.",
+      "verbatim_excerpt": "include the id in the right format"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "When selecting a preset, stay in basic mode visually but show it as selected instead of jumping to advanced mode.",
+      "verbatim_excerpt": "stay in 'basic' mode but with that selected"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "request",
+      "text": "The correct data should still be sent, and clicking into Advanced should show those preset settings populated.",
+      "verbatim_excerpt": "send the right data tho - and if i click into Advanced those settings will be there"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "workflow",
+      "text": "Push the changes to GitHub.",
+      "verbatim_excerpt": "push to github"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 6.1
+}

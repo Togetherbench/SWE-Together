@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "task": "reigh-timeline-mode-cleanup",
+  "n_oracle_turns_in": 14,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Eliminate TimelineModeContent pass-through component, render Timeline directly from ShotImagesEditor, move unpositioned generations div, map props correctly, delete file and exports.",
+      "verbatim_excerpt": "Eliminate TimelineModeContent — remove pure pass-through layer"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "Ask whether there is unused or should-be-unused code in the affected area.",
+      "verbatim_excerpt": "is tehre stuff there that's unused or that should be unused?"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "request",
+      "text": "Proceed with cleaning up the unused code identified.",
+      "verbatim_excerpt": "yes plesae"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "workflow",
+      "text": "Push changes to GitHub.",
+      "verbatim_excerpt": "push to github"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "context",
+      "text": "Describing an issue with the info button on the variant selector in MediaLightbox.",
+      "verbatim_excerpt": "when i click the info thing on the variant selector"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 6,
+      "intent_kind": "context",
+      "text": "Clarify the variant selector is at the bottom right of the media lightbox.",
+      "verbatim_excerpt": "variant selector at the bottom of the media lightbox on the right"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 7,
+      "intent_kind": "context",
+      "text": "The variant selector info popup doesn't immediately open when clicked.",
+      "verbatim_excerpt": "It doens't immediately open when i click"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 8,
+      "intent_kind": "request",
+      "text": "Make the variant selector info popup open on both hover and click.",
+      "verbatim_excerpt": "it should be hover and click"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 9,
+      "intent_kind": "request",
+      "text": "Make the variant info popup disappear immediately when the user dehovers.",
+      "verbatim_excerpt": "make it disappear immediately upon dehover"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 10,
+      "intent_kind": "context",
+      "text": "Opening lightbox while generation pane is locked incorrectly adjusts task pane handler positions.",
+      "verbatim_excerpt": "adjust the positions of the task pane handler"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 11,
+      "intent_kind": "request",
+      "text": "Fix PaneControlTab positioning so task/tool tabs don't shift up for locked generation pane when lightbox is open and hides them.",
+      "verbatim_excerpt": "when the lightbox is open, the task pane hadnler is still visible"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 12,
+      "intent_kind": "correction",
+      "text": "Dehovering the variant info still doesn't immediately close it.",
+      "verbatim_excerpt": "dehovering the info thing for a variant stilldoesn't immediately close it"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 12,
+      "intent_kind": "correction",
+      "text": "Variant selector shows for single-variant images but not single-variant videos; behavior should be consistent.",
+      "verbatim_excerpt": "variant thing doesn't show when there's only one variant for videos, but it shows regardless for images"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 14,
+      "intent_kind": "correction",
+      "text": "Add a slight delay before showing the variant hover card instead of showing immediately.",
+      "verbatim_excerpt": "now it shows immediateely upon hover, but there should be a slight delay"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 14,
+      "intent_kind": "correction",
+      "text": "Keep variant hover card open when cursor moves through the gap between trigger and expanded card, and while on the card itself.",
+      "verbatim_excerpt": "it should stay expanded when i'm in the space between it and the expanded card"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 15,
+      "intent_kind": "question",
+      "text": "Ask what 'click to pin' means in the agent's proposed solution.",
+      "verbatim_excerpt": "What do you mean click to pin?"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 18.1
+}

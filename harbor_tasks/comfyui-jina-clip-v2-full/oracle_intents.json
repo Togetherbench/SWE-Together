@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "task": "comfyui-jina-clip-v2-full",
+  "n_oracle_turns_in": 0,
+  "intents": [],
+  "extractor_model": "trivial-no-turns"
+}
