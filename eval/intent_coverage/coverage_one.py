@@ -14,7 +14,7 @@ Pipeline:
 
 Usage:
     .venv/bin/python -m eval.intent_coverage.coverage_one \\
-        --trial-dir trials_eval_pilot_10_task_r1/cli-task-2a55af__LXqASZW \\
+        --trial-dir trials_judge_cmp_r1/cli-task-2a55af__LXqASZW \\
         --task-dir  harbor_tasks/cli-task-2a55af
 
 Output: `<trial_dir>/intent_coverage_verdict.json`

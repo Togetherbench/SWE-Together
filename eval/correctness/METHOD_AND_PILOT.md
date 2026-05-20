@@ -662,17 +662,15 @@ The full per-trial dirs (`agent/`, `verifier/`, `judge_verdict.json`,
 `reward.replay.txt`, `final.patch`, per-turn `episode-N/user_decision.json`,
 etc.) are tarballed (`zstd -19`) and attached to the v0.5.0 release:
 
-- **Cohort r1** (15 MB): https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/trials_eval_pilot_10_task_r1.tar.zst
-- **Cohort r2** (12 MB): https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/trials_eval_pilot_10_task_r2.tar.zst
-- **Cohort r3** (12 MB): https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/trials_eval_pilot_10_task_r3.tar.zst
-
-These are the **2026-05-20 re-run** archives: post-task-swap (`cli-task-7e3475` / `rudel-task-468289` in, `cli-task-4a9dde` / `rudel-task-d64e5a` out), with `judge_verdict.json` + `reward.replay.txt` + `intent_coverage_verdict_v2_freeLLM_r{i}.json` + `user_behavior_verdict.json` baked into every trial dir. The pre-fix `judge_vs_testsh_pilot_trials_r*.tar.zst` assets they replaced are no longer attached to the release.
+- **Cohort r1** (5.2 MB): https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/judge_vs_testsh_pilot_trials_r1.tar.zst
+- **Cohort r2** (1.6 MB): https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/judge_vs_testsh_pilot_trials_r2.tar.zst
+- **Cohort r3** (1.8 MB): https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/judge_vs_testsh_pilot_trials_r3.tar.zst
 
 To extract any cohort:
 ```bash
-wget https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/trials_eval_pilot_10_task_r1.tar.zst
-tar -I zstd -xf trials_eval_pilot_10_task_r1.tar.zst
-ls trials_eval_pilot_10_task_r1/
+wget https://github.com/Togetherbench/SWE-Together/releases/download/v0.5.0/judge_vs_testsh_pilot_trials_r1.tar.zst
+tar -I zstd -xf judge_vs_testsh_pilot_trials_r1.tar.zst
+ls trials_judge_cmp_r1/
 ```
 
 ### Reproduction commands
@@ -686,7 +684,7 @@ for i in 1 2 3; do
   uv run python src/run_eval.py \
     --model deepseek/deepseek-v4-pro \
     --user-model gemini/gemini-3.1-pro-preview \
-    --tag judge_cmp_r${i} --trials-dir trials_eval_pilot_10_task_r${i} \
+    --tag judge_cmp_r${i} --trials-dir trials_judge_cmp_r${i} \
     --env-type e2b --workers 5 --tasks "$TASKS" --skip-existing \
     > logs/cohort${i}.log 2>&1 &
 done; wait
@@ -695,7 +693,7 @@ done; wait
 python3 -c "
 from pathlib import Path
 out = open('/tmp/eligible_trials.txt','w')
-for c in sorted(Path('.').glob('trials_eval_pilot_10_task_r*')):
+for c in sorted(Path('.').glob('trials_judge_cmp_r*')):
     for t in sorted(c.iterdir()):
         if (t/'verifier/reward.txt').exists() and (t/'agent/final.patch').exists():
             out.write(str(t)+'\n')

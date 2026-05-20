@@ -127,7 +127,7 @@ The LLM does pattern-matching; arithmetic is deterministic. This is the key V2-o
 
 ```bash
 python -m eval.intent_coverage.coverage_one \
-    --trial-dir trials_eval_pilot_10_task_r1/cli-task-2a55af__LXqASZW \
+    --trial-dir trials_judge_cmp_r1/cli-task-2a55af__LXqASZW \
     --task-dir  harbor_tasks/cli-task-2a55af
 ```
 
@@ -236,40 +236,27 @@ def disentangle_correctness(task_cohorts, sigma_k=1.0, abs_floor=0.50, magnitude
         - 'overall_score' from intent_coverage_verdict.json
         - 'judge_score'   from judge_verdict.json
     Returns: filtered subset + per-cohort outlierness + diagnostics
-
-    All three guards are explicit AND-clauses on overall_score:
-      ① relative    : o < median − sigma_k·σ
-      ② abs_floor   : o < 0.50               ← true AND guard, NOT a max() on threshold
-      ③ magnitude   : median − o > magnitude_gap
     """
     overalls = [c['overall_score'] for c in task_cohorts]
     median   = statistics.median(overalls)
     sd       = statistics.pstdev(overalls)
-    relative_threshold = median - sigma_k * sd
+    threshold_relative = median - sigma_k * sd
+    threshold = max(threshold_relative, abs_floor)
 
     kept, dropped = [], []
     for c in task_cohorts:
-        o = c['overall_score']
+        # Drop iff: clearly low AND meaningful gap from median
         is_outlier = (
-            o < relative_threshold
-            and o < abs_floor
-            and (median - o) > magnitude_gap
+            c['overall_score'] < threshold
+            and (median - c['overall_score']) > magnitude_gap
         )
         (dropped if is_outlier else kept).append(c)
 
     if not kept:                       # safety: never drop everything
-        kept = [max(task_cohorts, key=lambda c: c['overall_score'])]
+        kept = [min(task_cohorts, key=lambda c: -c['overall_score'])]
         dropped = [c for c in task_cohorts if c not in kept]
     return kept, dropped
 ```
-
-> **Filter bug fix (2026-05-20).** Earlier versions of this function combined
-> the relative and absolute thresholds via `threshold = max(relative, abs_floor)`
-> and only checked `o < threshold`. That form meant `abs_floor` only kicked in
-> when σ was *small*; when σ was large enough that `relative > 0.50`, healthy
-> trials like `gemini-voyager r2` (o=0.6265) got dropped, contradicting the
-> prose below and the §Pitfall empirical claim. The 3-AND form above is what
-> the prose has always intended.
 
 Three guards on the drop rule:
 1. **relative**: `overall_score < median − 1·σ`

@@ -104,7 +104,7 @@ Single trial:
 
 ```bash
 python -m eval.user_behavior.behavior_one \
-    --trial-dir trials_eval_pilot_10_task_r1/cli-task-2a55af__LXqASZW \
+    --trial-dir trials_judge_cmp_r1/cli-task-2a55af__LXqASZW \
     --task-dir  harbor_tasks/cli-task-2a55af
 ```
 
