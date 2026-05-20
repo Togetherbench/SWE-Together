@@ -317,18 +317,3 @@ The filter:
 - Leaves untouched the cases where high σ is real agent variance (gemini-voyager, sd-scripts)
 
 This is the *disentangled* number we report — σ_judge after sim-outlier removal is a tighter estimate of σ_agent, the metric we actually care about for model comparison.
-
----
-
-## When to use V2 vs the V0 TF-IDF preview
-
-| symptom | use |
-|---|---|
-| Smoke-testing pipeline plumbing | V0 (`scripts/eval/intention_divergence.py`) — no API cost, ~50 ms / task |
-| Pre-filter to skip task × cohort sets that are already tight | V0 first; only run V2 where TF-IDF cohort-σ ≥ 0.05 |
-| Production cohort scoring | V2 (this package) |
-| Multilingual oracle (CJK, mixed-language) | V2 — V0 bigram tokenizer underperforms |
-| Debugging a single cohort's sim drift | V2 — the match table tells you which intents were missed and which trial msgs were off-task |
-| One-off comparison between two sim arms (e.g. graph vs free-LLM) | V2 — overall_score is comparable across arms |
-
-V0 cost: $0. V2 cost at Opus 4.6: ~$0.05 per task (one-time extract) + ~$0.10 per 3-cohort match (cached intents). On the §Q1 pilot's 10 tasks × 3 cohorts that's ~$1.50 total — small enough to skip the V0 pre-filter and run V2 on everything if you prefer simpler operational state.
