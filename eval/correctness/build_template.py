@@ -10,9 +10,9 @@ ENV instructions with their already-resolved values (tracking a small env-var
 table as we parse).
 
 Usage:
-    .venv/bin/python -m eval.agentic.build_template <task-name>
+    .venv/bin/python -m eval.correctness.build_template <task-name>
     # or programmatically:
-    from eval.agentic.build_template import build_one
+    from eval.correctness.build_template import build_one
     asyncio.run(build_one("cli-task-2c3e30"))
 """
 from __future__ import annotations
@@ -125,7 +125,7 @@ def load_task_resources(task_dir: Path) -> tuple[int, int]:
 
 async def build_one(task_name: str, *, force: bool = False) -> str:
     """Build (or rebuild) the E2B template for one task. Returns the alias."""
-    from eval.agentic.sandbox import template_alias
+    from eval.correctness.sandbox import template_alias
 
     task_dir = TASKS_DIR / task_name
     if not task_dir.is_dir():

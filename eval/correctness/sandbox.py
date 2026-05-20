@@ -76,8 +76,21 @@ async def run_judge_in_e2b(
     *,
     timeout_sec: int = JUDGE_TIMEOUT_SEC,
     max_turns: int = JUDGE_MAX_TURNS,
+    api_key: str | None = None,
 ) -> JudgeRunResult:
+    """Run the agentic judge in a fresh E2B sandbox.
+
+    Auth: prefer `api_key` (sk-ant-api03-…, pay-per-token) when supplied,
+    otherwise fall back to `oauth_token` (sk-ant-oat01-…, subscription).
+    Passing both lets Claude Code in the sandbox pick api_key automatically
+    via its standard ANTHROPIC_API_KEY env var.
+    """
     alias = template_alias(task_name)
+    auth_envs: dict[str, str] = {}
+    if api_key:
+        auth_envs["ANTHROPIC_API_KEY"] = api_key
+    else:
+        auth_envs["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token or ""
 
     # Retry sandbox spawn on E2B's flaky HTTP/2 ProtocolError ("Invalid input
     # ConnectionInputs.SEND_SETTINGS in state ConnectionState.CLOSED") — pure
@@ -91,7 +104,7 @@ async def run_judge_in_e2b(
             log.info("spawning E2B sandbox: template=%s trial=%s (attempt %d)", alias, trial_id, attempt + 1)
             sb = await AsyncSandbox.create(
                 template=alias,
-                envs={"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
+                envs=auth_envs,
                 timeout=timeout_sec + SANDBOX_BUFFER_SEC,
                 # Judge needs internet for: (1) claude-code installer when the task
                 # image doesn't bake it in, (2) `go mod download` / `pip install`

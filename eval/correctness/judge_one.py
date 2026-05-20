@@ -1,7 +1,7 @@
 """Single-trial agentic judge CLI.
 
 Usage:
-    .venv/bin/python -m eval.agentic.judge_one \\
+    .venv/bin/python -m eval.correctness.judge_one \\
         --trial-dir ~/Downloads/release_v0.4.4.3/extracted/trials_deepseek_v4_pro_swerb/cli-task-2c3e30__oS6jWHt \\
         --task-dir  harbor_tasks/cli-task-2c3e30
 
@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-from eval.agentic.sandbox import JudgeInputs, run_judge_in_e2b
+from eval.correctness.sandbox import JudgeInputs, run_judge_in_e2b
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

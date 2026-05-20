@@ -5,7 +5,7 @@ parallel via an asyncio.Semaphore-bounded pool, writes per-trial verdict files,
 and prints a summary at the end.
 
 Usage:
-    .venv/bin/python -m eval.agentic.run_batch --plan plan.json --workers 50
+    .venv/bin/python -m eval.correctness.run_batch --plan plan.json --workers 50
 
 Plan file shape (JSON list):
     [
@@ -29,14 +29,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from eval.agentic.judge_one import _validate_schema, load_dotenv, load_inputs
-from eval.agentic.sandbox import run_judge_in_e2b
+from eval.correctness.judge_one import _validate_schema, load_dotenv, load_inputs
+from eval.correctness.sandbox import run_judge_in_e2b
 
 log = logging.getLogger(__name__)
 
 
 async def _one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
-               *, timeout_sec: int, max_turns: int, force: bool) -> dict:
+               *, timeout_sec: int, max_turns: int, force: bool,
+               api_key: str | None = None) -> dict:
     trial_dir = Path(job["trial_dir"]).expanduser()
     task_dir = Path(job["task_dir"]).expanduser()
     out_name = job["out_name"]
@@ -69,6 +70,7 @@ async def _one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
                 oauth_token=oauth_token,
                 timeout_sec=timeout_sec,
                 max_turns=max_turns,
+                api_key=api_key,
             )
         except Exception as e:
             result["status"] = "error"
@@ -132,10 +134,15 @@ async def amain() -> int:
     )
 
     load_dotenv()
-    for k in ("E2B_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
-        if not os.environ.get(k):
-            print(f"ERROR: {k} not set", file=sys.stderr)
-            return 2
+    # Require E2B_API_KEY always; require AT LEAST ONE of (ANTHROPIC_API_KEY,
+    # CLAUDE_CODE_OAUTH_TOKEN). When both present, ANTHROPIC_API_KEY wins
+    # (independent pay-per-token quota).
+    if not os.environ.get("E2B_API_KEY"):
+        print("ERROR: E2B_API_KEY not set", file=sys.stderr)
+        return 2
+    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")):
+        print("ERROR: need ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN", file=sys.stderr)
+        return 2
 
     if not args.plan.exists():
         print(f"ERROR: plan not found: {args.plan}", file=sys.stderr)
@@ -147,7 +154,10 @@ async def amain() -> int:
 
     print(f"queued {len(jobs)} jobs, workers={args.workers}")
     sem = asyncio.Semaphore(args.workers)
-    oauth = os.environ["CLAUDE_CODE_OAUTH_TOKEN"]
+    oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or None
+    auth_kind = "ANTHROPIC_API_KEY (pay-per-token)" if api_key else "CLAUDE_CODE_OAUTH_TOKEN (subscription)"
+    print(f"judge auth: {auth_kind}")
     t0 = time.time()
 
     tasks = [
@@ -156,6 +166,7 @@ async def amain() -> int:
             timeout_sec=args.timeout_sec,
             max_turns=args.max_turns,
             force=args.force,
+            api_key=api_key,
         ))
         for j in jobs
     ]
