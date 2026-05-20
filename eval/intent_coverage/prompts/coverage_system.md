@@ -35,13 +35,50 @@ Every trial message that you did NOT pick as a match for any intent goes into `u
 - `off-task` — about something unrelated to the task
 - `repetitive` — duplicate of an earlier sim message
 
+## Also tag every trial message's specificity tier and kind
+
+Independent of the match table, classify **every** trial message (all
+trial_idx in `0..n_trial_msgs-1`) on two axes:
+
+### Tier — how specific is the hint payload?
+
+| tier | the sim is saying | example |
+|---|---|---|
+| `vague` | "something is off, look around" | "this seems broken" / "didn't work" |
+| `directional` | "look in this area / module" | "look at the import section" / "check session handling" |
+| `diagnostic` | concrete cause/effect, names the wrong thing | "you're using np.load instead of zipfile-stream read" |
+| `prescriptive` | concrete fix recipe, names the right thing | "replace np.load with zipfile.ZipFile.open" |
+| `patch_level` | ≥20 lines of code verbatim, or a full diff | (sim writes the actual code) |
+
+When uncertain between adjacent tiers, pick the **lower** (less specific) one.
+
+### Kind — what kind of help is the sim giving?
+
+| kind | the sim is | counts toward effort? |
+|---|---|---|
+| `request` | adding a new requirement / sub-task | yes |
+| `correction` | redirecting after a wrong turn | yes |
+| `question` | probing reasoning ("are you sure all 4 corners snap?") | yes (questions carry hint payload) |
+| `verification` | asking the agent to confirm / check ("did you run the tests?") | yes |
+| `workflow` | mechanical loop ops — commit, push, /commit, "continue" | **no (FREE)** |
+| `context` | environment / setup facts not load-bearing on the fix | **no (FREE)** |
+| `approval` | "ok", "yes do it", "go ahead", "looks good" | **no (FREE)** |
+
+Free kinds cost zero effort regardless of tier — they're the connective
+tissue of the conversation, not the steering signal.
+
+When a trial message MATCHES an oracle intent (i.e. it appears in
+`per_intent[*].matched_trial_idx`), prefer the kind from the matched
+intent's `intent_kind` if the trial msg paraphrases it cleanly. Only
+classify on the fly for messages in `unmatched_trial_msgs`.
+
 ## Output — strict JSON only
 
 Return ONE JSON object. No prose, no markdown fences. Do NOT compute aggregate scores — downstream code does that from the match table.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "n_intents": <int>,
   "n_trial_msgs": <int>,
   "per_intent": [
@@ -58,6 +95,14 @@ Return ONE JSON object. No prose, no markdown fences. Do NOT compute aggregate s
       "category": "task-relevant-extra|off-task|repetitive",
       "rationale": "<one short sentence>"
     }
+  ],
+  "trial_msg_specificity": [
+    {
+      "trial_idx": <int>,
+      "tier": "vague|directional|diagnostic|prescriptive|patch_level",
+      "kind_hint": "request|correction|question|verification|workflow|context|approval",
+      "rationale": "<≤25 words>"
+    }
   ]
 }
 ```
@@ -65,3 +110,5 @@ Return ONE JSON object. No prose, no markdown fences. Do NOT compute aggregate s
 `per_intent` must contain exactly `n_intents` entries, one per intent_id in 0..n_intents-1, in any order.
 
 `unmatched_trial_msgs` contains every trial_idx in 0..n_trial_msgs-1 that does NOT appear as `matched_trial_idx` for any intent.
+
+`trial_msg_specificity` contains exactly `n_trial_msgs` entries — one per trial_idx in 0..n_trial_msgs-1, in any order. **Every** trial msg gets a tier + kind_hint, matched and unmatched alike.

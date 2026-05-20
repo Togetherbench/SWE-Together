@@ -14,7 +14,7 @@ Pipeline:
 
 Usage:
     .venv/bin/python -m eval.intent_coverage.coverage_one \\
-        --trial-dir trials_judge_cmp_r1/cli-task-2a55af__LXqASZW \\
+        --trial-dir trials_eval_pilot_10_task_r1/cli-task-2a55af__LXqASZW \\
         --task-dir  harbor_tasks/cli-task-2a55af
 
 Output: `<trial_dir>/intent_coverage_verdict.json`
@@ -46,6 +46,24 @@ W_COVERAGE = 0.65
 W_PRECISION = 0.35
 MATCH_CONFIDENCE_FLOOR_FOR_COVERED = 0.5  # ≥ this counts as "covered"
 _FLOAT_TOL = 1e-6
+
+# §Proposal — user effort tiers (eval_design.md §B). Keep in sync with
+# `eval/user_behavior/behavior_one.py::SPECIFICITY_WEIGHTS`.
+SPECIFICITY_WEIGHTS: dict[str, int] = {
+    "vague":         1,
+    "directional":   2,
+    "diagnostic":    3,
+    "prescriptive":  4,
+    "patch_level":   5,
+}
+TIER_NAMES: frozenset[str] = frozenset(SPECIFICITY_WEIGHTS)
+
+# Kinds that don't pay effort — commit/push/ok/continue are free.
+FREE_KINDS: frozenset[str] = frozenset({"workflow", "context", "approval"})
+ALL_KINDS: frozenset[str] = frozenset({
+    "request", "correction", "question", "verification",
+    "workflow", "context", "approval",
+})
 
 
 def load_dotenv(repo_root: Path) -> None:
@@ -197,12 +215,78 @@ def normalize_match_table(table: dict, n_intents: int, n_trial: int) -> tuple[di
         })
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "n_intents": n_intents,
         "n_trial_msgs": n_trial,
         "per_intent": full_per_intent,
         "unmatched_trial_msgs": cleaned_unmatched,
     }, warnings
+
+
+def normalize_trial_msg_specificity(
+    spec: object, n_trial: int,
+) -> tuple[list[dict], list[str]]:
+    """Validate the §Proposal `trial_msg_specificity` array. Returns
+    (normalized list, warnings). Missing rows are filled with `(vague, request)`
+    and flagged in warnings so downstream readers can detect gaps."""
+    warnings: list[str] = []
+    if spec is None:
+        if n_trial > 0:
+            warnings.append("trial_msg_specificity missing from response")
+        return [], warnings
+    if not isinstance(spec, list):
+        warnings.append(f"trial_msg_specificity not a list: {type(spec).__name__}")
+        return [], warnings
+
+    seen: dict[int, dict] = {}
+    for entry in spec:
+        if not isinstance(entry, dict):
+            continue
+        ti = entry.get("trial_idx")
+        if not isinstance(ti, int) or not (0 <= ti < n_trial):
+            warnings.append(f"specificity entry with bad trial_idx={ti}")
+            continue
+        tier = entry.get("tier")
+        if tier not in TIER_NAMES:
+            warnings.append(f"trial {ti} bad tier={tier!r}; coerced to 'vague'")
+            tier = "vague"
+        kind = entry.get("kind_hint")
+        if kind not in ALL_KINDS:
+            warnings.append(f"trial {ti} bad kind_hint={kind!r}; coerced to 'request'")
+            kind = "request"
+        seen[ti] = {
+            "trial_idx": ti,
+            "tier": tier,
+            "kind_hint": kind,
+            "rationale": str(entry.get("rationale", ""))[:200],
+        }
+
+    out: list[dict] = []
+    for ti in range(n_trial):
+        if ti in seen:
+            out.append(seen[ti])
+        else:
+            warnings.append(f"trial {ti} missing from specificity; assumed vague/request")
+            out.append({
+                "trial_idx": ti, "tier": "vague", "kind_hint": "request",
+                "rationale": "missing in LLM output",
+            })
+    return out, warnings
+
+
+def compute_effort_cost(specificity: list[dict]) -> int:
+    """Per-trial effort scalar — sum of tier weights over non-FREE messages.
+
+    `eval_design.md` §B:
+        effort_cost = Σ SPECIFICITY_WEIGHTS[m.tier]
+                      for m in specificity if m.kind_hint not in FREE_KINDS
+    """
+    total = 0
+    for m in specificity:
+        if m.get("kind_hint") in FREE_KINDS:
+            continue
+        total += SPECIFICITY_WEIGHTS.get(m.get("tier") or "", 0)
+    return total
 
 
 def compute_scores(match_table: dict, n_intents: int, n_trial: int) -> dict:
@@ -260,10 +344,12 @@ async def judge_one_trial(
     # Step 2: trivial shortcut
     if not intents and not sim:
         verdict = {
-            "schema_version": 1, "n_intents": 0, "n_trial_msgs": 0,
+            "schema_version": 2, "n_intents": 0, "n_trial_msgs": 0,
             "match_table": {"per_intent": [], "unmatched_trial_msgs": []},
+            "trial_msg_specificity": [],
             "coverage_rate": 1.0, "weighted_coverage": 1.0,
             "scope_precision": 1.0, "overall_score": 1.0,
+            "effort_cost": 0,
             "judge_model": "shortcut", "elapsed_sec": 0.0,
             "schema_warnings": [],
             "trial_dir": str(trial_dir), "task_dir": str(task_dir),
@@ -300,12 +386,21 @@ async def judge_one_trial(
     table, warnings = normalize_match_table(table_raw, len(intents), len(sim))
     scores = compute_scores(table, len(intents), len(sim))
 
+    # §Proposal — trial_msg_specificity + effort_cost (eval_design.md §B)
+    specificity, spec_warnings = normalize_trial_msg_specificity(
+        table_raw.get("trial_msg_specificity"), len(sim),
+    )
+    warnings.extend(spec_warnings)
+    effort_cost = compute_effort_cost(specificity)
+
     verdict = {
-        "schema_version": 1,
+        "schema_version": 2,
         "n_intents": len(intents),
         "n_trial_msgs": len(sim),
         "match_table": table,
+        "trial_msg_specificity": specificity,
         **scores,
+        "effort_cost": effort_cost,
         "judge_model": model,
         "elapsed_sec": round(time.monotonic() - t0, 1),
         "schema_warnings": warnings,
