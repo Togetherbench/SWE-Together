@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task": "agent-swarm-task-4a881b",
+  "n_oracle_turns_in": 8,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Implement the plan for one-time scheduled tasks from the specified plan file.",
+      "verbatim_excerpt": "plans/2026-03-06-one-time-scheduled-tasks.md"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 7,
+      "intent_kind": "question",
+      "text": "Did you perform manual end-to-end tests?",
+      "verbatim_excerpt": "did you perform manual e2es?"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 8,
+      "intent_kind": "workflow",
+      "text": "Bump the version, commit changes, and push, ignoring unstaged workflow files.",
+      "verbatim_excerpt": "bump tha version, commit the changes and push (disregard the workflow unstaged files!)"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 5.6
+}

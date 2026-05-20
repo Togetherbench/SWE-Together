@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-auto-ec7037ba",
+  "n_oracle_turns_in": 7,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "verification",
+      "text": "Verify all changelog attributions are correct by looking up issues/PRs via gh cli.",
+      "verbatim_excerpt": "double check that all attributions are correct by locating the issues/prs via gh cli"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "Ask where the terrobe PR attribution is.",
+      "verbatim_excerpt": "where's the terrobe pr?"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "question",
+      "text": "Ask how many other changelog entries have incorrect attributions.",
+      "verbatim_excerpt": "how many more cl entries did you fuck up?"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "workflow",
+      "text": "Commit and push the changes.",
+      "verbatim_excerpt": "commit and push"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "workflow",
+      "text": "Do a new patch release.",
+      "verbatim_excerpt": "then do a new patch release"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 6,
+      "intent_kind": "context",
+      "text": "Report that the merged autocomplete feature is broken: selecting with tab/enter adds a space and stops autocompletion.",
+      "verbatim_excerpt": "i type @packages which completes to \"@packages/ \" (note the space) and the auto-complete file list disappears"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 6,
+      "intent_kind": "request",
+      "text": "Fix autocomplete so tab/enter selection doesn't add a trailing space and continues completing child paths.",
+      "verbatim_excerpt": "why do we add a space if we select an entry with tab or enter?"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 7,
+      "intent_kind": "workflow",
+      "text": "Commit and push the changes.",
+      "verbatim_excerpt": "ok commit and push"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 8.9
+}

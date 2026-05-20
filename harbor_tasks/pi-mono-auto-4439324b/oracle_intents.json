@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-auto-4439324b",
+  "n_oracle_turns_in": 15,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Why did this error occur after switching from openai-codex/gpt to github-copilot/gpt backend?",
+      "verbatim_excerpt": "why would that error happen after the last message?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "correction",
+      "text": "Clarify it was the GitHub Copilot backend that caused the error, not the Codex backend.",
+      "verbatim_excerpt": "it wasn't codex backend it was github copilot backend that fucked up"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "question",
+      "text": "Is the given conversation ID compatible with the Codex backend?",
+      "verbatim_excerpt": "is compatible with codex backend, no?"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "Write an ad-hoc Node script using stream.test.ts patterns to reproduce the error with a synthetic context and complete call.",
+      "verbatim_excerpt": "do an ad-hoc node script see @packages/ai/test/stream.test.ts"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Could the error be caused by the ID having two underscores?",
+      "verbatim_excerpt": "maybe because it has 2 underscores?"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 6,
+      "intent_kind": "request",
+      "text": "Try a string with the same underscore placement but different alphanumeric characters.",
+      "verbatim_excerpt": "try a string with the same _ placement but different alnum?"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 7,
+      "intent_kind": "question",
+      "text": "Should we avoid converting '/' into '_' in the ID?",
+      "verbatim_excerpt": "we shouldn't change / into _?"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 8,
+      "intent_kind": "request",
+      "text": "Only use a single underscore after 'fc' prefix in the ID format.",
+      "verbatim_excerpt": "only have a _ after fc?"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 9,
+      "intent_kind": "context",
+      "text": "This underscore rule applies to 'foreign' IDs specifically.",
+      "verbatim_excerpt": "for \"foreign\" ids"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 10,
+      "intent_kind": "question",
+      "text": "What is the collision probability of the shortHash function?",
+      "verbatim_excerpt": "what's the collision probability between shortHash?"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 11,
+      "intent_kind": "request",
+      "text": "Fix the ID generation and ensure the ID length stays within valid bounds.",
+      "verbatim_excerpt": "fix it, ensure lenght of id is within bounds!"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 12,
+      "intent_kind": "verification",
+      "text": "Test the fix first using the original problematic string from Copilot.",
+      "verbatim_excerpt": "test first with the string from copilot"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 13,
+      "intent_kind": "request",
+      "text": "Remove all heap snapshot files in the current directory.",
+      "verbatim_excerpt": "remove all the heap snapshots in this dir"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 14,
+      "intent_kind": "request",
+      "text": "Remove the mbtree file as well.",
+      "verbatim_excerpt": "mbtree file too"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 15,
+      "intent_kind": "workflow",
+      "text": "Update changelog, commit changed files, check branch is main, and push.",
+      "verbatim_excerpt": "Wrap it."
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 15.2
+}

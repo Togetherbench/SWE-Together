@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "rudel-task-468289",
+  "n_oracle_turns_in": 2,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "workflow",
+      "text": "Commit changes and open a pull request.",
+      "verbatim_excerpt": "please commit changes and open PR"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "context",
+      "text": "Follow the PR creation skill checklist: run verification, review diff, commit, push, and create PR with conventional commit title.",
+      "verbatim_excerpt": "Follow these steps in order when creating a pull request"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 4.1
+}

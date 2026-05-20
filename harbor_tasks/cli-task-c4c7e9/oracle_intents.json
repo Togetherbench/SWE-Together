@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-c4c7e9",
+  "n_oracle_turns_in": 2,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Remove all of the referenced content.",
+      "verbatim_excerpt": "Let's remove all that"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "workflow",
+      "text": "Commit the changes.",
+      "verbatim_excerpt": "commit this"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 3.9
+}

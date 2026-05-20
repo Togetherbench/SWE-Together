@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-dbd2bf",
+  "n_oracle_turns_in": 3,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "List all outstanding issues in the project.",
+      "verbatim_excerpt": "which other outstanding issues we have?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Fix linting issues in the codebase.",
+      "verbatim_excerpt": "fix liniting"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 2,
+      "intent_kind": "verification",
+      "text": "Run the tests.",
+      "verbatim_excerpt": "run the tests"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 3,
+      "intent_kind": "correction",
+      "text": "Do not remove existing `nolint:ireturn` comments.",
+      "verbatim_excerpt": "don't remove the `nolint:ireturn` comments"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 5.0
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-32ba47",
+  "n_oracle_turns_in": 3,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "Ask whether there is any remaining dead code.",
+      "verbatim_excerpt": "is not any more dead code ?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 3,
+      "intent_kind": "workflow",
+      "text": "Commit the current changes first.",
+      "verbatim_excerpt": "first commit the current changes"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 5,
+      "intent_kind": "workflow",
+      "text": "Commit the current changes first.",
+      "verbatim_excerpt": "first commit the current changes"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 4.9
+}

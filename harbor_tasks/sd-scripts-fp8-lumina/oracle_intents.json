@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "task": "sd-scripts-fp8-lumina",
+  "n_oracle_turns_in": 14,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Do the added FP8_OPTIMIZATION_TARGET_KEYS and FP8_OPTIMIZATION_EXCLUDE_KEYS actually exist in the Lumina2 model?",
+      "verbatim_excerpt": "FP8_OPTIMIZATION_TARGET_KEYS` and `FP8_OPTIMIZATION_EXCLUDE_KEYS` actually exist"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "Explain modifications and whether they are consistent with fp8_scaled implementation for other models in musubi-tuner.",
+      "verbatim_excerpt": "Are theey consistent with how fp8_scaled is implemented for other models"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "context",
+      "text": "Fix the error: traceback in lumina_models.py involving patchify_and_embed, attention, and qkv forward calls.",
+      "verbatim_excerpt": "self.qkv(x)"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Why is use_scaled_mm not enabled despite using SM 8.9+ hardware?",
+      "verbatim_excerpt": "I'm using SM 8.9+ . Why is `use_scaled_mm` not enabled?"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 7,
+      "intent_kind": "request",
+      "text": "Implement torch.compile for Lumina in sd-scripts, referencing musubi-tuner's approach of manually specifying modules to compile.",
+      "verbatim_excerpt": "refer to how `torch.compile` is implemented in C:\\musubi-tuner"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 8,
+      "intent_kind": "question",
+      "text": "After fp8_scaled modifications, training loss is much higher (5.0 vs 0.5). What could cause this?",
+      "verbatim_excerpt": "the training loss is much higher than before (5.0 vs 0.5)"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 12,
+      "intent_kind": "question",
+      "text": "With torch.compile reverted, fp8_scaled loads without missing keys (bf16 converted on the fly). What else could cause high loss?",
+      "verbatim_excerpt": "Loaded Lumina: <All keys matched successfully>"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 9.7
+}

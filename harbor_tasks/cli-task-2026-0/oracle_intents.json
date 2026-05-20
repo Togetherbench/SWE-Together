@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-2026-0",
+  "n_oracle_turns_in": 2,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Explain what io.Discard does in Go.",
+      "verbatim_excerpt": "what do io.Discard does"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 2.9
+}

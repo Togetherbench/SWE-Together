@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-19def0",
+  "n_oracle_turns_in": 1,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "workflow",
+      "text": "Commit the changes with a thorough commit message.",
+      "verbatim_excerpt": "Commit with thorough message."
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 3.5
+}

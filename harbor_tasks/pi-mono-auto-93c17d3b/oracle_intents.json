@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-auto-93c17d3b",
+  "n_oracle_turns_in": 10,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Create a test extension with a slash command that injects a hidden message instructing the model to output a specific signal string.",
+      "verbatim_excerpt": "a slash command, something like /start which injects a hidden custom message"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Extension should listen for message_end and react to the signal string by showing/closing UI or other actions.",
+      "verbatim_excerpt": "listen for message_end and react accordingly, e.g. by showing ui, or closing ui"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Move the extension to cwd/.pi/extensions so it can be reloaded.",
+      "verbatim_excerpt": "move that to cwd/.pi/extensions so i can relaod"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 5,
+      "intent_kind": "context",
+      "text": "Reports that UI says 'signal ui is open waiting for signal close ui' unexpectedly.",
+      "verbatim_excerpt": "now it says signal ui is open waiting for signal close ui"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 8,
+      "intent_kind": "correction",
+      "text": "Outputting open and close in the same message causes both to execute; need to separate them across turns.",
+      "verbatim_excerpt": "if you output open and close, close is also executed"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 8,
+      "intent_kind": "request",
+      "text": "Do 10 turns reading all README.md files 10 lines each, open UI on first turn, close on last turn.",
+      "verbatim_excerpt": "10 turns, read all the @README.md files 10 lines each. open on first turn, close on last turn"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 10,
+      "intent_kind": "request",
+      "text": "Complete all 10 turns as instructed.",
+      "verbatim_excerpt": "just do all 10 turns"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 11,
+      "intent_kind": "context",
+      "text": "UI freezes during model output; markdown streams in but typing is blocked.",
+      "verbatim_excerpt": "when you output shit, the ui kinda freezes. i see markdown coming in, but i basically can't type"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 11,
+      "intent_kind": "question",
+      "text": "Is the UI code in message_end/update path broken? Are we recreating UI on every update?",
+      "verbatim_excerpt": "is the ui code int he message_end/update path foobar? do we recreate ui all the time?"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 12.4
+}

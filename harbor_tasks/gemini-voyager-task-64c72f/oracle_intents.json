@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "gemini-voyager-task-64c72f",
+  "n_oracle_turns_in": 5,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Ask what changes were made to fix the problem.",
+      "verbatim_excerpt": "你做了什么修复这个问题"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Ask when the bug/issue was introduced.",
+      "verbatim_excerpt": "这个是什么时候被引入的"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 4.7
+}

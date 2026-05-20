@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "triton-msvc-c4267-warnings",
+  "n_oracle_turns_in": 2,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "What is the signature of op->getResult?",
+      "verbatim_excerpt": "What's the signature of op->getResult"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "context",
+      "text": "Check the LLVM project source at C:\\llvm-project\\ for the answer.",
+      "verbatim_excerpt": "You may check C:\\llvm-project\\"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 3.8
+}
