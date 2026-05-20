@@ -6,6 +6,8 @@ Closely related design docs:
 - [`eval/correctness/METHOD_AND_PILOT.md`](../correctness/METHOD_AND_PILOT.md) — sibling pilot doc (test.sh vs agentic judge comparison; the same trial set)
 - [`analysis/eval_metric.md`](../../analysis/eval_metric.md) — the disentanglement metric taxonomy this fits into
 
+**Introduced in**: [PR #158 — eval: split agentic judge into correctness + intent_coverage](https://github.com/Togetherbench/SWE-Together/pull/158). Sibling package [`eval/correctness/`](../correctness/) was renamed from `eval/agentic/` in the same PR.
+
 ---
 
 ## What's in the box
@@ -35,6 +37,50 @@ trials_*/<trial>/intent_coverage_verdict.json
 ---
 
 ## V2 pipeline — three stages
+
+### Pipeline at a glance
+
+Two LLM passes total — one per task (cached forever), one per trial. All aggregate scores are computed deterministically in code, not by the LLM.
+
+```mermaid
+flowchart TD
+  subgraph S1 ["Stage 1 — extract_intents.py (one-time per task, cached)"]
+    O["harbor_tasks/&lt;task&gt;/oracle_session.jsonl"]
+    O --> O1["load_oracle_user_turns:<br/>skip turn 0 (instruction.md), interrupts,<br/>continuations, &lt;10-char acks"]
+    O1 --> O2["Opus 4.6 + extract_intents_system.md<br/>temperature 0"]
+    O2 --> O3["validate intent ids, fields, kinds"]
+    O3 --> OC["harbor_tasks/&lt;task&gt;/oracle_intents.json<br/>(cached, idempotent — --force to refresh)"]
+  end
+
+  subgraph S2 ["Stage 2 — coverage_one.py (per trial)"]
+    T["trial dir → load_trial_sim_msgs<br/>(episode-N/user_decision.json, has_message=true)"]
+    OC -.cached intents.-> M
+    T --> M["build_user_message:<br/>(intents, trial_msgs) → prompt"]
+    M --> J["Opus 4.6 + coverage_system.md<br/>match-table output ONLY:<br/>per_intent[matched_trial_idx, confidence, rationale]<br/>+ unmatched_trial_msgs[trial_idx, category, rationale]"]
+    J --> N["normalize_match_table:<br/>type-check + fill missing intent ids +<br/>contradiction guard (null match w/ confidence > 0 → 0)"]
+    N --> COMP["compute_scores (code, not LLM):<br/>coverage_rate     = matched (conf≥0.5) / n_intents<br/>weighted_coverage = mean(confidence) over intents<br/>scope_precision   = unique matched trial idxs / n_trial_msgs<br/>overall_score     = 0.65·weighted + 0.35·scope_precision"]
+    COMP --> V["trials_*/&lt;trial&gt;/intent_coverage_verdict.json<br/>(match_table + scores + schema_warnings)"]
+  end
+
+  subgraph S3 ["Stage 3 — run_batch.py (cohort orchestration)"]
+    PLAN["plan.json: [{trial_dir, task_dir, out_name}, ...]"] --> POOL
+    POOL["asyncio.Semaphore(workers=5)"] -.calls Stage 2 in parallel.-> J
+    V --> SUMM["pipeline_logs/&lt;tag&gt;_summary.json:<br/>status counts + per-job overall_score + elapsed"]
+  end
+
+  subgraph S4 ["Stage 4 — disentangle (post-batch)"]
+    V --> F["For each task across cohorts:<br/>1. compute median(overall_score) + σ(overall)<br/>2. threshold = max(median − 1·σ, 0.50)<br/>3. drop cohort if overall &lt; threshold<br/>   AND (median − overall) &gt; 0.10<br/>4. always keep ≥ 1 cohort"]
+    F --> R["report two numbers:<br/>σ_judge(all cohorts) — raw signal<br/>σ_judge(filtered) — disentangled agent variance"]
+  end
+```
+
+Operational cost on the §Q1 pilot (10 tasks × 3 cohorts, Opus 4.6, temp 0):
+
+| stage | cost |
+|---|---|
+| Stage 1 (intent extraction) | ~$0.05 per task, one-time, cached — total ~$0.50 for 10 tasks |
+| Stage 2+3 (cohort batch) | 31 trials at workers=5 → **63 s end-to-end**, ~$3 total |
+| Stage 4 (filter, no LLM) | deterministic Python; < 1 s for the whole pilot |
 
 ### Stage 1 — `extract_intents.py` (one-time per task, cached)
 
