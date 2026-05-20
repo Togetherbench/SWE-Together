@@ -59,6 +59,158 @@ unconditional behavior). The claim is `judge >> test.sh`, not
 `judge == oracle`.
 
 ---
+## Design — agentic judge
+
+**Origin**: [PR #128 — feat(eval): judge-augmented correctness scoring](https://github.com/Togetherbench/SWE-Together/pull/128) (merged 2026-05-17). Core implementation in commit [`323dd9fc — feat(eval/agentic): agentic judge running inside the task sandbox`](https://github.com/Togetherbench/SWE-Together/commit/323dd9fc9497875378ffb4f5d45ced3334c0735e). Original package path `eval/agentic/`; renamed to `eval/correctness/` when [PR #158](https://github.com/Togetherbench/SWE-Together/pull/158) introduced the sibling `eval/intent_coverage/` package.
+
+### Why test.sh is structurally blind
+
+The cleanest motivating case from PR #128 — `cli-task-2c3e30`, DS V4 Pro vs Opus 4.6 on the same task:
+
+| Agent | Test added | F2P matched | `reward.txt` |
+|---|---|---:|---:|
+| Opus 4.6 | `TestResumeMultipleCheckpoints_SortsByCreatedAt` | 2 / 2 | **1.0** |
+| DS V4 Pro | `TestSortAndRestoreCheckpoints_Ordering` | 1 / 2 | **0.5** |
+
+Both diffs sort by `CreatedAt` and restore in sorted order; DS's test is arguably stronger (3 checkpoints vs 2). The 0.5 gap exists entirely because DS named the test after a renamed helper, and that name isn't in the hardcoded `FAIL_TO_PASS` list. `test.sh` cannot fix this by enumerating all plausible test names — F2P is downstream of refactoring choices the task author cannot anticipate.
+
+This is one of four structural blindspots `test.sh` has. The judge captures all four — see §Q2 case studies below for traceable evidence (Patterns A–D referenced inline).
+
+### The judge in one sentence
+
+**Run `claude-code` (Opus 4.6) inside the task's own E2B sandbox, with `agent.patch` applied to `/workspace`, and let it adjudicate completeness against a weighted-tier rubric — bidirectionally**.
+
+### Pipeline
+
+```mermaid
+flowchart TD
+  A[trial dir + task dir]
+  A --> B["load_inputs (judge_one.py:124)"]
+  B --> B1["agent.patch (trial/agent/final.patch)"]
+  B --> B2["oracle.patch (task/oracle_session.jsonl grading_patch)"]
+  B --> B3["test.sh, README, user_simulation_prompt.md (task/)"]
+  B --> B4["judge_system.md (eval/correctness/prompts/)"]
+
+  B --> C["spawn E2B sandbox<br/>template = tb-&lt;task&gt;__&lt;hash&gt;<br/>retries on ProtocolError"]
+  C --> D["root: git apply /tmp/agent.patch<br/>chmod -R a+rwX /workspace"]
+  D --> E["ensure claude-code v2.1.108 installed<br/>(idempotent — most images bake it in)"]
+  E --> F["upload to /tmp/judge_inputs/<br/>agent.patch · oracle.patch · README · user_sim_prompt · test.sh · tests/* · judge_system.md"]
+  F --> G["spawn judge<br/>claude --print --max-turns 40<br/>--model claude-opus-4-6<br/>--setting-sources user<br/>--append-system-prompt judge_system.md<br/>--dangerously-skip-permissions"]
+
+  G --> H{"judge agent loop"}
+  H -->|"Read"| H1["README.md → goal"]
+  H -->|"Read"| H2["user_simulation_prompt.md → user intent"]
+  H -->|"Bash/Grep/Read"| H3["explore /workspace post-patch"]
+  H -->|"Bash"| H4["run test.sh (optional)"]
+  H -->|"Read"| H5["compare agent.patch vs oracle.patch"]
+
+  H --> I["Write /tmp/judge_inputs/verdict.json"]
+  I --> J["host reads verdict.json"]
+  J --> K["_validate_schema (judge_one.py:34)"]
+  K --> K1["weights sum to 1.0 ± 0.01"]
+  K --> K2["≥ 1 core goal"]
+  K --> K3["judge_score = Σ weight × met (± 0.01)"]
+  K --> K4["verdict bucket consistent with judge_score"]
+  K --> L["write judge_verdict.json to trial dir"]
+```
+
+### Why a sandbox, not host-side static checks
+
+Three reasons the judge runs *inside* the same image the agent ran in, not against text on disk:
+
+1. **Running `test.sh` is part of the judge's tool set** — it can re-run individual tests, inspect failure modes, and ground its score in real execution. Host-side judges have to guess.
+2. **`/workspace` post-patch state** — the judge greps real renamed symbols, traces real call sites, sees the canonical project layout. Operating on patch hunks alone misses cross-file context.
+3. **Image-baked toolchains** — `go test`, `cargo test`, `pytest`, language-specific lints all just work because the image is the same one the agent had. No host-side reproduction of N toolchains.
+
+### Grading schema — weighted-tier rubric
+
+From [`prompts/judge_system.md`](./prompts/judge_system.md). The judge decomposes the task into 3–6 completeness goals; each goal carries:
+
+| field | semantics |
+|---|---|
+| `goal` | behavioral description, implementation-agnostic ("sort by CreatedAt ascending", not "add function named sortByX") |
+| `tier` | `core` (primary task) · `secondary` (later user requests, meaningful refactors) · `polish` (style, optional renames) |
+| `weight` | float; **all weights sum to 1.0** (enforced by `_validate_schema`) |
+| `met` | bool |
+| `evidence` | `file:line`, grep result, or test output |
+
+**Suggested default weight ratio** (judge can deviate): `core : secondary : polish = 4 : 1 : 0.25`. Normalised across the decomposition.
+
+**Final score**: `judge_score = Σ(weight × met)`, then bucketed:
+
+```
+judge_score ≥ 0.85  → verdict = "equivalent"
+0.30 ≤ ... < 0.85  → verdict = "partial"
+judge_score < 0.30  → verdict = "incorrect"
+
+override: verdict = "gameable" allowed at any score; forces judge_score = 0.0
+```
+
+The "gameable" override is the downgrade lever — if the agent's "solution" passes `test.sh` via deleted tests, no-op stubs, or hardcoded outputs, the judge can zero the score regardless of the rubric arithmetic.
+
+### Bidirectional — upgrades and downgrades vs `test.sh`
+
+The judge's verdict is authoritative and supersedes `test.sh`. Concretely:
+
+- **Upgrade** (`test.sh = 0.5 → judge = 1.0`): agent took a valid alternate approach that the narrow F2P list didn't recognise. **Pattern A** in §Q2 (`cli-task-2c3e30__oS6jWHt` — DS V4 Pro, renamed test).
+- **Downgrade** (`test.sh = 1.0 → judge = 0.85`): agent passed F2P but skipped a user request that had no test gate. **Pattern B** in §Q2 (`cli-task-2c3e30__XJ6ZWvx` — Opus, Turn-12 rename skipped).
+- **Downgrade — replay credit**: `reward.txt` came from running test.sh against an earlier turn snapshot, not the agent's actual final patch. **Pattern C** (`cli-task-ea3f8f` — scaffolding without core file).
+- **Upgrade — ceiling artefact**: `test.sh` reward is bounded by `Σ F2P_weights` because `base_reward.txt` is missing per [#148](https://github.com/Togetherbench/SWE-Together/issues/148); the judge ignores the pipeline artefact and scores the actual work. **Pattern D** (`amytis-implement-3b6cb5__ALW7wDo`).
+- **Gameable** (`test.sh = 1.0 → judge_score = 0.0`): hardcoded outputs / deleted tests / no-op stubs. **Pattern E** — framework supported; not exercised in the pilot.
+
+The four patterns drove the rubric design: each is something an F2P regex cannot encode, but a Bash-armed agent with the README and the user-sim prompt can verify.
+
+### Hard-validated output schema
+
+`_validate_schema` in [`judge_one.py`](./judge_one.py) enforces the invariants on the host *after* reading the verdict from the sandbox. It does not try to silently fix the LLM's output; it surfaces every drift as a `schema_warnings` entry on the verdict so downstream aggregation can quarantine bad records:
+
+```python
+# from judge_one.py:34
+- completeness_goals is a non-empty list
+- each goal has all required fields, well-typed
+- tier ∈ {core, secondary, polish}
+- weight is numeric
+- at least one 'core' goal
+- weights sum to 1.0 (± 0.01)
+- judge_score == sum(weight × met) (± 0.01)
+- verdict bucket consistent with judge_score
+- 'gameable' allowed at any score, forces score = 0.0
+```
+
+### Why pin Opus 4.6 inside the sandbox
+
+The judge model is hard-pinned to `claude-opus-4-6` in the spawn command (see [`sandbox.py:run_judge_in_e2b`](./sandbox.py)). Three considerations:
+
+- **PR #128 pilot was on Sonnet (default at the time)**; results were already publishable but variance was higher on borderline cases. Upgrading to Opus 4.6 was a planned follow-up and is now the default.
+- **`--setting-sources user`** skips loading the workspace's `.claude/settings.json` — required because many tasks ship a `SessionStart`/`SessionEnd` hook that runs the workspace's binary (`go run cmd/entire/main.go hooks ...`), which fails inside our judge sandbox and would otherwise short-circuit the agent before `verdict.json` is written.
+- **`--dangerously-skip-permissions`** is required for headless `claude --print` (no TTY for interactive approval) — but it's safe here because the sandbox is throwaway and isolated.
+
+### Operating envelope (from the PR #128 pilot)
+
+| | |
+|---|---|
+| Pilot scale | 5 tasks × 2 cohorts × 3 runs = 30 verdicts |
+| Wall-clock | 11.6 min at `WORKERS=15` |
+| Failure rate | 0/30 |
+| Verdict σ across the 3 runs per (task, cohort) | aggregate 0.025, median 0.016, max 0.069 |
+| Mean abs model-gap: `reward.txt` vs judge | 0.240 vs **0.139** (judge smooths through structural artefacts) |
+| Outcome shifts | 1 rank flip + 1 tie-break out of 5 tasks |
+
+The follow-up 10-task × 3-cohort pilot in §Q2/§Q3 of this doc scales this up and reports the per-task evidence at full detail.
+
+### File layout
+
+```
+eval/correctness/                       (renamed from eval/agentic/ in PR #158)
+├── sandbox.py                          E2B sandbox spawn + patch apply + judge spawn
+├── judge_one.py                        single-trial CLI + _validate_schema
+├── run_batch.py                        batch runner (asyncio.Semaphore pool)
+├── build_template.py                   E2B template builder (multi-line ENV preprocessor)
+└── prompts/judge_system.md             weighted-tier rubric prompt
+```
+
+---
+
 
 ## Experimental setup
 
