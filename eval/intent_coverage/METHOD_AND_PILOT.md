@@ -390,35 +390,32 @@ The 10 tasks below are the [`eval/correctness/METHOD_AND_PILOT.md`](../correctne
 
 ---
 
-### 4. `cli-task-4a9dde` — **DIVERGENT**
+### 4. `cli-task-7e3475` — **IDENTICAL** *(replaces `cli-task-4a9dde`; see [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159))*
 
-- n cohorts: 3  ·  intervention count per cohort: [9, 14, 13]  ·  patch lines per cohort: [0, 0, 0]
-- live σ=0.153  ·  clean n<2  ·  judge n<2
+- n cohorts: 3  ·  intervention count per cohort: [2, 3, 2]  ·  patch lines per cohort: [210817, 210817, 210817]
+- live σ=0.000  ·  clean σ=0.000  ·  judge σ=0.035
 
 **Sim messages (first 4 non-no-op per cohort):**
 
 ```
---- cohort 1 (9 intv, 10 turns) ---
-  t 1 [question      ] can you give me the full command first and I can test if this works?
-  t 2 [question      ] can you check the docs / cli help?
-  t 3 [redirect      ] --allowed-tools <tool1,tool2,...>: A comma-separated list of tool names that will bypass the confirmation dialog. Example: gemini --allowed-
-  t 4 [redirect      ] this is the right syntax: --allowed-tools "ShellTool(git status),ShellTool(git add),..."
+--- cohort 1 (2 intv, 6 turns) ---
+  t 1 [new_requirement] commit and push this
+  t 2 [new_requirement] pull main and rebase this branch onto it and then push it
 
---- cohort 2 (14 intv, 15 turns) ---
-  t 1 [question      ] can you give me the command first and I can test if this works?
-  t 2 [question      ] can you check the docs / cli help?
-  t 3 [redirect      ] --allowed-tools <tool1,tool2,...>: A comma-separated list of tool names that will bypass the confirmation dialog. Example: gemini --allowed-
-  t 4 [redirect      ] no with --approval-mode auto_edit that is not necessary. it works, so what's the issue then
+--- cohort 2 (3 intv, 7 turns) ---
+  t 1 [new_requirement] commit and push this
+  t 2 [new_requirement] pull main and rebase this branch onto it and then push it
+  t 3 [redirect      ] wait no, the patch failed to apply so of course there's no diff. you need to actually get these changes onto a branch based on main and force push it.
 
---- cohort 3 (13 intv, 15 turns) ---
-  t 1 [question      ] your message got cut off, what is the actual gemini command it runs?
-  t 2 [question      ] your message got cut off again, what were you going to say about --allowed-tools? why is it not working?
-  t 3 [question      ] can you give me the command first and I can test if this works?
-  t 4 [question      ] can you check the docs / cli help?
+--- cohort 3 (2 intv, 6 turns) ---
+  t 1 [new_requirement] commit and push this
+  t 2 [new_requirement] pull main and rebase this branch onto it and then push it
 
 ```
 
-**Sim fully diverged** — every cohort opened with a different first message, conversations don't overlap. Each trial is effectively measuring a different (agent, sim-path) pair.
+**Sim is effectively identical across cohorts** (every cohort opens with the same two messages verbatim; r2 adds one redirect when the rebase didn't take). Patch lines are byte-identical at 210,817 across all 3 cohorts — the diff is dominated by the rebase-introduced re-application of upstream commits, so post-patch state is fully deterministic. Score variance is therefore 100% from agent randomness (which is small here: judge σ=0.035).
+
+- Score impact: judge range tight (0.89-0.95). Sim contributes 0 variance.
 
 ---
 
@@ -560,32 +557,38 @@ The 10 tasks below are the [`eval/correctness/METHOD_AND_PILOT.md`](../correctne
 
 ---
 
-### 9. `rudel-task-d64e5a` — **partial-converge**
+### 9. `rudel-task-468289` — **IDENTICAL** *(replaces `rudel-task-d64e5a`; see [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159))*
 
-- n cohorts: 3  ·  intervention count per cohort: [2, 3, 4]  ·  patch lines per cohort: [0, 0, 0]
-- live σ=0.433  ·  clean n<2  ·  judge n<2
+- n cohorts: 3  ·  intervention count per cohort: [2, 3, 2]  ·  patch lines per cohort: [335, 350, 381]
+- live σ=0.000  ·  clean σ=0.000  ·  judge σ=0.118
 
 **Sim messages (first 4 non-no-op per cohort):**
 
 ```
 --- cohort 1 (2 intv, 6 turns) ---
-  t 1 [new_requirement] commit, push, create PR and merge it when CI passes
-  t 2 [redirect      ] skip the push, we are done
+  t 1 [new_requirement] seems to work please commit changes and open PR
+  t 2 [new_requirement] Base directory for this skill: /Users/rafa/Obsession/rudel/.claude/skills/pr-creation
 
---- cohort 2 (3 intv, 7 turns) ---
-  t 1 [new_requirement] run all 3 commands lint, build, check-types as well as test in a single turborepo command
-  t 2 [question      ] did you run verify locally and it works?
-  t 3 [new_requirement] commit, push, create PR and merge it when CI passes
+# PR Creation Checklist
+…
 
---- cohort 3 (4 intv, 11 turns) ---
-  t 1 [new_requirement] run all 3 commands lint, build, check-types as well as test in a single turborepo command
-  t 2 [question      ] did you run verify locally and it works?
-  t 3 [new_requirement] commit, push, create PR and merge it when CI passes
-  t 7 [redirect      ] that's fine, just leave it committed locally, we are done
+--- cohort 2 (3 intv, 9 turns) ---
+  t 1 [new_requirement] seems to work please commit changes and open PR
+  t 2 [redirect      ] wait follow the pr creation checklist, run bun run verify first and review the diff
+  t 5 [new_requirement] ok that's fine, we're done here
+
+--- cohort 3 (2 intv, 6 turns) ---
+  t 1 [new_requirement] seems to work please commit changes and open PR
+  t 2 [new_requirement] Base directory for this skill: /Users/rafa/Obsession/rudel/.claude/skills/pr-creation
+
+# PR Creation Checklist
+…
 
 ```
 
-**Sim partially diverged but at similar depth**. Some cohorts opened with different first messages but converged on the same task scope.
+**Sim opens identically across all 3 cohorts** (t1 verbatim everywhere). r1/r3 then deliver the PR-creation skill checklist; r2 nudges the agent to run verify first. Sim variance is small (overall σ=0.078); patch-quality variance is real and shows up at judge level (σ=0.118) because only r2 made meaningful progress on the optional ChartTooltip refactor. Same regime as `cli-task-46c118` — sim tight, agent noisy on secondary work.
+
+- Score impact: judge range 0.70-0.93 (Δ=0.23). Spread is agent-side, not sim-side.
 
 ---
 
@@ -644,27 +647,27 @@ V2 gives a continuous score; here's how it lines up.
 | `cli-task-2f5833` | 2 | 1.00 / 1.00 / 1.00 | 0.88 / 1.00 / 0.67 | 0.88 / 1.00 / 0.67 | 0.06 | 0.026 |
 | `comfyui-frontend-autoscale-layout` | 5 | 0.78 / 0.80 / 0.80 | 0.79 / 0.80 / 0.80 | 0.73 / 0.60 / 1.00 | 0.03 | 0.009 |
 | `sd-scripts-reg-image-dedup` | 7 | 0.76 / 0.86 / 0.80 | 0.77 / 0.86 / 0.80 | 0.76 / 0.86 / 0.71 | **0.00** | 0.175 |
-| `cli-task-4a9dde` | 23 | 0.60 / 0.43 / 1.00 | 0.73 / 0.70 / 0.93 | 0.63 / 0.52 / 0.92 | 0.06 | — (empty patches) |
+| `cli-task-7e3475` | 5 | 0.61 / 0.40 / 1.00 | 0.49 / 0.40 / 0.67 | 0.61 / 0.40 / 1.00 | 0.07 | 0.035 |
 | `cli-task-2a55af` | 18 | 0.53 / 0.28 / 1.00 | 0.64 / 0.56 / 0.85 | 0.44 / 0.33 / 0.75 | 0.08 | **0.316** |
 | `cluefin-task-52eab9` | 4 | 0.82 / 0.75 / 0.80 | 0.67 / 0.75 / 0.60 | 0.63 / 0.75 / 0.60 | 0.08 | 0.033 |
 | `gemini-voyager-task-18a6ae` | 5 | 0.90 / 1.00 / 0.80 | 0.63 / 0.60 / 0.75 | 0.76 / 0.80 / 0.75 | 0.11 | **0.353** |
 | `cli-task-f76665` | 10 | 0.41 / 0.10 / 1.00 | 0.75 / 0.70 / 1.00 | 0.70 / 0.60 / 1.00 | **0.15** | 0.097 |
-| `rudel-task-d64e5a` | 3 | 0.39 / 0.33 / 0.50 | 1.00 / 1.00 / 1.00 | 0.91 / 1.00 / 0.75 | **0.27** | — (empty patches) |
+| `rudel-task-468289` | 2 | 0.94 / 1.00 / 1.00 | 0.79 / 1.00 / 0.67 | 0.90 / 1.00 / 1.00 | 0.08 | 0.118 |
 
-Aggregate: 31 trials, `overall_score` mean = 0.75, σ = 0.17.
+Aggregate: 31 trials, `overall_score` mean = 0.75, σ = 0.19.
 
 ### Quantitative ↔ qualitative — how V2 numbers map onto §Q1 buckets
 
 | §Q1 bucket | tasks | V2 reading |
 |---|---|---|
-| IDENTICAL | `cli-task-46c118` | All cohorts overall = 1.00; σ_overall = 0. Perfect alignment with §Q1's "IDENTICAL" label. |
+| IDENTICAL | `cli-task-46c118`, `cli-task-7e3475`, `rudel-task-468289` | All cohorts on `cli-task-46c118` overall=1.00; `cli-task-7e3475` overall σ=0.07 with σ_judge=0.035 (sim and agent both tight); `rudel-task-468289` overall σ=0.08 with σ_judge=0.118 (sim tight, agent noisy on secondaries). |
 | front-converged | `cluefin-task-52eab9` | Three cohorts cluster 0.63–0.82; weakest cohort coverage low because scope_precision drops on later turns. Matches §Q1's "front matches, later diverges". |
-| partial-converge | `cli-task-2a55af`, `cli-task-2f5833`, `comfyui-frontend...`, `rudel-task-d64e5a`, `sd-scripts...` | overall σ spans 0.00 (sd-scripts/2f5833 — very tight) to 0.27 (rudel — wide). §Q1's "partial-converge" label can't distinguish these; **V2 reveals the continuous spectrum.** |
-| DIVERGENT | `cli-task-4a9dde`, `cli-task-f76665`, `gemini-voyager-task-18a6ae` | σ_overall 0.06–0.15. Different cohorts opened differently but cover overlapping intents; pilot's "DIVERGENT" label is fuzzy on these (see §Q1 §3 pilot disagreement). V2 detects the spread but doesn't necessarily call it DIVERGENT — semantically the cohorts shared scope. |
+| partial-converge | `cli-task-2a55af`, `cli-task-2f5833`, `comfyui-frontend...`, `sd-scripts...` | overall σ spans 0.00 (sd-scripts/2f5833 — very tight) to 0.08 (2a55af). §Q1's "partial-converge" label can't distinguish these; **V2 reveals the continuous spectrum.** |
+| DIVERGENT | `cli-task-f76665`, `gemini-voyager-task-18a6ae` | σ_overall 0.11–0.15. Different cohorts opened differently but cover overlapping intents; pilot's "DIVERGENT" label is fuzzy on these (see §Q1 §3 pilot disagreement). V2 detects the spread but doesn't necessarily call it DIVERGENT — semantically the cohorts shared scope. |
 
 **Where V2 actually adds value beyond §Q1**:
 - `sd-scripts-reg-image-dedup` and `cli-task-2f5833`: §Q1 calls both "partial-converge" but V2 σ ≈ 0 — these cohorts are effectively IDENTICAL in intent coverage. The §Q1 label was over-cautious.
-- `cli-task-2a55af` and `rudel-task-d64e5a`: same §Q1 "partial-converge" label, but V2 σ = 0.08 vs 0.27 — rudel has a real cohort outlier that §Q1's category misses.
+- `cli-task-7e3475` and `rudel-task-468289` (the 2026-05-20 replacement tasks): both look IDENTICAL at sim-level (overall σ < 0.10) but show different patterns at judge-level — `cli-task-7e3475` has σ_judge=0.035 (agent also tight) vs `rudel-task-468289` σ_judge=0.118 (agent noisy on optional secondary work). Sim-coverage σ alone can't tell those apart; you need both signals.
 - `gemini-voyager`: §Q1 said "DIVERGENT" by opening-msg disagreement, but V2 finds overall σ only 0.11 — cohorts cover the same 5 intents in different orderings. **The variance §Q1 attributed to sim is actually agent variance** (visible in judge σ = 0.353).
 
 This is the headline V2 win: continuous score + per-intent matching disambiguates cases that the categorical §Q1 classifier conflated.
@@ -678,22 +681,23 @@ Using the filter rule above (k=1.0, abs_floor=0.50, magnitude_gap=0.10):
 | `cli-task-46c118` | (none) | 0.107 | 0.107 | 0 | agent variance only |
 | `cli-task-2f5833` | (none) | 0.026 | 0.026 | 0 | tight; no filter needed |
 | `cli-task-2a55af` | **r3 (overall 0.44)** | 0.316 | **0.000** | **−0.316** | sim outlier — major win |
+| `cli-task-7e3475` | (none — overall σ tiny, all above floor) | 0.035 | 0.035 | 0 | tight; no filter needed |
 | `cli-task-f76665` | **r1 (overall 0.41)** | 0.097 | **0.015** | **−0.082** | sim outlier — single short msg |
 | `cluefin-task-52eab9` | (none — r3=0.63 above floor) | 0.033 | 0.033 | 0 | already tight |
 | `comfyui-frontend...` | (none — σ too small) | 0.009 | 0.009 | 0 | tight |
 | `sd-scripts-reg-image-dedup` | (none — σ too small) | 0.175 | 0.175 | 0 | **agent variance unhidden** |
 | `gemini-voyager...` | (none — r2 above floor) | 0.353 | 0.353 | 0 | **correctly preserved** (pure agent variance) |
-| `cli-task-4a9dde` / `rudel-task-d64e5a` | — | n/a (empty patches) | — | — | — |
+| `rudel-task-468289` | (none — all cohorts above floor) | 0.118 | 0.118 | 0 | **agent variance on optional secondaries** |
 
-**Aggregate σ_judge across 8 tasks with measurable judge data**:
+**Aggregate σ_judge across 10 tasks with measurable judge data**:
 
 ```
-all cohorts:  mean σ_judge = 0.140
-filtered:     mean σ_judge = 0.090     (35% reduction, 2 cohorts dropped out of 24)
+all cohorts:  mean σ_judge = 0.131
+filtered:     mean σ_judge = 0.091     (31% reduction, 2 cohorts dropped out of 30)
 ```
 
 The filter:
 - Removes 2 truly-divergent sim cohorts (cli-task-2a55af r3, cli-task-f76665 r1)
-- Leaves untouched the cases where high σ is real agent variance (gemini-voyager, sd-scripts)
+- Leaves untouched the cases where high σ is real agent variance (gemini-voyager, sd-scripts, rudel-task-468289)
 
 This is the *disentangled* number we report — σ_judge after sim-outlier removal is a tighter estimate of σ_agent, the metric we actually care about for model comparison.

@@ -1,9 +1,11 @@
 # Judge vs `test.sh` Pilot — 10-task × 3-cohort comparison
 
-**Date**: 2026-05-18
+**Date**: 2026-05-20 (re-run after task-set fix)
 **Branch**: `judge-vs-testsh-10tasks` (off `origin/main` @ `6c771495` after PR #150)
 **Pipeline**: DS-Pro coding agent → Gemini-3.1-Pro user-sim → clean-sandbox replay test.sh → Opus-4.6 agentic judge
-**Sample**: 10 tasks × 3 cohorts = 31 trial dirs (one comfyui dupe from `--skip-existing` 30-char truncation bug; 25 patch-bearing trials judge+replayed; 6 empty-patch trials from cli-task-4a9dde and rudel uncountable on judge/replay)
+**Sample**: 10 tasks × 3 cohorts = 31 trial dirs (one comfyui dupe from `--skip-existing` 30-char truncation bug). All 31 trials produce non-empty patches and are scored by judge + clean replay.
+
+**Task-set change (2026-05-20)**: Two of the originally-selected tasks (`cli-task-4a9dde`, `rudel-task-d64e5a`) produced empty `final.patch` across all 3 cohorts in the original 2026-05-18 run — root-caused to a per-turn-snapshot scan loop in `user_enabled_claude_code.py` that only walks `/workspace/<subdir>/.git` and silently skips tasks with non-standard repo layouts ([issue #159](https://github.com/Togetherbench/SWE-Together/issues/159)). Both broken tasks were Dockerfile-layout violations: `cli-task-4a9dde` cloned to `/opt/entire-cli`, `rudel-task-d64e5a` to `/workspace` root. They were replaced with `cli-task-7e3475` and `rudel-task-468289` (same task families, layout-compliant) and the 6 affected trials were re-run end-to-end.
 
 **Trial archives uploaded to [Togetherbench/SWE-Together release v0.5.0](https://github.com/Togetherbench/SWE-Together/releases/tag/v0.5.0)** (see Appendix B for download URLs).
 
@@ -24,11 +26,11 @@ Headline findings (full per-task evidence in §Q2/Q3 below):
 > **User-sim consistency** was originally finding #1 here (§Q1, sim case studies). It has been **moved to** [`../intent_coverage/METHOD_AND_PILOT.md`](../intent_coverage/METHOD_AND_PILOT.md) so this doc is purely about test.sh vs agentic judge. Short version: across 10 tasks, only 1 (`cli-task-46c118`) gives a fully reproducible sim across cohorts; the other 9 have varying degrees of sim divergence which contaminates `judge` σ. See the linked doc for the case studies and the V2 disentanglement pipeline that filters outlier cohorts before reporting.
 
 **1. Judge tracks oracle/semantic correctness materially better than test.sh**
-in this sample. Out of **25 trials with judge+clean side-by-side**:
-- **13 upgrades** (judge > clean by >0.05)
-- **5 agreements** (|Δ| ≤ 0.05)
+in this sample. Out of **31 trials with judge+clean side-by-side**:
+- **18 upgrades** (judge > clean by >0.05)
+- **6 agreements** (|Δ| ≤ 0.05)
 - **7 downgrades** (judge < clean by >0.05)
-- **Mean Δ(judge − clean) = +0.130**, median +0.050
+- **Mean Δ(judge − clean) = +0.146**, median +0.140
 
 Per-task case studies vs the oracle/canonical patch (§Q2) show judge is
 correct on every clear case we inspected: it caught test.sh false-positives
@@ -40,11 +42,11 @@ test.sh because the easier sub-test passed, 0.50 by judge because agent took
 a fundamentally wrong direction that doesn't strip JS bundles).
 
 **2. Judge variance vs test.sh variance is task-dependent — not uniformly
-lower.** Across 8 tasks with ≥2 trials of both signals:
-- mean clean σ = **0.097**, mean judge σ = **0.176** (judge looks wider on aggregate)
-- *but* 3 of those 8 tasks have clean σ = 0.0 (test.sh saturated all-pass or all-fail), which artificially deflates the clean aggregate
+lower.** Across 10 tasks with ≥2 trials of both signals:
+- mean clean σ = **0.078**, mean judge σ = **0.156** (judge looks wider on aggregate)
+- *but* 5 of those 10 tasks have clean σ = 0.0 (test.sh saturated all-pass or all-fail), which artificially deflates the clean aggregate
 - on the 5 discriminating tasks (clean σ > 0): **mean clean σ = 0.156 vs judge σ = 0.154** — essentially equal
-- **Per task**: judge tighter ≥2× on 3 (`cli-task-2f5833`, `cluefin`, `comfyui`); judge wider on 2 (`gemini-voyager`, `sd-scripts`); 3 are false-consistency cases where test.sh σ=0 hides real variance judge reveals.
+- **Per task**: judge tighter ≥2× on 3 (`cli-task-2f5833`, `cluefin`, `comfyui`); judge wider on 2 (`gemini-voyager`, `sd-scripts`); 5 are false-consistency cases where test.sh σ=0 hides real variance judge reveals (`cli-task-2a55af`, `cli-task-46c118`, `cli-task-7e3475`, `cli-task-f76665`, `rudel-task-468289`).
 
 The story is **not** "judge has lower variance on average" — it's "judge has
 *meaningful* variance" (i.e., σ that reflects real patch-quality differences
@@ -217,7 +219,12 @@ eval/correctness/                       (renamed from eval/agentic/ in PR #158)
 - **Task set**: 10 stratified-random tasks (seed=42) across `cli-*` (5),
   `cluefin` (1), `comfyui-frontend-autoscale-layout` (1), `gemini-voyager`
   (1), `rudel` (1), `sd-scripts` (1). Pulled from the 98 tasks with real
-  reference patches + README.
+  reference patches + README. *(2026-05-20 task-set fix: `cli-task-4a9dde`
+  and `rudel-task-d64e5a` from the original draw produced empty patches
+  in the harness due to a non-standard repo layout —
+  [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159) —
+  and were replaced by `cli-task-7e3475` and `rudel-task-468289`, same
+  task families, layout-compliant.)*
 - **Coding agent**: `deepseek/deepseek-v4-pro` via in-sandbox LiteLLM proxy
   (Anthropic-compat). 3 cohorts × 10 tasks = 30 trials targeted; final
   count 31 (1 comfyui dupe).
@@ -226,15 +233,19 @@ eval/correctness/                       (renamed from eval/agentic/ in PR #158)
 - **Judge**: Opus 4.6 via Claude Code CLI inside a fresh E2B sandbox
   (per-trial template alias = Harbor's `tb-{task}__{dirhash}`),
   `--model claude-opus-4-6 --max-turns 40 --setting-sources user`.
-- **Replay**: minimal `eval/agentic/clean_replay.py` (no LLM) — spawn
+- **Replay**: minimal `eval/correctness/clean_replay.py` (no LLM) — spawn
   sandbox, apply patch, run `test.sh` at `/logs/verifier/`, write
   `reward.replay.txt` next to `reward.txt`.
 - **Sample story**: First wave launched at WORKERS=10×3=30 concurrent E2B
   sandboxes; hit account concurrency cap and lost 19 trials. A WORKERS=5×3
-  fill with `--skip-existing` recovered the missing trials. 6 trials
-  (cli-task-4a9dde × 3, rudel × 3) have empty `final.patch` (agent never
-  produced a non-trivial diff) so cannot be judge/replayed — they appear
-  as `—` in tables below.
+  fill with `--skip-existing` recovered the missing trials. Original
+  2026-05-18 run had 6 empty-patch trials (`cli-task-4a9dde` × 3,
+  `rudel-task-d64e5a` × 3) which we later root-caused to
+  [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159);
+  both tasks were swapped out for `cli-task-7e3475` /
+  `rudel-task-468289` and re-run end-to-end on 2026-05-20. All 31 trials
+  reported below have non-empty patches and full judge + clean-replay
+  scores.
 
 ## Q2: Per-task judge vs `test.sh` case studies (10/10)
 
@@ -309,17 +320,26 @@ For each task we report (a) what the oracle/canonical patch does, (b) what each 
 
 ---
 
-### 4. `cli-task-4a9dde`
+### 4. `cli-task-7e3475` *(replaces `cli-task-4a9dde`; see [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159))*
 
 | cohort | trial | live | clean | judge | verdict | Δ(j-c) |
 |---|---|---|---|---|---|---|
-| 1 | `cli-task-4a9dde__Eu38C2u` | 0.30 | — | — | — | — |
-| 2 | `cli-task-4a9dde__5VVUW2U` | 0.10 | — | — | — | — |
-| 3 | `cli-task-4a9dde__k7ZhKQP` | 0.00 | — | — | — | — |
+| 1 | `cli-task-7e3475__9ww7jB9` | 0.60 | 0.60 | 0.89 | equivalent | +0.29 |
+| 2 | `cli-task-7e3475__WrfJWbU` | 0.60 | 0.60 | 0.95 | equivalent | +0.35 |
+| 3 | `cli-task-7e3475__W35PVL9` | 0.60 | 0.60 | 0.95 | equivalent | +0.35 |
 
-**Oracle summary**: 129 lines diff across 3 file(s): b/cmd/entire/cli/e2e_test/agent_runner.go, b/cmd/entire/cli/strategy/content_overlap.go, b/cmd/entire/cli/strategy/manual_commit_hooks.go
+**Oracle summary**: 186 lines diff across 3 file(s): b/cmd/entire/cli/config.go, b/cmd/entire/cli/setup.go, b/cmd/entire/cli/strategy/manual_commit_hooks.go
 
-**Judge & replay**: not computable — agent produced empty patches across all 3 trials (patch lines = [0, 0, 0]). test.sh's live reward [0.3, 0.1, 0.0] is from agent's polluted sandbox; can't separate patch quality.
+**Cohort 1 judge** = 0.89 (equivalent), goals met: 7/7 (core: 4/4, secondary: 3/3)
+> Agent successfully implemented all core and secondary changes from the 6-step plan. The test.sh scores 0.60 (3/5 F2P gates) but both failing gates are false negatives: G3 (SETUP_SAVE_HELPER) fails because the rebase onto main completely restructured setup.go — the duplicated save blocks and struct-copy pattern that the oracle simplified no longer exist in the rebased code, so a closure helper is unnecessary. G5 (SAVE_HELPER_INVOKED) fails because the agent used raw JSON manipulation (os.ReadFile + json.Unmarshal + os.WriteFile) instead of settings.LoadFromFile/settings.SaveLocal — this is a va…
+
+**Cohort 2 judge** = 0.95 (equivalent), goals met: 7/7 (core: 3/3, secondary: 3/3, polish: 1/1)
+> Decomposition: 3 cores + 3 secondaries + 1 polish. Weights: 3*0.25=0.75 core, 3*0.08=0.24 secondary, 1*0.01 polish = 1.00. Agent achieved all goals. test.sh scored 0.6 because G3 and G5 regex patterns are too narrow: G3 expects shouldUseLocal+SaveEntireSettingsLocal+SaveEntireSettings directly inside a closure body, but agent used a named saveSettingsToTarget helper (setup.go:343-352) called from the closure; G5 expects settings.LoadFromFile+SaveLocal pattern but agent used raw JSON merge with os.ReadFile+os.WriteFile — both are semantically equivalent valid approaches. go vet passes…
+
+**Cohort 3 judge** = 0.95 (equivalent), goals met: 6/6 (core: 4/4, secondary: 2/2)
+> Decomposition: 4 cores + 2 secondaries → weights: each core ~0.225, each secondary ~0.05, adjusted slightly to reflect relative importance. Agent solved all goals. test.sh scored 0.60 because G3 and G5 regex patterns are too narrow: G3 expects shouldUseLocal/SaveEntireSettingsLocal/SaveEntireSettings directly in the closure body, but agent extracted a saveSettingsToTarget helper function instead (valid refactoring, closure still exists and is called twice, anti-pattern is eliminated). G5 expects settings.SaveLocal/LoadFromFile/.CommitLinking=CommitLinkingAlways, but agent used raw JSON merge…
+
+**Judge upgrades systematically** (mean Δ +0.33) and `test.sh = 0.60` is locked at a structural ceiling on all 3 cohorts — both failing F2P gates (G3 closure pattern, G5 specific settings API) are **Pattern A / Pattern D** false-negatives that the judge correctly credits as valid alternates.
 
 ---
 
@@ -421,17 +441,26 @@ Upgraded from test.sh's 0.45: The bug_report_complete failure was due to the tes
 
 ---
 
-### 9. `rudel-task-d64e5a`
+### 9. `rudel-task-468289` *(replaces `rudel-task-d64e5a`; see [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159))*
 
 | cohort | trial | live | clean | judge | verdict | Δ(j-c) |
 |---|---|---|---|---|---|---|
-| 1 | `rudel-task-d64e5a__Fvg66dB` | 0.10 | — | — | — | — |
-| 2 | `rudel-task-d64e5a__9xrabdZ` | 0.10 | — | — | — | — |
-| 3 | `rudel-task-d64e5a__hXy3eRj` | 0.85 | — | — | — | — |
+| 1 | `rudel-task-468289__JPkm7W3` | 0.70 | 0.70 | 0.77 | partial | +0.07 |
+| 2 | `rudel-task-468289__YpJe4BL` | 0.70 | 0.70 | 0.93 | equivalent | +0.23 |
+| 3 | `rudel-task-468289__xemZkQX` | 0.70 | 0.70 | 0.70 | partial | +0.00 |
 
-**Oracle summary**: 69 lines diff across 3 file(s): b/.github/workflows/ci.yml, b/package.json, b/turbo.json
+**Oracle summary**: 553 lines diff across 8 file(s): b/apps/web/src/components/charts/ChartTooltip.tsx, b/apps/web/src/components/charts/DeveloperTrendChart.tsx, b/apps/web/src/components/charts/DimensionAnalysisChart.tsx, b/apps/web/src/components/charts/ErrorTrendChart.tsx, b/apps/web/src/components/charts/LearningsTrendChart.tsx…
 
-**Judge & replay**: not computable — agent produced empty patches across all 3 trials (patch lines = [0, 0, 0]). test.sh's live reward [0.1, 0.1, 0.85] is from agent's polluted sandbox; can't separate patch quality.
+**Cohort 1 judge** = 0.77 (partial), goals met: 4/5 (core: 3/4, secondary: 1/1)
+> Decomposition: 4 core + 1 secondary. Default ratio 4:1 gives sum_mult=4*4+1*1=17; core=4/17≈0.235, sec=1/17≈0.06. Weights: 4*0.235+0.06=1.00. The agent implemented all stable-color and sorted-legend features (colorMap, sortedLegendPayload, stableColorOrder, DimensionAnalysis sort) but completely missed the ChartTooltip component creation and tooltip migration across 7+ chart files. This is a significant omission — the new file was never created and no chart was migrated to use it. test.sh scored 0.70; upgrading slightly to 0.77 because the secondary DimensionAnalysis goal (which test.sh already…
+
+**Cohort 2 judge** = 0.93 (equivalent), goals met: 4/5 (core: 3/3, secondary: 1/2)
+> Decomposition: 3 cores + 2 secondaries. Default ratio: sum_mult = 3*4 + 2*1 = 14. Each core = 4/14 ≈ 0.286, each sec = 1/14 ≈ 0.071. Rounded to: 0.29 + 0.29 + 0.29 + 0.06 + 0.07 = 1.00. Agent delivered all core user-facing features (stable colors + sorted legends across ProjectTrend, DeveloperTrend, ErrorTrend charts, plus DimensionAnalysis deterministic sorting) but omitted the ChartTooltip refactoring — a new shared component and its migration to 7+ chart files. The tooltip migration is an architectural/DX improvement rather than a user-facing bug fix, so it's secondary.
+
+**Cohort 3 judge** = 0.70 (partial), goals met: 4/6 (core: 3/3, secondary: 1/3)
+> Decomposition: 3 cores (colorMap, sortedLegend, stableColors) + 3 secondaries (dimension sort, ChartTooltip creation, tooltip migration). Using suggested ratio 4:1:0.25 → sum_mult = 3*4 + 3*1 = 15. Each core = 4/15 ≈ 0.267, each sec = 1/15 ≈ 0.067. Adjusted weights upward for the two tooltip goals (0.15 each) since they were explicitly part of the plan and represent significant work, and kept dimension sort at 0.10 since it's simpler. Core weights at 0.20 each. Total = 0.60 + 0.10 + 0.15 + 0.15 = 1.00. Agent completed all 3 core goals and 1 of 3 secondary goals.
+
+**Judge upgrades modestly** (mean Δ +0.10). All 3 cohorts saturate `test.sh = 0.70`, but judge sees real agent-quality variance: r2 implemented more of the secondary tooltip work than r1/r3, so judge's σ=0.118 vs test.sh's σ=0.000 is the *real* spread — Pattern A "false-consistency" in §Q3.
 
 ---
 
@@ -467,15 +496,15 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 | 1 | `cli-task-2a55af` | 3 | 0.00±0.000 | 0.00±0.000 | 0.22±0.387 | ✗ false-consist |
 | 2 | `cli-task-2f5833` | 3 | 0.42±0.126 | 0.42±0.126 | 0.65±0.032 | ✓ ≥2× |
 | 3 | `cli-task-46c118` | 3 | 1.00±0.000 | 1.00±0.000 | 0.84±0.131 | ✗ false-consist |
-| 4 | `cli-task-4a9dde` | 3 | 0.13±0.153 | — | — | — |
+| 4 | `cli-task-7e3475` | 3 | 0.60±0.000 | 0.60±0.000 | 0.93±0.035 | ✗ false-consist |
 | 5 | `cli-task-f76665` | 3 | 1.00±0.000 | 1.00±0.000 | 0.92±0.119 | ✗ false-consist |
 | 6 | `cluefin-task-52eab9` | 3 | 0.50±0.278 | 0.50±0.278 | 0.95±0.040 | ✓ ≥2× |
 | 7 | `comfyui-frontend-autoscale-layout` | 4 | 0.53±0.225 | 0.38±0.144 | 0.90±0.053 | ✓ ≥2× |
 | 8 | `gemini-voyager-task-18a6ae` | 3 | 0.70±0.000 | 0.62±0.144 | 0.45±0.432 | ✗ wider |
-| 9 | `rudel-task-d64e5a` | 3 | 0.35±0.433 | — | — | — |
+| 9 | `rudel-task-468289` | 3 | 0.70±0.000 | 0.70±0.000 | 0.80±0.118 | ✗ false-consist |
 | 10 | `sd-scripts-reg-image-dedup` | 3 | 0.95±0.087 | 0.95±0.087 | 0.83±0.214 | ✗ wider |
 
-**Aggregate** (across 8 tasks with ≥2-trial clean+judge): mean clean σ = **0.097**, mean judge σ = **0.176** (ratio 1.81×).
+**Aggregate** (across 10 tasks with ≥2-trial clean+judge): mean clean σ = **0.078**, mean judge σ = **0.156** (ratio 2.00×).
 
 ### Per-task interpretation
 
@@ -485,7 +514,7 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 
 **3. `cli-task-46c118`** — clean: 1.00/1.00/1.00; judge: 0.69/0.93/0.90  →  **False-consistency case**: clean σ=0 not because trials are identical but because test.sh's gates are saturated (all 1.0 or all 0.0). Judge sees actual patch differences and reports σ=0.131 — the *real* variance test.sh is hiding.
 
-**4. `cli-task-4a9dde`** — no judge/clean data (empty patches). Live σ alone = 0.153 reflects test.sh's verdict on no-patch trials.
+**4. `cli-task-7e3475`** — clean: 0.60/0.60/0.60; judge: 0.89/0.95/0.95  →  **False-consistency case**: clean σ=0 because all 3 cohorts hit the same `test.sh = 0.60` structural ceiling (G3/G5 narrow regex gates fire false-negatives uniformly). Judge sees the patches are real and consistent at 0.93±0.035 — both the level and the tightness are signal test.sh is hiding.
 
 **5. `cli-task-f76665`** — clean: 1.00/1.00/1.00; judge: 0.78/0.97/1.00  →  **False-consistency case**: clean σ=0 not because trials are identical but because test.sh's gates are saturated (all 1.0 or all 0.0). Judge sees actual patch differences and reports σ=0.119 — the *real* variance test.sh is hiding.
 
@@ -495,7 +524,7 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 
 **8. `gemini-voyager-task-18a6ae`** — clean: 0.70/0.70/0.45; judge: 0.86/0.50/0.00  →  **Judge wider than test.sh** (0.432 vs 0.144). Likely because judge perceives real quality differences that flip its weighted goals (e.g., one cohort missed a core goal, others didn't), while test.sh's narrow gates happened to give similar scores.
 
-**9. `rudel-task-d64e5a`** — no judge/clean data (empty patches). Live σ alone = 0.433 reflects test.sh's verdict on no-patch trials.
+**9. `rudel-task-468289`** — clean: 0.70/0.70/0.70; judge: 0.77/0.93/0.70  →  **False-consistency case**: clean σ=0 because test.sh's F2P gates score the 3 cohorts identically at 0.70 (3/4 core stable-color/sorted-legend gates pass uniformly), but judge σ=0.118 reveals real spread on whether the optional ChartTooltip refactor was attempted — only r2 made meaningful progress on it.
 
 **10. `sd-scripts-reg-image-dedup`** — clean: 1.00/0.85/1.00; judge: 0.59/0.90/1.00  →  **Judge wider than test.sh** (0.214 vs 0.087). Likely because judge perceives real quality differences that flip its weighted goals (e.g., one cohort missed a core goal, others didn't), while test.sh's narrow gates happened to give similar scores.
 
@@ -510,29 +539,20 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
    of 4 trials — the agent's session-time `pip install` / file writes
    help test.sh pass in the original box but not after fresh `git apply`.
 
-2. **Empty-patch trials still get test.sh scores**: cli-task-4a9dde
-   (0.30 / 0.10 / 0.00) and rudel (0.10 / 0.10 / 0.85) have `patch_size=0`
-   (agent produced no diff) but Harbor still runs test.sh in the original
-   sandbox at trial end — and gets nonzero rewards because the agent's
-   in-sandbox actions (creating files, modifying state) affected the
-   verifier. **This is a substantial pollution effect**: rudel r3 scored
-   0.85 with no patch! Clean replay would correctly score these 0.0,
-   but we couldn't run replay (nothing to apply).
-
-3. **`--skip-existing` truncation bug**: Harbor truncates trial dir names
+2. **`--skip-existing` truncation bug**: Harbor truncates trial dir names
    to 30 chars (`comfyui-frontend-autoscale-layout` → `…-layou__<id>`),
    but `is_task_completed` uses full task name + `__` prefix match.
    Result: `comfyui` re-ran in cohort 2 and 3 even though we already had
    trials, giving us 4 trials for that task instead of 3.
 
-4. **dirhash vs checksumdir mismatch**: `eval/agentic/sandbox.py` originally
+3. **dirhash vs checksumdir mismatch**: `eval/agentic/sandbox.py` originally
    imported `checksumdir.dirhash` which computes a *different* alias than
    Harbor's `dirhash.dirhash`. We patched to `dirhash` in this pilot to
    make sandbox lookup work (Harbor-built templates were registered under
    dirhash aliases). The legacy `scripts/build_e2b_templates.py` also uses
    `checksumdir` and should be aligned in a follow-up.
 
-5. **E2B account concurrency cap is ~20**: WORKERS=10 × 3 cohorts = 30
+4. **E2B account concurrency cap is ~20**: WORKERS=10 × 3 cohorts = 30
    concurrent sandboxes silently lost 19/30 trials in the first wave
    (sandboxes spawn but get culled — "sandbox not found" errors after
    Harbor's 60s/120s retries). WORKERS=5 × 3 = 15 ran clean with zero
@@ -547,26 +567,19 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
    useful for filtering empty-patch and obvious-zero trials), but
    the final per-trial reward should be judge's `judge_score`.
 
-2. **Add a sim-divergence flag per task.** Compute message similarity
-   across cohorts (e.g., sequence Jaccard on first 6 non-no-op turns)
-   and surface tasks where the sim contributes large score variance
-   so they can be weighted differently in cross-model comparison.
+2. **Always replay before scoring**. Never use `live` reward for any
+   ranking purpose. Empty-patch trials (the historical
+   `cli-task-4a9dde` / `rudel-task-d64e5a` cases — see [issue #159](https://github.com/Togetherbench/SWE-Together/issues/159))
+   would score 0.0 by clean replay even when live reward is non-zero
+   from sandbox pollution, but the right fix is to catch empty-patch at
+   capture time, not to discover it at scoring time.
 
-3. **Always replay before scoring**. Never use `live` reward for any
-   ranking purpose. Empty-patch trials must score 0.0 by clean replay
-   (cli-task-4a9dde / rudel cases above).
-
-4. **Document the dirhash vs checksumdir alignment** in `CLAUDE.md` —
+3. **Document the dirhash vs checksumdir alignment** in `CLAUDE.md` —
    the note already exists but the agentic-judge code was on the wrong
    side until our patch. Either standardize on dirhash everywhere or
    add a unit test catching divergent aliases.
 
-5. **Pre-build E2B templates before any multi-cohort run**. The first
-   wave's 2 build-cancellation failures + the broader concurrency-cap
-   failures would have been avoided by `scripts/build_e2b_templates.py
-   --tasks <list>` before launching trials.
-
-6. **Plumb judge through the production pipeline as a downgrade gate
+4. **Plumb judge through the production pipeline as a downgrade gate
    on `live=1.0` trials**. The cli-task-46c118 r1 case shows that
    test.sh's regex/AST gates can give full credit to incomplete fixes.
    A "judge-second-opinion" rule (run judge on every live=1.0 trial,
@@ -577,24 +590,16 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 
 ## Caveats & limitations
 
-1. **Small sample**. 10 tasks × 3 trials per task is enough to demonstrate
-   patterns, not to publish a final calibration. Stronger conclusions
-   need 30-50 tasks × 5+ trials.
-
-2. **Judge is not oracle**. The judge is an Opus 4.6 LLM evaluating its
+1. **Judge is not oracle**. The judge is an Opus 4.6 LLM evaluating its
    own kind. It carries unknown biases (probably correlated with the
    agent's biases since both are LLMs). Several borderline calibrations
    were spotted (cli-task-46c118 r3 calling a 4-condition fix
    "equivalent" vs the oracle's unconditional fix).
 
-3. **Judge is slow**. ~3-5 min per trial vs ~10s for replay. Acceptable
+2. **Judge is slow**. ~3-5 min per trial vs ~10s for replay. Acceptable
    for offline leaderboards, not viable for online feedback loops.
 
-4. **Sim divergence is a confound for Q2/Q3 averaging**. Across-cohort
-   averages on DIVERGENT tasks (cli-task-4a9dde, cli-task-f76665,
-   gemini-voyager) aren't averaging the same thing.
-
-5. **The agentic-judge prompt itself is calibration-sensitive**. We did
+3. **The agentic-judge prompt itself is calibration-sensitive**. We did
    not vary the prompt across trials. A more rigorous study would
    ablate the prompt (e.g., 4 vs 1 secondary tier weight, mandatory
    test.sh re-run vs not).
@@ -615,9 +620,9 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 | `cli-task-46c118` | 1 | `kciBKZL` | 1.00 | 1.00 | 0.69 | partial | -0.31 |
 | `cli-task-46c118` | 2 | `8CugLeu` | 1.00 | 1.00 | 0.93 | equivalent | -0.07 |
 | `cli-task-46c118` | 3 | `iNSqBPe` | 1.00 | 1.00 | 0.90 | equivalent | -0.10 |
-| `cli-task-4a9dde` | 1 | `Eu38C2u` | 0.30 | — | — | — | — |
-| `cli-task-4a9dde` | 2 | `5VVUW2U` | 0.10 | — | — | — | — |
-| `cli-task-4a9dde` | 3 | `k7ZhKQP` | 0.00 | — | — | — | — |
+| `cli-task-7e3475` | 1 | `9ww7jB9` | 0.60 | 0.60 | 0.89 | equivalent | +0.29 |
+| `cli-task-7e3475` | 2 | `WrfJWbU` | 0.60 | 0.60 | 0.95 | equivalent | +0.35 |
+| `cli-task-7e3475` | 3 | `W35PVL9` | 0.60 | 0.60 | 0.95 | equivalent | +0.35 |
 | `cli-task-f76665` | 1 | `UKHCgsY` | 1.00 | 1.00 | 0.78 | partial | -0.22 |
 | `cli-task-f76665` | 2 | `5ixmcf2` | 1.00 | 1.00 | 0.97 | equivalent | -0.03 |
 | `cli-task-f76665` | 3 | `tSfK5kB` | 1.00 | 1.00 | 1.00 | equivalent | +0.00 |
@@ -631,9 +636,9 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 | `gemini-voyager-task-18a6ae` | 1 | `eFCuvoa` | 0.70 | 0.70 | 0.86 | equivalent | +0.16 |
 | `gemini-voyager-task-18a6ae` | 2 | `284ow2T` | 0.70 | 0.70 | 0.50 | partial | -0.20 |
 | `gemini-voyager-task-18a6ae` | 3 | `QMo5v3E` | 0.70 | 0.45 | 0.00 | incorrect | -0.45 |
-| `rudel-task-d64e5a` | 1 | `Fvg66dB` | 0.10 | — | — | — | — |
-| `rudel-task-d64e5a` | 2 | `9xrabdZ` | 0.10 | — | — | — | — |
-| `rudel-task-d64e5a` | 3 | `hXy3eRj` | 0.85 | — | — | — | — |
+| `rudel-task-468289` | 1 | `JPkm7W3` | 0.70 | 0.70 | 0.77 | partial | +0.07 |
+| `rudel-task-468289` | 2 | `YpJe4BL` | 0.70 | 0.70 | 0.93 | equivalent | +0.23 |
+| `rudel-task-468289` | 3 | `xemZkQX` | 0.70 | 0.70 | 0.70 | partial | +0.00 |
 | `sd-scripts-reg-image-dedup` | 1 | `4XbNUwr` | 1.00 | 1.00 | 0.59 | partial | -0.41 |
 | `sd-scripts-reg-image-dedup` | 2 | `kjgj5bo` | 0.85 | 0.85 | 0.90 | equivalent | +0.05 |
 | `sd-scripts-reg-image-dedup` | 3 | `UQNvNoY` | 1.00 | 1.00 | 1.00 | equivalent | +0.00 |
@@ -672,6 +677,8 @@ ls trials_judge_cmp_r1/
 
 ```bash
 # 1. 30-trial run (use WORKERS=5 × 3 cohorts; WORKERS=10 × 3 will hit E2B account cap)
+# task_list_judge_compare.txt swaps cli-task-4a9dde→cli-task-7e3475 and
+# rudel-task-d64e5a→rudel-task-468289 vs. the original seed=42 draw (see issue #159)
 TASKS=$(tr '\n' ',' < task_list_judge_compare.txt | sed 's/,$//')
 for i in 1 2 3; do
   uv run python src/run_eval.py \
@@ -693,7 +700,9 @@ for c in sorted(Path('.').glob('trials_judge_cmp_r*')):
 "
 
 # 3. Clean replay (writes reward.replay.txt next to reward.txt)
-uv run python -m eval.agentic.clean_replay \
+# Note: module path is eval.correctness.* since PR #158; older trial dirs
+# referenced eval.agentic.* — both names imported the same module for a window.
+uv run python -m eval.correctness.clean_replay \
   --trial-list /tmp/eligible_trials.txt --workers 5 \
   --out logs/clean_replay_results.json
 
@@ -708,7 +717,7 @@ for ln in open('/tmp/eligible_trials.txt'):
     plan.append({'trial_dir':str(ROOT/td),'task_dir':str(TASKS/real),'out_name':'judge_verdict.json'})
 Path('logs/judge_plan.json').write_text(json.dumps(plan, indent=2))
 "
-uv run python -m eval.agentic.run_batch \
+uv run python -m eval.correctness.run_batch \
   --plan logs/judge_plan.json --workers 5 --max-turns 40 \
   --summary logs/judge_summary.json
 
@@ -720,7 +729,3 @@ uv run python -m eval.agentic.run_batch \
 ### Environment
 - `DEEPSEEK_API_KEY` (coding agent), `GEMINI_API_KEY` (user sim direct), `E2B_API_KEY`, `GHCR_USER`/`GHCR_TOKEN` (template image pull), `CLAUDE_CODE_OAUTH_TOKEN` (judge via subscription billing).
 - `HARBOR_TEAM_PREFIX=tb` (auto-set by `src/run_eval.py`; required to disambiguate from other teams' E2B aliases).
-
-### Acknowledgements
-- Agentic judge code shipped in PR #128 (`feat(eval/agentic): agentic judge running inside the task sandbox`) — this pilot uses that infrastructure with a `dirhash` swap.
-- Task selection draws from the post-PR-150 unified `oracle_session.jsonl` schema (`agent_session/2.0`) where available, with fallback to `reference_patch.json::patch`.
