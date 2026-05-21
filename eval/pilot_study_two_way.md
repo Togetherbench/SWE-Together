@@ -50,17 +50,29 @@ sampling-bias surprises. Each tick label marks the smallest k where that
 task first contributes a passing trial. Reproduced by
 [scripts/_plot_two_way_auc_curve.py](../scripts/_plot_two_way_auc_curve.py).
 
-**How to read it:**
-- **Opus-4.6 is strictly above (or equal to) DS-Pro at every k.** It starts at
-  0.20 (two tasks pass at zero effort: `cli-task-7e3475` and `rudel-task-468289`)
-  vs DS-Pro's 0.10 (only `cli-task-7e3475` at zero effort).
-- **The gap is biggest at k=0..3**, where Opus has 2–3 tasks passing while
-  DS-Pro has 1–2. Both reach the same 0.50 ceiling at k=10 because both
-  pilots ultimately solve the same 5 of the 10 tasks within the 0–10 budget.
-- **AUC under each curve** (trapezoidal over k∈[0,10], normalized): DS-Pro
-  0.290, Opus-4.6 0.325. These slightly differ from the headline
-  `effort_AUC_mean` (0.221 / 0.323) because the headline uses a per-task AUC
-  before averaging; both rank Opus above DS-Pro by the same direction.
+**How to read it (left → right panel):**
+- **The yellow band marks where Opus leads** (k=0..3). Opus solves
+  `rudel-task-468289` at zero effort; DS-Pro needs k=4 to land it. This is
+  the only structural advantage in the curve.
+- **For k=4..9 the two cohorts are identical.** Both solve `cli-task-46c118`
+  at k=2, `cluefin-task-52eab9` at k=7, and otherwise nothing else within
+  that range.
+- **At k=10 they each pick up a 5th task — but a different one each.** DS-Pro
+  lands `comfyui-frontend-autoscale-layout`; Opus lands
+  `gemini-voyager-task-18a6ae` (its high-variance 0.87 trial qualifies).
+  Both end at success@10 = 0.50.
+- **Four tasks neither cohort solves within k ≤ 10**: `cli-task-2a55af`,
+  `cli-task-2f5833`, `cli-task-f76665`, `sd-scripts-reg-image-dedup`. These
+  are the genuinely hard / expensive-to-solve tasks in the pilot.
+
+**AUC (trapezoidal over k∈[0,10]):** DS-Pro **0.290**, Opus-4.6 **0.325** —
+Δ +0.035 driven entirely by the `rudel-task-468289` early-pass.
+
+> Note: these figure-AUC numbers differ from the headline `effort_AUC_mean`
+> (0.221 / 0.323) because the headline computes per-task AUC *before*
+> averaging across all 10 tasks; the figure-AUC integrates the already-
+> aggregated cross-task curve. Both rank Opus above DS-Pro by the same
+> direction.
 
 **Reading the headline:**
 - **`mean_judge` is essentially identical** (Δ +0.02). Across the 10 tasks, both agents
