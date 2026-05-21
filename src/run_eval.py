@@ -48,6 +48,12 @@ from harbor.models.job.config import EnvironmentConfig
 from harbor.models.trial.config import AgentConfig, TaskConfig, TrialConfig
 from harbor.orchestrators.local import LocalOrchestrator, RetryConfig
 
+from eval_infra_sentinel import (
+    classify_or_load,
+    classify_trial,
+    write_sidecar,
+)
+
 # Import shared utilities from runner.py
 from runner import (
     resolve_model,
@@ -107,20 +113,37 @@ def get_all_tasks() -> list[str]:
 
 
 def is_task_completed(task_name: str, trials_dir: Path) -> bool:
-    """Check if a task has a successful trial (result.json with a real reward)."""
+    """Check if a task has a successful trial.
+
+    A trial counts as completed only if (a) Harbor recorded a verifier
+    result AND (b) the infra sentinel says the agent actually ran. Trials
+    that scored 0.0 because the provider returned 402/429/HTML inside the
+    sandbox are excluded, so ``--skip-existing`` reruns them instead of
+    silently inheriting the bad data point.
+    """
     if not trials_dir.exists():
         return False
     for d in trials_dir.iterdir():
-        if d.is_dir() and d.name.startswith(task_name + "__"):
-            result_path = d / "result.json"
-            if result_path.exists():
-                try:
-                    result = json.loads(result_path.read_text())
-                    vr = result.get("verifier_result")
-                    if vr and vr.get("rewards"):
-                        return True
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        if not (d.is_dir() and d.name.startswith(task_name + "__")):
+            continue
+        result_path = d / "result.json"
+        if not result_path.exists():
+            continue
+        try:
+            result = json.loads(result_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        vr = result.get("verifier_result")
+        if not (vr and vr.get("rewards")):
+            continue
+        verdict = classify_or_load(d)
+        if verdict.status == "infra_failed":
+            log.info(
+                "Re-running %s: trial %s flagged infra_failed (%s)",
+                task_name, d.name, verdict.reason,
+            )
+            continue
+        return True
     return False
 
 
@@ -444,6 +467,38 @@ def _build_trajectories(trials_dir: Path):
             log.info("  %s", line)
     if result.returncode != 0 and result.stderr:
         log.warning("build_trajectory errors: %s", result.stderr[:500])
+
+
+def _emit_infra_sidecars(trials_dir: Path) -> dict[str, int]:
+    """Classify every trial in ``trials_dir`` and write ``trial_infra.json``
+    next to its ``result.json``.
+
+    Returns a Counter-like dict ``{"ok": N, "infra_failed": M, "<reason>": K, ...}``
+    that the post-run summary prints. Idempotent: re-running re-classifies
+    fresh (cheap — bounded by claude-code.txt size) and overwrites the
+    sidecar.
+
+    Why this lives in the runner rather than only in the audit CLI: writing
+    the sidecar at trial-completion time means the next ``--skip-existing``
+    invocation pays only a single JSON read per trial, never re-parses the
+    multi-MB transcript.
+    """
+    if not trials_dir.exists():
+        return {}
+    counts: dict[str, int] = {"ok": 0, "infra_failed": 0}
+    for trial_dir in sorted(trials_dir.iterdir()):
+        if not (trial_dir.is_dir() and "__" in trial_dir.name):
+            continue
+        # Only sidecar trials that actually completed — pre-result.json dirs
+        # are partial and would always classify as no_agent_progress.
+        if not (trial_dir / "result.json").exists():
+            continue
+        verdict = classify_trial(trial_dir)
+        write_sidecar(trial_dir, verdict)
+        counts[verdict.status] = counts.get(verdict.status, 0) + 1
+        if verdict.status == "infra_failed":
+            counts[verdict.reason] = counts.get(verdict.reason, 0) + 1
+    return counts
 
 
 def _sanitize_and_upload(trials_dir: Path):
@@ -795,9 +850,16 @@ async def main():
     summary_path.write_text(json.dumps(summary_data, indent=2))
     log.info("Summary written to %s", summary_path)
 
-    # Post-run: copy sim prompts, build trajectories, sanitize and upload
+    # Post-run: copy sim prompts, build trajectories, classify infra
+    # health, sanitize and upload. Order matters — sidecars must be written
+    # before the optional S3 upload so they're included.
     _copy_sim_prompts(task_names, trials_dir)
     _build_trajectories(trials_dir)
+    infra_counts = _emit_infra_sidecars(trials_dir)
+    if infra_counts:
+        print(f"\nInfra audit: {infra_counts.get('ok', 0)} ok, "
+              f"{infra_counts.get('infra_failed', 0)} infra_failed "
+              f"({', '.join(f'{k}={v}' for k, v in infra_counts.items() if k not in ('ok', 'infra_failed'))})")
     _sanitize_and_upload(trials_dir)
 
 
