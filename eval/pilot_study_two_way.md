@@ -39,6 +39,27 @@ re-judged by the same v2 coverage prompt to keep `effort_cost` comparable.
 | `empty_patch_rate_mean` | 0.0% | 0.0% | — |
 | `schema_warning_rate_mean` | 25.8% | 13.3% | −12.5 pp |
 
+### Success-vs-effort curve (visual)
+
+![Success-vs-effort curve — DS-Pro vs Opus-4.6](pilot_study_two_way_curve.png)
+
+Cross-task mean `success@k` averaged across **populated tasks only** (where at
+least one kept trial has `effort_cost ≤ k`). `n_tasks` under each tick shows
+how many of the 10 tasks contribute to that point (DS-Pro / Opus-4.6).
+Reproduced by [scripts/_plot_two_way_auc_curve.py](../scripts/_plot_two_way_auc_curve.py).
+
+> **Two AUC conventions, two different numbers:**
+> - **Legend AUC** (figure) = area under the *cross-task mean curve* over k∈[0,10],
+>   averaged across populated tasks only. DS-Pro 0.471, Opus-4.6 0.801. This is
+>   what the figure visually integrates.
+> - **`effort_AUC_mean`** (headline table above) = per-task AUC where missing
+>   points are zeroed, then averaged across **all 10 tasks**. DS-Pro 0.221,
+>   Opus-4.6 0.323. This is the leaderboard metric — penalizes tasks where no
+>   trial qualifies at any k ≤ 10.
+>
+> Both rank Opus-4.6 above DS-Pro by the same direction and roughly the same
+> margin (0.330 vs 0.102); the figure is just a more legible aggregate.
+
 **Reading the headline:**
 - **`mean_judge` is essentially identical** (Δ +0.02). Across the 10 tasks, both agents
   end up at similar terminal correctness when the sim is free to keep correcting.
