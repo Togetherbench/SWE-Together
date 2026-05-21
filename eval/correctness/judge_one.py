@@ -187,7 +187,7 @@ async def amain() -> int:
     ap.add_argument("--out", default="judge_verdict.json",
                     help="filename inside --trial-dir (default: judge_verdict.json)")
     ap.add_argument("--timeout-sec", type=int, default=600)
-    ap.add_argument("--max-turns", type=int, default=40)
+    ap.add_argument("--max-turns", type=int, default=50)
     ap.add_argument("--force", action="store_true",
                     help="overwrite existing verdict file")
     ap.add_argument("--save-stdout", action="store_true",

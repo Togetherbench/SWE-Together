@@ -27,8 +27,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TASKS_DIR = REPO_ROOT / "harbor_tasks"
 
 JUDGE_TIMEOUT_SEC = 600  # 10 min wall clock for the judge agent itself
-JUDGE_MAX_TURNS = 40  # bumped from 20 — complex tasks (e.g. cli-task-ea3f8f) hit
-                       # "Error: Reached max turns" before writing verdict.json.
+JUDGE_MAX_TURNS = 50  # bumped from 40 — complex tasks (e.g. cli-task-ea3f8f,
+                       # sd-scripts-reg-image-dedup) hit "Error: Reached max turns"
+                       # before writing verdict.json.
 SANDBOX_BUFFER_SEC = 180  # extra time on the sandbox for setup + teardown
 
 

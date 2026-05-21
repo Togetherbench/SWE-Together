@@ -122,7 +122,7 @@ async def amain() -> int:
     ap.add_argument("--plan", required=True, type=Path)
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--timeout-sec", type=int, default=600)
-    ap.add_argument("--max-turns", type=int, default=40)
+    ap.add_argument("--max-turns", type=int, default=50)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--summary", type=Path, default=None,
                     help="write JSON summary of all results (default: <plan>.summary.json)")

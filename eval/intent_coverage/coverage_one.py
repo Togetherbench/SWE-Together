@@ -41,6 +41,86 @@ from eval.intent_coverage.extract_intents import extract_one as extract_intents_
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "coverage_system.md"
 DEFAULT_MODEL = "anthropic/claude-opus-4-6"
 
+
+class _OAuthLiteLLMShim:
+    """Mimic harbor LiteLLM's `.call()` interface but hit Anthropic Messages API
+    with OAuth Bearer auth instead of x-api-key. Used when CLAUDE_CODE_OAUTH_TOKEN
+    is set and ANTHROPIC_API_KEY is empty — same path Claude Code itself uses.
+    Only handles anthropic/* models; other providers fall back to LiteLLM upstream.
+    """
+
+    def __init__(self, model_name: str, temperature: float, oauth_token: str):
+        # Strip "anthropic/" prefix — API expects raw model name.
+        self._model = model_name.split("/", 1)[1] if model_name.startswith("anthropic/") else model_name
+        self._temperature = temperature
+        self._oauth = oauth_token
+
+    async def call(self, prompt: str, message_history=None, tools=None, **_kwargs):
+        import httpx
+
+        system_msg = ""
+        user_messages: list[dict] = []
+        for m in (message_history or []):
+            role = m.get("role")
+            content = m.get("content", "")
+            if role == "system":
+                system_msg = content
+            else:
+                user_messages.append({"role": role, "content": content})
+        user_messages.append({"role": "user", "content": prompt})
+
+        body = {
+            "model": self._model,
+            "max_tokens": 8192,
+            "temperature": self._temperature,
+            "messages": user_messages,
+        }
+        if system_msg:
+            body["system"] = system_msg
+
+        headers = {
+            "Authorization": f"Bearer {self._oauth}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "content-type": "application/json",
+        }
+        # Retry on transient 429/5xx. OAuth shares the 5-hour budget with whatever
+        # else is running (typically r3 trials in this pilot), so back off and try
+        # again rather than fail the whole coverage step on a single throttle.
+        backoffs = (5, 15, 30, 60, 120, 240)
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            for i, wait in enumerate((*backoffs, 0)):
+                r = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    json=body, headers=headers,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    break
+                if r.status_code in (429, 500, 502, 503, 504) and wait:
+                    await asyncio.sleep(wait)
+                    continue
+                raise RuntimeError(f"Anthropic OAuth call failed: HTTP {r.status_code}: {r.text[:500]}")
+            else:
+                raise RuntimeError(f"Anthropic OAuth call exhausted retries: HTTP {r.status_code}: {r.text[:500]}")
+        text_parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+        text = "".join(text_parts)
+
+        class _Resp:
+            content = text
+        return _Resp()
+
+
+def _make_llm(model: str, temperature: float):
+    """Pick LiteLLM (api-key) or OAuth shim based on env. OAuth wins only when
+    ANTHROPIC_API_KEY is empty/unset (LiteLLM would prefer api-key otherwise).
+    """
+    oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if model.startswith("anthropic/") and oauth and not api_key:
+        return _OAuthLiteLLMShim(model_name=model, temperature=temperature, oauth_token=oauth)
+    return LiteLLM(model_name=model, temperature=temperature)
+
 # Score formula (Codex weights — coverage outweighs precision slightly)
 W_COVERAGE = 0.65
 W_PRECISION = 0.35
@@ -360,7 +440,7 @@ async def judge_one_trial(
     # Step 3: LLM match
     user_msg = build_user_message(intents, sim)
     sys_prompt = SYSTEM_PROMPT_PATH.read_text()
-    llm = LiteLLM(model_name=model, temperature=0.0)
+    llm = _make_llm(model, temperature=0.0)
 
     t0 = time.monotonic()
     last_err = ""
