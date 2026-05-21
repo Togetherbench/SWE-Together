@@ -8,7 +8,7 @@ pilot, re-judged with the v2 coverage prompt that emits the §Proposal
 
 - agent: **DS-Pro** coding agent
 - user-sim: **Gemini-3.1-Pro** free-LLM sim (no graph constraint)
-- trials: `trials_eval_pilot_10_task_r{1,2,3}/` → **10 tasks × 3 trials = 31 trials**
+- trials: `trials_deepseek_pilot_10_task_r{1,2,3}/` → **10 tasks × 3 trials = 31 trials**
 - coverage verdict: `intent_coverage_verdict.json` (schema v2, with effort)
 
 Pipeline: [`eval/run_eval.py`](run_eval.py). Raw artefacts at
@@ -262,9 +262,9 @@ End-to-end (steps 1+2+3 + aggregate):
 
 ```bash
 python -m eval.run_eval \
-    --trials-root trials_eval_pilot_10_task_r1 \
-    --trials-root trials_eval_pilot_10_task_r2 \
-    --trials-root trials_eval_pilot_10_task_r3 \
+    --trials-root trials_deepseek_pilot_10_task_r1 \
+    --trials-root trials_deepseek_pilot_10_task_r2 \
+    --trials-root trials_deepseek_pilot_10_task_r3 \
     --tasks-root harbor_tasks \
     --output-dir pipeline_logs/pilot_v051 \
     --model-tag "DS-Pro + Gemini-3.1-Pro user-sim (pilot v0.5.1)"
@@ -274,9 +274,9 @@ Aggregate-only (re-uses existing verdicts):
 
 ```bash
 python -m eval.run_eval \
-    --trials-root trials_eval_pilot_10_task_r1 \
-    --trials-root trials_eval_pilot_10_task_r2 \
-    --trials-root trials_eval_pilot_10_task_r3 \
+    --trials-root trials_deepseek_pilot_10_task_r1 \
+    --trials-root trials_deepseek_pilot_10_task_r2 \
+    --trials-root trials_deepseek_pilot_10_task_r3 \
     --tasks-root harbor_tasks \
     --output-dir pipeline_logs/pilot_v051 \
     --only-aggregate

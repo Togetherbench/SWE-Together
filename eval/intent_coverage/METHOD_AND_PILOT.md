@@ -127,7 +127,7 @@ The LLM does pattern-matching; arithmetic is deterministic. This is the key V2-o
 
 ```bash
 python -m eval.intent_coverage.coverage_one \
-    --trial-dir trials_eval_pilot_10_task_r1/cli-task-2a55af__LXqASZW \
+    --trial-dir trials_deepseek_pilot_10_task_r1/cli-task-2a55af__LXqASZW \
     --task-dir  harbor_tasks/cli-task-2a55af
 ```
 
