@@ -39,40 +39,56 @@ re-judged by the same v2 coverage prompt to keep `effort_cost` comparable.
 | `empty_patch_rate_mean` | 0.0% | 0.0% | — |
 | `schema_warning_rate_mean` | 25.8% | 13.3% | −12.5 pp |
 
-### Success-vs-effort curve (visual)
+### Success-rate-vs-effort curve (visual)
 
-![Success-vs-effort curve — DS-Pro vs Opus-4.6](pilot_study_two_way_curve.png)
+![Success-rate-vs-effort curve — DS-Pro vs Opus-4.6](pilot_study_two_way_curve.png)
 
-**`success@k`** = (# tasks where any kept trial has `effort_cost ≤ k` AND
-`judge_score ≥ 0.85`) / **10** (all tasks, None→0). The same convention the
-headline `effort_AUC_mean` uses — monotone non-decreasing in k, no
-sampling-bias surprises. Each tick label marks the smallest k where that
-task first contributes a passing trial. Reproduced by
-[scripts/_plot_two_way_auc_curve.py](../scripts/_plot_two_way_auc_curve.py).
+**Y-axis** = `success rate` = (# of 10 tasks where the cohort's post-step-2-filter
+**mean_judge ≥ 0.85** AND any kept trial has `effort_cost ≤ k`) / 10. Uses the
+per-task mean over step-2 survivors as the pass criterion — a more conservative
+bar than "any single trial passes". The denominator is fixed at 10 (None→0
+convention; tasks that can't reach 0.85 still count, with value 0).
 
-**How to read it (left → right panel):**
-- **The yellow band marks where Opus leads** (k=0..3). Opus solves
-  `rudel-task-468289` at zero effort; DS-Pro needs k=4 to land it. This is
-  the only structural advantage in the curve.
-- **For k=4..9 the two cohorts are identical.** Both solve `cli-task-46c118`
-  at k=2, `cluefin-task-52eab9` at k=7, and otherwise nothing else within
-  that range.
-- **At k=10 they each pick up a 5th task — but a different one each.** DS-Pro
-  lands `comfyui-frontend-autoscale-layout`; Opus lands
-  `gemini-voyager-task-18a6ae` (its high-variance 0.87 trial qualifies).
-  Both end at success@10 = 0.50.
-- **Four tasks neither cohort solves within k ≤ 10**: `cli-task-2a55af`,
-  `cli-task-2f5833`, `cli-task-f76665`, `sd-scripts-reg-image-dedup`. These
-  are the genuinely hard / expensive-to-solve tasks in the pilot.
+**X-axis** is dynamic — extends to `max(min_effort across all tasks) + 3`, so
+even the long-horizon tasks (Opus `cli-task-2a55af` enters eligibility at k=27)
+fall inside the plotted range. The dotted vertical at k=10 marks where the
+published headline `effort_AUC_mean` window ends and the long-horizon coverage
+begins.
 
-**AUC (trapezoidal over k∈[0,10]):** DS-Pro **0.290**, Opus-4.6 **0.325** —
-Δ +0.035 driven entirely by the `rudel-task-468289` early-pass.
+**Structural ceilings (do not depend on effort budget):**
 
-> Note: these figure-AUC numbers differ from the headline `effort_AUC_mean`
-> (0.221 / 0.323) because the headline computes per-task AUC *before*
-> averaging across all 10 tasks; the figure-AUC integrates the already-
-> aggregated cross-task curve. Both rank Opus above DS-Pro by the same
-> direction.
+| ceiling | tasks that can NEVER pass (post-filter mean_judge < 0.85) |
+|---|---|
+| DS-Pro 40% | `cli-task-2a55af` (0.00), `cli-task-2f5833` (0.65), `cli-task-46c118` (0.84), `gemini-voyager` (0.45), `rudel-task-468289` (0.80), `sd-scripts/dedup` (0.83) |
+| Opus-4.6 60% | `cli-task-2a55af` (0.12), `cli-task-2f5833` (0.42), `comfyui-frontend-autoscale-layout` (0.78), `gemini-voyager` (0.37) |
+
+Those tasks are filtered out by the mean_judge bar regardless of effort budget;
+extending k to ∞ wouldn't change either ceiling.
+
+**Step-AUC (over the full dynamic range):**
+
+| metric | DS-Pro | Opus-4.6 | Δ (Opus − DS-Pro) |
+|---|---:|---:|---:|
+| AUC under success-rate curve | 0.283 | **0.440** | **+0.157** |
+| ceiling (max success rate) | 40% | **60%** | +20 pp |
+| `success@0` (mean judge crit) | 10% | **20%** | +10 pp |
+| `success@10` (mean judge crit) | 30% | **40%** | +10 pp |
+| `success@30` (mean judge crit) | 40% | **60%** | +20 pp |
+
+Opus leads at every k under this convention. The advantage compounds across
+the range: at k=0..3 (one task gap), through k=10 (still one task gap), out
+to k=30 (two-task gap as Opus picks up `sd-scripts/dedup` at k=15 and
+`cli-task-f76665` at k=24 while DS-Pro's mean_judge on those tasks stays
+under the 0.85 bar). Same directional ranking as the headline
+`effort_AUC_mean` (Opus 0.323 vs DS-Pro 0.221).
+
+> **Why "any-trial-passes" gave a different story:** earlier versions of
+> this chart counted a task as solved if any *individual* trial reached
+> judge ≥ 0.85, ignoring the step-2 filter's per-task aggregation. Under
+> that lenient bar, DS-Pro looked better in the long tail because high-variance
+> trials (e.g., `comfyui` 0.93 + 0.93 + 0.82 + 0.93) tipped it over. Using
+> the post-filter per-task mean — what the headline metric actually uses —
+> is stricter and aligns the figure with the leaderboard.
 
 **Reading the headline:**
 - **`mean_judge` is essentially identical** (Δ +0.02). Across the 10 tasks, both agents
