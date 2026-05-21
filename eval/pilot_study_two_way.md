@@ -43,22 +43,24 @@ re-judged by the same v2 coverage prompt to keep `effort_cost` comparable.
 
 ![Success-vs-effort curve — DS-Pro vs Opus-4.6](pilot_study_two_way_curve.png)
 
-Cross-task mean `success@k` averaged across **populated tasks only** (where at
-least one kept trial has `effort_cost ≤ k`). `n_tasks` under each tick shows
-how many of the 10 tasks contribute to that point (DS-Pro / Opus-4.6).
-Reproduced by [scripts/_plot_two_way_auc_curve.py](../scripts/_plot_two_way_auc_curve.py).
+**`success@k`** = (# tasks where any kept trial has `effort_cost ≤ k` AND
+`judge_score ≥ 0.85`) / **10** (all tasks, None→0). The same convention the
+headline `effort_AUC_mean` uses — monotone non-decreasing in k, no
+sampling-bias surprises. Each tick label marks the smallest k where that
+task first contributes a passing trial. Reproduced by
+[scripts/_plot_two_way_auc_curve.py](../scripts/_plot_two_way_auc_curve.py).
 
-> **Two AUC conventions, two different numbers:**
-> - **Legend AUC** (figure) = area under the *cross-task mean curve* over k∈[0,10],
->   averaged across populated tasks only. DS-Pro 0.471, Opus-4.6 0.801. This is
->   what the figure visually integrates.
-> - **`effort_AUC_mean`** (headline table above) = per-task AUC where missing
->   points are zeroed, then averaged across **all 10 tasks**. DS-Pro 0.221,
->   Opus-4.6 0.323. This is the leaderboard metric — penalizes tasks where no
->   trial qualifies at any k ≤ 10.
->
-> Both rank Opus-4.6 above DS-Pro by the same direction and roughly the same
-> margin (0.330 vs 0.102); the figure is just a more legible aggregate.
+**How to read it:**
+- **Opus-4.6 is strictly above (or equal to) DS-Pro at every k.** It starts at
+  0.20 (two tasks pass at zero effort: `cli-task-7e3475` and `rudel-task-468289`)
+  vs DS-Pro's 0.10 (only `cli-task-7e3475` at zero effort).
+- **The gap is biggest at k=0..3**, where Opus has 2–3 tasks passing while
+  DS-Pro has 1–2. Both reach the same 0.50 ceiling at k=10 because both
+  pilots ultimately solve the same 5 of the 10 tasks within the 0–10 budget.
+- **AUC under each curve** (trapezoidal over k∈[0,10], normalized): DS-Pro
+  0.290, Opus-4.6 0.325. These slightly differ from the headline
+  `effort_AUC_mean` (0.221 / 0.323) because the headline uses a per-task AUC
+  before averaging; both rank Opus above DS-Pro by the same direction.
 
 **Reading the headline:**
 - **`mean_judge` is essentially identical** (Δ +0.02). Across the 10 tasks, both agents
