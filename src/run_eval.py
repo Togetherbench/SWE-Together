@@ -134,10 +134,21 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
     env: dict[str, str] = {}
 
     if provider == "anthropic":
-        env["ANTHROPIC_API_KEY"] = action_key
+        # OAuth tokens (sk-ant-oat01-... from `claude setup-token`, subscription
+        # billing) MUST go via CLAUDE_CODE_OAUTH_TOKEN — the Anthropic API rejects
+        # OAuth tokens sent via x-api-key. CC in the sandbox auto-detects this
+        # env var and routes via Authorization: Bearer + the oauth beta header.
+        # Same auth path as eval/correctness/sandbox.py uses for the judge.
+        oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        if action_key.startswith("sk-ant-oat01-") or oauth_token.startswith("sk-ant-oat01-"):
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token or action_key
+        else:
+            env["ANTHROPIC_API_KEY"] = action_key
         # Forward CLAUDE_CODE_EFFORT_LEVEL (low/medium/high/xhigh/max) for
         # Claude Opus 4.7. xhigh is the recommended default for coding/agentic
         # use; controls adaptive-thinking depth via Anthropic's effort param.
+        # For Opus 4.6 the valid levels are low/medium/high/max ('xhigh' falls
+        # back to high silently); recommended default for coding is 'high'.
         effort = os.environ.get("CLAUDE_CODE_EFFORT_LEVEL")
         if effort:
             env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
@@ -557,6 +568,18 @@ async def main():
     for k, v in agent_env.items():
         os.environ[k] = v
     log.info("  host-env override applied (%d keys)", len(agent_env))
+
+    # When using OAuth (subscription billing), explicitly POP any stale
+    # ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL from os.environ. Harbor's
+    # claude_code adapter reads these from the host env and would prefer
+    # ANTHROPIC_API_KEY (x-api-key auth) over CLAUDE_CODE_OAUTH_TOKEN
+    # (Bearer auth), causing CC inside the sandbox to send the stale API
+    # key to api.anthropic.com → 401. Matches the README's documented
+    # OAuth flow.
+    if agent_env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
+            os.environ.pop(k, None)
+        log.info("  OAuth mode: popped ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL from host env")
 
     # Permanent fix for the shichaopei alias collision: prefix every E2B
     # template alias with our team identifier so we live in a private

@@ -136,14 +136,32 @@ async def run_judge_in_e2b(
         # permission-denied class. After the apply we chmod world-rwX so the
         # judge agent can still read/run tests against the patched workspace.
         await sb.files.write("/tmp/agent.patch", inputs.agent_patch)
+        # Repo discovery (mirrors PR #170 in src/user_agent/user_enabled_claude_code.py):
+        # the original `cd /workspace; find . -maxdepth 3 -name .git` missed 29
+        # tasks whose Dockerfiles clone outside /workspace (/opt/<name>,
+        # /home/{agent,user}/..., /app, /repo, /tmp/repo, or filesystem-root
+        # oddballs like /entire-cli, /no-magic). For those tasks the judge
+        # failed with NO_GIT_REPO_FOUND. Now `find` over the same allowlist
+        # of well-known roots (maxdepth 3) so every task layout is covered.
+        # HARBOR_REPO_PATHS env var (colon-separated) is the escape hatch
+        # for future nonstandard layouts.
         apply = await sb.commands.run(
             "set -e; "
-            "cd /workspace 2>/dev/null || cd /; "
-            "REPO=$(find . -maxdepth 3 -name '.git' -type d 2>/dev/null | head -1 | xargs -I{} dirname {}); "
-            "if [ -z \"$REPO\" ]; then echo 'NO_GIT_REPO_FOUND' >&2; exit 1; fi; "
-            "cd \"$REPO\" && echo \"applying to $(pwd)\" && "
-            "git apply --whitespace=nowarn /tmp/agent.patch && "
-            "chmod -R a+rwX /workspace 2>/dev/null || true",
+            'ROOTS="/workspace /opt /home /app /repo /tmp /entire-cli /entireio-cli /no-magic"; '
+            'if [ -n "${HARBOR_REPO_PATHS:-}" ]; then '
+            '  ROOTS="$ROOTS $(echo "$HARBOR_REPO_PATHS" | tr ":" " ")"; '
+            'fi; '
+            'EXISTING=""; '
+            'for r in $ROOTS; do [ -e "$r" ] && EXISTING="$EXISTING $r"; done; '
+            'if [ -z "$EXISTING" ]; then echo "NO_REPO_ROOTS_EXIST" >&2; exit 1; fi; '
+            'REPO=$(find $EXISTING -maxdepth 3 -name .git \\( -type d -o -type f \\) 2>/dev/null | head -1 | xargs -I{} dirname {}); '
+            'if [ -z "$REPO" ]; then echo "NO_GIT_REPO_FOUND" >&2; exit 1; fi; '
+            'cd "$REPO" && echo "applying to $(pwd)" && '
+            # safe.directory='*' lets root run git on repos owned by `agent`
+            # (uid 1001) without "dubious ownership" errors. Common for tasks
+            # at /home/agent/<repo> or /workspace/<sub>/ chowned to agent.
+            'git -c safe.directory="*" apply --whitespace=nowarn /tmp/agent.patch && '
+            'chmod -R a+rwX "$REPO" 2>/dev/null || true',
             timeout=120, user="root",
         )
         if apply.exit_code != 0:
@@ -197,11 +215,22 @@ async def run_judge_in_e2b(
 
         # 3. Run judge agent headlessly. `claude --print` runs to completion;
         # --max-turns caps the agentic loop; `timeout` is the hard wall-clock kill.
+        # Capture the repo path the patch was applied to (set by the apply step
+        # — `echo "applying to $(pwd)"` writes it to stdout). Most tasks clone
+        # to /workspace/<sub>/ but ~29 use /opt, /home, /app, /repo, /tmp, or
+        # filesystem-root dirs; we surface the discovered path so the judge
+        # doesn't waste turns hunting in /workspace when it's empty.
+        repo_hint = "/workspace"  # safe default
+        for line in apply.stdout.splitlines():
+            if line.startswith("applying to "):
+                repo_hint = line.removeprefix("applying to ").strip()
+                break
         first_message = (
             f"Begin by reading {inputs_dir}/README.md and "
             f"{inputs_dir}/user_simulation_prompt.md. Then evaluate the agent "
             f"solution and write your verdict to {inputs_dir}/verdict.json. "
-            f"Use Bash freely to explore /workspace and run tests."
+            f"Use Bash freely to explore the project repo at {repo_hint} "
+            f"(the agent's patch has already been applied there) and run tests."
         )
         # `--setting-sources user` skips loading the workspace's .claude/settings.json,
         # which often defines SessionStart/SessionEnd hooks pointing at binaries not in
