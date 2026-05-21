@@ -119,9 +119,53 @@ uv sync
 
 Pin to a release tag (`git checkout v0.4.4.3` for the published leaderboard, `v0.4.5.0` once tagged for the latest data-integrity trunk) when reproducing numbers — the task set, user simulator, and test scripts evolve.
 
+### Canonical eval pipeline (always use this path)
+
+[`eval/eval_design.md`](eval/eval_design.md) is the authoritative spec for how we measure model performance. The production flow is two binaries, not one:
+
+1. **`src/run_eval.py` — generate trials.** For each (task, agent, sim) cohort, runs Harbor + the user simulator inside E2B and writes `trials/<cohort>/<task>__<id>/` with `agent/final.patch`, `verifier/reward.txt`, `agent/claude-code.txt`, `session.jsonl`. **This is Step 0 — trial production only. The `reward.txt` it writes is Block 3 (benchmark fidelity), not the leaderboard ranking dimension.**
+2. **`eval/run_eval.py` — score those trials canonically.** Reads the trial dirs, runs the three-step protocol from `eval_design.md`, writes verdicts in-place, and emits per-task / per-cohort aggregates.
+
+```text
+Step 1  correctness       → judge_verdict.json           (Opus-4.6 in E2B, judge_score ∈ [0,1])
+Step 2  intent_coverage   → intent_coverage_verdict.json (Opus-4.6 match-table + effort_cost)
+Step 3  user_behavior     → user_behavior_verdict.json   (no-LLM panel, free)
+aggregate                 → per-task success@{0,3,10}, effort_AUC, mean/var judge_score after the Step-2 clean filter
+```
+
+Headline ranking lives in `judge_score` (Step 1), filtered by the Step-2 clean rule on `intent_coverage.overall_score`. Never rank on `reward.txt` directly — it's noisier than the judge and per the [SWE-bench Verified critique](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/) ~35% of test failures are narrow-test false negatives the judge catches.
+
+**Replicate count (`k`):**
+- **Pilot / scout runs: `k=1` is fine** — fastest signal on whether infra is healthy (no auth/rate-limit/sandbox issues), what the empty-patch rate looks like post-#159, which tasks are broken vs. saturating.
+- **Canonical leaderboard: `k=3` minimum** (`k=5` for paper-quality variance bars). Per `eval_design.md` §"Filter protocol (step 2)", the clean filter operates within the k replicates of each (task, agent) pair, so k=1 gives you no variance estimate and no filtering signal.
+
+**Don't conflate `src/run_eval.py` output with canonical eval.** If someone says "we ran the eval," ask which: Step 0 only (`reward.txt`), or Step 0 + `eval/run_eval.py` (`judge_verdict.json` + aggregates). Only the latter is leaderboard-grade.
+
+```bash
+# Scout / pilot: Step 0 only, k=1
+DEEPSEEK_API_KEY=<key> uv run python src/run_eval.py \
+    --model deepseek/deepseek-v4-flash --tag ds_flash_pilot \
+    --tasks $(cat task_list_judge_compare.txt | tr '\n' ',') \
+    --workers 10
+
+# Canonical: Step 0 (×k) + Step 1+2+3 over the trial dirs
+for k in 1 2 3; do
+  ANTHROPIC_API_KEY=<key> uv run python src/run_eval.py \
+      --model anthropic/claude-opus-4-6 --tag opus46_r${k} --workers 10
+done
+ANTHROPIC_API_KEY=<key> uv run python -m eval.run_eval \
+    --trials-root trials/opus46_r1 \
+    --trials-root trials/opus46_r2 \
+    --trials-root trials/opus46_r3 \
+    --tasks-root  harbor_tasks \
+    --output-dir  pipeline_logs/opus46_canonical \
+    --model-tag   opus46-gemini-3.1-pro \
+    --correctness-workers 50 --intent-coverage-workers 5
+```
+
 ### Running the full eval (production path)
 
-`src/run_eval.py` is the production async evaluator. It drives Harbor's `LocalOrchestrator` across N concurrent E2B sandboxes (default 20 workers), launches the in-sandbox LiteLLM proxy per trial, and writes per-cohort `trials_<tag>/<task>__<id>/` directories.
+`src/run_eval.py` is the production async evaluator (Step 0 above — generates trials). It drives Harbor's `LocalOrchestrator` across N concurrent E2B sandboxes (default 20 workers), launches the in-sandbox LiteLLM proxy per trial, and writes per-cohort `trials_<tag>/<task>__<id>/` directories. To turn its output into a canonical leaderboard, hand the trial dirs to `eval/run_eval.py` per the section above.
 
 ```bash
 # Anthropic — pay-per-token API key (sk-ant-api03-...)
@@ -169,7 +213,9 @@ Trial output: `trials/<task>__<id>/verifier/reward.txt`.
 
 ### Building / updating the leaderboard
 
-The v0.4.4.x leaderboard is built by `scripts/finalize_v044.sh`, which:
+**Canonical path (v0.5.0 onward):** the per-task / per-cohort aggregates emitted by `eval/run_eval.py` (see "Canonical eval pipeline" above) ARE the leaderboard. Run it across all cohorts' k replicates and read the resulting `pipeline_logs/<run>/per_task_*.json` + summary Markdown. No separate "build leaderboard" step exists for the canonical pipeline — aggregation is baked into `eval/run_eval.py`.
+
+**Legacy path (v0.4.4.x and earlier):** built by `scripts/finalize_v044.sh`, which ranks on `verifier/reward.txt` (Step 0 fidelity) instead of `judge_score`. Still works for reproducing pre-v0.5.0 numbers:
 1. Replays every captured agent patch against the current `harbor_tasks/*/tests/test.sh` in fresh E2B sandboxes (no model re-runs)
 2. Per-(model, task) deduplicates using the latest trial by `result.json::started_at`
 3. Excludes rate-limit-corrupted trials (≥10 `api_retry` events + reward 0) and DeepSeek HTTP 402 billing failures
