@@ -39,7 +39,12 @@ from harbor.llms.lite_llm import LiteLLM  # noqa: E402
 from eval.intent_coverage.extract_intents import extract_one as extract_intents_one  # noqa: E402
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "coverage_system.md"
-DEFAULT_MODEL = "anthropic/claude-opus-4-6"
+# Default judge: Gemini-3.1-Pro. Calibrated against Opus-4.6 on the v0.5.1 pilot
+# (see eval/pilot_study_two_way.md §"Calibration delta"); success@k and effort_AUC
+# agree to ~0.001, mean_judge within 0.023. Gemini has its own provider quota
+# (GEMINI_API_KEY in .env) and doesn't share the Anthropic OAuth 5-hour window,
+# which made Opus impractical for parallel judge runs during the Opus-pilot.
+DEFAULT_MODEL = "gemini/gemini-3.1-pro-preview"
 
 
 class _OAuthLiteLLMShim:

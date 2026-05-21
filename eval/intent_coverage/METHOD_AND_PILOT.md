@@ -155,7 +155,7 @@ Output (`<trial>/intent_coverage_verdict.json`):
   "weighted_coverage": 0.28,
   "scope_precision":   1.00,
   "overall_score":     0.53,
-  "judge_model": "anthropic/claude-opus-4-6",
+  "judge_model": "gemini/gemini-3.1-pro-preview",
   "elapsed_sec": 4.1,
   "schema_warnings": []
 }
@@ -168,9 +168,11 @@ Plan-file driven, asyncio.Semaphore concurrency control. Mirrors `eval/correctne
 ```bash
 python -m eval.intent_coverage.run_batch \
     --plan pipeline_logs/intent_coverage_plan.json \
-    --model anthropic/claude-opus-4-6 \
     --workers 5 \
     --summary pipeline_logs/intent_coverage_summary.json
+# Defaults to --model gemini/gemini-3.1-pro-preview (uses GEMINI_API_KEY).
+# Pass --model anthropic/claude-opus-4-6 to fall back to Opus (needs
+# CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY with budget).
 ```
 
 Plan file shape:

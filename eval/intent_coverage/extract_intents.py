@@ -28,7 +28,10 @@ if str(REPO_ROOT / "external" / "harbor" / "src") not in sys.path:
 from harbor.llms.lite_llm import LiteLLM  # noqa: E402
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "extract_intents_system.md"
-DEFAULT_MODEL = "anthropic/claude-opus-4-6"
+# Default extractor model — matches coverage_one.DEFAULT_MODEL (Gemini-3.1-Pro).
+# Keeps extract + judge on the same model so oracle_intents.json and per-trial
+# coverage verdicts share calibration.
+DEFAULT_MODEL = "gemini/gemini-3.1-pro-preview"
 
 
 def load_dotenv(repo_root: Path) -> None:
