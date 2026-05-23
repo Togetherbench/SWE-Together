@@ -1,14 +1,8 @@
 comfyui-gemma3-sliding-window
 pi-mono-extension-loader-priority
-pi-mono-auto-d8c68afc
 pi-mono-auto-796a21ab
-pi-mono-auto-d3b2130d
-pi-mono-auto-ec7037ba
 pi-mono-auto-90748a5d
-pi-mono-auto-a4fca584
-pi-mono-auto-41636ae5
 pi-mono-overflow-detection
-pi-mono-parallel-tool-stall
 pi-mono-extensions-event-refactor
 comfyui-triton-windows-amd-fix
 sageattention-headdim-256
@@ -27,3 +21,9 @@ lock-code-manager-fix-7c955a
 hyperswitch-9437
 hyperswitch-8394
 hyperswitch-9430
+cli-task-0ec2e9
+cli-task-c425e4
+gemini-voyager-task-16a5c7
+rudel-task-d64e5a
+comfyui-lumina-axes-lens
+sd-scripts-fp8-lumina
