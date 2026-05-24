@@ -520,7 +520,7 @@ class Codex(BaseInstalledAgent):
                 lines.append(f'url = "{server.url}"')
             lines.append("")
         escaped_config = shlex.quote("\n".join(lines))
-        return f'echo {escaped_config} > "$CODEX_HOME/config.toml"'
+        return f'echo {escaped_config} >> "$CODEX_HOME/config.toml"'
 
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         escaped_instruction = shlex.quote(instruction)
@@ -551,6 +551,16 @@ cat >/tmp/codex-secrets/auth.json <<EOF
 EOF
 ln -sf /tmp/codex-secrets/auth.json "$CODEX_HOME/auth.json"
                 """
+
+        # codex 0.118.0+ only honors openai_base_url from config.toml, not the
+        # env var (upstream harbor PR #1482). Append-mode so it composes with
+        # the MCP servers block if that's also written.
+        if openai_base_url:
+            setup_command += (
+                '\ncat >>"$CODEX_HOME/config.toml" <<TOML\n'
+                'openai_base_url = "${OPENAI_BASE_URL}"\n'
+                'TOML\n'
+            )
 
         skills_command = self._build_register_skills_command()
         if skills_command:

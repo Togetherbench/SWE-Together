@@ -9,7 +9,7 @@ if ldd --version 2>&1 | grep -qi musl || [ -f /etc/alpine-release ]; then
     {% if version %}
     npm install -g @openai/codex@{{ version }}
     {% else %}
-    npm install -g @openai/codex@latest
+    npm install -g @openai/codex@0.117.0
     {% endif %}
 else
     # glibc system — use NVM
@@ -39,7 +39,7 @@ else
     {% if version %}
     npm install -g @openai/codex@{{ version }}
     {% else %}
-    npm install -g @openai/codex@latest
+    npm install -g @openai/codex@0.117.0
     {% endif %}
 fi
 
