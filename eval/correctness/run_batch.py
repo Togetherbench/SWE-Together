@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from eval.correctness.judge_one import _validate_schema, load_dotenv, load_inputs
-from eval.correctness.sandbox import run_judge_in_e2b
+from eval.correctness.sandbox import run_judge_in_e2b, judge_timeout_for_task
 
 log = logging.getLogger(__name__)
 
@@ -59,16 +59,19 @@ async def _one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         result["reason"] = str(e)
         return result
 
+    # Per-task budget override for heavy-build tasks (e.g. Go monorepos that
+    # spend most of their judge sandbox on `go build` + `go test`).
+    effective_timeout = max(timeout_sec, judge_timeout_for_task(task_dir.name))
     async with sem:
         t0 = time.time()
-        log.info("start %s out=%s", trial_dir.name, out_name)
+        log.info("start %s out=%s timeout=%ds", trial_dir.name, out_name, effective_timeout)
         try:
             sb_result = await run_judge_in_e2b(
                 task_name=task_dir.name,
                 trial_id=trial_dir.name,
                 inputs=inputs,
                 oauth_token=oauth_token,
-                timeout_sec=timeout_sec,
+                timeout_sec=effective_timeout,
                 max_turns=max_turns,
                 api_key=api_key,
             )

@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-from eval.correctness.sandbox import JudgeInputs, run_judge_in_e2b
+from eval.correctness.sandbox import JudgeInputs, run_judge_in_e2b, judge_timeout_for_task
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -227,13 +227,16 @@ async def amain() -> int:
     trial_id = args.trial_dir.name
     print(f"judging {trial_id} on {task_name}...")
 
+    # Per-task budget override for heavy-build tasks (e.g. Go monorepos that
+    # spend most of their judge sandbox on `go build` + `go test`).
+    effective_timeout = max(args.timeout_sec, judge_timeout_for_task(task_name))
     t0 = time.time()
     result = await run_judge_in_e2b(
         task_name=task_name,
         trial_id=trial_id,
         inputs=inputs,
         oauth_token=os.environ["CLAUDE_CODE_OAUTH_TOKEN"],
-        timeout_sec=args.timeout_sec,
+        timeout_sec=effective_timeout,
         max_turns=args.max_turns,
     )
     elapsed = time.time() - t0

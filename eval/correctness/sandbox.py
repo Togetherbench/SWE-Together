@@ -27,10 +27,37 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TASKS_DIR = REPO_ROOT / "harbor_tasks"
 
 JUDGE_TIMEOUT_SEC = 600  # 10 min wall clock for the judge agent itself
+JUDGE_TIMEOUT_SEC_HEAVY = 1200  # 20 min for tasks with build_timeout_sec >= 600
+                                # (e.g. cc-backend-implement-50b2b1, where the agentic
+                                # judge has to wait for `go build` + `go test` on a
+                                # ~30k-LOC Go web app — too slow to fit in 600s).
 JUDGE_MAX_TURNS = 50  # bumped from 40 — complex tasks (e.g. cli-task-ea3f8f,
                        # sd-scripts-reg-image-dedup) hit "Error: Reached max turns"
                        # before writing verdict.json.
 SANDBOX_BUFFER_SEC = 180  # extra time on the sandbox for setup + teardown
+
+
+def judge_timeout_for_task(task_name: str) -> int:
+    """Return the judge sandbox wall-clock budget for this task.
+
+    Heavy-build tasks (those whose task.toml declares `[agent].build_timeout_sec
+    >= 600`) need a longer judge window: the agentic judge runs the canonical
+    `test.sh`, which can itself spend most of the budget compiling/running the
+    upstream project before the judge has any time to think.
+    """
+    task_toml = TASKS_DIR / task_name / "task.toml"
+    if not task_toml.exists():
+        return JUDGE_TIMEOUT_SEC
+    try:
+        # Lightweight regex scan — avoid importing toml just for one field.
+        text = task_toml.read_text()
+        import re
+        m = re.search(r"build_timeout_sec\s*=\s*([0-9.]+)", text)
+        if m and float(m.group(1)) >= 600:
+            return JUDGE_TIMEOUT_SEC_HEAVY
+    except Exception:
+        pass
+    return JUDGE_TIMEOUT_SEC
 
 
 def template_alias(task_name: str) -> str:
@@ -88,7 +115,16 @@ async def run_judge_in_e2b(
     """
     alias = template_alias(task_name)
     auth_envs: dict[str, str] = {}
-    if api_key:
+    # [judge-via-codex] If JUDGE_VIA_CODEX=1, swap `claude` for `codex` as the
+    # agentic judge. Auth via host's ~/.codex/auth.json (ChatGPT OAuth — same
+    # mechanism Harbor uses with CODEX_USE_HOST_AUTH=1 for agent runs).
+    judge_via_codex = os.environ.get("JUDGE_VIA_CODEX") == "1"
+    codex_auth_path = Path.home() / ".codex" / "auth.json"
+    codex_auth_blob: str | None = None
+    if judge_via_codex and codex_auth_path.exists():
+        codex_auth_blob = codex_auth_path.read_text()
+        log.info("judge auth: codex via host ~/.codex/auth.json (ChatGPT OAuth)")
+    elif api_key:
         auth_envs["ANTHROPIC_API_KEY"] = api_key
     else:
         auth_envs["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token or ""
@@ -240,14 +276,54 @@ async def run_judge_in_e2b(
         # at boot before our verdict.json is ever written. cwd=/tmp alone isn't enough
         # because claude code's project-settings loader finds the workspace .claude/
         # via auto-detection independent of cwd.
-        judge_cmd = (
-            f"timeout {timeout_sec} claude --print --max-turns {max_turns} "
-            f"--model claude-opus-4-7 "
-            f"--dangerously-skip-permissions "
-            f"--setting-sources user "
-            f"--append-system-prompt \"$(cat {inputs_dir}/judge_system.md)\" "
-            f"{shlex.quote(first_message)}"
-        )
+        if judge_via_codex and codex_auth_blob:
+            codex_model = os.environ.get("CODEX_JUDGE_MODEL", "gpt-5.5")
+            # Upload host OAuth credentials to sandbox CODEX_HOME (default /root/.codex).
+            # chmod 600 to keep codex happy about file permissions.
+            heredoc_marker = "CODEX_AUTH_EOF"
+            await sb.commands.run(
+                f"mkdir -p /root/.codex && "
+                f"cat > /root/.codex/auth.json <<'{heredoc_marker}'\n"
+                f"{codex_auth_blob}\n"
+                f"{heredoc_marker}\n"
+                f"chmod 600 /root/.codex/auth.json",
+                timeout=30, user="root",
+            )
+            # Codex doesn't have a separate system-prompt flag; concat system + first message.
+            # Inline the system-prompt content directly (don't try to shell-expand $(cat ...)
+            # — we shlex.quote the final string for safe arg passing, which would prevent
+            # expansion anyway).
+            full_instruction = (
+                f"{inputs.system_prompt}"
+                f"\n\n---\n\n"
+                f"{first_message}"
+            )
+            codex_version = os.environ.get("CODEX_CLI_VERSION", "0.133.0")
+            # Install codex CLI if not pre-baked, then exec. (~60s install when fresh.)
+            judge_cmd = (
+                "if ! command -v codex >/dev/null 2>&1; then "
+                "  if command -v apk >/dev/null 2>&1; then "
+                "    apk add --no-cache nodejs npm >/dev/null 2>&1; "
+                "  elif command -v apt-get >/dev/null 2>&1; then "
+                "    apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null 2>&1; "
+                "  fi && "
+                f"  npm install -g @openai/codex@{codex_version} >/dev/null 2>&1; "
+                "fi && "
+                f"CODEX_HOME=/root/.codex timeout {timeout_sec} codex exec "
+                "--dangerously-bypass-approvals-and-sandbox "
+                "--skip-git-repo-check "
+                f"--model {codex_model} "
+                f"-- {shlex.quote(full_instruction)}"
+            )
+        else:
+            judge_cmd = (
+                f"timeout {timeout_sec} claude --print --max-turns {max_turns} "
+                f"--model claude-opus-4-7 "
+                f"--dangerously-skip-permissions "
+                f"--setting-sources user "
+                f"--append-system-prompt \"$(cat {inputs_dir}/judge_system.md)\" "
+                f"{shlex.quote(first_message)}"
+            )
         # Run from /tmp so claude doesn't pick up the repo's
         # .claude/settings.json (which often defines SessionEnd hooks pointing
         # at binaries that don't exist in our sandbox, e.g. cli-task-2c3e30's
@@ -258,8 +334,11 @@ async def run_judge_in_e2b(
         # may have written verdict.json successfully BEFORE the hook failed.
         from e2b.sandbox.commands.command_handle import CommandExitException
         try:
+            # codex needs root for apt-get install + npm -g; harmless for claude path.
+            judge_user = "root" if (judge_via_codex and codex_auth_blob) else None
             result = await sb.commands.run(
                 judge_cmd, timeout=timeout_sec + 60, cwd="/tmp",
+                **({"user": judge_user} if judge_user else {}),
             )
             exit_code = result.exit_code
             stdout, stderr = result.stdout, result.stderr
