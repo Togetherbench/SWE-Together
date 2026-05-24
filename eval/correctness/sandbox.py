@@ -87,6 +87,10 @@ class JudgeInputs:
     tests_files: dict[str, bytes] = None  # type: ignore[assignment]
 
 
+JUDGE_MODEL_CLAUDE = "claude-opus-4-6"
+JUDGE_MODEL_CODEX_DEFAULT = "gpt-5.5"
+
+
 @dataclass
 class JudgeRunResult:
     verdict: dict  # parsed verdict.json, or {"error": ...} on failure
@@ -94,6 +98,10 @@ class JudgeRunResult:
     stderr: str
     exit_code: int
     sandbox_id: str
+    # Which judge model produced this verdict. Surfaced into the on-disk
+    # verdict JSON so post-hoc analyses can tell 4-6 vs 4-7 runs apart, and
+    # which trials used the codex-as-judge cross-family calibration.
+    judge_model: str = ""
 
 
 async def run_judge_in_e2b(
@@ -202,20 +210,34 @@ async def run_judge_in_e2b(
             timeout=120, user="root",
         )
         if apply.exit_code != 0:
+            # Intended judge model (the run errored before we picked which branch);
+            # default to the claude path since judge_via_codex requires an explicit opt-in env.
+            intended_model = f"codex:{os.environ.get('CODEX_JUDGE_MODEL', JUDGE_MODEL_CODEX_DEFAULT)}" if judge_via_codex else JUDGE_MODEL_CLAUDE
             return JudgeRunResult(
                 verdict={"error": "patch_apply_failed",
                          "stdout": apply.stdout[-2000:],
                          "stderr": apply.stderr[-2000:]},
                 stdout=apply.stdout, stderr=apply.stderr,
                 exit_code=apply.exit_code, sandbox_id=sandbox_id,
+                judge_model=intended_model,
             )
 
         # 2. Ensure claude-code CLI is present. Production task images
         # FROM one of base_images/* which bake in v2.1.108; standalone
-        # Dockerfiles (like cli-task-2c3e30 → ubuntu:24.04) don't, so we
-        # install on demand. The official installer is idempotent — `claude`
-        # already in PATH is a no-op.
-        check_claude = await sb.commands.run("command -v claude || true", timeout=10)
+        # Dockerfiles (like cli-task-2c3e30 → ubuntu:24.04 and the personA
+        # cohort task images) don't, so we install on demand. The official
+        # installer is idempotent — `claude` already in PATH is a no-op.
+        #
+        # PATH gotcha: `claude.ai/install.sh` drops the binary in
+        # `$HOME/.local/bin/` and only updates ~/.bashrc to add that to PATH.
+        # `sb.commands.run` does NOT source ~/.bashrc, so a subsequent
+        # `command -v claude` returns empty even though the binary exists.
+        # We explicitly prepend `~/.local/bin` everywhere we look for or run
+        # claude (also covers `/root/.local/bin` for tasks that run as root).
+        _PATH_PREFIX = "export PATH=\"$HOME/.local/bin:/root/.local/bin:$PATH\"; "
+        check_claude = await sb.commands.run(
+            _PATH_PREFIX + "command -v claude || true", timeout=10
+        )
         if not check_claude.stdout.strip():
             log.info("claude-code not in PATH; installing v2.1.108")
             install = await sb.commands.run(
@@ -228,7 +250,24 @@ async def run_judge_in_e2b(
                              "stderr": install.stderr[-2000:]},
                     stdout=install.stdout, stderr=install.stderr,
                     exit_code=install.exit_code, sandbox_id=sandbox_id,
+                    judge_model=JUDGE_MODEL_CLAUDE,
                 )
+            # Re-verify claude is now resolvable with the PATH prefix.
+            # If the installer wrote to a non-standard location we want to
+            # fail fast here rather than blow up later inside judge_cmd.
+            recheck = await sb.commands.run(
+                _PATH_PREFIX + "command -v claude || true", timeout=10
+            )
+            if not recheck.stdout.strip():
+                return JudgeRunResult(
+                    verdict={"error": "claude_install_post_check_failed",
+                             "install_stdout_tail": install.stdout[-1000:],
+                             "install_stderr_tail": install.stderr[-1000:]},
+                    stdout=install.stdout, stderr=install.stderr,
+                    exit_code=1, sandbox_id=sandbox_id,
+                    judge_model=JUDGE_MODEL_CLAUDE,
+                )
+            log.info("claude-code resolved at: %s", recheck.stdout.strip())
 
         # 3. Drop input files under the agent user's home — `USER agent` in the
         # task Dockerfile means /judge_inputs/ at root is not writable.
@@ -277,7 +316,8 @@ async def run_judge_in_e2b(
         # because claude code's project-settings loader finds the workspace .claude/
         # via auto-detection independent of cwd.
         if judge_via_codex and codex_auth_blob:
-            codex_model = os.environ.get("CODEX_JUDGE_MODEL", "gpt-5.5")
+            codex_model = os.environ.get("CODEX_JUDGE_MODEL", JUDGE_MODEL_CODEX_DEFAULT)
+            judge_model_label = f"codex:{codex_model}"
             # Upload host OAuth credentials to sandbox CODEX_HOME (default /root/.codex).
             # chmod 600 to keep codex happy about file permissions.
             heredoc_marker = "CODEX_AUTH_EOF"
@@ -316,9 +356,14 @@ async def run_judge_in_e2b(
                 f"-- {shlex.quote(full_instruction)}"
             )
         else:
+            judge_model_label = JUDGE_MODEL_CLAUDE
+            # PATH prefix mirrors the install/check step above — required when
+            # the binary was on-demand-installed to ~/.local/bin and the
+            # shell doesn't source ~/.bashrc.
             judge_cmd = (
-                f"timeout {timeout_sec} claude --print --max-turns {max_turns} "
-                f"--model claude-opus-4-7 "
+                _PATH_PREFIX
+                + f"timeout {timeout_sec} claude --print --max-turns {max_turns} "
+                f"--model {JUDGE_MODEL_CLAUDE} "
                 f"--dangerously-skip-permissions "
                 f"--setting-sources user "
                 f"--append-system-prompt \"$(cat {inputs_dir}/judge_system.md)\" "
@@ -376,6 +421,7 @@ async def run_judge_in_e2b(
             stderr=result.stderr,
             exit_code=result.exit_code,
             sandbox_id=sandbox_id,
+            judge_model=judge_model_label,
         )
     finally:
         try:

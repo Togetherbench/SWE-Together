@@ -269,6 +269,12 @@ async def amain() -> int:
     verdict["judge_elapsed_sec"] = round(elapsed, 1)
     verdict["sandbox_id"] = result.sandbox_id
     verdict["judge_exit_code"] = result.exit_code
+    # Record which judge model produced this verdict (set in sandbox.py based
+    # on the --model flag passed to `claude --print` or `codex exec`).
+    # Lets post-hoc analyses distinguish opus-4-6 vs opus-4-7 vs codex runs
+    # without re-reading the sandbox source at the original commit.
+    if result.judge_model:
+        verdict["judge_model"] = result.judge_model
 
     # Schema validation — log warnings on weighted-tier violations
     schema_warnings = _validate_schema(verdict)

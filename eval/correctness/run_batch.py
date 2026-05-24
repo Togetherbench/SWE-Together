@@ -100,6 +100,10 @@ async def _one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         verdict["judge_elapsed_sec"] = round(elapsed, 1)
         verdict["sandbox_id"] = sb_result.sandbox_id
         verdict["judge_exit_code"] = sb_result.exit_code
+        # Record which judge model produced this verdict (set in sandbox.py
+        # based on which judge_cmd branch fired). Mirrors judge_one.py.
+        if sb_result.judge_model:
+            verdict["judge_model"] = sb_result.judge_model
 
         warnings = _validate_schema(verdict)
         if warnings:
