@@ -205,7 +205,7 @@ class UserAgent:
     can see what it already said. Each call produces exactly one UserDecision.
     """
 
-    VERSION = "0.7.0"  # see CHANGELOG.md
+    VERSION = "0.8.0"  # see CHANGELOG.md
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None):

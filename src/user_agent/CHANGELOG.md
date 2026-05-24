@@ -3,6 +3,119 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.8.0 — 2026-05-24
+
+**Codex + Gemini-CLI user-sim enablement.**
+
+Two new agent wrappers join `UserEnabledClaudeCode`, so the same user-sim +
+ground-truth + per-turn-diff machinery now works against codex (OpenAI/codex
+CLI) and gemini-cli (Google Gemini CLI). Both follow the
+"sequential re-issue with conversation history" pattern (neither CLI has
+`--resume`).
+
+### New wrappers
+
+- **`UserEnabledCodex`** ([src/user_agent/user_enabled_codex.py](user_enabled_codex.py))
+  - Routes gpt-5.x through codex via three auth/backend paths:
+    1. `--model openrouter/openai/gpt-5.x` → codex 0.117.0 + OR HTTP Chat Completions
+       (0.117.0 pinned because newer codex requires the WebSocket Responses API
+        that OpenRouter does not expose). Wrapper preserves the `openrouter/...`
+        prefix so OR receives `openai/gpt-5.5`, not the bare leaf.
+    2. `--model openai/gpt-5.x` + `OPENAI_BASE_URL` env (any OpenAI-compat
+       backend). Cleanly handed off via the upstream `openai_base_url` config.toml
+       block (harbor PR #1482).
+    3. **ChatGPT subscription OAuth** (`CODEX_USE_HOST_AUTH=1`):
+       overlays the host's `~/.codex/auth.json` into the in-sandbox
+       `$CODEX_HOME/auth.json`, so the in-sandbox codex bills against the
+       host user's ChatGPT subscription (flat cost) instead of pay-per-token
+       API. `CODEX_VERSION=0.133.0` env var upgrades the in-sandbox codex past
+       the 0.117.0 default (required for gpt-5.5 model name).
+  - Opt-in `codex exec resume <thread_id>` path
+    (`CODEX_USE_RESUME=1`) — captured but off by default until the
+    verifier-flake regression is root-caused.
+
+- **`UserEnabledGeminiCli`** ([src/user_agent/user_enabled_gemini_cli.py](user_enabled_gemini_cli.py))
+  - Wraps `gemini --yolo --model=<model> --prompt=<msg>` with the same
+    multi-turn / user-sim / per-turn-diff pipeline.
+  - Setup auto-strips repo-level `.gemini/settings.json` (often ships
+    project-level hooks like `entire-before-tool` that call `go`/`pre-commit`
+    binaries not in our sandbox, deadlocking every tool call).
+  - Sets `GEMINI_CLI_TRUST_WORKSPACE=true` so the CLI doesn't reject the
+    workspace as "untrusted" in headless mode.
+
+### Shared infrastructure (NEW)
+
+- **`src/user_agent/exec_helpers.py`** — `exec_with_budget()` wraps every
+  `environment.exec()` call with two guards:
+  - `PER_EXEC_CAP_SEC = 1200` (20 min) — single-call ceiling via
+    `asyncio.wait_for`, so a hung in-sandbox call dies fast.
+  - `TRIAL_BUDGET_SEC = 7200` (2 h) — trial-wide wall-clock. Codex+gpt-5.5
+    runs ~3× slower than claude_code+Opus; the budget guard caps that ratio
+    without leaving the cohort exposed to multi-hour single tasks.
+  - On timeout: returns a synthetic `_TimeoutResult` so the caller's
+    `result.return_code` / `.stdout` paths still work, and the multi-turn
+    loop can break gracefully and still capture `final.patch`.
+
+  Without this, the v0.7.0 wrapper would hang silently — observed in early
+  Gemini scout where one stuck `gemini exec` burned **6 h 36 min** on a
+  single trial before manual kill.
+
+- **`src/user_agent/repo_diff.py`** — shared per-turn diff capture
+  (`tag_harbor_base()`, `capture_git_diff()`, `_repo_discovery_cmd()`).
+  Extracted from the v0.7.0 claude_code wrapper so codex + gemini_cli
+  inherit the same `patches/turn-N.{patch,incremental.patch}` artifacts +
+  `_last_turn_diff` feed into `UserAgent.process(code_changes_diff=…)`.
+
+### Runner / orchestrator changes
+
+- **`src/runner.py`** — `--agent-type gemini-cli` added; existing
+  Chutes/OpenRouter/Fireworks/GLM proxy branches gated on
+  `agent_type == "claude-code"` so codex+OpenRouter no longer hijacks
+  the claude-code proxy env (which would set `action_model =
+  "claude-sonnet-4-6"` and corrupt the codex invocation). New
+  `is_openrouter and agent_type == "codex"` branch sets `OPENAI_BASE_URL`
+  on the host so the codex wrapper reads it.
+
+- **`src/run_eval.py`** — `--agent-type {claude-code,codex}` flag added
+  (default claude-code, backwards-compatible). When `--agent-type codex`,
+  switches `import_path` to `UserEnabledCodex`, drops the claude-code-only
+  env vars (`ANTHROPIC_*`, `LITELLM_PROXY_*`, `PROXY_*`), and forwards the
+  codex-relevant host env vars (`CODEX_USE_HOST_AUTH`,
+  `CODEX_HOST_AUTH_JSON`, `CODEX_VERSION`, `CODEX_USE_RESUME`,
+  `OPENAI_BASE_URL`) into the trial's agent_env. Also pops the
+  `version: "2.1.108"` kwarg (Claude Code's version, would otherwise pass
+  into `install-codex.sh.j2`'s `{% if version %}` block and `npm install -g
+  @openai/codex@2.1.108` would ETARGET).
+
+- **`src/user_agent/__init__.py`** — note explaining the three wrappers are
+  lazy-loaded via `import_path` to keep package import cheap.
+
+### Upstream harbor changes (already merged, `1ef3ced6`)
+
+- Backported harbor PR [#1482](https://github.com/harbor-framework/harbor/pull/1482):
+  codex 0.118.0+ only honors `openai_base_url` from `$CODEX_HOME/config.toml`,
+  not the env var; setup_command now appends the config.toml block when
+  `OPENAI_BASE_URL` is set. MCP-servers config write switched from `>` to
+  `>>` so it composes with the new block.
+- Pinned `install-codex.sh.j2` to `@openai/codex@0.117.0` (last version
+  whose HTTP Chat Completions fallback works with OpenRouter). Wrapper-side
+  `CODEX_VERSION` env var triggers an in-sandbox upgrade after setup for
+  flows that don't need OR (e.g. OpenAI direct + ChatGPT OAuth on
+  gpt-5.5, which requires ≥0.118.0).
+
+### Empirical scout results on cli-task-46c118
+
+| Setup | reward | wall | cache hit | cost/trial |
+|---|---:|---:|---:|---:|
+| claude_code + Opus-4.6 (OAuth) | 1.00 | 7.0 min | server-side (Anthropic) | $0 (subscription) |
+| codex + gpt-5.5 (OR direct, 0.117.0) | 0.80 | 16-26 min | 90.6% | ~$2.49 (OR pay-per-token) |
+| codex + gpt-5.5 (OpenAI direct + ChatGPT OAuth, 0.133.0) | 0.80 | 21 min | 92% | $0 (subscription) |
+| claude_code + gpt-5.5 (OR proxy) | 0.80 | 7.8 min | 23.6% (proxy drops `cache_control`) | ~$7.78 (OR pay-per-token) |
+
+Validates the wrapper plumbing end-to-end across all four (model, harness, auth)
+combinations; the speed/cost trade-offs above are structural to each
+combination, not wrapper bugs.
+
 ## v0.7.0 — 2026-05-11
 
 **Per-turn incremental git diff fed to user sim.**

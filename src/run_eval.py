@@ -90,6 +90,16 @@ if _env_path.exists():
 
 
 AGENT_IMPORT_PATH = "user_agent.user_enabled_claude_code:UserEnabledClaudeCode"
+CODEX_AGENT_IMPORT_PATH = "user_agent.user_enabled_codex:UserEnabledCodex"
+
+# Env vars the codex wrapper inspects on the host — forwarded into the trial's
+# agent_env so the in-sandbox wrapper sees them (CODEX_USE_HOST_AUTH triggers
+# the ChatGPT-OAuth auth.json overlay; CODEX_VERSION upgrades the in-sandbox
+# codex CLI past the pinned 0.117.0; CODEX_USE_RESUME opts INTO the resume path).
+_CODEX_FORWARDED_HOST_ENV = (
+    "CODEX_USE_HOST_AUTH", "CODEX_HOST_AUTH_JSON", "CODEX_VERSION",
+    "CODEX_USE_RESUME", "OPENAI_BASE_URL",
+)
 
 
 def get_all_tasks() -> list[str]:
@@ -339,6 +349,7 @@ def build_trial_config(
     user_context_chars: int,
     call_user_on_completion: bool,
     force_build: bool = False,
+    agent_type: str = "claude-code",
 ) -> TrialConfig:
     """Build a TrialConfig with per-task user sim kwargs."""
     # Load per-task data
@@ -407,12 +418,45 @@ def build_trial_config(
     elif agent_env.get("ANTHROPIC_BASE_URL") in (_ARK_BASE_URL, _MINIMAX_BASE_URL, _GLMD_BASE_URL):
         harbor_model = "claude-sonnet-4-6"
 
+    if agent_type == "codex":
+        # Codex wrapper handles its own auth (CODEX_USE_HOST_AUTH overlay or
+        # OPENAI_API_KEY), its own protocol (OpenAI Responses API), and its
+        # own model-name passing — none of the claude_code Harbor-model
+        # remapping or ANTHROPIC_*_MODEL aliases apply. Drop them all so the
+        # in-sandbox codex sees a clean env.
+        import_path = CODEX_AGENT_IMPORT_PATH
+        harbor_model = action_model  # pass model as-is, codex wrapper strips provider prefix
+        # `version: "2.1.108"` in user_sim_kwargs is meant for ClaudeCode (pins
+        # the in-sandbox CC harness). When codex agent_type uses the same
+        # user_sim_kwargs, that version gets passed into install-codex.sh.j2 as
+        # `npm install -g @openai/codex@2.1.108` which doesn't exist (npm
+        # ETARGET). Drop it for codex so the template falls back to its
+        # hardcoded 0.117.0 default (then CODEX_VERSION env may upgrade in-sandbox).
+        user_sim_kwargs.pop("version", None)
+        # Strip claude_code-only env vars but KEEP codex-relevant ones
+        codex_env = {
+            k: v for k, v in agent_env.items()
+            if not k.startswith("ANTHROPIC_") and not k.startswith("CLAUDE_CODE_")
+               and not k.startswith("LITELLM_") and not k.startswith("PROXY_")
+        }
+        # Forward host-side CODEX_* env vars (wrapper reads them at trial start)
+        for var in _CODEX_FORWARDED_HOST_ENV:
+            if v := os.environ.get(var):
+                codex_env[var] = v
+        # Codex needs OPENAI_API_KEY env var even if empty (auth.json overlay
+        # provides real creds via CODEX_USE_HOST_AUTH path)
+        codex_env.setdefault("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
+        agent_env_final = codex_env
+    else:
+        import_path = AGENT_IMPORT_PATH
+        agent_env_final = agent_env
+
     agent_config = AgentConfig(
-        import_path=AGENT_IMPORT_PATH,
+        import_path=import_path,
         model_name=harbor_model,
         override_timeout_sec=agent_timeout,
         kwargs=user_sim_kwargs,
-        env=agent_env,
+        env=agent_env_final,
     )
 
     env_config = EnvironmentConfig(delete=True, force_build=force_build)
@@ -579,6 +623,10 @@ async def main():
     parser.add_argument("--tag", required=True, help="Short tag for this run")
     parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
     parser.add_argument("--env-type", default=None, help="Environment: docker, e2b, etc.")
+    parser.add_argument("--agent-type", default="claude-code",
+                        choices=["claude-code", "codex"],
+                        help="Coding agent type. Default claude-code. Use 'codex' for "
+                             "user_enabled_codex (gpt-5.x via OAuth/OpenAI direct or OR).")
     parser.add_argument("--agent-timeout", type=int, default=None, help="Agent timeout in seconds")
     parser.add_argument("--trials-dir", default=None, help="Trials directory (default: trials/)")
     parser.add_argument("--tasks", default=None, help="Comma-separated task names or globs")
@@ -690,7 +738,7 @@ async def main():
         "started_at": started_at,
         "model": args.model,
         "user_model": args.user_model,
-        "agent_type": "claude-code",
+        "agent_type": args.agent_type,
         "env_type": args.env_type,
         "agent_timeout": args.agent_timeout,
         "tag": args.tag,
@@ -730,6 +778,7 @@ async def main():
             user_context_chars=args.user_context_chars,
             call_user_on_completion=args.call_user_on_completion,
             force_build=args.force_build,
+            agent_type=args.agent_type,
         )
         trial_configs.append(tc)
 

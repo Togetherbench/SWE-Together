@@ -59,11 +59,12 @@ _USER_SIM_AGENT_TYPES = {
     "terminus":    "user_agent.user_enabled_agent:UserEnabledTerminus2",
     "claude-code": "user_agent.user_enabled_claude_code:UserEnabledClaudeCode",
     "codex":       "user_agent.user_enabled_codex:UserEnabledCodex",
+    "gemini-cli":  "user_agent.user_enabled_gemini_cli:UserEnabledGeminiCli",
 }
 
 # Agent types without user simulation (Harbor's installed CLI agents, single-shot)
 _PASSTHROUGH_AGENT_TYPES = {
-    "aider", "cline-cli", "cursor-cli", "gemini-cli", "goose",
+    "aider", "cline-cli", "cursor-cli", "goose",
     "swe-agent", "mini-swe-agent", "opencode", "openhands",
     "openhands-sdk", "kimi-cli", "qwen-coder",
 }
@@ -406,11 +407,30 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         os.environ.update(proxy_vars)
         log.info("%s proxy: %s → model %s", label, base_url, model)
 
-    if is_chutes:
+    # The chutes/openrouter/fireworks/glm proxy branches below all configure
+    # the in-sandbox LiteLLM proxy that Claude Code uses to speak the
+    # Anthropic Messages API to non-Anthropic upstreams. Codex / Gemini CLI
+    # talk to their native APIs directly (OPENAI_BASE_URL / GEMINI_API_KEY),
+    # so they need different env wiring — handled in the elif below.
+    is_proxy_agent = agent_type == "claude-code"
+
+    if is_chutes and is_proxy_agent:
         # Strip "chutes/" prefix — Claude Code sees just the model ID
         action_model = action_model.split("/", 1)[1]
         _configure_proxy(_CHUTES_BASE_URL, action_key, action_model, "Chutes")
-    elif is_openrouter:
+    elif is_openrouter and agent_type == "codex":
+        # Codex talks to OpenRouter's OpenAI-compat endpoint directly.
+        # The wrapper preserves the openrouter/ prefix in self.model_name
+        # and rewrites split(/)[-1] → split(/, 1)[1] so OpenRouter receives
+        # the full provider/model path (e.g. openai/gpt-5.5).
+        or_env = {
+            "OPENAI_API_KEY": action_key,
+            "OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+        }
+        agent_env.update(or_env)
+        os.environ.update(or_env)
+        log.info("Codex via OpenRouter: %s", action_model)
+    elif is_openrouter and is_proxy_agent:
         # OpenRouter: use a local LiteLLM proxy inside the E2B sandbox.
         # Claude Code sends Anthropic beta headers that OpenRouter rejects for
         # non-Anthropic models. The proxy (with drop_params=true) strips them.
@@ -441,7 +461,7 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         # Keep action_model as a standard Claude name (proxy remaps it)
         action_model = "claude-sonnet-4-6"
         log.info("OpenRouter via LiteLLM proxy: localhost:%s → %s", proxy_port, or_model)
-    elif is_fireworks:
+    elif is_fireworks and is_proxy_agent:
         # Fireworks: use a local proxy inside the E2B sandbox (like OpenRouter).
         # Claude Code CLI rejects non-Claude model names client-side, so we give it
         # a standard Claude model name and have the proxy remap to the real Fireworks
@@ -483,7 +503,7 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
         os.environ.update(proxy_vars)
         action_model = "claude-sonnet-4-6"
         log.info("Fireworks via proxy: localhost:%s → %s (fallback: OpenRouter/%s)", proxy_port, fw_model, or_fallback)
-    elif is_glm:
+    elif is_glm and is_proxy_agent:
         # Z.AI GLM: speaks Anthropic Messages API natively, but we still use an
         # in-sandbox proxy so it can fall back to OpenRouter on 429 (rate limit).
         glm_model = action_model.split("/", 1)[1]  # strip "glm/" prefix
