@@ -80,3 +80,8 @@ analysis/offline_graph_instructor/trace_graph_*.txt
 eval/pilot_study_*.png
 analysis/*.png
 analysis/*.md
+
+# Local-only artifacts (kept in working tree but never committed)
+eval/canonical_plan.example.json
+eval/canonical_plan_*.json
+eval/pilot_study_*.md
