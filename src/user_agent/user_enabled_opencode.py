@@ -193,22 +193,35 @@ class UserEnabledOpenCode(BaseAgent):
         await environment.upload_file(
             source_path=staged_proxy, target_path="/tmp/oauth_proxy.py",
         )
-        # Use the system python3 (Harbor's opencode install brings nvm/node
-        # but doesn't install Python deps — we rely on aiohttp being importable
-        # from the base image's python3). Pre-flight `python3 -c "import aiohttp"`
-        # before launching the proxy so dep-install failures fail fast with a
-        # clear error rather than the proxy silently dying mid-stream. httpx is
-        # no longer required — oauth_proxy.py uses aiohttp for both halves.
+        # Harbor's opencode install brings nvm/node but no Python deps; the
+        # base E2B image's /usr/bin/python3 may be stripped (no pip, no aiohttp).
+        # We need aiohttp for oauth_proxy.py's HTTP server + client. Cascade
+        # through install strategies — mirrors install-mini-swe-agent.sh.j2's
+        # proven recipe. Each branch's failure feeds the next; the final
+        # `import aiohttp` is the authoritative gate.
         start_cmd = (
-            # Try to ensure aiohttp is available. Allow failure; the import
-            # check after the install is the authoritative gate.
-            "python3 -m pip install --quiet --break-system-packages aiohttp "
-            "  >/tmp/oauth_proxy_pip.log 2>&1 || true; "
-            # Verify importability — if this fails, bail with a clear message
-            # before the proxy even tries to start.
+            # 1. apt path — fastest if running as root (template-time setups)
+            # or where agent has passwordless sudo. python3-aiohttp gives us
+            # the lib in one shot without ever touching pip.
+            "(apt-get install -y -qq python3-aiohttp 2>/dev/null "
+            "  || sudo -n apt-get install -y -qq python3-aiohttp 2>/dev/null "
+            # 2. Bootstrap pip via ensurepip (stdlib), then pip install aiohttp
+            # to user site-packages.
+            "  || (python3 -m ensurepip --user 2>/dev/null; "
+            "      python3 -m pip install --user --quiet --break-system-packages aiohttp 2>/dev/null) "
+            # 3. Bring pip in via apt, then pip install.
+            "  || (apt-get install -y -qq python3-pip 2>/dev/null "
+            "      || sudo -n apt-get install -y -qq python3-pip 2>/dev/null; "
+            "      python3 -m pip install --user --quiet --break-system-packages aiohttp 2>/dev/null) "
+            ") >/tmp/oauth_proxy_install.log 2>&1; "
+            # 4. Gate — verify importability. Surface the install log on failure
+            # so we can see which strategy ran and why it didn't land aiohttp.
             'if ! python3 -c "import aiohttp" 2>/tmp/oauth_proxy_import.err; then '
             '  echo "ERROR: aiohttp not importable in sandbox python3 — proxy cannot start" >&2; '
-            "  cat /tmp/oauth_proxy_pip.log /tmp/oauth_proxy_import.err >&2; "
+            '  echo "--- install log ---" >&2; '
+            "  cat /tmp/oauth_proxy_install.log >&2 2>/dev/null; "
+            '  echo "--- import error ---" >&2; '
+            "  cat /tmp/oauth_proxy_import.err >&2 2>/dev/null; "
             "  exit 1; "
             "fi; "
             "nohup python3 /tmp/oauth_proxy.py "
