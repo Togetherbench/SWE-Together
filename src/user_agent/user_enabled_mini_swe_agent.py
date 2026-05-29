@@ -38,6 +38,7 @@ from harbor.models.agent.context import AgentContext
 from harbor.llms.lite_llm import LiteLLM
 
 from .exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
+from .litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 from .repo_config import discover_repo_config_files
 from .repo_diff import capture_git_diff, tag_harbor_base
 from .user_agent import UserAgent, UserDecision
@@ -106,7 +107,23 @@ class UserEnabledMiniSweAgent(BaseAgent):
         mswea_version: str = "2.3.0",
         **kwargs,
     ):
-        super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
+        # `minimaxd/`, `glmd/`, `ark/`, etc. are our naming convention for
+        # provider-direct routing via the in-sandbox proxy on localhost:4210.
+        # Harbor's MiniSweAgent calls `get_api_key_var_names_from_model_name`
+        # against a hardcoded provider list that rejects these prefixes
+        # ("ValueError: Unknown model"). Mask to a Harbor-recognized
+        # placeholder ("anthropic/claude-sonnet-4-6"); LiteLLM sees that name
+        # + the ANTHROPIC_BASE_URL we set in build_agent_env, hits the proxy
+        # at localhost:4210, which rewrites the body's model field to the real
+        # target before forwarding to api.minimax.io / api.z.ai / etc.
+        inner_model_name = mask_proxied_model_name(model_name)
+        self._using_proxied_provider = inner_model_name != model_name
+        if self._using_proxied_provider:
+            log.info(
+                "mini-swe-agent: masking model %r → %r for Harbor validator (proxy handles real routing)",
+                model_name, inner_model_name,
+            )
+        super().__init__(logs_dir=logs_dir, model_name=inner_model_name, **kwargs)
 
         # Pin the in-sandbox mini-swe-agent CLI version for reproducibility.
         # Harbor's install template reads `{{ version }}` from this kwarg via
@@ -122,7 +139,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
         # pin "low"/"medium"/"high" explicitly when they want a sweep.
         kwargs.pop("reasoning_effort", None)
         self._inner = MiniSweAgent(
-            logs_dir=logs_dir, model_name=model_name,
+            logs_dir=logs_dir, model_name=inner_model_name,
             version=mswea_version,
             reasoning_effort=reasoning_effort, **kwargs,
         )
@@ -172,6 +189,14 @@ class UserEnabledMiniSweAgent(BaseAgent):
         # show only the agent's edits, even if a Dockerfile post-checkout
         # `git commit` mid-trial. See repo_diff for rationale.
         await tag_harbor_base(environment)
+        # Launch the in-sandbox LiteLLM-compat proxy on localhost:4210 when
+        # we're routing through a provider-direct path (minimaxd/, glmd/,
+        # ark/, fireworks/, deepseek/, openrouter/). build_agent_env in
+        # src/run_eval.py already set LITELLM_PROXY_MODEL + PROXY_TARGET_URL
+        # + ANTHROPIC_BASE_URL=http://localhost:4210 in the agent env; the
+        # helper picks those up and starts the proxy. No-op when the env vars
+        # aren't set (direct Anthropic or codex-oauth runs).
+        await launch_litellm_proxy(environment, self.logs_dir)
         # If MSWEA_USE_CODEX_OAUTH=1, drop our oauth_proxy.py + host's
         # ~/.codex/auth.json into the sandbox and start the proxy on
         # 127.0.0.1:4220. LiteLLM clients in the sandbox then route through

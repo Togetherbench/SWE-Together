@@ -47,6 +47,7 @@ from harbor.models.agent.context import AgentContext
 from harbor.llms.lite_llm import LiteLLM
 
 from .exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
+from .litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 from .repo_config import discover_repo_config_files
 from .repo_diff import capture_git_diff, tag_harbor_base
 from .user_agent import UserAgent, UserDecision
@@ -105,7 +106,21 @@ class UserEnabledOpenCode(BaseAgent):
         opencode_version: str | None = None,
         **kwargs,
     ):
-        super().__init__(logs_dir=logs_dir, model_name=model_name, **kwargs)
+        # `minimaxd/`, `glmd/`, `ark/`, etc. are our naming convention for
+        # provider-direct routing via the in-sandbox proxy on localhost:4210.
+        # Harbor's OpenCode (and the underlying `opencode-ai` CLI inside the
+        # sandbox) reject these prefixes ("Unknown provider minimaxd"). Mask
+        # to "anthropic/claude-sonnet-4-6"; opencode's anthropic provider hits
+        # ANTHROPIC_BASE_URL=localhost:4210, and the proxy rewrites the body
+        # model field to MiniMax-M2.7 / glm-5.1 / etc. before forwarding.
+        inner_model_name = mask_proxied_model_name(model_name)
+        self._using_proxied_provider = inner_model_name != model_name
+        if self._using_proxied_provider:
+            log.info(
+                "opencode: masking model %r → %r for Harbor + opencode CLI (proxy handles real routing)",
+                model_name, inner_model_name,
+            )
+        super().__init__(logs_dir=logs_dir, model_name=inner_model_name, **kwargs)
 
         # Drop kwargs the inner OpenCode doesn't accept, then construct it.
         # `version` is forwarded to install-opencode.sh.j2 via Harbor's
@@ -115,7 +130,7 @@ class UserEnabledOpenCode(BaseAgent):
         if opencode_version:
             inner_kwargs["version"] = opencode_version
         self._inner = OpenCode(
-            logs_dir=logs_dir, model_name=model_name, **inner_kwargs,
+            logs_dir=logs_dir, model_name=inner_model_name, **inner_kwargs,
         )
         # reasoning_effort: OpenCode's --variant flag toggles "reasoning
         # variants" but its semantics are provider-specific (anthropic
@@ -159,6 +174,14 @@ class UserEnabledOpenCode(BaseAgent):
         # show only the agent's edits, even when a Dockerfile post-checkout
         # `git commit` lands mid-trial. See repo_diff for rationale.
         await tag_harbor_base(environment)
+        # Launch the in-sandbox LiteLLM-compat proxy on localhost:4210 when
+        # we're routing through a provider-direct path (minimaxd/, glmd/,
+        # ark/, fireworks/, deepseek/, openrouter/). build_agent_env in
+        # src/run_eval.py already set LITELLM_PROXY_MODEL + PROXY_TARGET_URL
+        # + ANTHROPIC_BASE_URL=http://localhost:4210 in the agent env; the
+        # helper picks those up and starts the proxy. No-op when env vars
+        # aren't set (direct Anthropic or codex-oauth runs).
+        await launch_litellm_proxy(environment, self.logs_dir)
         # OAuth proxy path (MSWEA_USE_CODEX_OAUTH reused as the universal
         # "use host ChatGPT subscription" flag): drop oauth_proxy.py +
         # ~/.codex/auth.json into the sandbox, start the proxy on
