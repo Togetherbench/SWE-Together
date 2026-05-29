@@ -256,6 +256,7 @@ class StreamTranslator:
         self._tool_index: dict[str, tuple[int, str, str]] = {}
         self._next_tool_idx = 0
         self._finish_reason: str | None = None
+        self._final_usage: dict | None = None
 
     def _envelope(self, delta: dict, finish_reason: str | None = None) -> dict:
         return {
@@ -341,7 +342,37 @@ class StreamTranslator:
 
         if event_type == "response.completed":
             # Default to "stop" unless a tool call ended the turn
-            return [self._envelope({}, finish_reason=self._finish_reason or "stop")]
+            chunks = [self._envelope({}, finish_reason=self._finish_reason or "stop")]
+            # ChatGPT Responses returns `usage` on response.completed; map to
+            # Chat Completions shape so LiteLLM populates response.usage and
+            # callers (mini-swe-agent → trajectory) see reasoning_tokens.
+            # Without this, the trajectory shows usage all zeros for gpt-5.5
+            # via Codex OAuth, making the cohort look like it never thought.
+            resp_usage = ((data.get("response") or {}).get("usage")) or {}
+            if resp_usage:
+                prompt_tokens = resp_usage.get("input_tokens", 0) or 0
+                completion_tokens = resp_usage.get("output_tokens", 0) or 0
+                reasoning_tokens = (
+                    (resp_usage.get("output_tokens_details") or {})
+                    .get("reasoning_tokens", 0) or 0
+                )
+                usage_chunk = {
+                    "id": self.chat_id,
+                    "object": "chat.completion.chunk",
+                    "model": self.model,
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": reasoning_tokens,
+                        },
+                    },
+                }
+                self._final_usage = usage_chunk["usage"]
+                chunks.append(usage_chunk)
+            return chunks
 
         if event_type == "response.failed":
             err = (data.get("response") or {}).get("error") or {}
@@ -490,7 +521,10 @@ def _coalesce_chunks(chunks: list[dict], chat_id: str, model: str) -> dict:
     reasoning_parts: list[str] = []
     tool_calls_by_index: dict[int, dict] = {}
     finish_reason: str | None = None
+    usage: dict | None = None
     for ch in chunks:
+        if ch.get("usage"):
+            usage = ch["usage"]
         choice = (ch.get("choices") or [{}])[0]
         delta = choice.get("delta") or {}
         if "content" in delta and delta["content"]:
@@ -532,7 +566,7 @@ def _coalesce_chunks(chunks: list[dict], chat_id: str, model: str) -> dict:
             "message": message,
             "finish_reason": finish_reason or "stop",
         }],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
 

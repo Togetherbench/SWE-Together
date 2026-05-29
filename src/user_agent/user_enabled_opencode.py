@@ -329,15 +329,50 @@ class UserEnabledOpenCode(BaseAgent):
                 extra = "--thinking "
                 if self._reasoning_effort:
                     extra += f"--variant={shlex.quote(self._reasoning_effort)} "
+                # Patch opencode.json to enable per-provider thinking config so
+                # OpenRouter/Anthropic actually consumes a thinking budget
+                # (without this, --variant maps to nothing for OR providers
+                # and the model runs with thinking disabled — `tokens.reasoning`
+                # in step_finish events is reported as 0 despite --thinking).
+                patch_cfg = self._opencode_thinking_patch_command()
                 c.command = c.command.replace(
                     "run --format=json", f"run {extra}--format=json", 1,
                 )
+                if patch_cfg:
+                    c.command = f"{patch_cfg} && {c.command}"
             if oauth_on:
                 if c.env is None:
                     c.env = {}
                 c.env["OPENAI_BASE_URL"] = "http://127.0.0.1:4220/v1"
                 c.env["OPENAI_API_KEY"] = "placeholder"
         return commands
+
+    def _opencode_thinking_patch_command(self) -> str | None:
+        """Build a shell command that adds per-provider thinking config to
+        ~/.config/opencode/opencode.json.
+
+        Harbor's opencode config writer only registers the model, leaving
+        provider options empty. For OpenRouter Anthropic the missing piece is
+        `provider.openrouter.options.reasoning.effort`, which OpenRouter then
+        forwards as Anthropic's `thinking` budget. Without this, --variant is
+        silently ignored on the OR path and Opus runs with thinking off
+        (`tokens.reasoning: 0` in every step_finish event).
+        """
+        effort = self._reasoning_effort or "medium"
+        # python3 instead of jq — guaranteed present in the base images.
+        # Heredoc avoids shell-quoting hell around the embedded JSON literal.
+        script = (
+            "import json, pathlib, os\n"
+            "p = pathlib.Path.home()/'.config/opencode/opencode.json'\n"
+            "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
+            "prov = cfg.setdefault('provider', {})\n"
+            "for name in list(prov):\n"
+            "    prov[name].setdefault('options', {}).setdefault('reasoning', {})['effort'] = "
+            + json.dumps(effort) + "\n"
+            "p.parent.mkdir(parents=True, exist_ok=True)\n"
+            "p.write_text(json.dumps(cfg, indent=2))\n"
+        )
+        return f"python3 - <<'PYEOF'\n{script}PYEOF"
 
     # ── resume command builder ────────────────────────────────────────
 
