@@ -194,11 +194,23 @@ class UserEnabledOpenCode(BaseAgent):
             source_path=staged_proxy, target_path="/tmp/oauth_proxy.py",
         )
         # Use the system python3 (Harbor's opencode install brings nvm/node
-        # but doesn't install Python deps — we rely on aiohttp + httpx being
-        # importable from the base image's python3). If they aren't, the
-        # proxy will fail to start and we'll see it via the /health probe.
+        # but doesn't install Python deps — we rely on aiohttp being importable
+        # from the base image's python3). Pre-flight `python3 -c "import aiohttp"`
+        # before launching the proxy so dep-install failures fail fast with a
+        # clear error rather than the proxy silently dying mid-stream. httpx is
+        # no longer required — oauth_proxy.py uses aiohttp for both halves.
         start_cmd = (
-            'pip install --quiet --break-system-packages aiohttp httpx 2>/dev/null || true; '
+            # Try to ensure aiohttp is available. Allow failure; the import
+            # check after the install is the authoritative gate.
+            "python3 -m pip install --quiet --break-system-packages aiohttp "
+            "  >/tmp/oauth_proxy_pip.log 2>&1 || true; "
+            # Verify importability — if this fails, bail with a clear message
+            # before the proxy even tries to start.
+            'if ! python3 -c "import aiohttp" 2>/tmp/oauth_proxy_import.err; then '
+            '  echo "ERROR: aiohttp not importable in sandbox python3 — proxy cannot start" >&2; '
+            "  cat /tmp/oauth_proxy_pip.log /tmp/oauth_proxy_import.err >&2; "
+            "  exit 1; "
+            "fi; "
             "nohup python3 /tmp/oauth_proxy.py "
             "  --port 4220 --auth-json /tmp/codex-auth.json "
             "  > /tmp/oauth_proxy.log 2>&1 & "
@@ -272,12 +284,18 @@ class UserEnabledOpenCode(BaseAgent):
         oauth_on = os.environ.get("MSWEA_USE_CODEX_OAUTH") == "1"
         for c in commands:
             if "opencode --model=" in c.command and "run --format=json" in c.command:
+                # `--thinking` makes OpenCode emit `{type:"reasoning", part:{
+                # text:…}}` events into the JSON stream — without it, non-
+                # interactive runs suppress reasoning entirely (run.ts:251
+                # defaults thinking=false in non-interactive mode). The model
+                # is still thinking per --variant; this flag only controls
+                # whether the trace shows up in our opencode.txt capture.
+                extra = "--thinking "
                 if self._reasoning_effort:
-                    c.command = c.command.replace(
-                        "run --format=json",
-                        f"run --variant={shlex.quote(self._reasoning_effort)} --format=json",
-                        1,
-                    )
+                    extra += f"--variant={shlex.quote(self._reasoning_effort)} "
+                c.command = c.command.replace(
+                    "run --format=json", f"run {extra}--format=json", 1,
+                )
             if oauth_on:
                 if c.env is None:
                     c.env = {}
@@ -299,17 +317,19 @@ class UserEnabledOpenCode(BaseAgent):
         # final ExecInput; we already cached that during turn-0 exec.
         env = getattr(self, "_inner_run_env", {}) or {}
 
-        # OpenCode's `--variant` is the provider-agnostic reasoning toggle.
-        # When unset, opencode uses the model's default depth.
-        variant_flag = ""
+        # `--thinking` flag matches the turn-0 injection (see
+        # _inject_opencode_flags): force reasoning events into the JSON
+        # stream so we can quantify thinking strength offline.
+        # `--variant` is the provider-agnostic reasoning effort toggle.
+        flags = "--thinking "
         if self._reasoning_effort:
-            variant_flag = f"--variant={shlex.quote(self._reasoning_effort)} "
+            flags += f"--variant={shlex.quote(self._reasoning_effort)} "
 
         return ExecInput(
             command=(
                 ". ~/.nvm/nvm.sh; "
                 f"opencode --model={self._inner.model_name} run "
-                f"--session={shlex.quote(session_id)} {variant_flag}"
+                f"--session={shlex.quote(session_id)} {flags}"
                 f"--format=json -- {escaped_message} "
                 f"2>&1 </dev/null | stdbuf -oL tee -a {_OPENCODE_LOG}"
             ),

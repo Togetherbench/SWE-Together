@@ -57,7 +57,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import httpx
+import aiohttp
 from aiohttp import web
 
 log = logging.getLogger(__name__)
@@ -385,20 +385,24 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
     async def stream_upstream(retry_on_401: bool = True) -> int:
         nonlocal_chunks: list[dict] = []
         headers = _build_headers(auth)
-        timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST", UPSTREAM_URL,
+        # aiohttp's ClientTimeout: per-socket read budget covers long SSE streams.
+        # We intentionally set total=None — ChatGPT streams can run for minutes.
+        timeout = aiohttp.ClientTimeout(
+            sock_connect=30, sock_read=600, connect=30, total=None,
+        )
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                UPSTREAM_URL,
                 headers=headers, json=upstream_body,
             ) as r:
-                if r.status_code == 401 and retry_on_401:
+                if r.status == 401 and retry_on_401:
                     log.warning("upstream 401 — reloading auth.json")
                     auth.reload()
                     return await stream_upstream(retry_on_401=False)
-                if r.status_code >= 400:
-                    body_bytes = await r.aread()
-                    log.error("upstream %d: %s", r.status_code, body_bytes[:500])
-                    err_msg = f"upstream {r.status_code}: {body_bytes.decode(errors='replace')[:500]}"
+                if r.status >= 400:
+                    body_bytes = await r.read()
+                    log.error("upstream %d: %s", r.status, body_bytes[:500])
+                    err_msg = f"upstream {r.status}: {body_bytes.decode(errors='replace')[:500]}"
                     if streaming:
                         chunk = translator._envelope(
                             {"content": f"[proxy: {err_msg}]"},
@@ -408,10 +412,16 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
                         await response.write(b"data: [DONE]\n\n")
                     else:
                         await response.write(json.dumps({"error": err_msg}).encode())
-                    return r.status_code
+                    return r.status
 
                 current_event: str | None = None
-                async for line in r.aiter_lines():
+                # aiohttp StreamReader doesn't have aiter_lines; readline()
+                # returns until LF (handles LF/CRLF). Empty bytes ⇒ EOF.
+                while True:
+                    raw = await r.content.readline()
+                    if not raw:
+                        break
+                    line = raw.rstrip(b"\r\n").decode("utf-8", errors="replace")
                     if not line:
                         current_event = None
                         continue
@@ -559,6 +569,16 @@ async def handle_responses(request: web.Request) -> web.StreamResponse:
     if isinstance(reasoning, dict) and reasoning.get("effort") and not reasoning.get("summary"):
         reasoning["summary"] = "auto"
 
+    # ChatGPT's private /backend-api/codex/responses endpoint rejects the
+    # request with `{"detail":"Instructions are required"}` if `instructions`
+    # is missing or empty. The public OpenAI Responses API tolerates an
+    # absent field (defaults to empty system prompt). OpenCode's openai
+    # provider follows the public spec, so its turn-0 and resume bodies
+    # both omit `instructions`. Inject a minimal default when missing so
+    # we don't 400 every model call.
+    if not body.get("instructions"):
+        body["instructions"] = "You are a helpful assistant."
+
     streaming = bool(body.get("stream"))
     response = web.StreamResponse(
         headers={
@@ -571,29 +591,31 @@ async def handle_responses(request: web.Request) -> web.StreamResponse:
 
     async def proxy(retry_on_401: bool = True) -> int:
         headers = _build_headers(auth)
-        timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST", UPSTREAM_URL, headers=headers, json=body,
+        timeout = aiohttp.ClientTimeout(
+            sock_connect=30, sock_read=600, connect=30, total=None,
+        )
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                UPSTREAM_URL, headers=headers, json=body,
             ) as r:
-                if r.status_code == 401 and retry_on_401:
+                if r.status == 401 and retry_on_401:
                     log.warning("upstream 401 — reloading auth.json")
                     auth.reload()
                     return await proxy(retry_on_401=False)
-                if r.status_code >= 400:
-                    body_bytes = await r.aread()
-                    log.error("upstream %d: %s", r.status_code, body_bytes[:500])
+                if r.status >= 400:
+                    body_bytes = await r.read()
+                    log.error("upstream %d: %s", r.status, body_bytes[:500])
                     if streaming:
                         await response.write(
-                            f"data: {{\"error\":\"upstream {r.status_code}\"}}\n\n".encode()
+                            f"data: {{\"error\":\"upstream {r.status}\"}}\n\n".encode()
                         )
                         await response.write(b"data: [DONE]\n\n")
                     else:
                         await response.write(body_bytes)
-                    return r.status_code
-                # Pass through SSE lines verbatim — OpenCode already parses
+                    return r.status
+                # Pass through SSE bytes verbatim — OpenCode already parses
                 # native Responses-API events, no translation needed.
-                async for chunk in r.aiter_raw():
+                async for chunk in r.content.iter_any():
                     if chunk:
                         await response.write(chunk)
         return 200
