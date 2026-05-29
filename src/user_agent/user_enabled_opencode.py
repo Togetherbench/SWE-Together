@@ -351,12 +351,29 @@ class UserEnabledOpenCode(BaseAgent):
         """Build a shell command that adds per-provider thinking config to
         ~/.config/opencode/opencode.json.
 
-        Harbor's opencode config writer only registers the model, leaving
-        provider options empty. For OpenRouter Anthropic the missing piece is
-        `provider.openrouter.options.reasoning.effort`, which OpenRouter then
-        forwards as Anthropic's `thinking` budget. Without this, --variant is
-        silently ignored on the OR path and Opus runs with thinking off
-        (`tokens.reasoning: 0` in every step_finish event).
+        Two things written into every provider entry's `options`:
+
+        1. `reasoning.effort` — OpenRouter's effort knob. OR forwards it to
+           the underlying provider (OpenAI: `reasoning_effort` natively;
+           Anthropic 4.6: should map to adaptive `thinking + output_config`,
+           per Anthropic's adaptive-thinking docs).
+
+        2. `thinking: {type: "adaptive"}` — belt-and-suspenders for Anthropic
+           Claude 4.6 family. Per the docs, `type:"enabled"` with
+           `budget_tokens:N` is **deprecated** on 4.6 and **rejected** on 4.7+,
+           and **manual mode has no interleaved thinking on Opus 4.6**.
+           Setting `thinking.type=adaptive` here explicitly ensures the
+           Anthropic provider gets the adaptive request even if OR's
+           effort→thinking translation defaults to legacy budget_tokens
+           (OR's behaviour for this is undocumented as of this writing).
+
+        Harbor's opencode config writer only registers the model name and
+        leaves provider options empty, so without this patch:
+          - `--variant=<effort>` is silently ignored on the OR path
+          - Opus runs with thinking off (`tokens.reasoning: 0`)
+          - Even when thinking *is* on, lack of interleaved means inter-tool
+            reasoning is impossible on agentic workflows (the very thing we
+            run in this benchmark).
         """
         effort = self._reasoning_effort or "medium"
         # python3 instead of jq — guaranteed present in the base images.
@@ -367,8 +384,13 @@ class UserEnabledOpenCode(BaseAgent):
             "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
             "prov = cfg.setdefault('provider', {})\n"
             "for name in list(prov):\n"
-            "    prov[name].setdefault('options', {}).setdefault('reasoning', {})['effort'] = "
+            "    opts = prov[name].setdefault('options', {})\n"
+            "    opts.setdefault('reasoning', {})['effort'] = "
             + json.dumps(effort) + "\n"
+            "    # belt-and-suspenders: explicit adaptive thinking config\n"
+            "    # for Anthropic-family models. Harmless for OpenAI; OR\n"
+            "    # provider strips unknown fields rather than 400-ing.\n"
+            "    opts.setdefault('thinking', {'type': 'adaptive'})\n"
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text(json.dumps(cfg, indent=2))\n"
         )
