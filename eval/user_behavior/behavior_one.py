@@ -34,25 +34,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Specificity tiers — must match `eval/eval_design.md` §B.
-SPECIFICITY_WEIGHTS: dict[str, int] = {
-    "vague":         1,
-    "directional":   2,
-    "diagnostic":    3,
-    "prescriptive":  4,
-    "patch_level":   5,
-}
-TIER_NAMES: tuple[str, ...] = tuple(SPECIFICITY_WEIGHTS.keys())
-
-# kinds that don't pay effort (workflow/context/approval — commit/push/ok/continue).
-FREE_KINDS: frozenset[str] = frozenset({"workflow", "context", "approval"})
-
-# Oracle/sim intent kinds — used to bucket per-kind counts. The "approval" kind
-# is sim-only (a free no-op from the FREE_KINDS list); oracle never emits it.
-KIND_NAMES: tuple[str, ...] = (
-    "request", "correction", "question", "verification",
-    "workflow", "context", "approval",
-)
+# All tier/kind aggregations (`per_tier_count`, `per_tier_fraction`,
+# `per_kind_count`) plus the `effort_cost` scalar are computed by
+# `eval/intent_coverage/coverage_one.py` and passthrough-read here — see
+# eval_design.md §B. This file's role per its docstring is the no-LLM file-I/O
+# panel (intervention_count, hard_cap_abandon, per_action_count).
 
 # Sim action vocabulary — must match `src/user_agent/user_agent.py::ACTIONS`.
 ACTION_NAMES: tuple[str, ...] = (
@@ -134,54 +120,6 @@ def per_action_counts(episodes: list[dict]) -> dict[str, int]:
     return counts
 
 
-def per_tier_counts(trial_msg_specificity: list[dict] | None) -> dict[str, int]:
-    """Distribution of specificity tiers across this trial's sim messages.
-
-    Reads from intent_coverage's `trial_msg_specificity` (per §Proposal of
-    eval_design.md). Returns all-zero map if the field is absent or empty.
-    """
-    counts: dict[str, int] = {t: 0 for t in TIER_NAMES}
-    if not trial_msg_specificity:
-        return counts
-    for m in trial_msg_specificity:
-        tier = (m or {}).get("tier")
-        if tier in counts:
-            counts[tier] += 1
-    return counts
-
-
-def per_kind_counts(trial_msg_specificity: list[dict] | None) -> dict[str, int]:
-    """Distribution of sim-msg kinds (`kind_hint` from §Proposal). All-zero
-    map if the field is absent or empty."""
-    counts: dict[str, int] = {k: 0 for k in KIND_NAMES}
-    if not trial_msg_specificity:
-        return counts
-    for m in trial_msg_specificity:
-        kind = (m or {}).get("kind_hint")
-        if kind in counts:
-            counts[kind] += 1
-        elif kind:
-            counts.setdefault(kind, 0)
-            counts[kind] += 1
-    return counts
-
-
-def effort_cost_from_specificity(trial_msg_specificity: list[dict] | None) -> int | None:
-    """Re-derive effort_cost in code in case intent_coverage_verdict.json
-    doesn't carry a precomputed `effort_cost` field yet (the §Proposal lands
-    the field on coverage_one.py but this lets user_behavior stand alone)."""
-    if not trial_msg_specificity:
-        return None
-    total = 0
-    for m in trial_msg_specificity:
-        if not isinstance(m, dict):
-            continue
-        if (m.get("kind_hint") or "") in FREE_KINDS:
-            continue
-        total += SPECIFICITY_WEIGHTS.get(m.get("tier") or "", 0)
-    return total
-
-
 def measure_one_trial(
     trial_dir: Path,
     task_dir: Path,
@@ -206,13 +144,15 @@ def measure_one_trial(
 
     coverage_verdict = _load_json(trial_dir / "intent_coverage_verdict.json") or {}
     trial_msg_specificity = coverage_verdict.get("trial_msg_specificity")
-    tiers = per_tier_counts(trial_msg_specificity)
-    kinds = per_kind_counts(trial_msg_specificity)
 
-    # Prefer precomputed effort_cost (per §Proposal); fall back to in-code re-derive.
+    # All tier/kind aggregations and effort_cost are passthrough from
+    # intent_coverage_verdict.json (single source of truth — see eval_design.md
+    # §B). Legacy verdicts predating these fields → None / empty dict.
     effort_cost = coverage_verdict.get("effort_cost")
     if not isinstance(effort_cost, int):
-        effort_cost = effort_cost_from_specificity(trial_msg_specificity)
+        effort_cost = None
+    tiers = coverage_verdict.get("per_tier_count") or {}
+    kinds = coverage_verdict.get("per_kind_count") or {}
 
     # effort_per_matched_intent — sim-verbosity diagnostic from Block 1' of
     # eval_design.md. Needs the match_table to count matched intents.
@@ -233,10 +173,7 @@ def measure_one_trial(
         max_messages = _safe_int((episodes[-1].get("stats") or {}).get("max_messages"))
 
     n_trial_msgs = coverage_verdict.get("n_trial_msgs")
-    per_tier_fraction: dict[str, float] | None = None
-    denom = n_trial_msgs if isinstance(n_trial_msgs, int) and n_trial_msgs > 0 else None
-    if denom:
-        per_tier_fraction = {t: round(tiers[t] / denom, 4) for t in TIER_NAMES}
+    per_tier_fraction = coverage_verdict.get("per_tier_fraction")  # passthrough
 
     verdict = {
         "schema_version": 1,

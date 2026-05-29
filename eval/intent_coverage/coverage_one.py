@@ -132,8 +132,11 @@ W_PRECISION = 0.35
 MATCH_CONFIDENCE_FLOOR_FOR_COVERED = 0.5  # ≥ this counts as "covered"
 _FLOAT_TOL = 1e-6
 
-# §Proposal — user effort tiers (eval_design.md §B). Keep in sync with
-# `eval/user_behavior/behavior_one.py::SPECIFICITY_WEIGHTS`.
+# §Proposal — user effort tiers (eval_design.md §B). This file is the SOLE
+# source of truth for tier weights, free-kind classification, and tier/kind
+# aggregations. `eval/user_behavior/behavior_one.py` passthrough-reads the
+# resulting `effort_cost`, `per_tier_count`, `per_kind_count`, and
+# `per_tier_fraction` fields from this verdict (no re-derivation downstream).
 SPECIFICITY_WEIGHTS: dict[str, int] = {
     "vague":         1,
     "directional":   2,
@@ -141,14 +144,15 @@ SPECIFICITY_WEIGHTS: dict[str, int] = {
     "prescriptive":  4,
     "patch_level":   5,
 }
-TIER_NAMES: frozenset[str] = frozenset(SPECIFICITY_WEIGHTS)
+TIER_NAMES: tuple[str, ...] = tuple(SPECIFICITY_WEIGHTS.keys())
 
 # Kinds that don't pay effort — commit/push/ok/continue are free.
 FREE_KINDS: frozenset[str] = frozenset({"workflow", "context", "approval"})
-ALL_KINDS: frozenset[str] = frozenset({
+KIND_NAMES: tuple[str, ...] = (
     "request", "correction", "question", "verification",
     "workflow", "context", "approval",
-})
+)
+ALL_KINDS: frozenset[str] = frozenset(KIND_NAMES)
 
 
 def load_dotenv(repo_root: Path) -> None:
@@ -374,6 +378,43 @@ def compute_effort_cost(specificity: list[dict]) -> int:
     return total
 
 
+def compute_per_tier_count(specificity: list[dict]) -> dict[str, int]:
+    """Histogram of tier labels across this trial's messages, anchored to
+    TIER_NAMES so all known tiers appear with explicit 0 counts.
+    Unknown tiers (from a future schema bump) are appended in insertion order.
+    """
+    counts: dict[str, int] = {t: 0 for t in TIER_NAMES}
+    for m in specificity:
+        t = (m or {}).get("tier")
+        if t in counts:
+            counts[t] += 1
+        elif t:
+            counts[t] = counts.get(t, 0) + 1
+    return counts
+
+
+def compute_per_kind_count(specificity: list[dict]) -> dict[str, int]:
+    """Histogram of kind_hint labels. Anchored to KIND_NAMES; unknown kinds
+    are appended in insertion order (same drift-tolerance as per_tier_count)."""
+    counts: dict[str, int] = {k: 0 for k in KIND_NAMES}
+    for m in specificity:
+        k = (m or {}).get("kind_hint")
+        if k in counts:
+            counts[k] += 1
+        elif k:
+            counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+def compute_per_tier_fraction(per_tier_count: dict[str, int],
+                              n_trial_msgs: int) -> dict[str, float] | None:
+    """Normalize per-tier counts to [0,1] fractions over n_trial_msgs.
+    Returns None when n_trial_msgs is non-positive — no defined fractions."""
+    if not isinstance(n_trial_msgs, int) or n_trial_msgs <= 0:
+        return None
+    return {t: round(c / n_trial_msgs, 4) for t, c in per_tier_count.items()}
+
+
 def compute_scores(match_table: dict, n_intents: int, n_trial: int) -> dict:
     """All numeric scores derived deterministically from the match table."""
     per_intent = match_table["per_intent"]
@@ -471,12 +512,18 @@ async def judge_one_trial(
     table, warnings = normalize_match_table(table_raw, len(intents), len(sim))
     scores = compute_scores(table, len(intents), len(sim))
 
-    # §Proposal — trial_msg_specificity + effort_cost (eval_design.md §B)
+    # §Proposal — trial_msg_specificity + effort_cost (eval_design.md §B).
+    # per_tier_count / per_kind_count / per_tier_fraction are computed here
+    # too so user_behavior can passthrough rather than re-derive (preventing
+    # stale-data divergence — see eval_design.md §"Block separation").
     specificity, spec_warnings = normalize_trial_msg_specificity(
         table_raw.get("trial_msg_specificity"), len(sim),
     )
     warnings.extend(spec_warnings)
     effort_cost = compute_effort_cost(specificity)
+    per_tier_count = compute_per_tier_count(specificity)
+    per_kind_count = compute_per_kind_count(specificity)
+    per_tier_fraction = compute_per_tier_fraction(per_tier_count, len(sim))
 
     verdict = {
         "schema_version": 2,
@@ -486,6 +533,9 @@ async def judge_one_trial(
         "trial_msg_specificity": specificity,
         **scores,
         "effort_cost": effort_cost,
+        "per_tier_count": per_tier_count,
+        "per_tier_fraction": per_tier_fraction,
+        "per_kind_count": per_kind_count,
         "judge_model": model,
         "elapsed_sec": round(time.monotonic() - t0, 1),
         "schema_warnings": warnings,

@@ -11,15 +11,16 @@ Per trial, four artefacts already land on disk:
 | artefact | producer | what it captures |
 |---|---|---|
 | `verifier/reward.txt` (+ `reward.replay.txt`) | Harbor / [`correctness/clean_replay.py`](correctness/clean_replay.py) | `test.sh` reward, polluted-sandbox + clean-replay |
-| `judge_verdict.json` | [`correctness/judge_one.py`](correctness/judge_one.py) | Opus-4.6 agentic judge on the final patch — `judge_score ∈ [0,1]` + verdict bucket |
-| `intent_coverage_verdict.json` | [`intent_coverage/coverage_one.py`](intent_coverage/coverage_one.py) | Opus-4.6 match-table between sim msgs and oracle intents — `overall_score`, `coverage_rate`, `scope_precision` |
-| `user_behavior_verdict.json` | [`user_behavior/behavior_one.py`](user_behavior/behavior_one.py) | no-LLM panel of sim behavior — `intervention_count`, `per_action_count`, `per_tier_count`, `effort_cost`, `hard_cap_abandon` |
+| `judge_verdict.json` | [`correctness/run_batch.py`](correctness/run_batch.py) — Phase 2 scoring against the per-task frozen rubric (Phase 1 output, see below) | agentic judge marks each rubric goal `met:true/false`; `judge_score = sum(weight × met)` mechanically derived |
+| `intent_coverage_verdict.json` | [`intent_coverage/coverage_one.py`](intent_coverage/coverage_one.py) | LLM match-table between sim msgs and oracle intents — `overall_score`, `coverage_rate`, `scope_precision`, plus `effort_cost` / `per_tier_count` / `per_kind_count` (§B) |
+| `user_behavior_verdict.json` | [`user_behavior/behavior_one.py`](user_behavior/behavior_one.py) | no-LLM panel of sim behavior — `intervention_count`, `per_action_count`, `hard_cap_abandon` (locally computed) plus `effort_cost` / `per_tier_count` / `per_kind_count` (passthrough from intent_coverage — single source of truth) |
 
-Per task, one cached artefact:
+Per task, two cached artefacts (each produced once, frozen, re-used across all cohorts):
 
 | artefact | producer | what it captures |
 |---|---|---|
 | `oracle_intents.json` | [`intent_coverage/extract_intents.py`](intent_coverage/extract_intents.py) | atomic intents from the canonical human session, with `intent_kind` |
+| `canonical_goals.json` | [`correctness/generate_task_goals.py`](correctness/generate_task_goals.py) — **Phase 1** of the two-phase correctness judge | weighted completeness goals derived from the task spec + oracle patch. Frozen rubric: same goals + same weights apply to every (cohort, trial) of this task, so judge_score deltas reflect agent quality rather than per-trial decomposition noise. Phase 2 (per-trial) scoring against this rubric is mechanically deterministic given `met:true/false` per goal |
 
 The pilot (10 tasks × 3 cohorts, 31 trials) lives at [release v0.5.0](https://github.com/Togetherbench/SWE-Together/releases/tag/v0.5.0).
 
@@ -43,6 +44,12 @@ We do **not** resolve this by picking one. We accept that the sim is both an ins
 ### Three-step protocol per (task, agent)
 
 1. **Replicate.** Run the (task, agent, sim) trial **k times**, k ∈ {3, 5}. Judge each trial's final patch with [`eval/correctness`](correctness/) → per-trial `judge_score`.
+
+   **Step 1 is internally two phases**, orchestrated by [`correctness/run_batch.py`](correctness/run_batch.py):
+   - **Phase 1 — frozen rubric, run once per task.** [`correctness/generate_task_goals.py`](correctness/generate_task_goals.py) reads the task spec + oracle patch and emits `harbor_tasks/<task>/canonical_goals.json` (weighted completeness goals). Cached on disk; re-used across every cohort × replicate of this task. Same rubric for every agent ⇒ judge_score deltas reflect agent quality rather than per-trial decomposition noise.
+   - **Phase 2 — per-trial scoring, run k times per task per agent.** Reads the frozen rubric, asks the judge to mark each goal `met:true/false` against the agent's patch, then computes `judge_score = sum(weight × met)` mechanically. Writes `judge_verdict.json` per trial.
+
+   `run_batch.py` auto-runs Phase 1 for any task in the plan that's missing a rubric (one-time, cached) before dispatching the Phase 2 sandbox pool. The legacy single-pass judge ([`correctness/judge_one.py`](correctness/judge_one.py)) is deprecated.
 2. **Clean.** For each of the k trials, measure **intent divergence** via [`eval/intent_coverage`](intent_coverage/) (`overall_score` / `coverage_rate` / `scope_precision`). Drop the trial when divergence is large or coverage is low (i.e. the sim wandered off the oracle's task). Report `mean(judge_score)` and `var(judge_score)` over the **cleaned** subset, plus the number of trials that survived the filter. **Filter protocol** — see §"Filter protocol (step 2)" below.
 3. **Characterize.** On the surviving trials, run a panel of **user-behavior measurements** — user effort (§"Proposal" below), per-tier specificity distribution, intervention count, abandonment / give-up rate, etc. These are not aggregated into the correctness number; they sit alongside it so a reader can see *how* the sim got the agent to the score it got. Implementation lives at [`eval/user_behavior/`](user_behavior/).
 
@@ -185,9 +192,9 @@ Three blocks per model. **No composite score** across blocks (per `eval_metric.m
 
 | metric | formula | answers |
 |---|---|---|
-| `effort_cost(trial)` | §B | how much hint the sim paid in this trial |
-| `success@k(task, model)` for k ∈ {0, 3, 10} | `mean(judge_score ≥ 0.85 over trials with effort_cost ≤ k)` | model's capability curve under different hint budgets |
-| `effort_AUC(model)` | area under success-vs-effort / `max_k`, normalised to [0, 1] | one number summarising capability + steerability |
+| `effort_cost(trial)` | §B | how much hint+task-spec the sim revealed in this trial |
+| `success@k(task, model)` for k ∈ {0, 3, 10} | `mean(judge_score ≥ 0.85 over trials with effort_cost ≤ k)` | model's capability curve under different effort budgets |
+| `effort_AUC(model)` | area under success-vs-effort / `max_k`, normalised to [0, 1] | one number summarising **capability under effort-penalty**: higher AUC means the agent succeeds at smaller cumulative-effort budgets. See §"What effort actually measures" below — `effort_cost` mixes *task-design intrinsic complexity* (the original human session needed N substantive turns to unfold the task) and *agent responsiveness* (a weak agent additionally provokes more corrections). Cross-cohort comparison on the same task suite is fair because intrinsic complexity cancels; absolute AUC across benchmarks is not directly comparable. |
 
 ```python
 SUCCESS_THRESHOLD = 0.85  # judge_score
@@ -202,12 +209,28 @@ def effort_auc(replicates, max_k=10):
     return sum(curve) / (max_k + 1)
 ```
 
-Reading the curve:
-- `success@0` = single-turn capability (no hints accepted)
-- `success@3` = "agent can succeed after one diagnostic-tier hint"
-- `success@10` = "agent eventually gets there with strong steering"
+Reading the curve (effort-penalty framing — every additional turn of revealed task spec / correction costs):
+- `success@0` = trial reached its final state with **zero substantive sim messages**, which means *both* the agent didn't need correction AND the task happened to be specified well enough in the first user message alone. On a multi-turn benchmark where most tasks are deliberately not front-loaded, success@0 is usually small.
+- `success@3` = trial finished with at most ~one diagnostic-tier user turn of effort. Strong agent + well-bounded task.
+- `success@10` = trial needed the full multi-turn conversational unfolding. Acceptable for tasks intrinsically designed across many turns; signals weakness only if the agent really got stuck for the same task that other agents resolved at lower k.
 
-A strong agent has high `success@0`; a weak-but-steerable agent has low `success@0` rising sharply with k.
+A strong agent has high `success@k` at low k *for tasks designed to unfold quickly*, and follows the Oracle curve closely *for tasks designed to unfold over many turns*. The curve never measures "ability to use hints well" — it measures *how much effort the trial accumulated to succeed*.
+
+### What effort actually measures (and what it doesn't)
+
+The user simulator drives this benchmark by **progressively revealing the task across turns** — `instruction.md` is only the first user message, and the full requirements only emerge as the sim sends follow-ups (see [`harbor_tasks/<task>/user_simulation_prompt.md`](../harbor_tasks/) — typically 10–20 substantive turns per task). `effort_cost` is therefore a mixed signal:
+
+1. **Task-design intrinsic complexity** — even the Oracle agent (a perfectly-replayed human canonical solution) requires `effort_oracle` turns to reach 0.85 on a given task, because the task spec itself wasn't ready at turn 0. On the pilot10 curve the Oracle line tops out at AUC ≈ 0.83 with success only reaching 100% near k ≈ 8, which is the task suite's intrinsic effort floor.
+2. **Agent responsiveness penalty** — for a given task, a weaker agent provokes additional sim correction turns (sim repeats, restates, drills down) on top of the task-design baseline. This is the "hint penalty" the prior framing isolated.
+
+Both components combine into the single `effort_cost` we report. Implications:
+
+- **Same task, different cohorts**: differences in `effort_cost` reflect (2) only. Comparison is fair.
+- **Across tasks**: differences in `effort_cost` reflect both (1) and (2). Hard to attribute.
+- **Tasks where `effort_oracle` is small (≤ 2)**: the task is essentially single-turn. These should be audited and ideally pruned — see CLAUDE.md §"Multi-turn gap".
+- **Tasks where `effort_oracle` is large (≥ 10)**: the task is genuinely conversational. A model failing at low k here is doing the *expected* thing; failure judgment should be relative to Oracle, not absolute.
+
+For benchmark hygiene, the Oracle's per-task `effort_cost` floor is the right reference. Cohort `effort_AUC` is best read **relative to Oracle's AUC** on the same task suite, not as an absolute number.
 
 ### Block 1' — secondary effort metrics **[P1]**
 

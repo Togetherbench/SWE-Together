@@ -1,0 +1,34 @@
+{
+  "task_name": "sd-scripts-refactor-ses_38",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Extract the duplicate regularization image balancing loop out of DreamBoothDataset.__init__ into a shared helper method. After refactoring, __init__ should no longer contain the inline while/first_loop balancing pattern. Both __init__ and rebalance_regularization_images should delegate to the shared helper for reg image registration and repeat-count balancing.",
+      "tier": "core",
+      "weight": 0.31,
+      "rationale": "Instruction turn 1: 'Refactor it to remove duplicate code in reg imag balancing.' The oracle extracts the while loop into register_balanced_regularization_images (train_util.py:1954-1972), called from both __init__ (line 2284) and rebalance_regularization_images (line 1994). test_manifest gate t1_f2p_init_dedup_single_balance_loop (weight 0.15) checks the inline loop is removed; gate t1_f2p_helper_balances_repeats (weight 0.30) checks the helper works."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Handle the zero regularization images edge case gracefully. When no reg images are provided, the balancing helper or balancing code path should return early without hanging, crashing, or infinite-looping.",
+      "tier": "core",
+      "weight": 0.31,
+      "rationale": "Instruction turn 1: 'Handle the edge case of zero reg images.' Oracle adds early return at train_util.py:1957 ('if len(reg_infos) == 0 or num_train_images <= 0: return'). test_manifest gate t1_f2p_helper_zero_reg_no_hang (weight 0.20)."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Eliminate the redundant double update_dataset_image_counts() call in the DreamBooth filter override. The base class filter method should support suppressing its own count update (e.g., via a parameter), so the DreamBooth override can rebalance reg images and update counts exactly once rather than twice.",
+      "tier": "core",
+      "weight": 0.31,
+      "rationale": "Instruction turn 1: 'fix the redundant double call to update_dataset_image_counts() in the DreamBooth filter override — the base class already calls it, so the override shouldn't call it again after rebalancing.' Oracle adds update_counts parameter to base (train_util.py:809), DreamBooth override passes update_counts=not self.is_training_dataset (line 1997), and removes explicit self.update_dataset_image_counts() call. test_manifest gates: t1_f2p_base_filter_accepts_update_counts (0.15) and t1_f2p_db_override_no_double_update (0.20)."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The refactored balancing helper correctly computes regularization image repeat counts. When called with N reg images and M training images, total reg num_repeats should be approximately M (within tolerance of M to M+N), matching the original balancing semantics.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Implicit correctness requirement of the refactoring — extracting a helper must preserve behavior. Oracle's helper (train_util.py:1960-1972) maintains the original while/first_loop algorithm. test_manifest gate t1_f2p_helper_balances_repeats (weight 0.30) tests this directly. Classified as secondary because it's not an explicit user ask but an inherent requirement of a correct refactoring."
+    }
+  ],
+  "decomposition_notes": "3 cores + 1 secondary. All three explicit asks from the instruction ('refactor duplicate code', 'handle zero reg edge case', 'fix double update_dataset_image_counts call') are core. The balancing math correctness is secondary — it's implicit in doing a correct refactoring rather than a separate user ask. Weights: sum_mult = 3×4 + 1×1 = 13; each core = 4/13 ≈ 0.31, secondary = 1/13 ≈ 0.07; total = 3×0.31 + 0.07 = 1.00. Oracle test.sh run scores 0.85 (6/7 F2P pass; F2P 6 fails due to test name-matching limitation where the test searches for helper names '_balance_reg_images', 'register_regularization_images', 'rebalance_regularization_images' but the oracle's helper is named 'register_balanced_regularization_images'). Goals are behavioral and implementation-agnostic — any equivalent approach (different method names, different parameter names, different control flow) that achieves the same behavioral outcomes should receive credit."
+}

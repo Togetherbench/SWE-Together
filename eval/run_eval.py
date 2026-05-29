@@ -3,7 +3,10 @@
 then computes the final per-task metrics designed in that doc.
 
 Pipeline:
-  step 1   correctness    — E2B sandboxed agentic judge → judge_verdict.json
+  step 1   correctness    — Phase 1 (per-task frozen rubric, run-once cached
+                            at harbor_tasks/<task>/canonical_goals.json) +
+                            Phase 2 (per-trial scoring against the rubric in
+                            an E2B sandbox)             → judge_verdict.json
   step 2   intent_coverage — LLM match-table             → intent_coverage_verdict.json
   step 3   user_behavior   — pure file I/O panel         → user_behavior_verdict.json
   aggregate — apply step-2 filter, compute Block 1 / 1' / 3 metrics per task

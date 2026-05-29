@@ -1,0 +1,27 @@
+{
+  "task_name": "cli-task-2a55af",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Fix extractSessionIDFromMetadata to return the full directory basename instead of truncating UUID session IDs. The old logic split on hyphens and returned only the segment after the 3rd hyphen, which corrupts new-format UUIDs like '0544a0f5-46a6-41b3-a89c-e7804df731b8' into 'a89c-e7804df731b8'. The fix must return the entire basename of the metadata directory path, preserving full UUIDs while still working for legacy date-prefixed IDs.",
+      "tier": "core",
+      "weight": 0.44,
+      "rationale": "README.md headline ask: 'change extractSessionIDFromMetadata to return filepath.Base(metadataDir)'. User turn 13 reports truncated session ID as the core bug. Oracle implements at rewind.go:648-655."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Add a unit test for the session ID extraction function that covers at minimum: (1) new-format UUID session IDs (must return full UUID), (2) legacy date-prefixed session IDs, and (3) auto-commit sharded paths. The test must pass with the fixed implementation and would have failed with the old SplitN-based logic.",
+      "tier": "core",
+      "weight": 0.44,
+      "rationale": "FAIL_TO_PASS requires 'TestExtractSessionIDFromMetadata'. User turn 8 asked for tests. Oracle adds rewind_test.go with 8 table-driven subtests covering UUID, legacy, auto-commit, and simple formats."
+    },
+    {
+      "id": "goal_3",
+      "goal": "At call sites where session ID is needed for session checkpoints (both interactive and non-interactive rewind paths), prefer the SessionID field already present on the rewind point struct (sourced from commit trailer) over path-based extraction. Fall back to extracting from the metadata directory path only when the struct field is empty.",
+      "tier": "secondary",
+      "weight": 0.12,
+      "rationale": "README.md: 'prefer selectedPoint.SessionID from the Entire-Session trailer over path-based extraction at call sites'. User turn 14 asked 'is this session id handling wrong in other places'. Oracle implements at rewind.go:293-296 and rewind.go:494-497."
+    }
+  ],
+  "decomposition_notes": "2 cores + 1 secondary → 4*2 + 1*1 = 9 total multiplier units. Each core = 4/9 ≈ 0.44, secondary = 1/9 ≈ 0.12 (rounded to sum to 1.0). Goal 1 is the headline bug fix. Goal 2 is the FAIL_TO_PASS test requirement. Goal 3 is the defense-in-depth fix at call sites — without it the function fix alone resolves the UUID truncation, but the trailer preference adds robustness and was explicitly part of the canonical commit."
+}

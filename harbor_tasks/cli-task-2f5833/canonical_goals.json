@@ -1,0 +1,55 @@
+{
+  "task_name": "cli-task-2f5833",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "TurnEnd no longer extracts prompts from transcript or overwrites prompt.txt on filesystem; instead, prompts are appended to the filesystem prompt.txt at TurnStart (when the user prompt arrives)",
+      "tier": "core",
+      "weight": 0.33,
+      "rationale": "README headline ask: 'Remove ExtractPrompts() call and prompt.txt write from handleLifecycleTurnEnd. Add prompt append to filesystem at TurnStart.' User turn 1 plan explicitly says prompts should never be written from transcript at TurnEnd. Oracle removes ExtractPrompts+WriteFile from lifecycle.go:handleLifecycleTurnEnd and adds append logic in handleLifecycleTurnStart (lifecycle.go:140-159). Maps to test gates G1, G3, B2."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Checkpoint finalization (at turn end) reads prompts from shadow branch first, falling back to filesystem prompt.txt — not from transcript extraction",
+      "tier": "core",
+      "weight": 0.33,
+      "rationale": "README: 'Add filesystem fallback to finalizeAllTurnCheckpoints — read prompts from shadow branch first, then fall back to filesystem (not from transcript).' User turn 1 plan specifies shadow branch as primary source of truth with filesystem fallback. Oracle implements readPromptsFromShadowBranch + readPromptsFromFilesystem in manual_commit_hooks.go:finalizeAllTurnCheckpoints. Maps to test gate G2."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Commit message generation in TurnEnd uses the last prompt from session state (loaded via state persistence) rather than from transcript-extracted prompts array",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README: 'Use state.LastPrompt (loaded from session state) for commit messages.' Oracle replaces allPrompts[len(allPrompts)-1] with LoadSessionState + sessionState.LastPrompt in lifecycle.go:handleLifecycleTurnEnd. Maps to test gate S4."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Remove ExtractSummary method from the TranscriptAnalyzer interface and all agent implementations (claudecode, geminicli, opencode)",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README: 'Dead code cleanup: Remove ExtractSummary from the agent interface and all implementations.' User turn 1 plan lists this as dead code. Oracle removes from agent/agent.go interface, claudecode/lifecycle.go, geminicli/lifecycle.go, opencode/transcript.go. Maps to test gates S1, B3."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Remove the SummaryFileName constant from paths (it is no longer used since summary.txt is not written)",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README: 'Remove SummaryFileName constant.' Oracle removes SummaryFileName from paths/paths.go. Maps to test gate S2."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Rename FirstPrompt field to LastPrompt in session state struct and update all references (constants, truncation helper, status display, initialization, tests)",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README: 'Rename FirstPrompt -> LastPrompt.' Also update semantics so the field is refreshed on every turn (not just backfilled when empty). Oracle renames in session/state.go, strategy/manual_commit_types.go (maxFirstPromptRunes->maxLastPromptRunes), strategy/manual_commit_hooks.go, status.go. Maps to test gates S3, B1."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Preserve filesystem prompt.txt when carry-forward files remain after a commit (only clear it when all tracked files are committed)",
+      "tier": "polish",
+      "weight": 0.02,
+      "rationale": "User turns 2-3: 'If we find that there are carry over files, we should not delete the prompt.txt from the metadata directory.' Oracle conditionally clears prompt.txt only when len(remainingFiles)==0 in manual_commit_hooks.go:postCommitProcessSession."
+    }
+  ],
+  "decomposition_notes": "2 cores + 4 secondaries + 1 polish. Default ratio gives sum_mult = 2*4 + 4*1 + 1*0.25 = 12.25; core = 4/12.25 ≈ 0.33, sec = 1/12.25 ≈ 0.08, polish = 0.25/12.25 ≈ 0.02. Rounded to sum exactly 1.00 (0.33+0.33+0.08+0.08+0.08+0.08+0.02=1.00). Goal 1 combines the removal of ExtractPrompts/WriteFile from TurnEnd with the addition of prompt append at TurnStart because they are two sides of the same behavioral change (where prompts get written). Goal 2 covers the shadow branch + filesystem fallback pattern which is the other major behavioral change. Goals 3-6 cover the explicit secondary cleanup requests from the user's plan. Goal 7 covers the user's mid-session correction about carry-forward preservation. The B4 test gate (SimulateUserPromptSubmitWithPrompt helper) is not a standalone goal because it's test infrastructure that enables verifying the core fix, not an independent behavioral requirement."
+}

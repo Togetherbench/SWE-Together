@@ -85,6 +85,15 @@ class JudgeInputs:
     # sandbox so the judge can run the canonical test.sh exactly as Harbor would,
     # not just read it.
     tests_files: dict[str, bytes] = None  # type: ignore[assignment]
+    # Phase 1/2 split (see eval/correctness/prompts/judge_phase{1,2}_system.md):
+    #   phase=0  → legacy single-pass mode (decompose + score in one run; default)
+    #   phase=1  → DECOMPOSE-ONLY (apply oracle.patch; produce canonical_goals.json)
+    #   phase=2  → SCORE-ONLY (apply agent.patch + use frozen rubric from
+    #             canonical_goals_json; produce verdict.json with met-per-goal)
+    phase: int = 0
+    # Phase-2 only: the FROZEN rubric JSON content (Phase 1's output, read from
+    # harbor_tasks/<task>/canonical_goals.json on the host and passed in here).
+    canonical_goals_json: str = ""
 
 
 JUDGE_MODEL_CLAUDE = "claude-opus-4-6"
@@ -129,9 +138,27 @@ async def run_judge_in_e2b(
     judge_via_codex = os.environ.get("JUDGE_VIA_CODEX") == "1"
     codex_auth_path = Path.home() / ".codex" / "auth.json"
     codex_auth_blob: str | None = None
+    # [judge-via-or] If JUDGE_VIA_OR=1, route `claude --print` through OpenRouter's
+    # Anthropic-compat endpoint (https://openrouter.ai/api/v1/messages). Uses
+    # pay-per-token OR credit instead of the host's Anthropic OAuth subscription,
+    # which avoids the rate-limit ceiling we hit at workers>10 on opus-4-7
+    # and gives reproducible cost per judge run.
+    judge_via_or = os.environ.get("JUDGE_VIA_OR") == "1"
+    or_api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if judge_via_codex and codex_auth_path.exists():
         codex_auth_blob = codex_auth_path.read_text()
         log.info("judge auth: codex via host ~/.codex/auth.json (ChatGPT OAuth)")
+    elif judge_via_or and or_api_key:
+        # Cannot point claude CLI directly at OR — CC client-side validates the
+        # model via GET /v1/models/<name> and OR returns 404 there. Instead we
+        # boot an in-sandbox proxy on localhost:4210 (started after the sandbox
+        # exists, below) and point CC there; the proxy returns 200 for /v1/models
+        # probes and forwards POST /v1/messages to OR after rewriting the model.
+        auth_envs["ANTHROPIC_BASE_URL"] = "http://localhost:4210"
+        # CC requires *some* API key env var — value doesn't matter (proxy injects
+        # the real OR key on forward). Use a sentinel so it's obvious in logs.
+        auth_envs["ANTHROPIC_API_KEY"] = "or-proxy-placeholder"
+        log.info("judge auth: claude --print → localhost:4210 → OpenRouter (in-sandbox proxy)")
     elif api_key:
         auth_envs["ANTHROPIC_API_KEY"] = api_key
     else:
@@ -174,13 +201,18 @@ async def run_judge_in_e2b(
     sandbox_id = sb.sandbox_id
 
     try:
-        # 1. Apply agent patch to /workspace AS ROOT. Some Dockerfiles never
-        # chown the repo to `agent` (e.g. agent-swarm-implement-e71acf doesn't
-        # even create an `agent` user; cli-task-7e3475 only chowns
-        # /installed-agent). Applying the patch as root sidesteps every
-        # permission-denied class. After the apply we chmod world-rwX so the
-        # judge agent can still read/run tests against the patched workspace.
-        await sb.files.write("/tmp/agent.patch", inputs.agent_patch)
+        # 1. Apply the right patch to /workspace AS ROOT, depending on phase:
+        #   phase=0 (legacy single-pass) → agent.patch
+        #   phase=1 (decompose-only)      → oracle.patch (we judge the reference state)
+        #   phase=2 (score-only)          → agent.patch (judge what the agent did)
+        # Some Dockerfiles never chown the repo to `agent` (e.g.
+        # agent-swarm-implement-e71acf doesn't even create an `agent` user;
+        # cli-task-7e3475 only chowns /installed-agent). Applying the patch as
+        # root sidesteps every permission-denied class. After the apply we
+        # chmod world-rwX so the judge agent can still read/run tests against
+        # the patched workspace.
+        patch_to_apply = inputs.oracle_patch if inputs.phase == 1 else inputs.agent_patch
+        await sb.files.write("/tmp/agent.patch", patch_to_apply)
         # Repo discovery (mirrors PR #170 in src/user_agent/user_enabled_claude_code.py):
         # the original `cd /workspace; find . -maxdepth 3 -name .git` missed 29
         # tasks whose Dockerfiles clone outside /workspace (/opt/<name>,
@@ -269,6 +301,110 @@ async def run_judge_in_e2b(
                 )
             log.info("claude-code resolved at: %s", recheck.stdout.strip())
 
+        # 2b. If routing through OpenRouter, upload + start the in-sandbox proxy.
+        # Listens on localhost:4210; handles GET /v1/models/<name> (claude CLI's
+        # client-side probe) and POST /v1/messages (rewrites model field to the
+        # OR slug and forwards to https://openrouter.ai/api/v1/messages).
+        if judge_via_or and or_api_key:
+            or_target_model = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
+            proxy_script = '''#!/usr/bin/env python3
+"""Minimal OR proxy: GET /v1/models/<*> → 200, POST /v1/messages → rewrite model + forward."""
+import http.server, urllib.request, json, sys
+
+TARGET_URL = "https://openrouter.ai/api/v1/messages"
+OR_API_KEY = "''' + or_api_key + '''"
+REMAP_MODEL = "''' + or_target_model + '''"
+PORT = 4210
+
+class Proxy(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a, **kw): pass  # quiet
+
+    def do_GET(self):
+        # Claude CLI probes GET /v1/models/<name> before sending messages.
+        # OR returns 404 — we synthesize a 200 with a stub model object.
+        if self.path.startswith("/v1/models"):
+            body = json.dumps({
+                "id": self.path.split("/v1/models/")[-1] or REMAP_MODEL,
+                "type": "model",
+                "display_name": REMAP_MODEL,
+                "created_at": "2024-01-01T00:00:00Z",
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        if self.path != "/v1/messages":
+            self.send_error(404); return
+        n = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(n)
+        try:
+            body = json.loads(raw)
+            body["model"] = REMAP_MODEL
+            data = json.dumps(body).encode()
+        except Exception as e:
+            self.send_error(400, str(e)); return
+        # Build forward request — Anthropic format → OR's anthropic-compat endpoint.
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + OR_API_KEY,
+            "anthropic-version": self.headers.get("anthropic-version", "2023-06-01"),
+        }
+        # Pass through anthropic-beta (caching hints etc.) only for anthropic/ routes.
+        beta = self.headers.get("anthropic-beta", "")
+        if beta and REMAP_MODEL.startswith("anthropic/"):
+            headers["anthropic-beta"] = beta
+        req = urllib.request.Request(TARGET_URL, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                status = resp.status
+                resp_headers = dict(resp.headers)
+                resp_body = resp.read()
+        except urllib.error.HTTPError as e:
+            status = e.code
+            resp_body = e.read() if e.fp else b""
+            resp_headers = dict(e.headers) if e.headers else {}
+        except Exception as e:
+            self.send_error(502, str(e)); return
+        self.send_response(status)
+        for k, v in resp_headers.items():
+            kl = k.lower()
+            if kl in ("transfer-encoding", "content-length", "connection"): continue
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(resp_body)))
+        self.end_headers()
+        self.wfile.write(resp_body)
+
+if __name__ == "__main__":
+    print(f"OR-proxy: localhost:{PORT} → {TARGET_URL} model={REMAP_MODEL}", flush=True)
+    http.server.HTTPServer(("127.0.0.1", PORT), Proxy).serve_forever()
+'''
+            await sb.files.write("/tmp/or_proxy.py", proxy_script)
+            await sb.commands.run(
+                "nohup python3 /tmp/or_proxy.py > /tmp/or_proxy.log 2>&1 &",
+                timeout=10,
+            )
+            # Wait for port to bind (poll up to ~5s). Capture proxy log + GET
+            # probe output so we can diagnose if it didn't come up.
+            probe = await sb.commands.run(
+                "for i in 1 2 3 4 5 6 7 8 9 10; do "
+                "  if curl -sf http://localhost:4210/v1/models/probe; then "
+                "    echo OR_PROXY_UP; exit 0; "
+                "  fi; sleep 0.5; done; "
+                "echo OR_PROXY_NOT_UP; cat /tmp/or_proxy.log 2>&1; exit 1",
+                timeout=15,
+            )
+            if probe.exit_code != 0 or "OR_PROXY_UP" not in probe.stdout:
+                log.warning("OR-proxy DID NOT start: %s", (probe.stdout + probe.stderr)[:500])
+            else:
+                log.info("OR-proxy started in sandbox: localhost:4210 → %s", or_target_model)
+
         # 3. Drop input files under the agent user's home — `USER agent` in the
         # task Dockerfile means /judge_inputs/ at root is not writable.
         inputs_dir = "/tmp/judge_inputs"
@@ -278,9 +414,17 @@ async def run_judge_in_e2b(
         await sb.files.write(f"{inputs_dir}/README.md", inputs.readme)
         await sb.files.write(f"{inputs_dir}/user_simulation_prompt.md", inputs.user_sim_prompt)
         await sb.files.write(f"{inputs_dir}/oracle.patch", inputs.oracle_patch)
+        # In phase=2 we do NOT need agent.patch as an input (it's already on disk
+        # under /workspace), but we DO need the FROZEN rubric. In phase=1 we
+        # need oracle.patch as reference reading material (it's also already
+        # applied). Keep both files written for legacy compatibility.
         await sb.files.write(f"{inputs_dir}/agent.patch", inputs.agent_patch)
         await sb.files.write(f"{inputs_dir}/test.sh", inputs.test_sh)
         await sb.files.write(f"{inputs_dir}/judge_system.md", inputs.system_prompt)
+        # Phase 2 only: upload the frozen rubric from the host so the judge
+        # reads it instead of re-deriving goals.
+        if inputs.phase == 2 and inputs.canonical_goals_json:
+            await sb.files.write(f"{inputs_dir}/canonical_goals.json", inputs.canonical_goals_json)
 
         # Mount the task's full tests/ dir so the judge can run the canonical
         # test.sh, not just read it. Mirrors Harbor's verifier mount path.
@@ -301,13 +445,38 @@ async def run_judge_in_e2b(
             if line.startswith("applying to "):
                 repo_hint = line.removeprefix("applying to ").strip()
                 break
-        first_message = (
-            f"Begin by reading {inputs_dir}/README.md and "
-            f"{inputs_dir}/user_simulation_prompt.md. Then evaluate the agent "
-            f"solution and write your verdict to {inputs_dir}/verdict.json. "
-            f"Use Bash freely to explore the project repo at {repo_hint} "
-            f"(the agent's patch has already been applied there) and run tests."
-        )
+        # First message varies by phase. In phase=1 we instruct the judge to
+        # decompose into a rubric; in phase=2 we point it at the frozen rubric.
+        if inputs.phase == 1:
+            first_message = (
+                f"Begin by reading {inputs_dir}/README.md and "
+                f"{inputs_dir}/user_simulation_prompt.md to understand the task. "
+                f"Then read {inputs_dir}/oracle.patch (the reference solution, "
+                f"already applied to {repo_hint}) and explore the workspace. "
+                f"You may run the canonical test.sh to see which F2P tests the "
+                f"oracle satisfies. Decompose the task into completeness goals "
+                f"and write the FROZEN rubric to {inputs_dir}/canonical_goals.json."
+            )
+        elif inputs.phase == 2:
+            first_message = (
+                f"Begin by reading {inputs_dir}/canonical_goals.json — this is "
+                f"the FROZEN rubric. DO NOT re-derive goals; for each goal in "
+                f"the rubric, mark met:true/false with concrete evidence. Then "
+                f"read {inputs_dir}/README.md and {inputs_dir}/user_simulation_prompt.md "
+                f"for context, inspect the agent's patch at {inputs_dir}/agent.patch "
+                f"(already applied to {repo_hint}), explore the workspace, and "
+                f"optionally run tests. Write your verdict to "
+                f"{inputs_dir}/verdict.json."
+            )
+        else:
+            # Legacy single-pass mode (judge_system.md).
+            first_message = (
+                f"Begin by reading {inputs_dir}/README.md and "
+                f"{inputs_dir}/user_simulation_prompt.md. Then evaluate the agent "
+                f"solution and write your verdict to {inputs_dir}/verdict.json. "
+                f"Use Bash freely to explore the project repo at {repo_hint} "
+                f"(the agent's patch has already been applied there) and run tests."
+            )
         # `--setting-sources user` skips loading the workspace's .claude/settings.json,
         # which often defines SessionStart/SessionEnd hooks pointing at binaries not in
         # the sandbox PATH (e.g. cli-task-* repos hook to `go run cmd/entire/main.go
@@ -356,14 +525,26 @@ async def run_judge_in_e2b(
                 f"-- {shlex.quote(full_instruction)}"
             )
         else:
-            judge_model_label = JUDGE_MODEL_CLAUDE
+            # When routing through OR, claude CLI talks to the in-sandbox proxy
+            # which rewrites the model field to whatever JUDGE_OR_MODEL specifies.
+            # CC validates client-side via GET /v1/models/<name>, and the proxy
+            # returns 200 for ANY name, so we can pass a CC-recognized name
+            # (avoids any CC allowlist checks) — the actual OR model is set by
+            # JUDGE_OR_MODEL (default anthropic/claude-opus-4.6).
+            if judge_via_or:
+                or_target = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
+                judge_model_label = f"or:{or_target}"
+                claude_model = JUDGE_MODEL_CLAUDE  # opus-4-6, proxy rewrites on POST
+            else:
+                judge_model_label = JUDGE_MODEL_CLAUDE
+                claude_model = JUDGE_MODEL_CLAUDE
             # PATH prefix mirrors the install/check step above — required when
             # the binary was on-demand-installed to ~/.local/bin and the
             # shell doesn't source ~/.bashrc.
             judge_cmd = (
                 _PATH_PREFIX
                 + f"timeout {timeout_sec} claude --print --max-turns {max_turns} "
-                f"--model {JUDGE_MODEL_CLAUDE} "
+                f"--model {claude_model} "
                 f"--dangerously-skip-permissions "
                 f"--setting-sources user "
                 f"--append-system-prompt \"$(cat {inputs_dir}/judge_system.md)\" "
@@ -401,15 +582,18 @@ async def run_judge_in_e2b(
         result.stderr = stderr
         log.info("judge exit=%s stdout_len=%d", result.exit_code, len(result.stdout))
 
-        # 4. Pull verdict
+        # 4. Pull output file. Phase 1 writes canonical_goals.json; phase 2 +
+        # legacy single-pass mode both write verdict.json.
+        output_filename = "canonical_goals.json" if inputs.phase == 1 else "verdict.json"
         verdict: dict
         try:
-            raw = await sb.files.read(f"{inputs_dir}/verdict.json")
+            raw = await sb.files.read(f"{inputs_dir}/{output_filename}")
             verdict = json.loads(raw)
         except Exception as e:
             verdict = {
                 "error": "verdict_read_failed",
                 "exception": str(e),
+                "expected_filename": output_filename,
                 "judge_exit_code": result.exit_code,
                 "judge_stdout_tail": result.stdout[-2000:],
                 "judge_stderr_tail": result.stderr[-2000:],

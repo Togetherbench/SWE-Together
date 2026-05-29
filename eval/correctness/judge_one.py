@@ -1,9 +1,21 @@
-"""Single-trial agentic judge CLI.
+"""Single-trial agentic judge CLI — **legacy single-pass Phase 0 judge**.
 
-Usage:
+⚠️  DEPRECATED — superseded by the Phase 1 (frozen rubric) + Phase 2 (per-trial)
+    canonical flow. The new entry point is `eval.correctness.run_batch`, which
+    auto-runs Phase 1 once per task and Phase 2 per trial. See
+    `eval/eval_design.md` §"Three-step protocol" → Step 1.
+
+    This module is retained for:
+      - reproducing old phase-0 verdicts on historical trial archives
+      - the `load_dotenv` helper, imported by `clean_replay.py` and `run_batch.py`
+
+    Do NOT use for new pipelines — single-pass decomposition is unstable across
+    cohorts (the same task can land different tier weights on different trials),
+    which is exactly the issue Phase 1 freezing solves.
+
+Usage (legacy):
     .venv/bin/python -m eval.correctness.judge_one \\
-        --trial-dir ~/Downloads/release_v0.4.4.3/extracted/trials_deepseek_v4_pro_swerb/cli-task-2c3e30__oS6jWHt \\
-        --task-dir  harbor_tasks/cli-task-2c3e30
+        --trial-dir <abs path> --task-dir harbor_tasks/<task>
 
 Requires .env with E2B_API_KEY, GHCR_USER, GHCR_TOKEN, and the host process
 env to have CLAUDE_CODE_OAUTH_TOKEN exported (extract via keychain).

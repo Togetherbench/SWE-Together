@@ -1,0 +1,41 @@
+{
+  "task_name": "rudel-task-468289",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement stable color assignment in ProjectTrendChart and DeveloperTrendChart via a memoized color map keyed by identity (project/developer), so that colors remain consistent regardless of which metric is selected or the rendering order of series",
+      "tier": "core",
+      "weight": 0.286,
+      "rationale": "README: 'colorMap with stable color assignment (based on identity rank, not metric-dependent index)'. User plan Turn 1 states colors change when metric switches because they're assigned by index. Oracle implements colorMap = useMemo(...) in both ProjectTrendChart.tsx and DeveloperTrendChart.tsx, consuming via colorMap.get() for Line stroke and Bar fill. Test gate F2P_COLOR_MAPS (weight 0.20) verifies this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement metric-sorted legend ordering in ProjectTrendChart and DeveloperTrendChart, so legend entries are sorted by current metric totals (descending) rather than by arbitrary series insertion order",
+      "tier": "core",
+      "weight": 0.286,
+      "rationale": "README: 'sortedLegendPayload for metric-sorted legend ordering'. User plan Turn 1 identifies 'Inconsistent sort order: legends always sort by sessions even when tokens or hours is selected'. Oracle computes sortedLegendPayload via useMemo sorting by totals and passes it to ChartLegend in both charts. Test gate F2P_SORTED_LEGEND (weight 0.20) verifies this."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement stable color ordering in ErrorTrendChart based on total_errors rank (independent of the currently active metric like error_count or avg_errors_per_session), with colors assigned from a memoized color map",
+      "tier": "core",
+      "weight": 0.285,
+      "rationale": "README: 'stableColorOrder in ErrorTrendChart (based on total_errors, independent of active metric)'. User plan explicitly specifies ErrorTrendChart needs stable colors ranked by total_errors. Oracle implements stableColorOrder useMemo ranking by total_errors, then colorMap useMemo keyed from that order, consumed via colorMap.get(). Test gate F2P_STABLE_COLORS (weight 0.20) verifies this."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Sort split-by keys deterministically in DimensionAnalysisChart by their total raw value descending, instead of relying on Set insertion order",
+      "tier": "secondary",
+      "weight": 0.072,
+      "rationale": "README: 'Deterministic split-key sorting in DimensionAnalysisChart'. User plan Turn 1 includes this as part of the consistent ordering improvements. Oracle computes splitKeyTotals and calls rawSplitKeys.sort() by descending total. Test gate F2P_DIMENSION_SORT (weight 0.10) verifies this."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Create a shared ChartTooltip component and migrate at least the majority of chart files (LearningsTrendChart, ModelTokensChart, UsageTrendChart, and optionally others) from inline tooltip styling to using the shared component",
+      "tier": "secondary",
+      "weight": 0.071,
+      "rationale": "README: 'ChartTooltip component creation and migration to additional chart files'. User plan Turn 1 specifies creating a reusable tooltip component and migrating charts to use it. Oracle creates ChartTooltip.tsx (exported function) and migrates all 6 modified charts to import and use it. Test gates F2P_CHARTTOOLTIP_FILE (weight 0.10) and F2P_TOOLTIP_MIGRATION (weight 0.20) verify this."
+    }
+  ],
+  "decomposition_notes": "3 cores + 2 secondaries. Default ratio: sum_mult = 3*4 + 2*1 = 14; each core = 4/14 ≈ 0.286; each secondary = 1/14 ≈ 0.071. Weights: 0.286 + 0.286 + 0.285 + 0.072 + 0.071 = 1.000. The three core goals directly address the two stated problems (unstable colors and inconsistent legend sort order) which are the headline ask. The two secondary goals are explicitly part of the user's implementation plan but are supporting improvements (deterministic DimensionAnalysis sorting) and refactoring (ChartTooltip extraction). All features are delivered in a single comprehensive plan in Turn 1 — there are no multi-turn follow-ups that add new features. Test gate F2P_TOOLTIP_MIGRATION is folded into goal_5 alongside F2P_CHARTTOOLTIP_FILE since they test the same behavioral feature (shared tooltip component)."
+}
