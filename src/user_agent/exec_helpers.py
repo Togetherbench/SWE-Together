@@ -47,6 +47,10 @@ PER_EXEC_CAP_SEC = 1200       # 20m, was 10m. Codex's longest legit single-exec 
                               # tasks is ~5-10 min (gpt-5.5 reasoning + 20+ shell commands).
                               # 20m gives ~2× safety margin without leaving truly stuck
                               # calls to burn the rest of the trial budget.
+                              # (Briefly raised to 30m to accommodate v0.5.2 relaxed-
+                              # trigger sim; reverted because smoke #6 at 30m still
+                              # hit cap on the same turn — raising the cap doesn't
+                              # solve the root cause, just delays it.)
 
 
 @dataclass

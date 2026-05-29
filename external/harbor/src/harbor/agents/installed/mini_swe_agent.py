@@ -468,7 +468,7 @@ class MiniSweAgent(BaseInstalledAgent):
 
         commands = []
 
-        # Write custom config into the container if provided
+        # Write custom config into the container if provided.
         config_flags = ""
         if self._config_yaml:
             config_path = "/tmp/mswea-config/custom.yaml"
@@ -482,7 +482,47 @@ class MiniSweAgent(BaseInstalledAgent):
             commands.append(ExecInput(command=write_config_cmd, env=env))
             config_flags = f"-c {config_path} "
 
+        # mini-swe-agent v2 CLI: `-c` is a LIST option (typer Option with
+        # default=[DEFAULT_CONFIG_FILE]). Passing ANY -c flag (file path OR
+        # dotted-key override) REPLACES the default-spec list — the upstream
+        # CLI docstring at run/mini.py explicitly warns:
+        #
+        #   "-c model.model_kwargs.temperature=0  You forgot to add the
+        #    default config file! See above."
+        #
+        # So when _reasoning_effort is set, we must inject the package's
+        # default config (resolved at runtime via Python introspection)
+        # BEFORE our dotted-key override. Without this, InteractiveAgentConfig
+        # loads with only our override keys → system_template /
+        # instance_template missing → Pydantic ValidationError → silent
+        # agent failure (reward=0, all-redirect).
         if self._reasoning_effort:
+            # Resolve DEFAULT_CONFIG_FILE at exec time so it works regardless
+            # of pip/uv install layout. Falls back to empty string if the
+            # import path changes upstream — at which point our -c override
+            # alone would fail loudly with the same ValidationError, which
+            # is the right escalation signal.
+            # Resolve mini-swe-agent's bundled default config path via
+            # filesystem search rather than `python3 -c 'import
+            # minisweagent…'`. The python-import path is fragile: uv tool
+            # install isolates mini-swe-agent in its own venv, so system
+            # `python3` (used by the heredoc) often can't import the
+            # package and outputs nothing — silently producing `-c ""`
+            # which mini-swe-agent then treats as a literal empty path
+            # and crashes (`Building agent config from specs: ['',
+            # 'model.model_kwargs.…']`). Filesystem search is slower (~1s)
+            # but works regardless of the in-sandbox python environment.
+            default_resolver = (
+                '"$(find /root /usr /home -maxdepth 10 -name mini.yaml '
+                "-path '*minisweagent/config/*' 2>/dev/null | head -1)\""
+            )
+            # If the caller ALSO supplied a custom YAML, the order is
+            # default → custom YAML → key=value override. mini-swe-agent
+            # merges them left-to-right with later values winning.
+            if not self._config_yaml:
+                config_flags = f"-c {default_resolver} "
+            else:
+                config_flags = f"-c {default_resolver} " + config_flags
             config_flags += f"-c model.model_kwargs.extra_body.reasoning_effort={shlex.quote(self._reasoning_effort)} "
 
         commands.append(

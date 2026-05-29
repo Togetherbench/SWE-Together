@@ -3,6 +3,297 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v0.11.0 — 2026-05-29
+
+**OpenCode wrapper: second native-resume harness.**
+
+Adds `UserEnabledOpenCode`, mirroring `UserEnabledClaudeCode` in shape but
+running atop the open-source `opencode-ai` CLI rather than Anthropic's
+`claude` binary. Same native-resume pattern (`opencode run --session=<id>`
+continues the local-session store, replays prior history to the configured
+model), so wrapper-side code is thin: thread the session_id captured from
+the turn-0 JSON event stream, no manual history-replay (unlike codex /
+gemini_cli / mini-swe-agent).
+
+### Why two native-resume harnesses
+
+We now ship two side-by-side reference harnesses that use the same
+"server-side session id" abstraction:
+
+| Wrapper | CLI | Provider lock-in | reasoning depth knob |
+|---|---|---|---|
+| `UserEnabledClaudeCode` | `claude` (Anthropic) | Anthropic by default; non-Anthropic via in-sandbox LiteLLM proxy + model rewrite | `CLAUDE_CODE_EFFORT_LEVEL` env |
+| `UserEnabledOpenCode` | `opencode` (multi-provider, MIT) | First-class provider/model registry (12+ providers) | `--variant=<value>` per-`run` flag |
+
+`opencode --variant` accepts arbitrary strings and forwards to the
+provider; example values per OpenCode CLI source are `high / max / minimal`
+(OpenAI-style reasoning effort levels). The wrapper passes whatever
+`reasoning_effort` value the runner provides as-is; per-provider mapping
+is OpenCode's responsibility.
+
+### Wrapper feature parity
+
+Same patches we landed for claude_code over v0.5–v0.10 are mirrored:
+
+- ✅ Repo config file injection (CLAUDE.md, AGENTS.md, …) via shared `repo_config`
+- ✅ Structured trajectory snapshot for user-sim (parses `step_start` /
+  `step_finish` / `text` / `tool_use` event types → `[step] thinking /
+  tool_call / result`)
+- ✅ Wall-clock timing per turn (`_start_time` + `_turn_start_time`)
+- ✅ `_INCREMENTAL_NOTICE` instruction prefix (claude-code-style; safe to
+  add for native-resume harnesses because per-turn cost stays cheap when
+  the underlying CLI keeps state)
+- ✅ Per-turn incremental git diff → user-sim `code_changes_diff` channel
+- ✅ Shared `repo_diff.py` (`tag_harbor_base`, `capture_git_diff`)
+- ✅ `exec_with_budget` (PER_EXEC_CAP / TRIAL_BUDGET)
+- ✅ Per-turn stdout archive (`opencode.txt.turn-<N>`) so cumulative
+  `tee -a` rewrites don't lose individual turn data
+
+### OAuth proxy reuse
+
+`UserEnabledOpenCode.setup` reuses the same `MSWEA_USE_CODEX_OAUTH=1`
+flag and the same `oauth_proxy.py` (introduced in v0.10.0) to route
+`openai/gpt-5.5` traffic through ChatGPT-subscription OAuth. The proxy
+sits on `127.0.0.1:4220` inside the sandbox; OpenCode's openai provider
+respects `OPENAI_BASE_URL` so no additional integration is required.
+`_inject_opencode_flags` post-processes Harbor's command list to set the
+env vars on every `ExecInput` (Harbor's `OpenCode.create_run_agent_commands`
+doesn't take a reasoning kwarg yet, so the same hook also splices
+`--variant=<effort>` between `run` and `--format=json`).
+
+### Runner / orchestrator changes
+
+- **`src/run_eval.py`** — new `--agent-type opencode` branch:
+  `OPENCODE_IMPORT_PATH = "user_agent.user_enabled_opencode:UserEnabledOpenCode"`.
+  Forwards every provider key OpenCode's Harbor wrapper recognises
+  (anthropic / openai / openrouter / deepseek / google / groq / mistral /
+  xai / github / aws / azure) plus the OAuth-proxy switches.
+
+### What this is NOT
+
+- **Not a code review of OpenCode itself.** Wrapper assumes opencode-ai
+  v0.6+ semantics for `--session` / `--continue` / `--format=json`. A
+  version pin will land separately once we settle on a baseline.
+- **Not a thinking-cost normalizer.** OpenCode's `--variant` semantics
+  are provider-specific; comparing "Opus medium" via OpenCode against
+  "Opus medium" via mini-swe-agent is not apples-to-apples (different
+  request shapes / cache behavior). For cross-model fairness work, hold
+  the harness constant.
+
+## v0.10.0 — 2026-05-29
+
+**Mini-SWE-Agent wrapper + ChatGPT-OAuth proxy + reasoning_effort plumbing.**
+
+Adds a neutral, LiteLLM-based harness option to the cross-model cohort
+(`UserEnabledMiniSweAgent`), routes gpt-5.x through a ChatGPT-subscription
+OAuth proxy so OpenAI-billed runs can ride on the host's ChatGPT seat, and
+threads `reasoning_effort` end-to-end so thinking-strength is the comparison
+axis (instead of an unaligned provider default).
+
+### New wrappers + modules
+
+- **`src/user_agent/user_enabled_mini_swe_agent.py`** —
+  `UserEnabledMiniSweAgent`, the third "history-replay" wrapper (after codex
+  + gemini_cli). Re-invokes the in-sandbox `mini-swe-agent` CLI per turn
+  with a structured followup prompt (same 4-section shape as codex's
+  v0.9.0): `ORIGINAL TASK` + `CURRENT WORKSPACE STATE` (cumulative diff
+  capped 20 KB) + `RECENT TOOL CALLS` (last 3 turns, 4 KB/turn cap) +
+  `PRIOR USER MESSAGES`. Per-turn diff capture, ATIF trajectory snapshot
+  for user-sim, and `_extract_and_append_tool_history(turn)` archive
+  `mini-swe-agent.trajectory.turn-N.json` so prior-turn reasoning_content
+  isn't lost when mini-swe-agent overwrites the live trajectory.json on
+  the next turn.
+  - `mswea_version="2.3.0"` pin: 2.3.x supports our multi-turn flow and
+    is in LiteLLM's price table-ish (we still set `MSWEA_COST_TRACKING=
+    ignore_errors` because v2 fails the price-lookup for `openrouter/...`
+    + `openai/gpt-5.5`; benchmark correctness > cost reporting).
+  - OAuth path (`MSWEA_USE_CODEX_OAUTH=1`): wrapper uploads
+    `oauth_proxy.py` + host's `~/.codex/auth.json` to the sandbox at
+    `/tmp/`, starts the proxy on `127.0.0.1:4220`, sets
+    `OPENAI_BASE_URL=http://127.0.0.1:4220/v1` + `OPENAI_API_KEY=
+    placeholder` per `mini-swe-agent` invocation. `_flush_proxy_log` pulls
+    `/tmp/oauth_proxy.log` back to logs_dir at run-end so 4xx upstream
+    bodies are debuggable.
+
+- **`src/user_agent/oauth_proxy.py`** — minimal aiohttp proxy that
+  translates **OpenAI Chat Completions** ↔ **ChatGPT private Responses API**
+  at `https://chatgpt.com/backend-api/codex/responses`. Uses the host's
+  codex OAuth credentials (lazy reload on 401). Streaming SSE translation
+  (text deltas + function-call argument deltas). `reasoning_effort` lifts
+  to `reasoning.effort`. Tools schema is flattened to the Responses shape.
+
+  **Critical fix during smoke-test debugging:** the initial `messages →
+  input` translation passed `role: "tool"` through unchanged for tool
+  results, and `role: "assistant"` with `tool_calls` as a plain message
+  with the calls embedded. Both are rejected by the codex backend with
+  `Invalid value: 'tool'. Supported values are: 'assistant', 'system',
+  'developer', and 'user'.` (param `input[N]`). The first model call of
+  each turn worked; everything after the first tool result 422'd in a
+  loop. Now translated to Responses-API item types:
+    - `{role:"tool", tool_call_id, content}` →
+      `{type:"function_call_output", call_id, output}`
+    - `{role:"assistant", tool_calls:[...]}` → optional `{type:"message",
+       role:"assistant", content}` + one `{type:"function_call", call_id,
+       name, arguments}` per call
+  Validated end-to-end (v10 GPT-5.5 OAuth smoke ran past turn 2 with no
+  422; prior v7-v9 attempts all 422'd at the first tool result).
+
+### `reasoning_effort` threading (end-to-end)
+
+- `src/run_eval.py` — new `--reasoning-effort {low,medium,high}` CLI
+  flag, forwarded to `UserEnabledMiniSweAgent(reasoning_effort=…)` via
+  `user_sim_kwargs`. Only set when explicit (no default), so the
+  prior-cohort "provider native default" runs stay reproducible.
+
+- `UserEnabledMiniSweAgent.__init__` — pops `reasoning_effort` from
+  kwargs and forwards to inner `MiniSweAgent`. Inner agent threads it as
+  `-c model.model_kwargs.extra_body.reasoning_effort=<value>` to the
+  in-sandbox `mini-swe-agent` CLI; LiteLLM dispatches per provider:
+    - OpenAI / ChatGPT OAuth → `reasoning.effort=<value>` (proxy lifts it)
+    - Anthropic (Opus 4.6 via OR) → `thinking.budget_tokens`
+      (low=1024 / medium=4096 / high=16384)
+    - DeepSeek-v4-pro → accepts the parameter but per
+      [DeepSeek docs](https://api-docs.deepseek.com/api/create-chat-completion)
+      `low` and `medium` are silently **mapped to `high`** (and `xhigh →
+      max`). Net: DeepSeek has no usable level below `high`; for "all
+      medium" cohorts DeepSeek is structurally one step heavier.
+
+- **Companion fix — `external/harbor/src/harbor/agents/installed/mini_swe_agent.py`:**
+  upstream Harbor's `reasoning_effort` threading emits `-c model.model_kwargs.
+  extra_body.reasoning_effort=<v>` **without** a base config file. mini-
+  swe-agent's CLI then interprets the dotted-key argument as a config
+  file path, fails to load it, and the agent config falls back to an
+  empty dict → Pydantic `ValidationError: 2 validation errors for
+  InteractiveAgentConfig: system_template / instance_template Field
+  required`. Net: agent silently runs with no system/instance template
+  → user-sim sees a non-functional agent → all-redirect, reward=0,
+  trial wallclock 3 min. Patched to materialize a one-key YAML
+  (`model.model_kwargs.extra_body.reasoning_effort: <v>`) when no
+  explicit `_config_yaml` is set, so the CLI gets a real `-c <file>`
+  and the override applies cleanly.
+
+### Runner / orchestrator changes
+
+- **`src/run_eval.py`** — `--agent-type mini-swe-agent` branch:
+  `MINI_SWE_AGENT_IMPORT_PATH = "user_agent.user_enabled_mini_swe_agent:
+  UserEnabledMiniSweAgent"`. Forwards LiteLLM-relevant env vars
+  (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`,
+  `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_BASE_URL`) plus the
+  OAuth-proxy switches (`MSWEA_USE_CODEX_OAUTH`, `CODEX_HOST_AUTH_JSON`).
+  Drops the claude-code-only env vars (`ANTHROPIC_*_MODEL`,
+  `LITELLM_PROXY_*`, `PROXY_*`) to keep the LiteLLM dispatch clean.
+
+### Empirical signal (cli-task-46c118 smoke, 1 trial each)
+
+| Setup | reward | wall | reasoning behavior |
+|---|---:|---:|---|
+| mini-swe-agent + DeepSeek-v4-pro (native) | 1.00 | 20m39s | ~58 tok reasoning_content/msg, ~1.2K tok/turn (we observe; DeepSeek doesn't expose a knob below `high`) |
+| mini-swe-agent + Opus-4.6 OR (no thinking) | 1.00 | 14m1s | `provider_specific_fields.reasoning = null`, no thinking budget — pure completion |
+| mini-swe-agent + GPT-5.5 ChatGPT OAuth | (in flight at writeup) | — | proxy fix unblocks the multi-turn loop; previously all post-first-tool calls 422'd |
+
+Token / cost recording remains weak: `MSWEA_COST_TRACKING=ignore_errors`
+zeros `info.model_stats.instance_cost`. A follow-up should split this so
+OAuth path stays `ignore_errors` (no usage upstream anyway — proxy
+hard-codes `usage: 0/0/0`), while OR / DeepSeek paths keep LiteLLM's
+real cost-tracking enabled so prompt/completion/reasoning token counts
+survive in the trajectory.
+
+## v0.9.0 — 2026-05-23
+
+**Codex wrapper: structured followup prompt (diff + tool history).**
+
+Fixes a class of multi-turn failures where the codex agent ran out of the
+per-exec time cap (`PER_EXEC_CAP_SEC=1200`) re-exploring the codebase from
+scratch on every follow-up turn — most visible on `comfyui-frontend-autoscale-layout`,
+where all 3 reps produced empty patches in v0.5.1 pilot.
+
+### Root cause
+
+`claude_code` carries full agent tool history across turns via `claude --resume`
+(server-side session continuation). Codex has no resume, so the wrapper
+re-issues a fresh `codex exec` each turn. The previous followup prompt only
+prepended the **last 3 KB of cumulative stdout** as "agent history" —
+opaque JSON-stream slurry that gave the agent no useful state. The model
+therefore rebuilt its mental model from zero every turn: re-grep, re-read
+files, re-trace prior exploration. On heavy frontend repos this exceeded the
+20-min per-exec cap → turn killed → no patch.
+
+### Fix
+
+[`_build_followup_instruction`](user_enabled_codex.py) now constructs a
+structured prompt with three explicit state-restoration sections:
+
+1. **`CURRENT WORKSPACE STATE`** — full cumulative `git diff vs harbor-base`
+   (capped at 20 KB), read from `logs_dir/final.patch` which `capture_git_diff`
+   already writes after each turn. The agent now sees exactly which files have
+   been modified and what the edits look like.
+2. **`RECENT TOOL CALLS`** — last 3 turns of compact tool-call log produced
+   by the new `_extract_tool_calls_compact()`. Parses codex stream-json,
+   extracts `command_execution` / `apply_patch` / `function_call`
+   items, keeps each output's last 500 chars and caps total per-turn log at
+   4 KB. On a real comfyui turn-0 with 272 KB of raw stream output, this
+   compresses to ~3.7 KB while preserving every shell command + output tail
+   (73× compression).
+3. **`PRIOR USER MESSAGES`** — numbered list of just the user-sim messages
+   (no agent stdout). Compact and structured.
+
+Followup prompt size is comparable to before (~30 KB on a multi-turn task)
+but signal density is dramatically higher.
+
+### Storage additions
+
+- `self._tool_history: list[str]` — one compact log per turn, appended in
+  the `finally` block of turn-0 and every multi-turn exec.
+- `self._last_cumulative_diff: str` — re-read from `logs_dir/final.patch`
+  after each `_capture_git_diff`. No changes to the shared `repo_diff` API;
+  `claude_code` and `gemini_cli` are unaffected.
+
+### Module-level knobs
+
+- `_TOOL_OUTPUT_CHAR_CAP = 500` — per single tool call
+- `_TOOL_HISTORY_TURN_CAP = 4000` — per turn
+- `_TOOL_HISTORY_TURNS_KEPT = 3` — only inject last N turns (older
+  turns' net effect is already in the cumulative diff)
+- `_CUM_DIFF_CHAR_CAP = 20000` — cumulative-diff section cap
+
+### What this does NOT change
+
+- `claude_code` wrapper: unchanged. Still uses `--resume`.
+- `gemini_cli` wrapper: unchanged. Still uses full-history re-issue (could
+  benefit from the same upgrade in a follow-up).
+- Codex's `CODEX_USE_RESUME=1` opt-in path: unchanged. The new prompt
+  structure only fires on the fallback (full re-issue) path.
+- User-sim's `code_changes_diff` channel: unchanged (still uses
+  `self._last_turn_diff` = incremental).
+
+### Companion fix — per-turn diff capture: `git commit --no-verify`
+
+Caught while smoke-testing the codex wrapper upgrade. The shared per-turn
+diff-capture script (`repo_diff.py:_repo_discovery_cmd`, mirrored in
+`user_enabled_claude_code.py:_capture_git_diff`) does `git add -A && git
+commit --allow-empty -m "harbor-turn-N"` before computing `git diff
+harbor-base HEAD`. On repos with husky/lint-staged pre-commit hooks (e.g.
+`comfyui-frontend-autoscale-layout`), the hook fails in the sandbox (no
+`pnpm install` for hook deps), the commit fails silently (stderr redirected
+to `/dev/null`), `harbor-turn-N` never advances, and the diff returns
+empty — **masking real agent edits across multiple turns**.
+
+Empirical: cc+OR comfyui pilot trials show empty patches for turns 0-9,
+non-empty only from turn 10 onward (the moment the hook happens to pass).
+Codex's `file_change` mechanism never triggered a hook-passing edit so its
+patches stayed empty through every turn.
+
+Fix: add `--no-verify` to both `git commit` invocations (baseline tag +
+per-turn). Applied to both `repo_diff.py` and `user_enabled_claude_code.py`
+(claude_code has its own embedded copy of the script). Affects every
+agent's diff capture; no behavior change for repos without commit hooks.
+
+### Empirical signal (smoke test, 1 trial, comfyui task)
+
+Followup prompt verified to contain all 4 new sections. With the old wrapper
+all 3 reps produced 55-byte empty stubs across two separate pilot runs.
+A full re-run is pending to quantify cohort-level impact.
+
 ## v0.8.0 — 2026-05-24
 
 **Codex + Gemini-CLI user-sim enablement.**

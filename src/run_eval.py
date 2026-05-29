@@ -91,13 +91,19 @@ if _env_path.exists():
 
 AGENT_IMPORT_PATH = "user_agent.user_enabled_claude_code:UserEnabledClaudeCode"
 CODEX_AGENT_IMPORT_PATH = "user_agent.user_enabled_codex:UserEnabledCodex"
+MINI_SWE_AGENT_IMPORT_PATH = "user_agent.user_enabled_mini_swe_agent:UserEnabledMiniSweAgent"
+OPENCODE_IMPORT_PATH = "user_agent.user_enabled_opencode:UserEnabledOpenCode"
 
 # Env vars the codex wrapper inspects on the host — forwarded into the trial's
 # agent_env so the in-sandbox wrapper sees them (CODEX_USE_HOST_AUTH triggers
-# the ChatGPT-OAuth auth.json overlay; CODEX_VERSION upgrades the in-sandbox
-# codex CLI past the pinned 0.117.0; CODEX_USE_RESUME opts INTO the resume path).
+# the ChatGPT-OAuth auth.json overlay; CODEX_USE_RESUME opts INTO the
+# server-side `codex exec resume` path, otherwise the wrapper falls back to
+# re-issuing exec with cumulative diff + tool-call history injected).
+# The codex CLI version itself is pinned in UserEnabledCodex.__init__
+# (codex_version kwarg, default "0.133.0") — passed straight to Codex.install
+# as `npm install -g @openai/codex@<version>`.
 _CODEX_FORWARDED_HOST_ENV = (
-    "CODEX_USE_HOST_AUTH", "CODEX_HOST_AUTH_JSON", "CODEX_VERSION",
+    "CODEX_USE_HOST_AUTH", "CODEX_HOST_AUTH_JSON",
     "CODEX_USE_RESUME", "OPENAI_BASE_URL",
 )
 
@@ -350,6 +356,7 @@ def build_trial_config(
     call_user_on_completion: bool,
     force_build: bool = False,
     agent_type: str = "claude-code",
+    reasoning_effort: str | None = None,
 ) -> TrialConfig:
     """Build a TrialConfig with per-task user sim kwargs."""
     # Load per-task data
@@ -426,12 +433,12 @@ def build_trial_config(
         # in-sandbox codex sees a clean env.
         import_path = CODEX_AGENT_IMPORT_PATH
         harbor_model = action_model  # pass model as-is, codex wrapper strips provider prefix
-        # `version: "2.1.108"` in user_sim_kwargs is meant for ClaudeCode (pins
-        # the in-sandbox CC harness). When codex agent_type uses the same
-        # user_sim_kwargs, that version gets passed into install-codex.sh.j2 as
-        # `npm install -g @openai/codex@2.1.108` which doesn't exist (npm
-        # ETARGET). Drop it for codex so the template falls back to its
-        # hardcoded 0.117.0 default (then CODEX_VERSION env may upgrade in-sandbox).
+        # `version: "2.1.108"` in user_sim_kwargs pins the ClaudeCode CLI; it
+        # has no meaning for codex. Drop it so UserEnabledCodex's own
+        # `codex_version` default (0.133.0, set in its __init__) takes effect.
+        # Without this drop, `version="2.1.108"` would flow through to
+        # `Codex.install()` as `npm install -g @openai/codex@2.1.108` (npm
+        # ETARGET — that version doesn't exist).
         user_sim_kwargs.pop("version", None)
         # Strip claude_code-only env vars but KEEP codex-relevant ones
         codex_env = {
@@ -447,6 +454,62 @@ def build_trial_config(
         # provides real creds via CODEX_USE_HOST_AUTH path)
         codex_env.setdefault("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
         agent_env_final = codex_env
+    elif agent_type == "mini-swe-agent":
+        # mini-swe-agent is LiteLLM-based — pure provider/model string routing.
+        # No claude_code proxy, no ANTHROPIC_*_MODEL aliases. Just forward the
+        # vendor API keys the LiteLLM provider needs.
+        import_path = MINI_SWE_AGENT_IMPORT_PATH
+        harbor_model = action_model  # provider/model string passed as-is
+        user_sim_kwargs.pop("version", None)
+        if reasoning_effort:
+            user_sim_kwargs["reasoning_effort"] = reasoning_effort
+        mswe_env = {
+            k: v for k, v in agent_env.items()
+            if not k.startswith("ANTHROPIC_") and not k.startswith("CLAUDE_CODE_")
+               and not k.startswith("LITELLM_") and not k.startswith("PROXY_")
+        }
+        # Forward whichever vendor key matches the LiteLLM provider prefix.
+        # mini-swe-agent picks it up via `get_api_key_var_names_from_model_name`.
+        for var in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY",
+                    "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_BASE_URL",
+                    # OAuth-proxy path: wrapper launches a localhost proxy
+                    # inside the sandbox that fronts ChatGPT subscription auth.
+                    "MSWEA_USE_CODEX_OAUTH", "CODEX_HOST_AUTH_JSON"):
+            if v := os.environ.get(var):
+                mswe_env[var] = v
+        agent_env_final = mswe_env
+    elif agent_type == "opencode":
+        # OpenCode is a multi-provider CLI with first-class --session resume,
+        # so the wrapper mirrors claude_code's native-resume pattern (no
+        # wrapper-side history-replay). Forward only the provider-relevant
+        # vendor keys (Harbor's OpenCode.create_run_agent_commands picks
+        # the right one based on the `provider/...` prefix in model_name).
+        import_path = OPENCODE_IMPORT_PATH
+        harbor_model = action_model  # provider/model string passed as-is
+        user_sim_kwargs.pop("version", None)
+        if reasoning_effort:
+            user_sim_kwargs["reasoning_effort"] = reasoning_effort
+        opencode_env = {
+            k: v for k, v in agent_env.items()
+            if not k.startswith("ANTHROPIC_") and not k.startswith("CLAUDE_CODE_")
+               and not k.startswith("LITELLM_") and not k.startswith("PROXY_")
+        }
+        # Forward the provider-specific keys OpenCode (Harbor wrapper) reads.
+        # The provider/model split happens in OpenCode.create_run_agent_commands.
+        for var in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY",
+                    "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+                    "GOOGLE_GENERATIVE_AI_API_KEY", "GROQ_API_KEY",
+                    "MISTRAL_API_KEY", "XAI_API_KEY", "GITHUB_TOKEN",
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION",
+                    # OAuth proxy path (same as mini-swe-agent): wrapper
+                    # launches a localhost ChatGPT-OAuth proxy in the
+                    # sandbox; OpenCode's openai provider routes via
+                    # OPENAI_BASE_URL=http://127.0.0.1:4220/v1.
+                    "OPENAI_BASE_URL", "MSWEA_USE_CODEX_OAUTH",
+                    "CODEX_HOST_AUTH_JSON"):
+            if v := os.environ.get(var):
+                opencode_env[var] = v
+        agent_env_final = opencode_env
     else:
         import_path = AGENT_IMPORT_PATH
         agent_env_final = agent_env
@@ -624,10 +687,17 @@ async def main():
     parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
     parser.add_argument("--env-type", default=None, help="Environment: docker, e2b, etc.")
     parser.add_argument("--agent-type", default="claude-code",
-                        choices=["claude-code", "codex"],
+                        choices=["claude-code", "codex", "mini-swe-agent", "opencode"],
                         help="Coding agent type. Default claude-code. Use 'codex' for "
                              "user_enabled_codex (gpt-5.x via OAuth/OpenAI direct or OR).")
     parser.add_argument("--agent-timeout", type=int, default=None, help="Agent timeout in seconds")
+    parser.add_argument("--reasoning-effort", default=None,
+                        choices=["low", "medium", "high"],
+                        help="Reasoning effort for mini-swe-agent: routes through "
+                             "extra_body.reasoning_effort; LiteLLM maps to provider "
+                             "(OpenAI/ChatGPT: reasoning.effort; Anthropic: "
+                             "thinking.budget_tokens low=1024/med=4096/high=16384). "
+                             "DeepSeek ignores this knob.")
     parser.add_argument("--trials-dir", default=None, help="Trials directory (default: trials/)")
     parser.add_argument("--tasks", default=None, help="Comma-separated task names or globs")
     parser.add_argument("--skip-existing", action="store_true", help="Skip tasks with existing results")
@@ -779,6 +849,7 @@ async def main():
             call_user_on_completion=args.call_user_on_completion,
             force_build=args.force_build,
             agent_type=args.agent_type,
+            reasoning_effort=args.reasoning_effort,
         )
         trial_configs.append(tc)
 

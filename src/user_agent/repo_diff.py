@@ -47,7 +47,7 @@ def _repo_discovery_cmd(
             '  (cd "$d" && \\\n'
             '     git -c safe.directory="$PWD" add -A 2>/dev/null && \\\n'
             '     git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
-            '       commit --allow-empty -m "harbor-base" --quiet 2>/dev/null && \\\n'
+            '       commit --allow-empty --no-verify -m "harbor-base" --quiet 2>/dev/null && \\\n'
             '     git -c safe.directory="$PWD" tag -f harbor-base HEAD 2>/dev/null) || true\n'
         )
         return (
@@ -81,8 +81,13 @@ def _repo_discovery_cmd(
         '    PREV_REF=HEAD\n'
         '  fi\n'
         '  git -c safe.directory="$PWD" add -A 2>/dev/null\n'
+        # --no-verify skips pre-commit hooks. Repos with husky/lint-staged
+        # (e.g. comfyui-frontend-autoscale-layout, anywhere with prettier/eslint
+        # on commit) fail the hook in the sandbox (no pnpm install for hook deps),
+        # the commit silently fails, HEAD stays at harbor-base, and
+        # `git diff harbor-base HEAD` returns empty — masking real agent edits.
         '  git -c safe.directory="$PWD" -c user.email=harbor@base -c user.name=harbor \\\n'
-        '    commit --allow-empty -m "harbor-turn-$TURN" --quiet 2>/dev/null\n'
+        '    commit --allow-empty --no-verify -m "harbor-turn-$TURN" --quiet 2>/dev/null\n'
         '  git -c safe.directory="$PWD" tag -f "harbor-turn-$TURN" HEAD 2>/dev/null\n'
         '  if git -c safe.directory="$PWD" rev-parse --verify harbor-base >/dev/null 2>&1; then\n'
         '    printf "=== %s (cumulative vs harbor-base) ===\\n" "$d" >> /tmp/harbor_cum.diff\n'
