@@ -102,7 +102,11 @@ class UserEnabledOpenCode(BaseAgent):
         session_analysis: str = "",
         max_messages: int | None = None,
         call_user_on_completion: bool = True,
-        reasoning_effort: str | None = None,
+        # Default to `high` so missed launcher flags don't silently disable
+        # thinking on agentic trials. Matches Anthropic adaptive-thinking's
+        # recommended default for complex / multi-turn tasks (see
+        # https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking).
+        reasoning_effort: str | None = "high",
         opencode_version: str | None = None,
         **kwargs,
     ):

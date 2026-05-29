@@ -103,7 +103,15 @@ class UserEnabledMiniSweAgent(BaseAgent):
         session_analysis: str = "",
         max_messages: int | None = None,
         call_user_on_completion: bool = True,
-        reasoning_effort: str | None = None,
+        # `high` is the Anthropic adaptive-thinking documented default and the
+        # recommended setting for agentic coding (see
+        # https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking).
+        # Other providers (OpenAI gpt-5.5, DeepSeek-Reasoner, etc.) accept the
+        # same level keyword. None used to mean "skip the flag, take provider
+        # default" — but provider defaults vary and silently degrade quality
+        # on tool-use heavy workloads (the agent benchmark). Default to `high`
+        # so missed launcher flags don't silently disable thinking.
+        reasoning_effort: str | None = "high",
         mswea_version: str = "2.3.0",
         **kwargs,
     ):
