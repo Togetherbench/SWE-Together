@@ -375,7 +375,13 @@ class UserEnabledOpenCode(BaseAgent):
             reasoning is impossible on agentic workflows (the very thing we
             run in this benchmark).
         """
-        effort = self._reasoning_effort or "medium"
+        # `high` is Anthropic adaptive-thinking's documented default (per
+        # https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking).
+        # For agentic coding, the docs recommend high: "Claude always thinks.
+        # Provides deep reasoning on complex tasks." Medium "may skip thinking
+        # for very simple queries", which on a 13-turn agentic trial means the
+        # model skips reasoning on most tool-result observations.
+        effort = self._reasoning_effort or "high"
         # python3 instead of jq — guaranteed present in the base images.
         # Heredoc avoids shell-quoting hell around the embedded JSON literal.
         script = (
