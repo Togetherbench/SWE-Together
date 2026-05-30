@@ -378,6 +378,11 @@ class UserEnabledOpenCode(BaseAgent):
           - Even when thinking *is* on, lack of interleaved means inter-tool
             reasoning is impossible on agentic workflows (the very thing we
             run in this benchmark).
+
+        The same config write also removes a benchmark-only footgun: OpenCode
+        defaults `external_directory` to "ask", but our non-interactive runner
+        has no approval UI, so legitimate reads of `/workspace/venv`, `/tmp`,
+        `/proc`, etc. are auto-rejected.
         """
         # `high` is Anthropic adaptive-thinking's documented default (per
         # https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking).
@@ -386,6 +391,13 @@ class UserEnabledOpenCode(BaseAgent):
         # for very simple queries", which on a 13-turn agentic trial means the
         # model skips reasoning on most tool-result observations.
         effort = self._reasoning_effort or "high"
+        # Switched from reasoning.effort to reasoning.max_tokens after empirical
+        # OR test: effort='high' yields ~50 reasoning tokens on Opus 4.6 + tool_use,
+        # but reasoning.max_tokens=8000 yields 117+ tokens. OR translates max_tokens
+        # to Anthropic's explicit thinking budget; effort is translated more
+        # conservatively when tool_use is present.
+        _budget_map = {"low": 2000, "medium": 5000, "high": 8000}
+        max_tokens = _budget_map.get(effort, 8000)
         # python3 instead of jq — guaranteed present in the base images.
         # Heredoc avoids shell-quoting hell around the embedded JSON literal.
         script = (
@@ -395,16 +407,32 @@ class UserEnabledOpenCode(BaseAgent):
             "prov = cfg.setdefault('provider', {})\n"
             "for name in list(prov):\n"
             "    opts = prov[name].setdefault('options', {})\n"
-            "    opts.setdefault('reasoning', {})['effort'] = "
-            + json.dumps(effort) + "\n"
-            "    # belt-and-suspenders: explicit adaptive thinking config\n"
-            "    # for Anthropic-family models. Harmless for OpenAI; OR\n"
-            "    # provider strips unknown fields rather than 400-ing.\n"
-            "    opts.setdefault('thinking', {'type': 'adaptive'})\n"
+            f"    opts['reasoning'] = {{'max_tokens': {max_tokens}}}\n"
+            "perm = cfg.get('permission')\n"
+            "if perm != 'allow':\n"
+            "    if not isinstance(perm, dict):\n"
+            "        perm = {'*': perm} if isinstance(perm, str) else {}\n"
+            "    ext = perm.get('external_directory')\n"
+            "    if ext != 'allow':\n"
+            "        if not isinstance(ext, dict):\n"
+            "            ext = {'*': ext} if isinstance(ext, str) else {}\n"
+            "        for pattern in [\n"
+            "            '/workspace/**', '/tmp/**', '/var/tmp/**',\n"
+            "            '/opt/**', '/root/**', '/home/**',\n"
+            "            '/proc/**', '/usr/**', '/logs/**',\n"
+            "        ]:\n"
+            "            ext.setdefault(pattern, 'allow')\n"
+            "        perm['external_directory'] = ext\n"
+            "    cfg['permission'] = perm\n"
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text(json.dumps(cfg, indent=2))\n"
         )
-        return f"python3 - <<'PYEOF'\n{script}PYEOF"
+        # Subshell wrap is load-bearing: the caller chains this with
+        # `... && opencode run ...`. A bare heredoc can't be chained — bash
+        # requires the closer (PYEOF) alone on its line, but `&&` can't start
+        # a line. Wrapping in `(...)` puts `)` on its own line to close the
+        # heredoc and lets `) && opencode` sit on one valid line.
+        return f"(python3 - <<'PYEOF'\n{script}PYEOF\n)"
 
     # ── resume command builder ────────────────────────────────────────
 
@@ -552,6 +580,26 @@ class UserEnabledOpenCode(BaseAgent):
         except Exception as e:
             log.debug("opencode turn-%d archive failed: %s", turn, e)
 
+    async def _recover_opencode_log_after_cap(self, environment, turn: int) -> bool:
+        """Recover OpenCode's live JSON stream after exec_with_budget kills a turn."""
+        try:
+            oc_read = await environment.exec(
+                command=f"cat {_OPENCODE_LOG}",
+                timeout_sec=10,
+            )
+            stdout = getattr(oc_read, "stdout", "")
+            if stdout:
+                self._cumulative_output.append(stdout)
+                self._archive_turn_stdout(turn, stdout)
+                log.info(
+                    "Recovered %d bytes of opencode.txt from sandbox post-cap",
+                    len(stdout),
+                )
+                return True
+        except Exception as e:
+            log.warning("Failed to recover opencode.txt post-cap: %s", e)
+        return False
+
     # ── user simulation ───────────────────────────────────────────────
 
     async def _consult_user(
@@ -693,7 +741,18 @@ class UserEnabledOpenCode(BaseAgent):
                 self._archive_turn_stdout(0, self._cumulative_output[-1])
 
         if turn0_timed_out:
-            log.warning("turn-0 hit per-exec timeout; skipping multi-turn loop")
+            log.warning("turn-0 hit per-exec timeout — attempting cap-rescue")
+            # exec_helpers._TimeoutResult drops captured stdout on cap, so the
+            # sessionID emitted early in opencode's JSON stream never made it
+            # into self._cumulative_output. Recover it by reading the
+            # in-sandbox opencode.txt directly (the `tee -a` chain has been
+            # writing events to it in real time, so the file contains
+            # everything emitted before cap killed the parent process).
+            # Without this, _find_session_id() returns None, the function
+            # short-circuits, and the cap_rescue_pending loop below is never
+            # entered (49 cap events → 0 rescues in the new29 capRescue
+            # pilot until this fix).
+            await self._recover_opencode_log_after_cap(environment, turn=0)
 
         # Find session ID from turn-0 output. Required for resume.
         session_id = self._find_session_id()
@@ -707,10 +766,17 @@ class UserEnabledOpenCode(BaseAgent):
         log.info("OpenCode session ID: %s", session_id)
 
         # Multi-turn loop via `opencode run --session=<sid> -- <msg>`.
+        # If turn-0 hit the per-exec cap, do NOT abandon — sessionID is in
+        # opencode.txt and agent state is persisted in opencode's sqlite session
+        # store. We can pick up where it left off via --session=<id>. Inject a
+        # synthetic "please continue" as the first user message (bypassing the
+        # user-sim consult on turn 1 since there's no completed agent turn to
+        # judge yet). This rescues the entire turn-0 work that would otherwise
+        # be lost when slow models (e.g., Opus on cli-task-2f5833) overshoot
+        # the 1800s cap.
         consecutive_noops = 0
+        cap_rescue_pending = turn0_timed_out
         for turn in range(1, _MAX_RESUME_TURNS + 1):
-            if turn0_timed_out:
-                break
             elapsed = time.monotonic() - self._start_time
             if elapsed > TRIAL_BUDGET_SEC:
                 log.warning(
@@ -718,24 +784,35 @@ class UserEnabledOpenCode(BaseAgent):
                     elapsed, TRIAL_BUDGET_SEC, turn,
                 )
                 break
-            trajectory, observation = self._snapshot_latest_turn()
-
-            decision = await self._consult_user(
-                trajectory, observation, turn, completing=True, logging_dir=self.logs_dir,
-            )
-
-            if not decision.has_message:
-                consecutive_noops += 1
-                if consecutive_noops >= _MAX_CONSECUTIVE_NOOPS:
-                    log.info("User sim silent %d consecutive times at turn %d — ending",
-                             consecutive_noops, turn)
-                    break
-                log.info("User sim no-op at turn %d (streak %d/%d) — resuming agent",
-                         turn, consecutive_noops, _MAX_CONSECUTIVE_NOOPS)
-                user_msg = "continue"
+            if cap_rescue_pending:
+                # Bypass user-sim consult once: turn-0 was killed by per-exec
+                # cap, but sessionID survived. Resume the agent with a
+                # synthetic "please continue" message — equivalent to user
+                # noticing the interrupt and prompting agent to resume.
+                log.info(
+                    "Cap-rescue at turn %d: turn-0 was cut by per-exec cap, "
+                    "resuming via session_id=%s with synthetic 'continue'",
+                    turn, session_id,
+                )
+                user_msg = "Your previous run was interrupted. Please continue with the task from where you left off."
+                cap_rescue_pending = False
             else:
-                consecutive_noops = 0
-                user_msg = decision.format_for_injection()
+                trajectory, observation = self._snapshot_latest_turn()
+                decision = await self._consult_user(
+                    trajectory, observation, turn, completing=True, logging_dir=self.logs_dir,
+                )
+                if not decision.has_message:
+                    consecutive_noops += 1
+                    if consecutive_noops >= _MAX_CONSECUTIVE_NOOPS:
+                        log.info("User sim silent %d consecutive times at turn %d — ending",
+                                 consecutive_noops, turn)
+                        break
+                    log.info("User sim no-op at turn %d (streak %d/%d) — resuming agent",
+                             turn, consecutive_noops, _MAX_CONSECUTIVE_NOOPS)
+                    user_msg = "continue"
+                else:
+                    consecutive_noops = 0
+                    user_msg = decision.format_for_injection()
 
             self._turn_start_time = time.monotonic()
             log.info("Resuming OpenCode session with user message (turn %d)", turn)
@@ -765,8 +842,13 @@ class UserEnabledOpenCode(BaseAgent):
                     self._archive_turn_stdout(turn, self._cumulative_output[-1])
 
             if turn_timed_out:
-                log.warning("turn %d hit per-exec timeout — stopping multi-turn loop", turn)
-                break
+                log.warning(
+                    "turn %d hit per-exec timeout — attempting session resume on next turn",
+                    turn,
+                )
+                await self._recover_opencode_log_after_cap(environment, turn=turn)
+                cap_rescue_pending = True
+                continue
 
         # Final safety net — re-snapshot at run-end so final.patch reflects
         # the very last workspace state regardless of per-turn-capture state.
