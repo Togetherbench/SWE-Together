@@ -523,7 +523,16 @@ class MiniSweAgent(BaseInstalledAgent):
                 config_flags = f"-c {default_resolver} "
             else:
                 config_flags = f"-c {default_resolver} " + config_flags
-            config_flags += f"-c model.model_kwargs.extra_body.reasoning_effort={shlex.quote(self._reasoning_effort)} "
+            # Switched from extra_body.reasoning_effort=high to
+            # extra_body.reasoning.max_tokens=8000. Verified empirically via OR:
+            # - reasoning_effort='high' on Opus 4.6 + tool_use → ~50 reasoning tokens
+            # - reasoning.max_tokens=8000 on Opus 4.6 + tool_use → 117+ tokens (real thinking)
+            # OR translates max_tokens to Anthropic's explicit thinking budget;
+            # effort=high is translated more conservatively, giving little budget when
+            # tool_use is also present. 8000 covers most agentic tasks comfortably.
+            _budget_map = {"low": 2000, "medium": 5000, "high": 8000}
+            _budget = _budget_map.get(self._reasoning_effort, 8000)
+            config_flags += f"-c model.model_kwargs.extra_body.reasoning.max_tokens={_budget} "
 
         commands.append(
             ExecInput(

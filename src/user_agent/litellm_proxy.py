@@ -312,8 +312,15 @@ PROXIED_PROVIDER_PREFIXES: tuple[str, ...] = (
     "glmd/",
     "ark/",
     "fireworks/",
-    "deepseek/",
-    "openrouter/",   # OR is already a Harbor-recognized provider; included for completeness
+    # NOTE: openrouter/ and deepseek/ removed — both are Harbor-recognized
+    # providers (see external/harbor/.../agents/utils.py PROVIDER_API_KEY_VARS)
+    # that LiteLLM, Harbor, and opencode all route natively via OPENROUTER_API_KEY
+    # / DEEPSEEK_API_KEY. Masking them produced "anthropic/claude-sonnet-4-6",
+    # which LiteLLM's anthropic provider dispatched to api.anthropic.com (it
+    # reads ANTHROPIC_API_BASE, NOT ANTHROPIC_BASE_URL — so the proxy at
+    # localhost:4210 was bypassed) → 401 invalid x-api-key on every trial.
+    # See new29-diverse pilot diagnosis (2026-05-29): same failure mode on
+    # mini-Opus pilot10 reruns first surfaced this for openrouter/.
     "chutes/",
     "glm/",
 )

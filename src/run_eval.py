@@ -328,13 +328,20 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         return env
 
     if provider == "deepseek":
-        # DeepSeek direct — Anthropic-compat at api.deepseek.com/anthropic.
-        # /v1/models/<name> returns 404 (per ARK/MMD/GLMD known-broken pattern)
-        # so MUST route through proxy. x-api-key auth (proxy default).
-        # Supported: deepseek-v4-pro, deepseek-v4-flash. (`[1m]` suffix accepted
-        # but not canonical; bare IDs match `/v1/models` listing.)
+        # DeepSeek direct. Two routes coexist:
+        #   - Claude Code: reads ANTHROPIC_BASE_URL → proxy at localhost:4210
+        #     rewrites to api.deepseek.com/anthropic with x-api-key auth.
+        #   - LiteLLM (mini-swe-agent) + opencode CLI: don't read
+        #     ANTHROPIC_BASE_URL — use their native deepseek provider at
+        #     api.deepseek.com/v1 with DEEPSEEK_API_KEY env var.
+        # We populate both so all three agents work. The unmask in
+        # litellm_proxy.PROXIED_PROVIDER_PREFIXES is the companion change:
+        # without it, LiteLLM would see the anthropic mask and silently hit
+        # api.anthropic.com (it reads ANTHROPIC_API_BASE, not
+        # ANTHROPIC_BASE_URL — see new29 diagnosis 2026-05-29).
         ds_model = model_arg.split("/", 1)[1]
         env.update(_proxy_env(_DEEPSEEK_BASE_URL, ds_model, action_key))
+        env["DEEPSEEK_API_KEY"] = action_key
         return env
 
     # Unknown provider — pass key directly

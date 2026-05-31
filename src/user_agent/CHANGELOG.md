@@ -3,6 +3,237 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## v1.0 — 2026-05-31
+
+**Stabilization release: mini-swe-agent + opencode wrappers production-ready
+across all base image families.**
+
+v0.10–v0.11 introduced the two new harness wrappers (mini-swe-agent and
+opencode); the eight follow-up PRs and the late-cycle local patches turned
+them into runnable cohorts across the full benchmark. The pattern this cycle
+was the same on every PR: a cohort would partially run, the failure mode
+would only be visible in a small fraction of base-image families, and the fix
+would close one entire diagonal of the matrix.
+
+This release notes the cumulative state. Every PR below is already merged
+unless flagged "**local**".
+
+### Wrappers — features added this cycle
+
+- **mini-swe-agent** (v0.10.0, #191): history-replay wrapper around the
+  LiteLLM-based `mini-swe-agent` CLI. 4-section followup-prompt shape
+  matching the codex wrapper. Per-turn trajectory archive pulled from
+  sandbox via `env.download_file` so reasoning content survives across
+  invocations. Drops `MSWEA_COST_TRACKING=ignore_errors` (v2's price table
+  doesn't know `openai/gpt-5.5` or `openrouter/*` — benchmark correctness >
+  cost reporting).
+- **opencode** (v0.11.0, #191): native-resume wrapper, mirroring
+  `claude_code`'s `--resume` via `opencode run --session=<id>`. Same parity
+  features: repo config injection, structured trajectory snapshot,
+  wall-clock timing, `_INCREMENTAL_NOTICE`, per-turn diff to user-sim.
+  `_inject_opencode_flags` post-processes Harbor's command list to add
+  `--variant=<reasoning_effort>` and OAuth env vars.
+- **oauth_proxy.py** (#191, #192, #194, #196, **local**): in-sandbox proxy
+  translating OpenAI Chat Completions ↔ ChatGPT private Responses API
+  (`chatgpt.com/backend-api/codex/responses`). Lets LiteLLM-based runs route
+  through ChatGPT-subscription billing. SSE translation covers text /
+  tool_call / reasoning_text / reasoning_summary_text deltas. Two
+  non-obvious correctness fixes from #191:
+  1. ChatGPT Responses API rejects `role="tool"` — must translate to
+     `{type:"function_call_output", call_id, output}` items, and assistant
+     tool_calls to `{type:"function_call", ...}` items.
+  2. Without `reasoning.summary` set, ChatGPT does NOT emit any
+     `reasoning_summary_text.delta` even when `reasoning.effort` is on. Set
+     `summary="auto"` whenever effort is present.
+- **shared `litellm_proxy.py`** (#195): extracted from `user_enabled_claude_code`
+  so mini-swe-agent and opencode wrappers route `minimaxd/`, `glmd/`, `ark/`,
+  `fireworks/`, `deepseek/`, `openrouter/` through the same `localhost:4210`
+  proxy. Includes `mask_proxied_model_name()` to rewrite e.g.
+  `minimaxd/MiniMax-M2.7` → `anthropic/claude-sonnet-4-6` for Harbor's and
+  opencode's hardcoded provider lists.
+
+### Reasoning depth — what level, where it gets set
+
+| layer | default after this cycle | where it lands |
+|---|---|---|
+| mini-swe-agent wrapper (#199) | `reasoning_effort="high"` | passed to Harbor `MiniSweAgent(reasoning_effort=...)` |
+| opencode wrapper (#198, #199) | `reasoning_effort="high"` | `--variant=high` on `opencode run` |
+| opencode `~/.config/opencode/opencode.json` (#196) | `provider.<name>.options.reasoning.effort=<value>` | written by `_opencode_thinking_patch_command()` before launch |
+| opencode opus on OR (#197) | `provider.<name>.options.thinking.type="adaptive"` | belt-and-suspenders for #196: forces adaptive mode on Opus 4.6+ |
+| Harbor `MiniSweAgent` (**local**) | `-c model.model_kwargs.extra_body.reasoning.max_tokens={8000,5000,2000}` | injected into mini-swe-agent's argv |
+
+The Harbor-side switch (`reasoning.max_tokens` instead of
+`reasoning.effort`) is empirically motivated: OR translates `max_tokens` to
+Anthropic's explicit thinking budget, whereas `effort=high` is translated
+conservatively (only ~50 reasoning tokens observed in 9 opus trials with
+tool_use). `reasoning.max_tokens=8000` yields 117+ reasoning tokens in the
+same conditions.
+
+#196 also fixed an instrumentation gap: oauth_proxy didn't forward
+`usage.reasoning_tokens` on `response.completed`, so trajectories showed 0
+reasoning_tokens regardless of actual upstream thinking.
+
+### Sandbox install / aiohttp — the long-tail debug story
+
+The single nastiest bug class this cycle was "oauth_proxy port 4220 is
+silently closed because aiohttp didn't import." It failed differently on
+different base images and silently degraded to "the model wasn't trying"
+when the symptom was actually "the proxy never started." Resolved
+incrementally:
+
+- **#192** — drop httpx from oauth_proxy. Pilot10 r3 surfaced
+  `ModuleNotFoundError: No module named 'httpx'` (aiohttp was on the
+  image; httpx wasn't, and `pip install … || true` swallowed the failure).
+  Consolidated to aiohttp for both client and server.
+- **#194** — cascade install paths for aiohttp on the **opencode** sandbox
+  (`apt python3-aiohttp` → `ensurepip + pip --user` → `apt python3-pip + pip
+  --user`). Pre-#192 PR also tried `pip install` but E2B's stripped
+  `/usr/bin/python3` had no pip at all.
+- **feb02e55** (**local**, mirrors #194 for mini-swe-agent) —
+  `python3 /tmp/oauth_proxy.py` was failing with `ModuleNotFoundError: No
+  module named 'aiohttp'` specifically on tasks built `FROM ubuntu:24.04`
+  (moltis-task-ffe9ec, cli-task-c425e4, rudel-task-d64e5a, cli-task-4a9dde,
+  amytis-task-e3714e). System python3 doesn't see `uv tool install`'s
+  isolated venv. Switch the launch command to
+  `~/.local/share/uv/tools/mini-swe-agent/bin/python` — guaranteed to have
+  aiohttp because mini-swe-agent's litellm dep brought it. Fall back to
+  system `python3` if the venv path is missing.
+
+  Pre-fix symptom: 8/8 trials in `new29_mini_gpt_oauthRerun` produced
+  41–65 byte empty patches and 6 retry messages
+  ("InternalServerError: OpenAIException - Connection error" — litellm
+  wrapping ECONNREFUSED). All recovered to 0.10–0.70 reward after the
+  patch.
+
+  ComfyUI / hyperswitch / sd-scripts base images happen to ship aiohttp in
+  system Python (used by their web servers), which is why those tasks
+  worked the whole time and the bug never surfaced on the original cohorts.
+
+- **Harbor install script** (`install-mini-swe-agent.sh.j2`, **local**)
+  — replace the conditional pip fallback with `uv tool install --force`
+  unconditionally. The old `pip install --user` path triggered a
+  `PosixPath('.') has an empty name` ValueError when mini-swe-agent was
+  pip-installed into an activated venv (comfyui-dev, sd-scripts-dev). uv
+  tool install puts mini-swe-agent in its own isolated env, sidestepping
+  the venv/system-Python distinction entirely.
+
+### Cap-rescue and timeout tuning
+
+- **#200, `user_enabled_opencode.py`**: after `PER_EXEC_CAP_SEC` kills
+  turn-0, `_TimeoutResult` drops the captured stdout — so the previous
+  `_find_session_id()` returned None and the cap_rescue_pending resume
+  loop never entered (49 cap events → 0 rescues observed before the fix).
+  Fix: post-cap, `cat /logs/agent/opencode.txt` from the sandbox so the
+  sessionID + early events are recoverable.
+- **#200, subshell heredoc**: `_opencode_thinking_patch_command()` returned
+  `<<'PYEOF'\n...\nPYEOF\n && opencode run …`. Bash refuses to chain `&&`
+  onto the heredoc terminator. Wrapped in `(python3 - <<'PYEOF'\n…\nPYEOF\n)`
+  so `(...) && opencode run` is one valid line. Before the fix, 49 trials'
+  stdouts were silently truncated.
+- **#200, external_directory auto-allow**: opencode's `permission.external_directory`
+  defaults to "ask", which in our non-interactive runner means "auto-reject."
+  Agents failed to read venvs and /tmp scratch files. Auto-allow
+  `/workspace`, `/tmp`, `/opt`, `/root`, `/home`, `/proc`, `/usr`, `/logs`.
+- **`exec_helpers.py`** (**local**): `PER_EXEC_CAP_SEC` 1200s → 1800s.
+  Pilot10 audit found 4 trials wrapper-killed at 1200s (mini-Opus
+  cli-task-2f5833 × 3 + mini-GPT cli-task-7e3475 × 1) where the model was
+  legitimately progressing on a Go-project exploration. 1800s gives
+  breathing room without compromising `TRIAL_BUDGET_SEC=7200` (still
+  4 execs/trial).
+
+### repo_diff.py — harbor-base fallback (#200, repo_diff.py)
+
+`tag_harbor_base` only tags repos it discovers at setup time. If an agent
+later clones a new repo into a discovered root (e.g.
+`/home/user/repo`), the per-turn diff would scan it but the cumulative
+section would be empty because `harbor-base` wasn't tagged there. Fix:
+during per-turn capture, if `harbor-base` is missing in a discovered repo,
+try `harbor-turn-0` then `HEAD_BEFORE` as fallbacks. Both incremental
+and cumulative now record agent work in late-cloned repos.
+
+Audit signature: 2/3 mini_ds reps for `pi-mono-auto-796a21ab` had
+empty cumulative `final.patch` despite non-empty `turn-N.incremental.patch`
+under `/home/user/repo`. The bug was pre-#200; fix is deployed.
+
+### DeepSeek dual-route fix (`run_eval.py` + `litellm_proxy.py`, **local**)
+
+Symptom on new29-diverse pilot (2026-05-29): every `deepseek/*` mini-swe-agent
+trial returned 401 invalid x-api-key. Root cause: `mask_proxied_model_name()`
+was rewriting `deepseek/deepseek-v4-pro` → `anthropic/claude-sonnet-4-6`,
+and LiteLLM's anthropic provider dispatched to `api.anthropic.com` —
+*not* the proxy at `localhost:4210` — because LiteLLM reads
+`ANTHROPIC_API_BASE`, not `ANTHROPIC_BASE_URL`. The 401 was Anthropic
+rejecting the (correct) DeepSeek key.
+
+Fix is two-sided:
+- `litellm_proxy.PROXIED_PROVIDER_PREFIXES`: drop `deepseek/` and
+  `openrouter/`. Both are Harbor-recognized providers that LiteLLM and
+  opencode route natively via `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY`.
+  No masking, no proxy hop.
+- `src/run_eval.py:build_agent_env`: under `provider == "deepseek"`,
+  populate both the proxy env (so Claude Code still works via
+  `ANTHROPIC_BASE_URL`) AND `DEEPSEEK_API_KEY` (so mini-swe-agent and
+  opencode use the native deepseek provider directly).
+
+### oauth_proxy — Responses-API body trimming (**local**)
+
+ChatGPT's codex `/v1/responses` rejects bodies over ~1MB with
+`{"error":"bad json: Request Entity Too Large"}`. Long multi-turn
+conversations + tool history routinely cross this limit. OpenCode
+surfaced it as `ContextOverflowError` and tore the whole session down —
+even though the model's actual context window was fine.
+
+Add `_truncate_responses_input()`: keep `instructions` + `tools` + the
+last 8 input items, drop older history first until the serialized body
+is under 800KB. Always preserves at least the tail (we'd rather forward
+and let upstream 413 than ship an empty conversation).
+
+### PR / commit ledger this cycle
+
+| PR / commit | what it fixed |
+|---|---|
+| #191 (e8045a57) | initial wrappers (mini-swe-agent v0.10, opencode v0.11) + oauth_proxy |
+| #192 (58a2bbc3) | drop httpx dep in oauth_proxy — silent install failure killed runs |
+| #194 (49d348f4) | cascade install paths for aiohttp in opencode sandbox |
+| #195 (5e9b5304) | shared litellm_proxy helper — mini/opencode route minimaxd/glmd/ark |
+| #196 (c07213ed) | opencode thinking budget on OpenRouter + usage tokens |
+| #197 (5c370287) | write `thinking.type=adaptive` into provider config |
+| #198 (5f62ed6f) | opencode default effort "medium" → "high" |
+| #199 (03fa243b) | mini + opencode default reasoning_effort = "high" |
+| #200 (f9f72645) | opencode cap-rescue + max_tokens + external_directory + harbor-base fallback |
+| feb02e55 | mini-swe-agent oauth_proxy launches via uv tool venv Python |
+| **local** | DeepSeek dual-route, Responses-API body trim, PER_EXEC_CAP 1200→1800, install-mini-swe-agent uv-only path, Harbor mini_swe_agent.py max_tokens budget |
+
+### Files touched (cumulative)
+
+- `src/user_agent/user_enabled_mini_swe_agent.py` (NEW, #191; **local** patches)
+- `src/user_agent/user_enabled_opencode.py` (NEW, #191; #192, #194, #196, #197, #198, #200)
+- `src/user_agent/oauth_proxy.py` (NEW, #191; #192, #196, **local** patches)
+- `src/user_agent/litellm_proxy.py` (NEW, #195; **local** PROXIED_PROVIDER_PREFIXES)
+- `src/user_agent/exec_helpers.py` (**local** PER_EXEC_CAP bump)
+- `src/run_eval.py` (#195; **local** deepseek dual-route)
+- `src/user_agent/repo_diff.py` (#200)
+- `external/harbor/src/harbor/agents/installed/mini_swe_agent.py` (**local** max_tokens budget)
+- `external/harbor/src/harbor/agents/installed/install-mini-swe-agent.sh.j2` (**local** uv-only)
+
+### Empirical signal — before vs. after the cycle
+
+| baseline cohort | symptom | post-fix |
+|---|---|---|
+| `pilot10 × opencode × *` | 49/49 cap events → 0 rescues (#191 → #200) | cap-rescue restores sessionID, multi-turn resumes |
+| `pilot10 × opencode × Opus` | 0 reasoning blocks in 9 trials (#191) | 117+ reasoning tokens per turn (#196 + #197 + Harbor max_tokens) |
+| `pilot10 × opencode × gpt-5.5` | trials never produced dirs (#191) | aiohttp install cascade → runs complete (#194) |
+| `new29 × opencode × MiniMax/GLM` | 10/10 "Unknown provider" exceptions (pre-#195) | masked, routed via litellm_proxy (#195) |
+| `new29 × * × DeepSeek` | 100% 401 invalid x-api-key (pre-local DS fix) | DEEPSEEK_API_KEY native route + no mask (**local**) |
+| `new29 × mini-swe × gpt-5.5 × ubuntu:24.04` | 8/8 empty 41–65b patches with ECONNREFUSED (pre-feb02e55) | 0.10–0.70 reward across reruns |
+| `new29 × * × pi-mono-auto-796a21ab` | 2/3 mini_ds empty cumulative final.patch (pre-#200) | cumulative captures /home/user/repo (rerun verified) |
+
+The benchmark is now mature on six harness × provider × image combinations
+(mini-swe + opencode) × (gpt-5.5 + DeepSeek-v4-pro + Opus 4.6) × (ubuntu /
+comfyui / hyperswitch / sd-scripts / pi-mono bases). v1.0 declares the
+infrastructure stable enough to compare model capabilities rather than
+debug harness symptoms.
+
 ## v0.11.0 — 2026-05-29
 
 **OpenCode wrapper: second native-resume harness.**

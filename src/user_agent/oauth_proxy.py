@@ -574,6 +574,35 @@ def _coalesce_chunks(chunks: list[dict], chat_id: str, model: str) -> dict:
 # /v1/responses passthrough (for clients that already speak Responses API)
 # ──────────────────────────────────────────────────────────────────────
 
+def _truncate_responses_input(body: dict, max_bytes: int = 800_000) -> int:
+    """In-place trim `body['input']` from the head until the serialized body
+    is under `max_bytes`. Returns number of items dropped.
+
+    Why: ChatGPT OAuth's codex/responses backend rejects bodies over ~1MB
+    with `{"error":"bad json: Request Entity Too Large"}` (HTTP 400). Long
+    multi-turn conversations + tool history serialize past that. OpenCode
+    surfaces this as `ContextOverflowError` and tears the whole session
+    down — even though the model's actual context window is fine.
+
+    Strategy: keep `instructions` + `tools` + the last KEEP_TAIL `input`
+    items (recent user/assistant + tool calls), drop older history first.
+    Always preserves at least KEEP_TAIL items, even if that exceeds the
+    budget (we'd rather forward and let upstream 413 than ship an empty
+    conversation).
+    """
+    KEEP_TAIL = 8
+    items = body.get("input")
+    if not isinstance(items, list):
+        return 0
+    dropped = 0
+    while len(items) > KEEP_TAIL:
+        if len(json.dumps(body).encode()) < max_bytes:
+            return dropped
+        items.pop(0)
+        dropped += 1
+    return dropped
+
+
 async def handle_responses(request: web.Request) -> web.StreamResponse:
     """Proxy `POST /v1/responses` straight to ChatGPT's codex backend.
 
@@ -582,12 +611,14 @@ async def handle_responses(request: web.Request) -> web.StreamResponse:
     Chat Completions. We don't need to translate anything — just inject the
     OAuth headers and pipe the SSE stream through.
 
-    Only adjustments to the body:
+    Adjustments to the body:
       - strip any `openai/` / `openrouter/` model prefix to the bare leaf
         (ChatGPT's backend only accepts e.g. `gpt-5.5`, not `openai/gpt-5.5`)
       - if `reasoning.effort` is present without `summary`, add `summary=auto`
-        so reasoning_summary_text.delta events actually fire (same fix we
-        applied to chat_to_responses_body)
+        so reasoning_summary_text.delta events actually fire
+      - inject a minimal `instructions` if missing (codex backend requires it)
+      - truncate `input` history if the serialized body exceeds ~800KB
+        (codex backend rejects bigger bodies with `Request Entity Too Large`)
     """
     auth: AuthCache = request.app["auth"]
     try:
@@ -612,6 +643,11 @@ async def handle_responses(request: web.Request) -> web.StreamResponse:
     # we don't 400 every model call.
     if not body.get("instructions"):
         body["instructions"] = "You are a helpful assistant."
+
+    # Trim oldest history if the body would 413 upstream (see helper docstring).
+    dropped = _truncate_responses_input(body)
+    if dropped:
+        log.warning("responses: trimmed %d oldest input items to fit body size", dropped)
 
     streaming = bool(body.get("stream"))
     response = web.StreamResponse(
@@ -640,8 +676,29 @@ async def handle_responses(request: web.Request) -> web.StreamResponse:
                     body_bytes = await r.read()
                     log.error("upstream %d: %s", r.status, body_bytes[:500])
                     if streaming:
+                        # Emit a properly-typed Responses-API event so the
+                        # client's ai-sdk parser doesn't choke on schema
+                        # validation. Without a `type` field, ai-sdk's
+                        # zod-style validator throws
+                        # "Type validation failed: Value: {error:...}" and
+                        # the whole OpenCode session dies. `response.failed`
+                        # is the documented terminal event for failed runs.
+                        err_payload = body_bytes.decode(errors="replace")[:1000]
+                        failed_event = {
+                            "type": "response.failed",
+                            "response": {
+                                "id": "resp_proxy_error",
+                                "object": "response",
+                                "status": "failed",
+                                "error": {
+                                    "code": f"upstream_{r.status}",
+                                    "message": err_payload,
+                                },
+                            },
+                        }
+                        await response.write(b"event: response.failed\n")
                         await response.write(
-                            f"data: {{\"error\":\"upstream {r.status}\"}}\n\n".encode()
+                            f"data: {json.dumps(failed_event)}\n\n".encode()
                         )
                         await response.write(b"data: [DONE]\n\n")
                     else:

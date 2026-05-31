@@ -43,14 +43,17 @@ TRIAL_BUDGET_SEC = 7200       # 2h. codex+gpt-5.5 is ~3× slower than claude_cod
                               # 2h caps the long-tail without leaving the cohort exposed
                               # to a single 4h task; faster tasks (Opus median 6.5 min, codex
                               # ~20min) are unaffected.
-PER_EXEC_CAP_SEC = 1200       # 20m, was 10m. Codex's longest legit single-exec on hard
-                              # tasks is ~5-10 min (gpt-5.5 reasoning + 20+ shell commands).
-                              # 20m gives ~2× safety margin without leaving truly stuck
-                              # calls to burn the rest of the trial budget.
-                              # (Briefly raised to 30m to accommodate v0.5.2 relaxed-
-                              # trigger sim; reverted because smoke #6 at 30m still
-                              # hit cap on the same turn — raising the cap doesn't
-                              # solve the root cause, just delays it.)
+PER_EXEC_CAP_SEC = 1800       # 30m. Bumped from 1200s (20m) after pilot10 audit found
+                              # 4 trials wrapper-killed at 1200s (mini-Opus cli-task-2f5833
+                              # × 3 reps + mini-GPT cli-task-7e3475 × 1 rep) — Opus medium
+                              # reasoning + Go project exploration genuinely needs >20m
+                              # for turn-0 to write the patch. 30m gives breathing room
+                              # without compromising TRIAL_BUDGET (7200s/1800 = 4 execs
+                              # per trial, still enough for 1 turn-0 + 3 multi-turn).
+                              # The 30m-doesn't-fix-root-cause concern from v0.5.2 was
+                              # about a different failure mode (model genuinely stuck in
+                              # loops); the current cases are simple "slow but progressing"
+                              # which 30m does resolve.
 
 
 @dataclass

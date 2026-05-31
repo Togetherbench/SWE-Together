@@ -12,16 +12,22 @@ PKG_SPEC="mini-swe-agent=={{ version }}"
 PKG_SPEC="mini-swe-agent"
 {% endif %}
 
-if command -v uv >/dev/null 2>&1; then
-    uv tool install --force "$PKG_SPEC"
-else
-    if ! command -v pip >/dev/null 2>&1; then
-        if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && apt-get install -y -qq python3-pip
-        fi
-    fi
-    pip install --user --break-system-packages "$PKG_SPEC" 2>/dev/null || pip install --user "$PKG_SPEC"
+# Prefer `uv tool install` everywhere — it puts mini-swe-agent in an
+# isolated env at ~/.local/share/uv/tools/<pkg>, sidestepping the
+# venv-vs-system Python distinction entirely. Critical for venv-activated
+# images (comfyui-dev, sd-scripts-dev): pip-installed mini-swe-agent inside
+# a venv hits a default-config-path resolution bug
+# (ValueError: PosixPath('.') has an empty name) and dies at CLI startup.
+# When uv is missing, install it (single curl, no system dep) instead of
+# falling back to pip — pip-into-venv is the broken path we are explicitly
+# avoiding.
+if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh -s -- --no-modify-path
+    export PATH="$HOME/.local/bin:$PATH"
 fi
+uv tool install --force "$PKG_SPEC"
+# uv installs the CLI shim into ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
 
 # Ensure mini-swe-agent on PATH for the rest of the trial
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.local/bin/env" 2>/dev/null || true
