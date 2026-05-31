@@ -12,17 +12,34 @@ You are running INSIDE the task's Docker environment as Claude Code. The **oracl
 # Inputs at /tmp/judge_inputs/ — read in this order
 1. `README.md` — task spec; what "completeness" means *(optional — may be empty for tasks that don't ship a README. If empty, lean harder on `user_simulation_prompt.md` + the oracle code state for headline signal.)*
 2. `user_simulation_prompt.md` — what the user *actually* asks across all turns (often richer than README)
-3. `oracle.patch` — the **reference solution** (already applied to /workspace)
-4. **Explore `/workspace`** — see the oracle-applied state in context
+3. `oracle.patch` — the **reference solution** (already applied to /workspace) *(may be EMPTY for tasks whose original sessions had stripped tool_use exports; see fallback path below)*
+4. **Explore `/workspace`** — see the oracle-applied state in context *(if `oracle.patch` is empty, the workspace is in the BUGGY pre-fix state)*
 5. `test.sh` — the verifier (you may run it to see which F2P tests the oracle satisfies)
+6. `user_dialogue.md` *(only present when `oracle.patch` is empty)* — pre-extracted per-turn user intents (kind = request / question / workflow / correction) + verbatim user messages from the original session. THIS is your primary source of "what completion looks like" when the oracle solution isn't available.
 
 # Your job (Phase 1 — DECOMPOSE ONLY, do not score anything)
+
+**Mode A — oracle.patch is non-empty (typical):**
 
 1. **Read `README.md` if present** → understand the task's headline ask. (Empty file ⇒ derive headline ask from `user_simulation_prompt.md` Turn 0 + the oracle's primary code changes.)
 2. **Read `user_simulation_prompt.md`** → understand what the user asked across all turns. Multi-turn follow-ups are common.
 3. **Read `oracle.patch`** + **explore `/workspace`** → see what behavior the reference solution achieves. Use `Grep`/`Read` to inspect the changed files in context.
 4. **Optionally run `test.sh`** to see which F2P tests pass on the oracle state — gives empirical grounding for what "solved" means.
 5. **Decompose the task** into `completeness_goals` with tiers + weights. Cite real file:line locations from the oracle when possible (helps Phase 2 verify).
+
+**Mode B — `oracle.patch` is empty (no canonical, stripped-export task):**
+
+These tasks have NO reconstructable diff (the original session's tool_use inputs were saved as bare strings). The workspace is in the BUGGY pre-fix state, so don't treat it as evidence of the correct fix. Derive goals from user intent + tests:
+
+1. **Read `README.md` + `user_simulation_prompt.md`** as usual.
+2. **Read `user_dialogue.md`** — this is the authoritative source. Each `intent_<N>` block is a user turn's intent classified by `kind`:
+   - `request` → the user is asking the agent to implement / fix / change something. These are the **primary candidates for `core` and `secondary` goals**.
+   - `question` → the user is asking the agent to inspect / verify / report. Usually NOT a goal unless the user later requests the answer to be implemented.
+   - `correction` → the user is fixing or steering the agent's previous response. Strong signal of "must-have" behavior; promote to `core` if the correction is about the headline ask.
+   - `workflow` → setup / git / scaffolding plumbing. Rarely a graded goal unless the user explicitly cares.
+3. **Read `test.sh` + `tests/`** — the F2P tests encode "what completion empirically means" for this task. Use them as the strongest signal for which intents must be satisfied: every F2P test should map to (or be implied by) at least one `completeness_goal`. The `goal.rationale` should cite the test name when a goal corresponds to an F2P check.
+4. **Explore the buggy workspace** with Grep/Read for context on file shapes / framework / language. DO NOT treat the buggy state as the correct fix — it's the starting point the agent had to change.
+5. **Decompose** into goals. Without a reference solution, prefer fewer + broader goals (1–4 cores, 0–3 secondaries, 0–1 polish) over many narrow ones — the lack of a concrete oracle makes fine-grained slicing speculative. Each `goal.rationale` should cite the `intent_<N>` block(s) + test name(s) it derives from.
 
 # Grading schema
 

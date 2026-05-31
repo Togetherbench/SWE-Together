@@ -94,6 +94,13 @@ class JudgeInputs:
     # Phase-2 only: the FROZEN rubric JSON content (Phase 1's output, read from
     # harbor_tasks/<task>/canonical_goals.json on the host and passed in here).
     canonical_goals_json: str = ""
+    # Phase-1 fallback only: condensed user dialogue (oracle_intents.json +
+    # verbatim user turns from oracle_session.jsonl). Used when `oracle_patch`
+    # is empty — some tasks have `_status: no_canonical` with stripped tool_use
+    # inputs, so we have the conversation but no reconstructable diff. Phase 1
+    # then derives goals from the user's stated intent + test.sh + the
+    # buggy-state workspace, instead of from an oracle solution.
+    user_dialogue: str = ""
 
 
 JUDGE_MODEL_CLAUDE = "claude-opus-4-6"
@@ -222,6 +229,11 @@ async def run_judge_in_e2b(
         # the patched workspace.
         patch_to_apply = inputs.oracle_patch if inputs.phase == 1 else inputs.agent_patch
         await sb.files.write("/tmp/agent.patch", patch_to_apply)
+        # Phase-1 with no oracle patch still needs the repo discovery (the
+        # judge's first_message references {repo_hint}), but the apply step
+        # should be a no-op — the workspace stays in the buggy state and the
+        # judge derives goals from user_dialogue.md + test.sh expectations.
+        skip_apply = inputs.phase == 1 and not patch_to_apply.strip()
         # Repo discovery (mirrors PR #170 in src/user_agent/user_enabled_claude_code.py):
         # the original `cd /workspace; find . -maxdepth 3 -name .git` missed 29
         # tasks whose Dockerfiles clone outside /workspace (/opt/<name>,
@@ -246,8 +258,15 @@ async def run_judge_in_e2b(
             # safe.directory='*' lets root run git on repos owned by `agent`
             # (uid 1001) without "dubious ownership" errors. Common for tasks
             # at /home/agent/<repo> or /workspace/<sub>/ chowned to agent.
-            'git -c safe.directory="*" apply --whitespace=nowarn /tmp/agent.patch && '
-            'chmod -R a+rwX "$REPO" 2>/dev/null || true',
+            + (
+                # No-apply branch: just discover the repo, chmod for judge read
+                # access. Used for Phase-1 tasks with no canonical oracle patch.
+                'chmod -R a+rwX "$REPO" 2>/dev/null || true'
+                if skip_apply
+                else
+                'git -c safe.directory="*" apply --whitespace=nowarn /tmp/agent.patch && '
+                'chmod -R a+rwX "$REPO" 2>/dev/null || true'
+            ),
             timeout=120, user="root",
         )
         if apply.exit_code != 0:
@@ -422,6 +441,11 @@ if __name__ == "__main__":
         await sb.files.write(f"{inputs_dir}/README.md", inputs.readme)
         await sb.files.write(f"{inputs_dir}/user_simulation_prompt.md", inputs.user_sim_prompt)
         await sb.files.write(f"{inputs_dir}/oracle.patch", inputs.oracle_patch)
+        # Phase-1 fallback file: present only for tasks without an oracle patch.
+        # When non-empty, the Phase 1 first_message redirects the judge to read
+        # this instead of /tmp/judge_inputs/oracle.patch.
+        if inputs.user_dialogue:
+            await sb.files.write(f"{inputs_dir}/user_dialogue.md", inputs.user_dialogue)
         # In phase=2 we do NOT need agent.patch as an input (it's already on disk
         # under /workspace), but we DO need the FROZEN rubric. In phase=1 we
         # need oracle.patch as reference reading material (it's also already
@@ -456,15 +480,37 @@ if __name__ == "__main__":
         # First message varies by phase. In phase=1 we instruct the judge to
         # decompose into a rubric; in phase=2 we point it at the frozen rubric.
         if inputs.phase == 1:
-            first_message = (
-                f"Begin by reading {inputs_dir}/README.md and "
-                f"{inputs_dir}/user_simulation_prompt.md to understand the task. "
-                f"Then read {inputs_dir}/oracle.patch (the reference solution, "
-                f"already applied to {repo_hint}) and explore the workspace. "
-                f"You may run the canonical test.sh to see which F2P tests the "
-                f"oracle satisfies. Decompose the task into completeness goals "
-                f"and write the FROZEN rubric to {inputs_dir}/canonical_goals.json."
-            )
+            if inputs.oracle_patch.strip():
+                first_message = (
+                    f"Begin by reading {inputs_dir}/README.md and "
+                    f"{inputs_dir}/user_simulation_prompt.md to understand the task. "
+                    f"Then read {inputs_dir}/oracle.patch (the reference solution, "
+                    f"already applied to {repo_hint}) and explore the workspace. "
+                    f"You may run the canonical test.sh to see which F2P tests the "
+                    f"oracle satisfies. Decompose the task into completeness goals "
+                    f"and write the FROZEN rubric to {inputs_dir}/canonical_goals.json."
+                )
+            else:
+                # No diffable oracle patch — fall back to user-intent dialogue.
+                # The workspace is in the BUGGY state (no oracle applied), so
+                # the judge derives goals from what the user asked across turns
+                # + test.sh's F2P expectations, not from any concrete solution.
+                first_message = (
+                    f"Begin by reading {inputs_dir}/README.md and "
+                    f"{inputs_dir}/user_simulation_prompt.md to understand the task. "
+                    f"This task has NO canonical oracle patch (the original session's "
+                    f"tool_use inputs were stripped of diffable content). Instead, "
+                    f"read {inputs_dir}/user_dialogue.md which contains: (a) the "
+                    f"per-turn user intents extracted from the original session, and "
+                    f"(b) the verbatim user messages. Derive goals from what the user "
+                    f"explicitly asked for + corrections they made + tests in "
+                    f"{inputs_dir}/test.sh — those F2P tests are the empirical "
+                    f"definition of 'completed'. The workspace at {repo_hint} is in "
+                    f"the BUGGY pre-fix state (no oracle applied), so use it for "
+                    f"context on the codebase shape but not as evidence of the "
+                    f"correct fix. Decompose into completeness goals and write the "
+                    f"FROZEN rubric to {inputs_dir}/canonical_goals.json."
+                )
         elif inputs.phase == 2:
             first_message = (
                 f"Begin by reading {inputs_dir}/canonical_goals.json — this is "

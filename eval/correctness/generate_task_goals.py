@@ -99,6 +99,65 @@ def load_tests_files(task_dir: Path) -> dict[str, bytes]:
     return out
 
 
+def load_user_dialogue_fallback(task_dir: Path) -> str:
+    """Assemble a no-oracle-patch fallback context for Phase 1.
+
+    Some tasks (`_status: no_canonical` with `_category: stripped_export`) have
+    no diffable oracle patch — the original session export stripped tool_use
+    inputs to bare strings, leaving the conversation intact but no
+    reconstructable diff. For these, build goals from the user's stated intent
+    instead: `oracle_intents.json` (pre-extracted per-turn user
+    requests/corrections/questions) plus a concise dump of each user message
+    from `oracle_session.jsonl`.
+
+    Returns an empty string if no fallback sources are available.
+    """
+    parts: list[str] = []
+
+    intents_path = task_dir / "oracle_intents.json"
+    if intents_path.exists():
+        try:
+            intents = json.loads(intents_path.read_text())
+            parts.append(
+                "# Per-turn user intents (extracted from session)\n\n"
+                f"Schema: {intents.get('schema_version', '?')}, "
+                f"n_oracle_turns_in: {intents.get('n_oracle_turns_in', '?')}\n\n"
+            )
+            for it in (intents.get("intents") or []):
+                parts.append(
+                    f"## intent_{it.get('intent_id')} "
+                    f"(turn {it.get('source_turn')}, kind={it.get('intent_kind')})\n"
+                    f"  {it.get('text', '').strip()}\n"
+                    f"  (verbatim: \"{(it.get('verbatim_excerpt') or '').strip()[:200]}\")\n"
+                )
+        except Exception as e:
+            log.warning("oracle_intents.json load failed for %s: %s", task_dir.name, e)
+
+    sess_path = task_dir / "oracle_session.jsonl"
+    if sess_path.exists():
+        try:
+            user_msgs: list[str] = []
+            with open(sess_path) as f:
+                for i, line in enumerate(f):
+                    if i == 0:  # header
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    msg = (d.get("user_message") or "").strip()
+                    if msg:
+                        # Cap each message to keep total input bounded
+                        user_msgs.append(f"## Turn {d.get('turn', '?')}\n{msg[:2000]}")
+            if user_msgs:
+                parts.append("\n# Verbatim user turns (from oracle_session.jsonl)\n\n")
+                parts.append("\n\n".join(user_msgs))
+        except Exception as e:
+            log.warning("oracle_session.jsonl turn dump failed for %s: %s", task_dir.name, e)
+
+    return "".join(parts)
+
+
 def build_inputs(task_dir: Path) -> JudgeInputs | None:
     """Assemble JudgeInputs for phase-1 (decomposition) on this task."""
     readme = (task_dir / "README.md").read_text() if (task_dir / "README.md").exists() else ""
@@ -106,9 +165,24 @@ def build_inputs(task_dir: Path) -> JudgeInputs | None:
     user_sim = usp.read_text() if usp.exists() else ""
 
     oracle = load_oracle_patch(task_dir)
+    user_dialogue = ""
     if not oracle:
-        log.warning("skip %s: no oracle patch (oracle_session.jsonl/reference_patch.json missing or empty)", task_dir.name)
-        return None
+        # Fallback path: no diffable oracle, but we still have the user's
+        # stated intent. Reconstruct goals from oracle_intents.json + verbatim
+        # session turns. Phase 1 prompt branches on whether oracle.patch is
+        # empty to decide which input to lean on.
+        user_dialogue = load_user_dialogue_fallback(task_dir)
+        if not user_dialogue:
+            log.warning(
+                "skip %s: no oracle patch AND no oracle_intents.json or "
+                "oracle_session.jsonl turns to fall back to",
+                task_dir.name,
+            )
+            return None
+        log.info(
+            "%s: oracle patch missing — building rubric from user-intent fallback (%d chars)",
+            task_dir.name, len(user_dialogue),
+        )
 
     test_sh = (task_dir / "tests" / "test.sh")
     test_sh_text = test_sh.read_text() if test_sh.exists() else ""
@@ -122,6 +196,7 @@ def build_inputs(task_dir: Path) -> JudgeInputs | None:
         system_prompt=PHASE1_PROMPT,
         tests_files=load_tests_files(task_dir),
         phase=1,
+        user_dialogue=user_dialogue,
     )
 
 
