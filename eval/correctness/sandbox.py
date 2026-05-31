@@ -149,16 +149,25 @@ async def run_judge_in_e2b(
         codex_auth_blob = codex_auth_path.read_text()
         log.info("judge auth: codex via host ~/.codex/auth.json (ChatGPT OAuth)")
     elif judge_via_or and or_api_key:
-        # Cannot point claude CLI directly at OR — CC client-side validates the
-        # model via GET /v1/models/<name> and OR returns 404 there. Instead we
-        # boot an in-sandbox proxy on localhost:4210 (started after the sandbox
-        # exists, below) and point CC there; the proxy returns 200 for /v1/models
-        # probes and forwards POST /v1/messages to OR after rewriting the model.
-        auth_envs["ANTHROPIC_BASE_URL"] = "http://localhost:4210"
-        # CC requires *some* API key env var — value doesn't matter (proxy injects
-        # the real OR key on forward). Use a sentinel so it's obvious in logs.
-        auth_envs["ANTHROPIC_API_KEY"] = "or-proxy-placeholder"
-        log.info("judge auth: claude --print → localhost:4210 → OpenRouter (in-sandbox proxy)")
+        # Direct OR routing per
+        # https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration
+        # CC accepts ANTHROPIC_AUTH_TOKEN (vs ANTHROPIC_API_KEY) without doing the
+        # strict /v1/models/<name> pre-flight that blocked the legacy proxy-stub
+        # approach. Required env tuple:
+        #   ANTHROPIC_BASE_URL = https://openrouter.ai/api
+        #   ANTHROPIC_AUTH_TOKEN = <OR-key>
+        #   ANTHROPIC_API_KEY   = "" (MUST be empty — non-empty here breaks auth)
+        # Model names use OR's dot notation (anthropic/claude-opus-4.6 NOT -4-6).
+        auth_envs["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
+        auth_envs["ANTHROPIC_AUTH_TOKEN"] = or_api_key
+        auth_envs["ANTHROPIC_API_KEY"] = ""
+        or_target = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
+        # CC resolves per-tier model from these env vars; pin all three to the
+        # same OR slug so any model-tier dispatch routes correctly.
+        auth_envs["ANTHROPIC_DEFAULT_OPUS_MODEL"] = or_target
+        auth_envs["ANTHROPIC_DEFAULT_SONNET_MODEL"] = or_target
+        auth_envs["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = or_target
+        log.info("judge auth: claude --print → OpenRouter direct (model=%s)", or_target)
     elif api_key:
         auth_envs["ANTHROPIC_API_KEY"] = api_key
     else:
@@ -301,11 +310,10 @@ async def run_judge_in_e2b(
                 )
             log.info("claude-code resolved at: %s", recheck.stdout.strip())
 
-        # 2b. If routing through OpenRouter, upload + start the in-sandbox proxy.
-        # Listens on localhost:4210; handles GET /v1/models/<name> (claude CLI's
-        # client-side probe) and POST /v1/messages (rewrites model field to the
-        # OR slug and forwards to https://openrouter.ai/api/v1/messages).
-        if judge_via_or and or_api_key:
+        # 2b. Legacy in-sandbox OR proxy — superseded by direct routing per
+        # OR's claude-code cookbook. Kept guarded by a deprecated flag for
+        # backwards-compat with any one-off experiments that still set it.
+        if judge_via_or and or_api_key and os.environ.get("JUDGE_OR_USE_LEGACY_PROXY") == "1":
             or_target_model = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
             proxy_script = '''#!/usr/bin/env python3
 """Minimal OR proxy: GET /v1/models/<*> → 200, POST /v1/messages → rewrite model + forward."""
@@ -525,16 +533,13 @@ if __name__ == "__main__":
                 f"-- {shlex.quote(full_instruction)}"
             )
         else:
-            # When routing through OR, claude CLI talks to the in-sandbox proxy
-            # which rewrites the model field to whatever JUDGE_OR_MODEL specifies.
-            # CC validates client-side via GET /v1/models/<name>, and the proxy
-            # returns 200 for ANY name, so we can pass a CC-recognized name
-            # (avoids any CC allowlist checks) — the actual OR model is set by
-            # JUDGE_OR_MODEL (default anthropic/claude-opus-4.6).
+            # When routing through OR, pass the OR-formatted slug directly.
+            # CC honors ANTHROPIC_AUTH_TOKEN auth with no /v1/models pre-flight,
+            # so the model name is forwarded as-is to OR (no rewriting needed).
             if judge_via_or:
                 or_target = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
                 judge_model_label = f"or:{or_target}"
-                claude_model = JUDGE_MODEL_CLAUDE  # opus-4-6, proxy rewrites on POST
+                claude_model = or_target  # OR's dot notation, e.g. anthropic/claude-opus-4.6
             else:
                 judge_model_label = JUDGE_MODEL_CLAUDE
                 claude_model = JUDGE_MODEL_CLAUDE
@@ -580,7 +585,9 @@ if __name__ == "__main__":
         result.exit_code = exit_code
         result.stdout = stdout
         result.stderr = stderr
-        log.info("judge exit=%s stdout_len=%d", result.exit_code, len(result.stdout))
+        log.info("judge exit=%s stdout_len=%d stdout_tail=%r stderr_tail=%r",
+                 result.exit_code, len(result.stdout),
+                 result.stdout[-400:], (result.stderr or "")[-300:])
 
         # 4. Pull output file. Phase 1 writes canonical_goals.json; phase 2 +
         # legacy single-pass mode both write verdict.json.
