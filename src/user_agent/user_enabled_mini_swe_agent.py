@@ -239,11 +239,21 @@ class UserEnabledMiniSweAgent(BaseAgent):
             source_path=staged_proxy, target_path="/tmp/oauth_proxy.py",
         )
         # mini-swe-agent install brings in aiohttp + httpx as litellm/openai
-        # deps, so python3 /tmp/oauth_proxy.py just works. Start as daemon
-        # and wait for /health.
+        # deps, BUT they land in uv's isolated tool venv
+        # (~/.local/share/uv/tools/mini-swe-agent/lib/python3.12/site-packages/)
+        # which system `python3` cannot see. Bare ubuntu:24.04 images (moltis,
+        # cli-task-c425e4, rudel, cli-task-4a9dde, amytis) have no aiohttp in
+        # system site-packages → `python3 /tmp/oauth_proxy.py` dies immediately
+        # with ModuleNotFoundError, leaving port 4220 closed and every LiteLLM
+        # call returning "OpenAIException - Connection error". ComfyUI/hyperswitch
+        # bases ship aiohttp in system Python (used by their web servers) so
+        # those tasks happened to work. Fix: run oauth_proxy via mini-swe-agent's
+        # bundled venv Python which is guaranteed to have aiohttp.
         start_cmd = (
             'export PATH="$HOME/.local/bin:$PATH"; '
-            "nohup python3 /tmp/oauth_proxy.py "
+            'PROXY_PY="$HOME/.local/share/uv/tools/mini-swe-agent/bin/python"; '
+            '[ -x "$PROXY_PY" ] || PROXY_PY=python3; '
+            'nohup "$PROXY_PY" /tmp/oauth_proxy.py '
             "  --port 4220 --auth-json /tmp/codex-auth.json "
             "  > /tmp/oauth_proxy.log 2>&1 & "
             "for i in $(seq 1 20); do "
