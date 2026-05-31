@@ -98,3 +98,8 @@ RUN su - agent -c 'git config --global user.email "agent@test.com" && git config
 RUN cd /workspace && git init -q && git add -A 2>/dev/null && git -c user.email=t@e -c user.name=t commit -q -m "baseline" || true
 
 WORKDIR /workspace
+
+# Drop back to agent so claude-code's --dangerously-skip-permissions accepts
+# (it refuses to run as root for security). Final setup steps above (rm
+# AGENTS.md, git init/config) all needed root; runtime work runs as agent.
+USER agent
