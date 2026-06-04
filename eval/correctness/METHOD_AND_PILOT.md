@@ -654,7 +654,7 @@ For each task we compute σ (sample standard deviation) across cohorts for live 
 - New files:
   - `eval/agentic/clean_replay.py` — minimal sandbox-replay tool (no LLM): apply patch, run test.sh at `/logs/verifier/`, write `reward.replay.txt`
   - `eval/correctness/METHOD_AND_PILOT.md` — this document (renamed and moved from `analysis/JUDGE_VS_TESTSH_PILOT.md`; sim case studies extracted to `eval/intent_coverage/METHOD_AND_PILOT.md`)
-  - `task_list_judge_compare.txt` — the seed=42 stratified random task selection (10 tasks)
+  - **seed=42 stratified random task selection (10 tasks)**: `cli-task-2a55af, cli-task-2f5833, cli-task-46c118, cli-task-7e3475, cli-task-f76665, cluefin-task-52eab9, comfyui-frontend-autoscale-layout, gemini-voyager-task-18a6ae, rudel-task-468289, sd-scripts-reg-image-dedup`
 
 ### Trial archives (uploaded to release v0.5.0)
 
@@ -679,9 +679,9 @@ ls trials_deepseek_pilot_10_task_r1/
 
 ```bash
 # 1. 30-trial run (use WORKERS=5 × 3 cohorts; WORKERS=10 × 3 will hit E2B account cap)
-# task_list_judge_compare.txt swaps cli-task-4a9dde→cli-task-7e3475 and
+# This 10-task set swaps cli-task-4a9dde→cli-task-7e3475 and
 # rudel-task-d64e5a→rudel-task-468289 vs. the original seed=42 draw (see issue #159)
-TASKS=$(tr '\n' ',' < task_list_judge_compare.txt | sed 's/,$//')
+TASKS=cli-task-2a55af,cli-task-2f5833,cli-task-46c118,cli-task-7e3475,cli-task-f76665,cluefin-task-52eab9,comfyui-frontend-autoscale-layout,gemini-voyager-task-18a6ae,rudel-task-468289,sd-scripts-reg-image-dedup
 for i in 1 2 3; do
   uv run python src/run_eval.py \
     --model deepseek/deepseek-v4-pro \

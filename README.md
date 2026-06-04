@@ -121,7 +121,7 @@ If you want to drive a single cohort by hand without the state machine:
 # Scout / pilot: Step 0 only, k=1
 DEEPSEEK_API_KEY=<key> uv run python src/run_eval.py \
     --model deepseek/deepseek-v4-flash --tag ds_flash_pilot \
-    --tasks $(cat task_list_judge_compare.txt | tr '\n' ',') \
+    --tasks cli-task-2a55af,cli-task-2f5833,cli-task-46c118,cli-task-7e3475,cli-task-f76665,cluefin-task-52eab9,comfyui-frontend-autoscale-layout,gemini-voyager-task-18a6ae,rudel-task-468289,sd-scripts-reg-image-dedup \
     --workers 10
 
 # Canonical: Step 0 (×k) + Step 1+2+3 over the trial dirs
