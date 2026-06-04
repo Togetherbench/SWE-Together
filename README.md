@@ -1,6 +1,6 @@
 # SWE-Together
 
-A benchmark derived from real multi-turn coding sessions, measuring **coding agent performance under iterative user correction** — the loop that single-turn benchmarks ignore.
+A benchmark derived from real multi-turn coding sessions, measuring **coding agent performance under iterative user interaction** — the loop that single-turn benchmarks ignore.
 
 **Live traces:** [traces.togetherbench.com](https://traces.togetherbench.com/jobs/trials)
 
@@ -26,7 +26,7 @@ Task prompt → Solution           Task prompt → Agent attempt
 
 ## Benchmark
 
-**166 tasks** under `harbor_tasks/` (trunk), all derived from **real recorded coding sessions** across four sourcing waves. Current per-source breakdown (canonical-patch source attribution, post 2026-05-16 integrity pass):
+**165 tasks** under `harbor_tasks/` (trunk), all derived from **real recorded coding sessions** across four sourcing waves. Current per-source breakdown:
 
 | source | count | wave |
 |---|---|---|
@@ -39,71 +39,15 @@ Task prompt → Solution           Task prompt → Agent attempt
 | cc-backend, dataclaw | 2 each | DataClaw |
 | reigh-*, gemini-voyager-*, rudel-*, marin-*, moltis-*, nunchaku-*, etc. | 34 | DataClaw (`peteromallet/dataclaw` publishers, repos with 20+ GitHub stars) |
 
-Of the 166, **144 have a real canonical patch** + **22 are `no_canonical` stubs** (older DataClaw bare-string exporter, pi-mono Hashline format, etc. — fundamentally not extractable from session replay). Stubs still ship; they measure how well the user-sim can recover the agent with no canonical anchor.
+Of the 165, **142 have a real canonical patch** + **22 are `no_canonical` stubs** (older DataClaw bare-string exporter, pi-mono Hashline format, etc. — fundamentally not extractable from session replay) + **1 awaits oracle extraction** (`pi-mono-keybinding-scope`). Stubs still ship; they measure how well the user-sim can recover the agent with no canonical anchor.
 
 No synthetic tasks. Each task has a Docker environment, a natural-language instruction (**the real user's first non-trivial message, byte-verbatim modulo PII redaction**, CI-enforced via [`tests/test_instruction_verbatim.py`](tests/test_instruction_verbatim.py)), and a deterministic verifier. Two verifier families coexist:
 
 - **Manifest F2P/P2P** (122 tasks): per-task `tests/test_manifest.yaml` with `F2P` and `P2P_REGRESSION`/`P2P` gates. The target scoring semantics are unweighted F2P coverage with bounded P2P penalty, computed centrally from `gates.json`; legacy weighted-replace and `P2P_GATING` verifiers are being migrated.
 - **SWE-rebench-style** (68 tasks): per-task `tests/install_config.json` declares `test_cmd` + `FAIL_TO_PASS` + `log_parser`. The verifier runs the test command, parses stdout with one of 76 log parsers vendored from [SWE-rebench-V2](https://github.com/swerebench/swerebench-v2) (MIT), and scores by `FAIL_TO_PASS` pass rate. See `data-pipeline/scaffold/build_swerebench_configs.py`.
 
-The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop. Headline metric is **multi-turn gain = Final − T0**, scored at three checkpoints (`nop`, `after_instruction`, `after_user_turn_N`).
+The key differentiator: an **LLM-powered user simulator** (Gemini 3.1 Pro by default) watches the agent work and injects corrections, redirects, and new requirements based on the original session's ground truth — recreating the multi-turn correction loop.
 
-### Results — `togetherbench@0.4.4.3` (6 models, 932 unique (model, task) pairs)
-
-> **Benchmark version:** `togetherbench@0.4.4.3` (173 tasks, user sim v0.6.0, CC v2.1.108). Full numbers + audit notes in `analysis/V044_RELEASE_NOTES.md`.
->
-> **Note:** numbers below are from the v0.4.4.3 snapshot, NOT the current v0.4.5.0 trunk. The data-integrity release (instruction.md verbatim enforcement + 4 broken-canonical fixes + 3 Codex recoveries) will require re-running cohorts before producing a v0.4.5.0 leaderboard. Results are tied to a specific benchmark version — always reference the version when citing.
-
-**Headline** — per-(model, task) deduped, latest trial wins, audit-excluded trials filtered (162 DeepSeek HTTP 402 billing failures + 38 rate-limit-corrupted; see "Audit findings" below):
-
-| rank | model              | provider                                | mean       | n_tasks | nonzero |
-|------|--------------------|-----------------------------------------|------------|---------|---------|
-| 1    | **DeepSeek V4 Pro**   | `deepseek/deepseek-v4-pro`           | **0.4013** | 169     | 120     |
-| 2    | **Opus 4.6**          | `anthropic/claude-opus-4-6` (subscription) | **0.3922** | 167  | 112     |
-| 3    | MiniMax M2.7          | `minimaxd/MiniMax-M2.7`               | 0.3690     | 169     | 114     |
-| 4    | **DeepSeek V4 Flash** | `deepseek/deepseek-v4-flash`          | **0.3660** | 170     | 112     |
-| 5    | MiniMax M2.5          | `minimaxd/MiniMax-M2.5`               | 0.3426     | 167     | 109     |
-| 6    | GLM 5.1               | `glmd/glm-5.1` (z.ai direct)          | 0.3408     | 79      | 47      |
-
-**Apples-to-apples — 166 tasks attempted by ≥5 of 6 models**:
-
-| rank | model              | mean       | n_tasks |
-|------|--------------------|------------|---------|
-| 1    | DeepSeek V4 Pro    | **0.3917** | 166     |
-| 2    | Opus 4.6           | **0.3888** | 165     |
-| 3    | DeepSeek V4 Flash  | 0.3610     | 166     |
-| 4    | MiniMax M2.7       | 0.3592     | 166     |
-| 5    | MiniMax M2.5       | 0.3361     | 165     |
-| 6    | GLM 5.1            | 0.3313     | 76      |
-
-**Strict 6/6 — 74 tasks all 6 models attempted**:
-
-| rank | model              | mean       |
-|------|--------------------|------------|
-| 1    | DeepSeek V4 Pro    | **0.4111** |
-| 2    | Opus 4.6           | 0.4089     |
-| 3    | DeepSeek V4 Flash  | 0.4003     |
-| 4    | MiniMax M2.7       | 0.3795     |
-| 5    | MiniMax M2.5       | 0.3734     |
-| 6    | GLM 5.1            | 0.3267     |
-
-Top three (DS Pro, Opus, DS Flash) are within **0.011** on the strict 6/6 set — statistical tie within bootstrap noise.
-
-### Audit findings (v0.4.4.3 vs v0.4.4.2)
-
-A systematic audit of all 13 cohort dirs uncovered two systematic biases:
-
-| issue | trials excluded | impact |
-|---|---|---|
-| **DeepSeek HTTP 402 "Payment Required"** (DS Pro/Flash swerb runs hit during a billing window) | **162** (84 DS Pro + 81 DS Flash, 35% of swerb each, both `_v043` cohorts unaffected) | DS means lifted +0.07–0.10; DS Pro now leads, DS Flash jumps from #6 → #4 |
-| **Rate-limit corruption** (≥10 `api_retry` events + reward 0; CC fabricates after 10 retries per CLAUDE.md) | 38 (GLM 35, MM 2.5 2, MM 2.7 1) | GLM was the obvious case (#6 → #4 vs the original v0.4.4.1 numbers); MM cohorts barely moved |
-
-Pre-fix, DS was systematically depressed by silent billing failures. The v0.4.4.3 leaderboard above already has these exclusions baked in — see `analysis/V044_RELEASE_NOTES.md` for the full per-cohort audit table.
-
-> **Anthropic OAuth path (subscription billing, free under Claude Pro/Max plan):**
-> Opus 4.6 trials in this release used `claude setup-token` to generate a long-lived `sk-ant-oat01-...` token, exported as `CLAUDE_CODE_OAUTH_TOKEN`. The patched `src/run_eval.py:build_agent_env` detects the `oat01` prefix and routes via `Authorization: Bearer` (the Anthropic API rejects OAuth tokens via the `x-api-key` header). It also pops `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` from `os.environ` so Harbor's `claude_code` adapter doesn't leak them into the sandbox. See "Anthropic subscription billing" in `analysis/V044_RELEASE_NOTES.md` for the full mechanic.
-
----
 
 ## Quick Start
 
@@ -115,9 +59,11 @@ cd SWE-Together
 
 # Install dependencies (use uv, not pip)
 uv sync
-```
 
-Pin to a release tag (`git checkout v0.4.4.3` for the published leaderboard, `v0.4.5.0` once tagged for the latest data-integrity trunk) when reproducing numbers — the task set, user simulator, and test scripts evolve.
+# Configure env — required keys live in .env at the repo root
+cp .env.example .env   # create one if missing
+# Then populate the keys you need (see "Environment" below).
+```
 
 ### Canonical eval pipeline (always use this path)
 
@@ -137,9 +83,39 @@ Headline ranking lives in `judge_score` (Step 1), filtered by the Step-2 clean r
 
 **Replicate count (`k`):**
 - **Pilot / scout runs: `k=1` is fine** — fastest signal on whether infra is healthy (no auth/rate-limit/sandbox issues), what the empty-patch rate looks like post-#159, which tasks are broken vs. saturating.
-- **Canonical leaderboard: `k=3` minimum** (`k=5` for paper-quality variance bars). Per `eval_design.md` §"Filter protocol (step 2)", the clean filter operates within the k replicates of each (task, agent) pair, so k=1 gives you no variance estimate and no filtering signal.
+- **Canonical leaderboard: `k=3` minimum**. Per `eval_design.md` §"Filter protocol (step 2)", the clean filter operates within the k replicates of each (task, agent) pair, so k=1 gives you no variance estimate and no filtering signal.
 
 **Don't conflate `src/run_eval.py` output with canonical eval.** If someone says "we ran the eval," ask which: Step 0 only (`reward.txt`), or Step 0 + `eval/run_eval.py` (`judge_verdict.json` + aggregates). Only the latter is leaderboard-grade.
+
+#### Recommended driver: plan JSON + canonical launcher
+
+A canonical run is a matrix of (model × replicate × task) cells. Declare it once as a plan JSON; let the state-machine driver figure out what's done, what's missing, and what to launch next:
+
+```bash
+# 1) See what would launch (dry-run — also runs env preflight per cohort)
+python scripts/canonical_launch_lite.py
+
+# 2) Launch Step 0 for every cohort that still has missing cells
+python scripts/canonical_launch_lite.py --launch step0
+
+# 3) After Step 0 finishes across replicates, launch Step 1+2+3 per model
+python scripts/canonical_launch_lite.py --launch eval
+
+# 4) Both in one shot (drives until all 1260 cells are at STEP3_DONE)
+python scripts/canonical_launch_lite.py --launch all
+
+# 5) Watch progress
+python scripts/canonical_status.py scripts/canonical_plan_lite70.json
+
+# 6) Optional: batch infra audit over the trials root
+python scripts/canonical_launch_lite.py --audit-after
+```
+
+The plan ([`scripts/canonical_plan_lite70.json`](scripts/canonical_plan_lite70.json)) declares 70 tasks × 6 cohorts × 3 reps = 1,260 cells. The state machine ([`src/canonical_tracker.py`](src/canonical_tracker.py)) classifies each cell as `NOT_STARTED` / `STEP0_INFRA_FAIL` / `STEP0_OK` / `STEP1_DONE` / `STEP2_DONE` / `STEP3_DONE` by reading disk, and re-running the launcher only acts on cells that still need work — `--skip-existing` is sentinel-aware, so infra-failed trials are auto-rerun. Single source of truth: edit the plan to change task list, model routing, workers, etc.; the launcher reads it directly.
+
+#### Manual invocation (debugging / one-off)
+
+If you want to drive a single cohort by hand without the state machine:
 
 ```bash
 # Scout / pilot: Step 0 only, k=1
@@ -211,36 +187,6 @@ ANTHROPIC_API_KEY=<key> uv run python src/runner.py \
 
 Trial output: `trials/<task>__<id>/verifier/reward.txt`.
 
-### Building / updating the leaderboard
-
-**Canonical path (v0.5.0 onward):** the per-task / per-cohort aggregates emitted by `eval/run_eval.py` (see "Canonical eval pipeline" above) ARE the leaderboard. Run it across all cohorts' k replicates and read the resulting `pipeline_logs/<run>/per_task_*.json` + summary Markdown. No separate "build leaderboard" step exists for the canonical pipeline — aggregation is baked into `eval/run_eval.py`.
-
-**Legacy path (v0.4.4.x and earlier):** built by `scripts/finalize_v044.sh`, which ranks on `verifier/reward.txt` (Step 0 fidelity) instead of `judge_score`. Still works for reproducing pre-v0.5.0 numbers:
-1. Replays every captured agent patch against the current `harbor_tasks/*/tests/test.sh` in fresh E2B sandboxes (no model re-runs)
-2. Per-(model, task) deduplicates using the latest trial by `result.json::started_at`
-3. Excludes rate-limit-corrupted trials (≥10 `api_retry` events + reward 0) and DeepSeek HTTP 402 billing failures
-4. Writes `analysis/v044_leaderboard.json` with `headline_latest` + `apples_to_apples_5_of_6` + `apples_to_apples_6_of_6`
-5. Optionally tarballs each cohort dir and uploads to GitHub release
-
-```bash
-# Full pipeline (replay + leaderboard rebuild + tarball + GitHub upload)
-bash scripts/finalize_v044.sh
-
-# Skip the replay (use on-disk reward.txt as-is) — useful when integrating new fill cohorts
-bash scripts/finalize_v044.sh --no-replay
-
-# Local rebuild only, no GitHub release
-bash scripts/finalize_v044.sh --no-upload
-```
-
-The legacy `v0.4.3` builder still works for reproducing v0.4.3 numbers:
-
-```bash
-uv run python scripts/build_leaderboard.py \
-    --cohorts trials_opus46_high_v043 trials_deepseek_v4_flash_v043 \
-              trials_deepseek_v4_pro_v043 trials_minimax27_v043 trials_minimax25_v043 \
-    --out analysis/v043_leaderboard
-```
 
 ### Viewing traces
 
@@ -268,11 +214,15 @@ Each task under `harbor_tasks/<name>/` contains:
 | `task.toml` | Metadata (difficulty, timeouts, resources) |
 | `environment/Dockerfile` | Clones repo at specific commit, installs deps, synthesizes buggy state |
 | `tests/test.sh` | Deterministic verifier returning 0.0–1.0 reward |
-| `test_manifest.yaml` | Weighted F2P/P2P gate declarations (when the manifest verifier is used) |
+| `tests/test_manifest.yaml` | Weighted F2P/P2P gate declarations (used by the verifier — present on all 165 tasks) |
 | `user_simulation_prompt.md` | Drives the user simulator — per-turn triggers, calibration, behavioral description |
-| `oracle_session.jsonl` | Canonical session in unified [`agent_session/2.0` schema](data-pipeline/agent_session.schema.json) — JSONL with header row + per-turn rows. Header carries `_grading_patch` (authoritative diff for scoring) plus extraction metadata; turn rows carry per-turn `cumulative_patch` snapshots. Replaces `reference_patch.json` + `per_turn_coding_agent_action.jsonl`. |
+| `oracle_session.jsonl` | Canonical session in unified [`agent_session/2.0` schema](data-pipeline/agent_session.schema.json) — JSONL with header row + per-turn rows. Header carries `_grading_patch` (authoritative diff for scoring) plus extraction metadata; turn rows carry per-turn `cumulative_patch` snapshots. Supersedes `reference_patch.json` + `per_turn_coding_agent_action.jsonl` as the primary read path; legacy files remain on disk while consumers finish migrating. |
 | `oracle_audit.json` | Human-edited review sidecar (`_review`, `_review_history`, `_reliability`). The pipeline never overwrites this — re-running extraction clobbers `oracle_session.jsonl` but leaves audit alone, retiring the legacy bidirectional sync. |
 | `original_session.json` | Raw session data (provenance) |
+| `reference_patch.json` | **Legacy primary, retained as fallback.** `eval/correctness/generate_task_goals.py` reads it when `oracle_session.jsonl` is missing; the deprecated `eval/correctness/judge_one.py` still reads it directly. Not GC'd until both consumers fully cut over to the v2.0 schema. |
+| `per_turn_coding_agent_action.jsonl` | **Legacy per-turn source, retained as fallback.** Still consumed by `data-pipeline/scripts/step6_replay_per_turn_patches.py` for per-turn replay augmentation. Superseded by `oracle_session.jsonl` turn rows but not yet GC'd. |
+| `oracle_intents.json` | **Eval-pipeline cache.** Written on first invocation of `eval/intent_coverage/extract_intents.py` — frozen oracle-intent list reused across every cohort × replicate for Step 2 (intent coverage). |
+| `canonical_goals.json` | **Eval-pipeline cache.** Written on first invocation of `eval/correctness/generate_task_goals.py` (Phase 1) — frozen weighted-completeness rubric reused across every cohort × replicate for Step 1 (agentic judge). |
 
 ---
 
@@ -280,7 +230,7 @@ Each task under `harbor_tasks/<name>/` contains:
 
 The benchmark ships canonical (oracle) sessions in the unified [`agent_session/2.0`](data-pipeline/agent_session.schema.json) JSONL schema — same shape as model trial outputs (see [Trial Output](#trial-output) below).
 
-- **Per-task oracle** — `harbor_tasks/<task>/oracle_session.jsonl`. JSONL with one header row + N turn rows. Header carries `_grading_patch` (authoritative diff for scoring), `_extraction.method`, `_fidelity`, `_source`, base/repo metadata. Turn rows carry per-turn `cumulative_patch` snapshots from message replay. 166 total: 144 with grading patches (`_status: canonical`) + 22 stubs (`_status: no_canonical`).
+- **Per-task oracle** — `harbor_tasks/<task>/oracle_session.jsonl`. JSONL with one header row + N turn rows. Header carries `_grading_patch` (authoritative diff for scoring), `_extraction.method`, `_fidelity`, `_source`, base/repo metadata. Turn rows carry per-turn `cumulative_patch` snapshots from message replay. 164 total: 142 with grading patches (`_status: canonical`) + 22 stubs (`_status: no_canonical`). One task (`pi-mono-keybinding-scope`) currently awaits oracle extraction.
 - **Audit sidecar** — `harbor_tasks/<task>/oracle_audit.json`. Human-edited only: `_review`, `_review_history[*kind=round1|round2|...]`, `_reliability`. The extraction pipeline never writes this file, so the legacy bidirectional `sync_reference_to_source.py` is retired.
 - **Extraction staging** — `data-pipeline/artifacts_<source>/canonical_patches/<session_id>.json` (147 source artifacts). Step4 writes here; `migrate_oracle_to_v2.py` promotes to the per-task `oracle_session.jsonl` form.
 
@@ -291,7 +241,7 @@ session = AgentSession.load(path)
 patch   = session.grading_patch  # returns None for no_canonical stubs
 ```
 
-The `grading_patch` property is policy-aware: returns `None` for stubs (so they can't accidentally participate in scoring) and walks turn rows backward past empty trailing turns for trials (matches `replay_all_against_latest`'s `_has_substantive_diff` logic — fixes the empty-`final.patch` bug from issue #146). CI-enforced by [`tests/test_agent_session_conformance.py`](tests/test_agent_session_conformance.py) (7 invariants × 166 tasks = 1162 cases) + [`tests/test_agent_session_negative.py`](tests/test_agent_session_negative.py) (18 reject-bad-input cases).
+The `grading_patch` property is policy-aware: returns `None` for stubs (so they can't accidentally participate in scoring) and walks turn rows backward past empty trailing turns for trials (matches `replay_all_against_latest`'s `_has_substantive_diff` logic — fixes the empty-`final.patch` bug from issue #146). CI-enforced by [`tests/test_agent_session_conformance.py`](tests/test_agent_session_conformance.py) (7 invariants × 164 tasks with oracle = 1148 cases) + [`tests/test_agent_session_negative.py`](tests/test_agent_session_negative.py) (18 reject-bad-input cases).
 
 ### Verbatim policy (CI-locked)
 
@@ -303,7 +253,7 @@ Only allowed transforms:
 - PII sanitization: `/Users/<name>/...` → `<HOST_PATH>`, emails → `<EMAIL>`
 - Skip messages matching narrow `TRIVIAL_PATTERNS`: `EMPTY`, `INTERRUPT_TOOL`/`INTERRUPT` (Claude Code artifacts), `CAVEAT_ONLY`, `COMMAND_NAME_ONLY`, `COMMAND_STANZA` (slash-command protocol stanzas, with `<command-args>` body extraction when prose is present)
 
-Enforced via [`tests/test_instruction_verbatim.py`](tests/test_instruction_verbatim.py) — 178 parametrized tests in 0.4s. 166/166 active tasks pass.
+Enforced via [`tests/test_instruction_verbatim.py`](tests/test_instruction_verbatim.py) — 178 parametrized tests in 0.4s. 165/165 active tasks pass.
 
 ### Schema, audit, tooling
 
@@ -427,7 +377,7 @@ The same `agent_session/2.0` schema covers oracle (canonical) sessions and model
                               (10-step inline prompt: screen → scaffold → tests → audit)
     ↓ build_swerebench_configs.py [optional]: migrate test.sh to install_config.json
                               + vendored SWE-rebench log parsers (68 tasks so far)
-166 Harbor benchmark tasks  (current trunk: 144 real canonicals + 22 stubs)
+165 Harbor benchmark tasks  (current trunk: 142 real canonicals + 22 stubs + 1 awaiting oracle)
     ↓ src/run_eval.py (in-process Harbor LocalOrchestrator, concurrent E2B sandboxes;
                         per-provider concurrency caps: anthropic/deepseek=10, glm=2, mm=1)
     ↓ scripts/finalize_v044.sh (replay all captured patches against latest test.sh →
