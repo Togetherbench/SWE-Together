@@ -1,0 +1,34 @@
+{
+  "task_name": "comfyui-wanvideowrapper-fix-167b3c",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Fix the K_scale pointer mutation pattern in the target Triton kernel file (attn_qk_int8_per_block.py) to resolve the AMD GPU LLVM crash. The bare pointer load of the scale factor inside the inner attention loop must be replaced with an approach that avoids pointer mutation — e.g., using an indexed/offset-based load with the loop variable, adding a type cast, or restructuring the scale multiply chain. The pointer increment at the end of the loop body must also be removed or made unnecessary. Any behaviorally-equivalent fix that eliminates the problematic load-then-increment pattern is acceptable.",
+      "tier": "core",
+      "weight": 0.57,
+      "rationale": "README headline ask: 'Fix a Triton kernel error that occurs on Windows with AMD GPU'. User turn 1 reports the LLVM crash. User turn 3 explicitly asks for a fix 'in this repo rather than in the Triton kernel'. Oracle implements this at attn_qk_int8_per_block.py:33 (indexed load) and removes line 69 (pointer increment). Test gate t1_f2p_target_remediated (weight 0.35) + t1_f2p_no_buggy_pair (weight 0.25) both verify this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Preserve computational correctness of the attention calculation — the qk expression in the inner attention function must still transitively reference both the query-scale and key-scale factors. The fix must not remove or orphan either scale factor from the dot-product scoring computation.",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "The fix must not break semantics. The oracle preserves the expression `tl.dot(q, k).to(tl.float32) * q_scale * k_scale` at attn_qk_int8_per_block.py:39. Test gate t1_f2p_scale_factor_preserved (weight 0.15) checks that both q_scale and k_scale are transitively referenced in qk assignments."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Maintain structural integrity of the target file — it must still parse as valid Python, contain the three required functions (inner attention kernel, outer attention kernel, and the forward/launch function) with real implementations (not stubs), and preserve the caller-callee relationship where the outer kernel calls the inner kernel.",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "Regression prevention. The oracle preserves all three functions intact. Test gate p2p_structure_intact checks parsing, function existence, non-stub bodies (>2 statements each), and presence of tl.dot and qk assignment in the inner function."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Fix the same pointer mutation pattern in the sparse attention file (sparse_int8_attn.py) which contains an identical buggy bare-pointer-load + pointer-increment pattern in its own inner attention function. The same remediation approach (indexed load, cast, or chain restructure) should be applied.",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "The sparse file at wanvideo/radial_attention/sparse_sage/sparse_int8_attn.py:43 has `k_scale = tl.load(K_scale_ptr)` and :66 has `K_scale_ptr += 1` — the identical buggy pattern. Test gate t1_f2p_sparse_remediated (weight 0.25) checks this. The oracle patch does NOT fix this file (oracle scores 0.75 not 1.0), but a thorough agent should find and fix all instances of the pattern in the repo."
+    }
+  ],
+  "decomposition_notes": "1 core + 3 secondaries. Default ratio gives sum_mult = 4*1 + 1*3 = 7; core = 4/7 ≈ 0.571, each sec = 1/7 ≈ 0.143. Rounded to core=0.57, sec=0.14, 0.14, 0.15 (sum=1.00). Bumped goal_4 (sparse file) to 0.15 because the test suite weights it at 0.25 — it's the same bug in a different file and a thorough fix should catch both. The oracle patch only fixes the target file (scoring 0.75 on actual test.sh), not the sparse file — agents that fix both files would score higher than the oracle. Goals are implementation-agnostic: the tests accept ARANGE_LOAD (indexed offset), FLOAT_CAST (.to(tl.float32)), or SPLIT_CHAIN (restructured multiply) as valid remediation approaches."
+}

@@ -1,0 +1,41 @@
+{
+  "task_name": "rudel-task-468289",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement tool_result handler chaining via a dedicated method: tool_result events must no longer go through the generic emit() method. Instead, a new dedicated method handles them with chaining semantics — handlers run in extension load order, each handler receives the event reflecting modifications from prior handlers (pass-by-reference / mutation pattern, not accumulator), handlers can return partial patches (content, details, isError) where omitted fields keep their current values, and the method returns undefined if no handler modified anything. The wrapper/call-site must invoke the new dedicated method instead of emit() for tool_result events.",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "User simulation T2 (pass-by-reference, not accumulator), T7 (propose chaining design), T8 (implement as proposed). This is the headline bug fix: previously tool_result used last-handler-wins semantics. Oracle implements emitToolResult() in runner.ts:558-606 with field-by-field merge on a mutable copy of the event, and wrapper.ts:75,97 calls it instead of emit(). F2P tests 1-5 all verify aspects of this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Narrow the generic emit() method's event parameter type to exclude event types that have dedicated emitXxx() methods (e.g., tool_call, tool_result, user_bash, context, before_agent_start, resources_discover, input). The emit() signature should only accept events that do NOT have their own specialized emission method, providing stronger compile-time type safety.",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "User simulation T3 ('shouldn't the event type exclude the types for which we have special emitXXX methods?') and T4 (user insists this be done before tool_result chaining). Oracle defines RunnerEmitEvent as Exclude<ExtensionEvent, ToolCallEvent | ToolResultEvent | UserBashEvent | ...> at runner.ts:102-111 and changes emit() signature at runner.ts:524 to use it."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Clean up the session_before special-case handling in emit(): improve the type guard and result types for session_before events so the special-case block is cleaner and more type-safe (e.g., the type guard should operate on the event object rather than a raw string, result types should cover all session_before variants, return type should be properly narrowed).",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "User simulation T10 and T13 (asked twice about cleaning up the 'if (this.isSessionBeforeEvent(event.type) && handlerResult)' block). Oracle changes isSessionBeforeEvent to take RunnerEmitEvent instead of string at runner.ts:515, introduces SessionBeforeEvent/SessionBeforeEventResult union types at runner.ts:113-122, and adds RunnerEmitResult<TEvent> conditional type at runner.ts:124-132 for a properly typed return."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Update the extensions documentation to describe the tool_result chaining behavior: handlers run in extension load order, each handler sees the latest result after previous handler changes, handlers can return partial patches where omitted fields keep their current values.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "User simulation T9 ('should we update docs/extensions.md as well?'). Oracle adds chaining documentation at extensions.md lines 527-530 describing middleware-like chaining, load order, and partial patches."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Fix test.sh to exclude additional API keys (specifically KIMI_API_KEY and HF_TOKEN) so tests don't fail due to environment variable leakage.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "User simulation T16 ('need to adjust test.sh to also exclude kimi for coding api keys') and T17. Oracle adds 'unset KIMI_API_KEY' and 'unset HF_TOKEN' at test.sh lines 38-39."
+    }
+  ],
+  "decomposition_notes": "2 cores + 3 secondaries. Default ratio: core=4, sec=1 → sum_mult = 2*4 + 3*1 = 11. Each core = 4/11 ≈ 0.36, each sec = 1/11 ≈ 0.09. Bumped session_before cleanup (goal_3) to 0.10 because the user asked about it twice across turns T10 and T13, signaling importance. Total: 0.36+0.36+0.10+0.09+0.09 = 1.00. Goal 1 (tool_result chaining) and goal 2 (type narrowing) are the two genuinely independent headline asks. Goals 3-5 are explicit follow-up requests. The F2P tests (1-5) all map to goal_1's behavioral requirements. The upstream tests check for emitSessionBefore which the oracle does NOT implement (the oracle cleans up session_before in-place rather than extracting it), so that's not included as a goal."
+}

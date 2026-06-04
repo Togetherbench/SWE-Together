@@ -1,0 +1,55 @@
+{
+  "task_name": "agent-swarm-task-ea4bd8",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Consolidate apt-get package installation in Dockerfile.worker into a single (or at most two) RUN layers instead of three separate ones, reducing the number of RUN blocks that contain `apt-get install`",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Phase 2 of user Turn 1 plan: 'Consolidate apt-get into a single RUN layer'. F2P gate dockerfile_apt_consolidation (weight 0.25) checks apt-get install blocks <=2. Oracle consolidates NodeSource setup, GitHub CLI repo addition, and all package installs into one chained RUN block in Dockerfile.worker:23-57."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Pin all npm global package versions in Dockerfile.worker to specific version numbers instead of using @latest, ensuring at least 3 packages have explicit semver pins (e.g., @X.Y.Z format)",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Phase 1 of user Turn 1 plan: 'Pin npm package versions'. Turn 3 also asks to 'double check pinned versions are the LATEST'. F2P gate dockerfile_npm_pinned (weight 0.20) checks no @latest for wts/qa-use/sentry/localtunnel and >=3 pinned entries. Oracle pins @sentry/cli@3.3.0, @desplega.ai/wts@0.2.2, @desplega.ai/localtunnel@2.2.0, @desplega.ai/qa-use@2.8.7 in Dockerfile.worker:102-107."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Refactor MCP JSON config generation in docker-entrypoint.sh from heredoc (cat > .mcp.json << EOF) to use jq for structured JSON construction, properly handling conditional fields like AGENT_ID header",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Phase 3 of user Turn 1 plan: 'Refactor MCP JSON generation to use jq'. F2P gate entrypoint_mcp_json_jq (weight 0.25) checks for jq -n/--arg usage and absence of heredoc. Oracle replaces the duplicated cat<<EOF blocks with jq -n + conditional jq pipes in docker-entrypoint.sh:139-184."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Move marketplace plugin installation (claude plugin marketplace add / claude plugin install) from docker-entrypoint.sh runtime to Dockerfile.worker build time so plugins are cached in the image layer",
+      "tier": "secondary",
+      "weight": 0.0625,
+      "rationale": "Phase 3 of user Turn 1 plan: 'Move marketplace installs ... from entrypoint to Dockerfile'. F2P gate dockerfile_marketplace_build_time (weight 0.15) checks that Dockerfile contains 'claude plugin marketplace add' and 'claude plugin install'. P2P gate p2p_entrypoint_no_marketplace verifies they are removed from the entrypoint. Oracle adds RUN block with marketplace installs in Dockerfile.worker:73-82 and removes the marketplace block from docker-entrypoint.sh:196-221."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Make agent detail page load tasks lazily by passing false as the second argument to the fetchAgent API call in the useAgent hook, so tasks are not included in the initial agent detail response",
+      "tier": "secondary",
+      "weight": 0.0625,
+      "rationale": "User Turn 4 item 2: 'ensure that the tasks are lazy loaded ... instead of loading them on details page load'. F2P gate use_agents_lazy (weight 0.15) checks for fetchAgent(id, false) in the useAgent function. Oracle changes use-agents.ts:16 from fetchAgent(id) to fetchAgent(id, false)."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Add agentmail-mcp server support in the MCP config generation, conditionally including it when an AGENTMAIL_API_KEY environment variable is present, configured to run via npx agentmail-mcp",
+      "tier": "secondary",
+      "weight": 0.0625,
+      "rationale": "User Turn 4 item 1: 'add the agentmail-mcp to the default .mcp.json'. Oracle adds conditional jq block in docker-entrypoint.sh:179-182 that injects agentmail server config when AGENTMAIL_API_KEY is set."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Move wts config creation and static workspace directory setup (personal, shared/thoughts, shared/memory) from docker-entrypoint.sh runtime to Dockerfile.worker build time",
+      "tier": "secondary",
+      "weight": 0.0625,
+      "rationale": "Phase 3 of user Turn 1 plan: 'Move wts config and static directories from entrypoint to Dockerfile'. P2P gates p2p_entrypoint_no_wts_config and p2p_dockerfile_wts_build_time verify this move. Oracle adds wts config in Dockerfile.worker:76-78 and static dirs in Dockerfile.worker:131-134, while removing mkdir/wts-config blocks from docker-entrypoint.sh:379-396."
+    }
+  ],
+  "decomposition_notes": "3 core + 4 secondary goals. The three core goals correspond to the three biggest behavioral changes from the user's 4-phase plan (apt consolidation, npm pinning, MCP jq refactor). The four secondary goals cover: marketplace move to build time, lazy task loading (Turn 4), agentmail-mcp (Turn 4), and wts/static-dir move to build time. Default ratio 4:1 gives sum_mult = 3*4 + 4*1 = 16, so each core = 4/16 = 0.25, each secondary = 1/16 = 0.0625. Weights sum to 3*0.25 + 4*0.0625 = 1.0. The marketplace-build-time goal could arguably be core since it was in the original plan, but it's a less complex change than the three cores and is proportionally weighted lower in the F2P test suite (0.15 vs 0.20-0.25), so secondary is appropriate."
+}

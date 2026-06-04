@@ -1,0 +1,48 @@
+{
+  "task_name": "no-magic-task-ce67d5",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Create a BPE tokenizer Python script at the expected location (01-foundations/microtokenizer.py) that is non-trivial (>=80 lines, multiple functions with substantive bodies), has valid Python syntax, and runs to completion without errors within a reasonable timeout",
+      "tier": "core",
+      "weight": 0.27,
+      "rationale": "README headline ask: 'Implement a Byte-Pair Encoding (BPE) tokenizer in 01-foundations/microtokenizer.py'. User Turn 1 gives a detailed implementation plan. Test gates: p2p_file_exists, p2p_not_trivial, p2p_anti_stub_ast, gate_syntax (0.10), gate_executes (0.20). Oracle: 227-line script with 7+ functions that exits cleanly."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement correct BPE encode and decode functions such that round-trip identity holds (decode(encode(text)) == text) for diverse inputs including common names, hyphenated names, names with apostrophes, empty strings, and single characters. The script must test and report PASS/FAIL for at least 6 such round-trip cases, all passing",
+      "tier": "core",
+      "weight": 0.27,
+      "rationale": "README: 'verify round-trip encode/decode correctness'. Test gate: gate_roundtrip (0.25) — checks for 6 [PASS] lines and 0 [FAIL] lines in output. Oracle tests: 'Emma', 'Xiomara', 'Mary-Jane', \"O'Brien\", '', 'Z' — all pass. This is the fundamental correctness property of the BPE implementation."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Train BPE merge rules on the makemore names dataset and achieve a compression ratio of at least 1.5x (original byte count / BPE token count >= 1.5). The script must report the compression ratio in its output in a format like 'ratio: <number>x'",
+      "tier": "core",
+      "weight": 0.27,
+      "rationale": "README: 'report compression ratio'. Test gate: gate_compression (0.20) — parses 'ratio: <float>x' from output, checks >= 1.5. Oracle achieves 2.01x with 256 merges on the names.txt corpus. Proves the BPE training algorithm actually discovers compressible structure."
+    },
+    {
+      "id": "goal_4",
+      "goal": "During BPE training, print merge progress lines showing merge index and total (e.g., 'merge N/M') so that at least 8 such lines appear in the output, demonstrating the training loop executes a meaningful number of merge steps",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "User spec describes training NUM_MERGES=256 merges with periodic progress output. Test gate: gate_training (0.15) — counts lines matching 'merge\\s+[0-9]+/' and requires >= 8. Oracle prints progress every 32 merges plus the first merge, yielding 9 lines."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Use only Python standard library modules (no pip-installed or third-party dependencies). Allowed modules include os, math, random, json, urllib, collections, itertools, functools, string, re, pathlib, typing, __future__, and similar stdlib modules",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "README: 'Zero external dependencies — stdlib only'. Test gate: gate_stdlib (0.10) — AST-checks all imports against a stdlib allowlist. Oracle uses only: __future__, os, random, urllib.request, collections.Counter."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Download (or use cached) the makemore names.txt dataset from the specified URL as the training corpus, rather than using arbitrary or synthetic data",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "User Turn 1 spec and README both specify: 'download the makemore names dataset'. Oracle downloads from 'https://raw.githubusercontent.com/karpei/makemore/master/names.txt' and trains on the raw bytes. Using the correct dataset is necessary to achieve the expected compression ratio and produce meaningful merge rules."
+    }
+  ],
+  "decomposition_notes": "3 cores + 3 secondaries. Default ratio: sum_mult = 3*4 + 3*1 = 15. Each core = 4/15 ≈ 0.267, each sec = 1/15 ≈ 0.067. Rounded to 0.27+0.27+0.27+0.07+0.06+0.06 = 1.00. The task is a single-turn implementation (user gives a detailed spec then goes silent for 22 turns). The three core goals cover the fundamental behavioral contract: the script runs, tokenization is correct (round-trip), and compression is meaningful. Secondary goals cover output formatting (training progress), dependency constraint (stdlib-only), and data sourcing (makemore dataset). All goals are behavioral and implementation-agnostic — any correct BPE implementation that meets these criteria should score fully."
+}

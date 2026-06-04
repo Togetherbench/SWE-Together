@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-30159a",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Make TestUpdateCommand deterministic by replacing the single non-deterministic test (which tested against the local machine's install method) with multiple table-driven subtests that each inject a controlled executable path and verify the expected update command. At least 4 subtests must pass, covering homebrew, mise, unknown path, and error cases.",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "Turn 1 headline ask: 'look at TestUpdateCommand I feel this test is wrong because it tests against the local setup of who ever runs the tests'. F2P gates: F2P_TEST_DETERMINISTIC (>=4 subtests passing), F2P_TABLE_DRIVEN (table-driven pattern with t.Run). Oracle replaces the old 3-way validCommands map with 8 deterministic subtests."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Tighten path detection in the update command logic so that usernames containing 'mise' or 'homebrew' do not trigger false positives. Specifically: the loose '/mise/' pattern must be replaced with a more specific pattern like '/mise/installs/', and the loose '/homebrew/' pattern must be replaced with more specific patterns like '/opt/homebrew/' and '/linuxbrew/'. A path like '/home/mise/bin/entire' must NOT match mise, and '/home/homebrew/bin/entire' must NOT match homebrew.",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "User Turn 5: 'can we guard against the user name is mise'. Turn 6: 'yeah let's do 1 for both mise homebrew'. F2P gate: F2P_PATH_SPECIFICITY requires >=3 of the specific tokens (/Cellar/, /opt/homebrew/, /linuxbrew/, /mise/installs/) and forbids loose '/homebrew/' and '/mise/' patterns."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Extract the os.Executable call in updateCommand into a package-level overridable variable (function-typed) so that tests can inject fake paths without depending on the actual filesystem. The updateCommand function must not call os.Executable directly.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "This is the mechanism that enables deterministic testing (goal_1). The user confirmed this approach in Turn 2: 'yes'. F2P gates: F2P_EXEC_INDIRECTION (var ... = os.Executable at package scope), F2P_NO_DIRECT_OS_EXEC (updateCommand body must not contain os.Executable()), F2P_TEST_OVERRIDES (test must assign to the override variable)."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The test must include subtests that verify username false-positive protection: a path containing a username 'mise' (e.g. /home/mise/...) must not trigger 'mise upgrade', and a path containing 'homebrew' as a username must not trigger 'brew upgrade'. These negative test cases ensure the tightened patterns work correctly.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "Turn 5-6 explicitly request guarding against username false positives. The oracle includes 'username mise not detected as mise install' and 'username homebrew not detected as brew install' subtests. Without these negative tests, the path-tightening from goal_2 is not regression-tested."
+    },
+    {
+      "id": "goal_5",
+      "goal": "All existing tests in the versioncheck package must continue to pass (no regressions introduced by the changes).",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Standard no-regression requirement. F2P_TEST_DETERMINISTIC gate runs 'go test' which would fail on regressions. README states this is a bugfix task; breaking other tests would be unacceptable."
+    }
+  ],
+  "decomposition_notes": "2 cores + 3 secondaries. Default ratio: 4/11 per core, 1/11 per sec. Adjusted goal_5 (no regressions) up to 0.10 from 0.09 to get clean sum. Total: 0.36 + 0.36 + 0.09 + 0.09 + 0.10 = 1.00. Goal 1 captures the headline ask (deterministic test with table-driven subtests). Goal 2 captures the second major ask (tighten path patterns for username safety). Goal 3 is the enabling mechanism (indirection variable). Goal 4 ensures negative test cases for the false-positive fix. Goal 5 ensures no regressions. Goals are behavioral and implementation-agnostic — any variable name, any test structure that achieves the same behavior is acceptable."
+}

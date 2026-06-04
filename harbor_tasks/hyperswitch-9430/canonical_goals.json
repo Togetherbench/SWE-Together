@@ -1,0 +1,55 @@
+{
+  "task_name": "rudel-task-468289",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Create a SQL migration that adds a nullable billing_processor_id VARCHAR column to the business_profile table (up.sql with ADD COLUMN, down.sql with DROP COLUMN)",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "The task requires persisting a new field. The oracle creates migrations/…/up.sql with ALTER TABLE business_profile ADD COLUMN billing_processor_id VARCHAR(64) and down.sql with DROP COLUMN. Test gate G1 (0.15) verifies this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Declare billing_processor_id as Nullable<Varchar> in the diesel schema definition for the business_profile table (schema.rs and/or schema_v2.rs)",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Diesel ORM requires schema declarations matching the DB. The oracle adds billing_processor_id -> Nullable<Varchar> in the business_profile table block of schema.rs and schema_v2.rs. Test gate G2 (0.10) verifies this."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Add billing_processor_id field to all three diesel model structs: the main Profile struct, ProfileNew (for inserts), and ProfileUpdateInternal (for updates) in the diesel models layer",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "All three structs must carry the field for reads, inserts, and updates to work. The oracle adds pub billing_processor_id: Option<MerchantConnectorAccountId> to all three. Test gate G3 (0.20) verifies all three."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Thread billing_processor_id through the apply_changeset (or equivalent update-merge) function so that it is destructured from the update and merged into the resulting Profile using fallback-to-source semantics (e.g., .or(source.billing_processor_id))",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Without apply_changeset threading, partial updates would silently drop the field. The oracle destructures billing_processor_id and applies .or(source.billing_processor_id) in both v1 and v2 apply_changeset impls. Test gate G4 (0.20) verifies this."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Add billing_processor_id field (typed as Option<MerchantConnectorAccountId>) to the domain-level Profile struct and wire it through the domain model's conversion/setter logic",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "The domain model is the canonical representation used by business logic. The oracle adds the field to domain Profile, ProfileSetter, ProfileGeneralUpdate, and the From/Conversion impls. Test gate G5 (0.15) verifies the domain struct carries the field with correct type."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Thread billing_processor_id through all Profile construction sites in the codebase (including event/test construction) so that no compilation errors remain from the new field",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Any struct literal constructing Profile must include billing_processor_id or the code won't compile. The oracle adds billing_processor_id: None in events.rs test construction. Test gate G6 (0.10) verifies events.rs threading."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Achieve broad completeness by touching at least 4 of the 5 critical layers: migration, diesel schema, diesel models, domain models, and events/construction sites",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "A partial implementation that only touches 1-2 layers leaves the codebase in an inconsistent state. Test gate G7 (0.10) requires at least 4/5 critical files to mention billing_processor_id."
+    }
+  ],
+  "decomposition_notes": "This is a single-turn task: add billing_processor_id to the business_profile across all layers of a Rust payment processing system. The task decomposes into 5 core goals (one per critical layer: migration, schema, diesel models, apply_changeset threading, domain models) and 2 secondary goals (event construction threading, cross-layer completeness). Using 5 cores + 2 secondaries: sum_mult = 5*4 + 2*1 = 22, each core = 4/22 ≈ 0.18, each sec = 1/22 ≈ 0.045. Rounded cores to 0.18 each (0.90 total) and secondaries to 0.05 each (0.10 total) to sum to 1.0. The test gates G1-G7 map directly to these goals. Goals G6 and G7 are secondary because they are derivative — if the 5 core layers are done correctly, events threading and completeness follow naturally."
+}

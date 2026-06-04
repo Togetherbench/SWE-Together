@@ -1,0 +1,48 @@
+{
+  "task_name": "sd-scripts-implement-dbf758",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Integrate fp8_scaled into Lumina model loading: define FP8 optimization target keys that match real Lumina model submodule names (must include 'layers'), modify the Lumina model loading function to accept an fp8_scaled parameter, and when fp8_scaled is enabled, use the fp8 optimization pipeline to load the state dict and apply the fp8 monkey patch to the model before loading weights",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "README 'What Must Be Implemented' item 1; user_simulation_prompt T1 initial task: 'implement fp8_scaled for Lumina (same pattern as HunyuanImage)'; oracle adds FP8_OPTIMIZATION_TARGET_KEYS=['layers','context_refiner','noise_refiner'] at lumina_util.py:25, modifies load_lumina_model signature at lumina_util.py:29-37, calls load_safetensors_with_lora_and_fp8 at lumina_util.py:64 and apply_fp8_monkey_patch at lumina_util.py:85"
+    },
+    {
+      "id": "goal_2",
+      "goal": "Fix the fp8 dequantization multiply bug in the fp8 linear forward patch: the scale_weight tensor must be cast to the input tensor's dtype (x.dtype) before multiplication, not left in the fp8 dtype (scale_weight.dtype), so that the dequantized weight and subsequent linear output are in the correct compute dtype and do not cause a RuntimeError from multiplying fp8 tensors",
+      "tier": "core",
+      "weight": 0.33,
+      "rationale": "README 'What Must Be Implemented' item 3: 'Fix fp8_linear_forward_patch — the dequantization multiply must cast scale_weight to the input tensor dtype (x.dtype), not the fp8 dtype'; user_simulation_prompt T4: RuntimeError 'mul_cuda not implemented for Float8_e4m3fn'; README test breakdown gives CORE BUG: fp8 multiply 0.30 + fp8 output dtype correctness 0.30 = 0.60 total; oracle changes fp8_optimization_utils.py:395 from 'original_dtype = self.scale_weight.dtype' to 'original_dtype = x.dtype' and casts scale at line 396"
+    },
+    {
+      "id": "goal_3",
+      "goal": "Add an --fp8_scaled CLI argument (boolean flag) to the Lumina training argument parser so it is parseable via argparse",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README 'What Must Be Implemented' item 2: 'Add --fp8_scaled CLI argument'; test t1_f2p_cli_flag_parses (weight 0.10); oracle adds parser.add_argument('--fp8_scaled', action='store_true') at lumina_train_util.py:1129-1133"
+    },
+    {
+      "id": "goal_4",
+      "goal": "Wire fp8_scaled into the Lumina training network script so that the load_target_model function passes the fp8_scaled flag through to the Lumina model loading function and adjusts the loading dtype accordingly (None for fp8_scaled, weight_dtype otherwise)",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Implicit requirement from T1 for end-to-end integration; test t1_f2p_train_network_wires_fp8 (weight 0.10); oracle modifies lumina_train_network.py:52-73 to pass fp8_scaled=args.fp8_scaled and set loading_dtype=None when fp8_scaled"
+    },
+    {
+      "id": "goal_5",
+      "goal": "Define FP8 exclude keys that prevent norm-type layers (e.g. attention_norm, norm_final) from being quantized to fp8",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Standard fp8 practice mirroring HunyuanImage reference; user_simulation_prompt T2 verification; test t2_f2p_exclude_keys_norm (weight 0.10); oracle defines FP8_OPTIMIZATION_EXCLUDE_KEYS containing 'norm' at lumina_util.py:26"
+    },
+    {
+      "id": "goal_6",
+      "goal": "Include a 'modulation' pattern in the fp8 exclude keys so that adaLN_modulation layers are not quantized, preventing the catastrophic training loss regression (5.0 vs 0.5) that occurs when these layers are quantized",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "README: 'FP8_OPTIMIZATION_EXCLUDE_KEYS (including modulation — critical for preventing loss regression)'; user_simulation_prompt T6: 'training loss is much higher (5.0 vs 0.5)'; test t3_f2p_modulation_excluded (weight 0.15); oracle includes 'modulation' in EXCLUDE_KEYS at lumina_util.py:26"
+    }
+  ],
+  "decomposition_notes": "2 cores + 4 secondaries. Default formula: sum_mult = 2*4 + 4*1 = 12, each core = 4/12 ≈ 0.33, each secondary = 1/12 ≈ 0.08. Gave goal_6 (modulation exclusion) a slight bump to 0.09 from 0.08 because README explicitly calls it 'critical for preventing loss regression' and the corresponding test has the highest secondary weight (0.15). goal_1 rounded up to 0.34 to reach exact sum of 1.00. The oracle also adds torch.compile support and lumina_minimal_inference.py changes, but these are tangential to the fp8_scaled task the user asked for and not tested by any gate — excluded from the rubric. The fp8 multiply bug fix (goal_2) is the single most impactful behavioral change per the README's test weights (0.60 combined), justifying it as core alongside the integration goal."
+}

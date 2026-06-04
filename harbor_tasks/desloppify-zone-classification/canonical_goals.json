@@ -1,0 +1,48 @@
+{
+  "task_name": "desloppify-zone-classification",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement precise pattern matching for zone classification that distinguishes pattern types (directory patterns like '/tests/', basename prefix patterns like 'test_', and exact basename matches like 'config.py') so that substring false positives are eliminated — e.g. 'src/contests/foo.py' must NOT match '/tests/', 'src/contest_results.py' must NOT match 'test_', 'src/my_config.py' must NOT match 'config.py', while true positives still match correctly",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "intent_0 + intent_1: user's plan item #1 explicitly asks to replace raw 'pattern in rel_path' with a _match_pattern() function. F2P 1 (0.22) tests 11 behavioral cases including 6 false-positive traps that the base substring impl fails. F2P 4 (0.15) also depends on this for end-to-end correctness."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Define shared common zone rules covering at least VENDOR, GENERATED, and TEST zones, and create per-language rule lists for Python (including 'test_' prefix pattern) and TypeScript (including '.test.'/'.spec.'/'__tests__' patterns) that extend the common rules",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "intent_2: user's plan item on COMMON_ZONE_RULES with per-language prepended rules. F2P 2 (0.15) checks COMMON_ZONE_RULES has >=3 rules covering VENDOR/GENERATED/TEST zones, PY_ZONE_RULES has Python-specific test_ patterns, TS_ZONE_RULES has .test./.spec./__tests__ patterns. F2P 4 (0.15) validates end-to-end classification using PY_ZONE_RULES."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement an adjust_potential() function that subtracts non-production files from the potentials count using zone classifications — when given a zone map, only production-zone files should be counted toward potentials; with no zone map it should be a no-op returning the original count",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "intent_3: user's plan identifies 'potentials denominator mismatch' as a key gap — phase runners count ALL files in potentials, inflating pass rates. F2P 3 (0.18) tests adjust_potential with 4 sub-checks: function exists, None zone_map is no-op, non-production files subtracted correctly (4 files with 2 non-prod → returns 2), empty list → 0."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Implement a user override mechanism so zone misclassifications can be corrected — FileZoneMap should accept an overrides parameter (mapping file paths to zone names) that takes precedence over rule-based classification, while not affecting unrelated file classifications",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "intent_5: user's plan identifies 'No user override mechanism' as gap #3. F2P 5 (0.12) tests FileZoneMap with overrides={'config.py': 'production'} and verifies the override takes effect while unrelated test files still classify correctly."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Wire zone_rules into the language configuration system — LangConfig should have a zone_rules field, and the Python language module should register its zone rules through this field so the pipeline can access them",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "intent_2 (infrastructure): the user's plan requires per-language rules to be accessible through the pipeline. F2P 6 (0.10) checks LangConfig dataclass has zone_rules field and LANGS['python'].zone_rules is non-empty."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Touch enough files across the codebase for a complete integration — changes should span the zones module, both Python and TypeScript language modules, and core infrastructure (e.g. base config or scoring)",
+      "tier": "polish",
+      "weight": 0.02,
+      "rationale": "F2P 7 (0.08) checks 4 completeness signals: COMMON_ZONE_RULES in zones module, PY_ZONE_RULES in python lang, TS_ZONE_RULES in typescript lang, adjust_potential defined. This is a structural completeness check rather than a behavioral one, so it's polish-tier — the behavioral goals already cover correctness."
+    }
+  ],
+  "decomposition_notes": "3 cores + 2 secondaries + 1 polish. Default ratio: 3*4 + 2*1 + 1*0.25 = 14.25. Default weights: core=4/14.25≈0.281, sec=1/14.25≈0.070, polish=0.25/14.25≈0.018. Rounded to: cores 0.28 each (0.84 total), secondaries 0.07 each (0.14 total), polish 0.02 (sum=1.00). Goals derived from in-scope Turns 1-3 only (Turns 4-14 are explicitly out of scope per user_simulation_prompt.md). goal_1 combines intent_0+intent_1 since _match_pattern and classify_file updates are tightly coupled and tested together in F2P 1+4. goal_2 covers the rule-definition layer (intent_2, F2P 2+4). goal_3 covers the potentials fix (intent_3, F2P 3). goal_4 covers user overrides (intent_5, F2P 5). goal_5 covers LangConfig wiring (F2P 6). goal_6 is a lightweight cross-file completeness check (F2P 7). intent_4 (skip_detectors enforcement) is not directly tested by any F2P test, so it's not a separate goal — agents implementing the other goals comprehensively would likely address it as part of the integration. The oracle patch is empty so goals are kept broader (6 goals rather than fine-grained) to avoid speculative decomposition."
+}

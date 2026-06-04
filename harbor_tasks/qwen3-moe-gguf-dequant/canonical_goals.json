@@ -1,0 +1,55 @@
+{
+  "task_name": "qwen3-moe-gguf-dequant",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Fix the IQ3_XXS dequantization function so it produces numerically correct output matching the gguf reference implementation (fix the byte-alignment bug when viewing uint8 as int32 and ensure the function runs without crashing)",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "README headline ask: 'Fix dequantize_blocks_IQ3_XXS and pass the test.' User sim instruction: 'Fix IQ3_XXS + implement IQ3_S, IQ1_S, IQ2_S, IQ2_XXS, IQ1_M'. Test.sh Gate G1 tests IQ3_XXS numerical correctness across 4 seeds (weight 0.18). The base code has a .view(torch.int32) alignment bug at an unaligned offset. Note: the oracle patch does NOT fix this — it only adds the 5 new functions — but the task spec explicitly asks for the fix."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement IQ3_S dequantization that is registered and produces numerically correct output matching the gguf reference (110-byte blocks with separate qh high bits, sign unpacking, grid lookup via IQ3_S grid)",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "User sim instruction includes IQ3_S in scope. Test.sh Gate G3 tests IQ3_S across 3 seeds (weight 0.16). Oracle implements this at dequant.py:339-368 as dequantize_blocks_IQ3_S and registers it in the dequantize_functions dict."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement IQ2_S dequantization that is registered and produces numerically correct output matching the gguf reference (82-byte blocks with 10-bit combined indices from qs+qh, sign unpacking, grid lookup via IQ2_S grid)",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "User sim instruction includes IQ2_S in scope. Test.sh Gate G4 tests IQ2_S across 3 seeds (weight 0.16). Oracle implements this at dequant.py:402-438."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Implement IQ2_XXS dequantization that is registered and produces numerically correct output matching the gguf reference (66-byte blocks with packed u32 for indices/scales/signs, ksigns lookup table, grid lookup via IQ2_XXS grid)",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "User sim instruction includes IQ2_XXS in scope. Test.sh Gate G5 tests IQ2_XXS across 3 seeds (weight 0.14). Oracle implements this at dequant.py:441-477."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Implement IQ1_S dequantization that is registered and produces numerically correct output matching the gguf reference (50-byte blocks, qh is 16 bytes interpreted as 8 uint16s, grid lookup via IQ1_S grid, includes delta term)",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "User sim instruction includes IQ1_S in scope. Test.sh Gate G6 tests IQ1_S across 3 seeds (weight 0.13). Oracle implements this at dequant.py:529-572."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Implement IQ1_M dequantization that is registered and produces numerically correct output matching the gguf reference (56-byte blocks, fp16 scale packed in top 4 bits of 4 uint16 scales, sub-scales, delta term, grid lookup via IQ1_S grid shared with IQ1_M)",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "User sim instruction includes IQ1_M in scope. Test.sh Gate G7 tests IQ1_M across 3 seeds (weight 0.13). Oracle implements this at dequant.py:480-526. Most complex function — d is reconstructed from top 4 bits of 4 uint16 scale words."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Use elemental torch tensor indexing operations (direct bracket indexing or torch.gather) instead of F.embedding / torch.nn.functional.embedding for grid/table lookups in the IQ dequantization functions",
+      "tier": "secondary",
+      "weight": 0.04,
+      "rationale": "User sim Turn 2 (conditional): 'Can we replace F.embedding by elemental torch operations?' Test.sh Gate G2 checks IQ3_XXS source for F.embedding usage (weight 0.04). Oracle's new functions all use direct indexing (e.g., GRID_IQ3_S[...]) but the pre-existing IQ3_XXS still uses F.embedding — a complete solution would replace those too."
+    }
+  ],
+  "decomposition_notes": "6 core goals (one per dequantization function: fix IQ3_XXS + implement IQ3_S, IQ2_S, IQ2_XXS, IQ1_S, IQ1_M) + 1 secondary (F.embedding replacement). Using formula: sum_mult = 6*4 + 1*1 = 25; each core = 4/25 = 0.16; secondary = 1/25 = 0.04. Total = 6*0.16 + 0.04 = 1.00. The oracle patch itself does NOT fix IQ3_XXS (goal_1) or replace F.embedding in IQ3_XXS (goal_7), scoring ~0.78 on test.sh — the rubric reflects the FULL task spec from the user instruction, not just what the oracle achieved. Registration of each function in the dequantize_functions dict is bundled into its respective implementation goal rather than split out separately, since an unregistered function is functionally incomplete. Each dequant function is an independent, substantial implementation requiring correct byte-layout parsing, grid initialization, sign unpacking, and scale computation unique to that quantization type."
+}

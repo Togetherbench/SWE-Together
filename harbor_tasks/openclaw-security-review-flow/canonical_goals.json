@@ -1,0 +1,55 @@
+{
+  "task_name": "openclaw-implement-b7594a",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement tool risk classification that maps destructive tools (bash, exec, delete) to 'high' risk, write/send tools to 'medium' risk, and read-only tools (read, grep, ls) to 'low' risk. Must be importable and callable as a pure function.",
+      "tier": "core",
+      "weight": 0.21,
+      "rationale": "intent_0 (initial request for security module), intent_1 (security first). F2P-1 test validates classifyTool behavior for 8 tool→tier mappings. Upstream gate f2p_upstream_risk_tiers_import also checks classifyToolRisk('bash')==='high'."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement bash command destructiveness detection that correctly identifies dangerous commands (rm -rf, dd, chmod 777, mkfs, etc.) as destructive while NOT flagging safe commands (ls, cat, echo, grep, git status, pwd) — high true-positive rate with zero/near-zero false positives.",
+      "tier": "core",
+      "weight": 0.21,
+      "rationale": "intent_0, intent_4 (prompt injection is advanced). F2P-2 test checks 6 dangerous commands (>=5 must flag) and 6 safe commands (0 false positives for full credit). This is a key security primitive."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement fast regex-based prompt injection pattern detection that catches common injection phrases ('ignore all previous instructions', 'disregard prior instructions', 'forget your guidelines', 'you are now a different AI', 'new instructions:', 'SYSTEM: override') while NOT flagging benign user messages. Performance should be fast (sub-5ms per check).",
+      "tier": "core",
+      "weight": 0.21,
+      "rationale": "intent_0 (address prompt injection shortcomings), intent_4 (prompt injection is advanced). F2P-3 test validates 6 malicious inputs (>=5 TP) and 5 clean inputs (0 FP) plus performance. Highest-weight individual F2P test at 0.18."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Implement a security decision flow orchestrator that ties the risk-tiered model together end-to-end: (a) low-risk + clean input auto-approves WITHOUT calling LLM reviewer, (b) high-risk tools trigger LLM reviewer call AND require human approval, (c) low-risk tool + suspicious injection patterns triggers escalation (reviewer called or request denied/blocked). Must expose a factory function returning an object with an evaluate() method.",
+      "tier": "core",
+      "weight": 0.21,
+      "rationale": "intent_4 (correction: LLM as security reviewer), intent_6 (correction: reuse existing LLM endpoint), intent_8 (approve risk-tiered + same-LLM-reviewer approach). F2P-6 is the integration test with 4 sub-checks and highest test weight (0.20). Upstream gate f2p_upstream_decision_flow_import validates importability."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Implement an LLM reviewer module with an exported system prompt string (200+ characters) that instructs the reviewer to output only APPROVE, DENY, or ESCALATE verdicts. The reviewer concept must use the same LLM endpoint with a security-focused system prompt and no tools.",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "intent_4 (correction: use LLM as security reviewer), intent_6 (correction: same LLM endpoint, different context prompt). F2P-5 checks REVIEWER_SYSTEM_PROMPT length >=200 and presence of all 3 verdict keywords. This was the user's key architectural pivot — promoting from pattern-only to LLM-reviewed security."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Implement a risk escalation function that bumps risk tiers up by one level: low→medium, medium→high, high stays high. Used when suspicious patterns are detected to escalate the security response.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Architectural requirement from intent_0 + intent_4 (risk-tiered model). F2P-4 test validates all 3 escalation paths. Supports the decision flow's pattern-based escalation logic."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Provide a public API surface via an index module that re-exports key symbols: the decision flow factory, bash destructiveness checker, pattern checker, risk escalation function, tool risk classifier, and reviewer system prompt.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Standard module organization. F2P-7 test checks for 6 expected exports from index.ts (score >=5 for full credit). Enables clean consumption of the security module by gateway integration and other consumers."
+    }
+  ],
+  "decomposition_notes": "4 cores + 3 secondaries. Default ratio 4:1 yields sum_mult=4*4+3*1=19. Each core=4/19≈0.21, secondaries=1/19≈0.05. Bumped goal_5 (LLM reviewer prompt) to 0.06 because the user made two corrections (intent_4, intent_6) insisting on LLM-based review — this was the session's key architectural pivot. Weights sum to 4*0.21+0.06+0.05+0.05=1.00. Goals are behavioral and implementation-agnostic: any function names, file organization, or code structure that achieves the described behavior should pass. The F2P tests themselves are flexible about naming conventions (they search multiple candidate function names). No oracle patch available; goals derived entirely from user_dialogue.md intents (especially corrections intent_4 and intent_6) plus the 7 F2P behavioral tests in test.sh."
+}

@@ -1,0 +1,48 @@
+{
+  "task_name": "cli-task-4a9dde",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "The TTY-detection function (hasTTY) must detect the GEMINI_CLI environment variable and return false (non-interactive) when it is set, so that git hooks do not attempt to open /dev/tty when running as a Gemini CLI subprocess",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "User turns 16-20: user discovers the hang is in the 'entire' git hook process reading /dev/tty, asks for GEMINI_CLI detection, and approves the fix. Oracle adds GEMINI_CLI check in hasTTY() at manual_commit_hooks.go:46-48. This is the root cause fix for the production bug."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The interactive confirmation function (askConfirmTTY) must also detect the GEMINI_CLI environment variable and return the default value without prompting when it is set, preventing the prepare-commit-msg hook from blocking on user input",
+      "tier": "core",
+      "weight": 0.33,
+      "rationale": "Same root cause as goal_1 but in a second function that reads from /dev/tty. Both hasTTY and askConfirmTTY independently open /dev/tty; both must be guarded. Oracle adds GEMINI_CLI check in askConfirmTTY() at manual_commit_hooks.go:72-75."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The Gemini E2E test runner's RunPromptWithTools must use Gemini's fully-permissive approval mode ('yolo') instead of 'auto_edit' with a per-tool allowlist, because Gemini's --allowed-tools requires exact command matching that doesn't work for parameterized shell commands",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "User turns 5-8 and 12-15: user discovers --allowed-tools exact matching doesn't work (ShellTool(git add) won't match 'git add hello.go'). Oracle switches to --approval-mode yolo in agent_runner.go:274. test.sh Gate 1 (F2P_GEMINI_YOLO_MODE, weight 0.20)."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The Gemini E2E test runner must add hang-prevention guards to the subprocess: at minimum, set an environment variable so git hooks skip interactive prompts AND either redirect stdin from /dev/null or explicitly configure the subprocess environment",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "User turn 21 discusses whether the devnull fix is still needed. Oracle sets ENTIRE_TEST_TTY=1 in cmd.Env and attaches /dev/null to stdin in agent_runner.go:285-294. test.sh Gate 2 (F2P_GEMINI_RUNNER_TTY_GUARDS) requires at least 2 of 3 guards."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The hardcoded ShellTool(git ...) tool allowlist entries must be removed from the Gemini runner's RunPromptWithTools function, since the yolo approval mode makes them unnecessary and their exact-match semantics were the proximate cause of the test hang",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "The buggy state hard-codes defaultAllowedTools with ShellTool(git status/add/commit/diff/log). Oracle removes all of these. test.sh Gate 6 (F2P_NO_HARDCODED_GIT_TOOLS, weight 0.10)."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The file carry-forward logic (filesWithRemainingAgentChanges) must check whether an uncommitted file already exists in the HEAD commit tree with content matching the shadow branch before marking it for carry-forward, preventing already-committed files from being redundantly carried forward",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Discovered during verification (user turns 22-24). Oracle adds commitTree.File/shadowTree.File hash comparison with continue in the !wasCommitted branch of content_overlap.go:394-407. test.sh Gate 5 (F2P_OVERLAP_HEAD_HASH_CHECK, weight 0.15)."
+    }
+  ],
+  "decomposition_notes": "2 cores + 4 secondaries. The two GEMINI_CLI guards in the hook functions are the core production bug fix (user explicitly identified the root cause at turn 16 and approved the fix at turn 20). The E2E test runner changes (yolo mode, TTY guards, removing ShellTool entries) and the content_overlap fix are secondary — they fix the test harness and a separate bug found during verification. Default ratio: sum_mult = 2*4 + 4*1 = 12; each core = 4/12 ≈ 0.333; each secondary = 1/12 ≈ 0.083. Rounded: cores at 0.34+0.33=0.67, secondaries at 0.08+0.09+0.08+0.08=0.33, total=1.00. Goals are behavioral and implementation-agnostic: any equivalent detection mechanism for GEMINI_CLI and any approach to making the test runner non-interactive would satisfy the rubric."
+}

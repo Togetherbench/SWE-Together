@@ -1,0 +1,41 @@
+{
+  "task_name": "rudel-task-468289",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement sliding window attention mask: when sequence length exceeds the configured window size on a sliding-attention layer, construct an attention mask that sets positions outside the window to -inf, so tokens beyond the window are blocked from attending. This replaces the previous stub/warning that logged 'sliding attention not implemented'.",
+      "tier": "core",
+      "weight": 0.39,
+      "rationale": "This is the headline ask of the task. The user simulation focuses on comparing ComfyUI Gemma3 with HuggingFace reference and implementing the missing sliding window. The oracle replaces the logging.warning at llama.py:390 with actual mask computation using torch.triu and masked_fill_. F2P4 (behavioral mask) verifies this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Ensure the sliding window size is 1024, matching the HuggingFace reference config for Gemma 3. The config's sliding_attention list should contain 1024 as the window size for sliding layers.",
+      "tier": "core",
+      "weight": 0.39,
+      "rationale": "User explicitly asks in turns 3-4: 'Shouldn't the sliding window be 1024?' The config already had sliding_attention=[False,False,False,False,False,1024] with window=1024 in the pre-oracle state, but agents must verify or set this correctly. F2P2 tests this."
+    },
+    {
+      "id": "goal_3",
+      "goal": "When an existing attention_mask is already provided, the sliding window mask must be additively combined with it (not replacing it). When no attention_mask exists, the window mask alone is used.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Important correctness detail for the sliding window implementation. The oracle checks 'if attention_mask is not None: attention_mask = attention_mask + window_mask' at llama.py:394-397. F2P5 specifically verifies that marker values in the original mask are preserved after combination."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Fix rope_theta ordering in Gemma3_4B_Config to match the HuggingFace reference. The values should be reordered so that the correct theta is used for global vs local/sliding attention layers.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "The task asks to compare ComfyUI and HuggingFace implementations and fix differences. The oracle swaps rope_theta from [10000.0, 1000000.0] to [1000000.0, 10000.0] at llama.py:180. This is a difference discovered during comparison that affects model correctness."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Remove or replace the stale warning/TODO text about sliding attention not being implemented, since it is now implemented.",
+      "tier": "polish",
+      "weight": 0.02,
+      "rationale": "With the implementation in place, the logging.warning('sliding attention not implemented') should be gone. The oracle naturally removes it by replacing the line with mask code. F2P1 checks for absence of 'sliding attention not implemented' and 'TODO: implement' strings."
+    }
+  ],
+  "decomposition_notes": "2 cores + 2 secondaries + 1 polish. Default ratio: sum_mult = 2*4 + 2*1 + 1*0.25 = 10.25. Core=4/10.25≈0.39, sec=1/10.25≈0.10, pol=0.25/10.25≈0.02. Weights: 2*0.39 + 2*0.10 + 0.02 = 1.00. The oracle patch makes exactly two changes: (1) swap rope_theta order in config, (2) implement sliding window mask logic replacing the warning. The sliding_attention config with window=1024 was already present pre-oracle, so goal_2 is about verifying/maintaining this value. The task is derived from a user comparing ComfyUI's Gemma3 implementation with HuggingFace's reference and fixing the gaps. Oracle passes F2P2 (config pattern), F2P4 (behavioral mask), F2P5 (mask combine) from test.sh. Goals are behavioral and implementation-agnostic — any approach that achieves the same sliding window masking behavior is valid."
+}

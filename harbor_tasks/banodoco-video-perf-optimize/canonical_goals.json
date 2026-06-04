@@ -1,0 +1,48 @@
+{
+  "task_name": "banodoco-wrapped-task-894a74",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement lazy/virtualized loading for TopGenerations video rows using IntersectionObserver or scroll-based windowing, so that only a limited subset of rows (roughly 4) are actively rendered with video sources at any time, and off-screen rows are released or have their media unloaded to reduce page weight",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "intent_1 (turn 1, kind=request): 'only load that four rows at a time... release the previous rows and load the next ones'. F2P 6 (0.20 weight) tests for IntersectionObserver + useState visibility + conditional src/render in TopGenerations.tsx. Upstream gate also checks IntersectionObserver presence (0.2 weight). This is one of the two headline asks."
+    },
+    {
+      "id": "goal_2",
+      "goal": "ModelTrends animation must auto-play when the section scrolls into view and start from an empty/zero state (left side), progressively revealing data left-to-right — NOT starting with all data already visible",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "intent_5 (kind=request): 'should play when you go into the section'; intent_8 (kind=question/correction): 'why on first load does it not play from the left'; turns 5-6 corrections about animation not running the whole way. F2P 4 (0.15 weight) tests for useState(0) and reset-to-zero logic. Buggy base has useState(data.length) which shows all data on first render."
+    },
+    {
+      "id": "goal_3",
+      "goal": "ModelTrends data must be normalized so that model percentages in each time period sum to approximately 100%, and the Y-axis must have a fixed domain of [0, 100] so it does not rescale during animation",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "intent_13 (kind=question): 'why does it add up to 100% and then not afterwards'; intent_14 (kind=correction): 'adds up to 99% now'. F2P 1 (0.20 weight) behaviorally tests normalization by extracting and executing the normalize function against test data sets. F2P 3 (0.15 weight) checks YAxis domain={[0, 100]}. Upstream gate also checks YAxis domain. These are tightly coupled: normalization makes 100% meaningful, fixed Y-axis prevents visual jumpiness."
+    },
+    {
+      "id": "goal_4",
+      "goal": "ModelTrends animation must use ease-out timing (starts fast, slows down toward the end) rather than constant/linear speed",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "intent_10 (kind=request): 'make it ease out smoothly in terms of the speed'; turns 8-10 iterate on animation smoothness (choppy → too wavy). F2P 2 (0.15 weight) behaviorally tests for an easing function where f(0)≈0, f(1)≈1, first half covers more distance than second half. The initial instruction includes ease-out as a requirement."
+    },
+    {
+      "id": "goal_5",
+      "goal": "When a new model first appears in the animated chart, display a white text label with that model's name on or near its segment in the chart area",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "intent_25 (kind=request): 'show a label in white surrounded by that models name'; intent_26 (kind=correction): 'ideally appearing on its segment'; intent_27 (kind=request): 'make it last long and follow the centre of that model'. F2P 5 (0.15 weight) checks for <text fill='white'> or text-white class with MODEL_COLORS name references."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The production build (npm run build) must succeed without errors — no TypeScript errors, no broken imports, no ReferenceErrors from variable ordering issues",
+      "tier": "secondary",
+      "weight": 0.02,
+      "rationale": "P2P gate in test.sh: build failure immediately zeroes the reward. intent_16 and intent_28 report ReferenceErrors from variable ordering bugs. The build gate ensures the final code is shippable. Low weight because it is primarily a gate (not a feature) but agents that break the build get zero."
+    }
+  ],
+  "decomposition_notes": "Task has two headline asks: (1) TopGenerations row virtualization and (2) ModelTrends animation improvements. Grouped the animation-start-from-zero + auto-play as one core goal since they are tightly coupled (both about the animation lifecycle). Grouped normalization + Y-axis fixed domain as one core goal since they're related data-display correctness issues. Ease-out timing and white labels are explicit user requests but are refinement features on top of the core animation, so they are secondary. Build success is a gate (zero-reward if broken) but not a feature goal per se — kept as low-weight secondary. Weight calculation: 3 cores × 4 = 12, 3 secondaries × 1 = 3, total multiplier = 15. Core default = 4/15 ≈ 0.267, secondary default = 1/15 ≈ 0.067. Adjusted cores slightly up to 0.28 each (0.84 total) since the three core goals represent the vast majority of test weight and user intent. Secondaries at 0.07+0.07+0.02 = 0.16. Total = 0.84 + 0.16 = 1.00."
+}

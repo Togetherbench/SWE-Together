@@ -1,0 +1,55 @@
+{
+  "task_name": "desloppify-treesitter-plugins",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Implement dynamic detector registration: add a runtime registration function to the detector registry that inserts a DetectorMeta into the DETECTORS dict and appends to the display order list. Must be idempotent (re-registering the same detector must not duplicate display-order entries).",
+      "tier": "core",
+      "weight": 0.1,
+      "rationale": "Turn 0 Step 1 explicit ask: 'Add runtime registration functions that generic plugins call at import time' for registry.py. Tested by F2P 1 (0.10): register_detector() exists, inserts into DETECTORS, idempotent on _DISPLAY_ORDER."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement dynamic scoring policy registration: add a runtime registration function in the scoring policy module that inserts a DetectorScoringPolicy and rebuilds derived state (DIMENSIONS_BY_NAME must reflect the new detector, FILE_BASED_DETECTORS must include file-based policies and exclude non-file-based ones).",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Turn 0 Step 1 explicit ask for register_scoring_policy() + _rebuild_derived(). Tested by F2P 2 (0.18): must rebuild DIMENSIONS_BY_NAME and FILE_BASED_DETECTORS correctly after registration."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement narrative DETECTOR_TOOLS refresh: add a function in the narrative constants module that re-syncs the DETECTOR_TOOLS dict from the current DETECTORS state. Must mutate the existing dict in-place (not rebind), so that modules holding a prior reference see updated keys.",
+      "tier": "core",
+      "weight": 0.12,
+      "rationale": "Turn 0 Step 1 mentions narrative registration via callback. Tested by F2P 3 (0.12): refresh_detector_tools() must mutate DETECTOR_TOOLS in-place so that a reference captured before the call reflects updates."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Wire generic_lang() to dynamically register each tool as a detector: when generic_lang() is called with tool specs, each tool's id must appear in the DETECTORS registry afterward.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn 0 Step 2 'generic_lang() calls register_detector for each tool'. Tested by F2P 4 (0.20): calling generic_lang() with a tool spec must result in that tool's id being present in DETECTORS."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Wire generic_lang() to dynamically register scoring policies: when generic_lang() is called with tool specs, each tool must get a scoring policy registered, the policy must be reflected in DIMENSIONS_BY_NAME and FILE_BASED_DETECTORS.",
+      "tier": "core",
+      "weight": 0.15,
+      "rationale": "Turn 0 Step 2 'register scoring policy for each tool'. Tested by F2P 5 (0.15): tool id must appear in DETECTOR_SCORING_POLICIES, DIMENSIONS_BY_NAME['Code quality'].detectors, and FILE_BASED_DETECTORS."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Wire generic_lang() to refresh DETECTOR_TOOLS after registration: after generic_lang() registers detectors, the narrative DETECTOR_TOOLS dict must contain the newly registered tool ids.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 0 Step 2 registration wiring. Tested by F2P 6 (0.10): after generic_lang() call, tool id must be in DETECTOR_TOOLS."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Wire generic_lang() to include shared analysis phases: the language config returned/registered by generic_lang() must include at least 3 phases total, including a security-related phase and at least one of subjective review, duplicate detection, or boilerplate detection phases.",
+      "tier": "core",
+      "weight": 0.15,
+      "rationale": "Turn 0 Step 3 'Run shared phases (security, boilerplate duplication, subjective review, duplicates)'. Tested by F2P 7 (0.15): phases must include security + at least one of subjective/duplicates/boilerplate, total >= 3."
+    }
+  ],
+  "decomposition_notes": "This task has a single headline ask (Turn 0: make generic plugins first-class via 5-step plan) decomposed into 7 goals matching exactly the 7 F2P tests. Goals 1-5 and 7 are core (the primary registration infrastructure + wiring + shared phases), goal 6 is secondary (ancillary narrative refresh wiring). Weights are set to match the F2P test weights exactly (summing to 1.00), since the tests were designed to reflect proportional importance of each sub-feature. The later user turns (T1-T10) are probing questions and research requests that don't produce graded behavioral output — the session was cut off during tree-sitter planning with zero tree-sitter implementation code, so no goals derive from those turns."
+}

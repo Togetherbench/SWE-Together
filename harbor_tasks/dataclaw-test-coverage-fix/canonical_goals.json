@@ -1,0 +1,48 @@
+{
+  "task_name": "dataclaw-test-coverage-fix",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Create a pytest test suite with at least 20 passing tests across at least 4 test files, with at least 80% pass ratio and non-trivial assertion density (at least 3 assert statements per test file). The tests/ directory must exist with test_*.py files that pytest can collect and run.",
+      "tier": "core",
+      "weight": 0.24,
+      "rationale": "Turn 0 headline ask: 'Write comprehensive test suite' for a package with zero tests. Verified by t1_f2p_suite_runs_and_passes (≥20 passing, ≥4 files, ≥80% ratio, ≥3 asserts/file)."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Tests must behaviorally exercise at least 4 of the 5 dataclaw modules (secrets, anonymizer, config, parser, cli) — meaning the tests actually assert on the behavioral output of each module such that value-level mutations in those modules cause test failures.",
+      "tier": "core",
+      "weight": 0.24,
+      "rationale": "Turn 0 plan explicitly lists tests for secrets.py, anonymizer.py, config.py, parser.py, cli.py. Verified by t1_f2p_module_breadth (mutation testing across all 5 modules, ≥4 must be caught)."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Tests must assert on the actual redaction marker string used by the secrets module (the REDACTED constant), such that changing that constant's value would cause at least one test to fail.",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "Turn 1 (intent_0): user asks about security concerns; Turn 2 (intent_1): mark them dealt with. The secrets module's REDACTED constant is the core security primitive. Verified by t2_f2p_secrets_redacted_constant."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Tests must assert on the anonymizer's username hash format (specifically the 'user_' prefix and/or the 8-character hex truncation length), such that changing the prefix or hash length would cause at least one test to fail.",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "Turn 1 (intent_0): user asks about security concerns; anonymizer hash format is security-sensitive. Verified by t2_f2p_anonymizer_hash_format (catches anon_hash_prefix or anon_hash_len mutations)."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Tests must assert on config.py behavioral values (DEFAULT_CONFIG's redact_strings and/or excluded_projects defaults), such that changing those default values causes at least one test to fail.",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "Turn 0 plan: 'Test config.py' with default value assertions. Verified by t1_f2p_config_behavior (catches config_redact_strings or config_excluded_projects mutations)."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Tests must assert on at least one behavioral value in parser.py or cli.py (e.g., file extension matching, timestamp division factor, size formatting divisor, or mask character), such that a value-level mutation in either module causes at least one test to fail.",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "Turn 0 plan includes parser and cli test sections. Verified by t1_f2p_parser_or_cli_behavior (catches parser_ts_div, parser_ext, cli_size_kb, or cli_mask_star mutations)."
+    }
+  ],
+  "decomposition_notes": "2 cores + 4 secondaries. Using ratio 4:1 gives sum_mult = 2*4 + 4*1 = 12. Each core = 4/12 ≈ 0.333, each sec = 1/12 ≈ 0.083. However, the test manifest weights (from test_manifest.yaml) show the upstream compile gate at 0.20 and the secrets/anonymizer security gates at 0.16 each — higher than the basic breadth gates at 0.12. I've adjusted weights to reflect this: cores get 0.24 each (0.48 total), secondaries get 0.13 each (0.52 total), summing to 1.00. This slightly elevates secondaries vs default ratio because the mutation-testing gates (secrets, anonymizer, config, parser/cli) are each independently verified and represent distinct, explicitly requested behavioral coverage. The f2p_upstream_8138ab05 gate (py_compile of all 7 expected test files) is implicitly covered by goal_1 and goal_2 — if the agent creates the right test files that pass, they will compile. Source immutability (p2p_src_unmodified) is a diagnostic constraint, not a goal — the agent should only write tests, not modify source. No oracle patch exists; goals derived from user_dialogue.md intents (Turn 0 plan + Turn 1-2 security concerns) cross-referenced with test.sh mutation gates."
+}

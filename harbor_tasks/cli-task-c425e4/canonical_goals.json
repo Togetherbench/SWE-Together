@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-c425e4",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "The linter detects indented multi-line run blocks using triple-double-quote syntax (run = \"\"\") when the block has more than 3 content lines. The awk start-delimiter and closing-delimiter patterns must allow leading whitespace so that indented blocks in mise.toml are caught, not just blocks starting at column 1.",
+      "tier": "core",
+      "weight": 0.5,
+      "rationale": "User turn 2 (instruction.md): 'The awk patterns in this linter only match delimiters at column 1... Consider allowing leading whitespace for both the start (run =) and closing delimiter matches.' This is the headline bug fix. Oracle patch changes /^run = \"\"\"/ to /^[ \\t]*run = \"\"\"/ and /^\"\"\"/ to /^[ \\t]*\"\"\"/. Test gate G1 validates this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The indentation-aware fix also applies to single-quote triple syntax (run = '''). Indented blocks using ''' are detected the same way as \"\"\" blocks.",
+      "tier": "secondary",
+      "weight": 0.125,
+      "rationale": "The original script already handles both ''' and \"\"\" syntaxes. The user's fix request ('allowing leading whitespace for both the start and closing delimiter matches') applies to all delimiter variants. Oracle patch updates both ''' patterns to allow leading whitespace. Test gate G3 validates this."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The closing delimiter line itself is not counted in the reported line count. A block with N content lines should report '(N lines)', not '(N+1 lines)'.",
+      "tier": "secondary",
+      "weight": 0.125,
+      "rationale": "User turn 2: '(optionally) avoid counting the closing delimiter line in the reported line count.' Oracle moves lines++ after the closing-delimiter check and adds 'next' so the delimiter line is excluded from the count. Test gate G5 validates this."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Non-indented multi-line blocks (>3 lines) are still detected — no regression from the whitespace fix.",
+      "tier": "secondary",
+      "weight": 0.125,
+      "rationale": "The fix must be additive: non-indented blocks at column 1 must continue to be caught. The oracle's /^[ \\t]*.../ pattern naturally includes the zero-whitespace case. Test gate G4 validates this."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Short inline scripts (3 or fewer content lines) are not flagged — no false positives.",
+      "tier": "secondary",
+      "weight": 0.125,
+      "rationale": "The original script's >3 threshold logic must remain correct after the fix. The oracle preserves 'if (lines > 3)' and the line-counting change doesn't inflate counts. Test gate G2 validates this."
+    }
+  ],
+  "decomposition_notes": "Single core goal (the headline column-1 anchoring bug fix for indented \"\"\" blocks) + 4 secondaries (''' syntax parity, line-count accuracy, non-indented regression, false-positive avoidance). Using default ratio: 1 core × 4 + 4 sec × 1 = 8. Core weight = 4/8 = 0.50, each secondary = 1/8 = 0.125. Sum = 0.50 + 4×0.125 = 1.00. The user explicitly marked the line-count fix as 'optional', keeping it secondary. The ''' syntax is secondary because it's the same fix applied to an additional delimiter variant. Regression and false-positive goals are behavioral invariants that any correct fix must preserve."
+}

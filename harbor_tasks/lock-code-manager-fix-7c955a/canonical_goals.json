@@ -1,0 +1,48 @@
+{
+  "task_name": "lock-code-manager-fix-7c955a",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Add a setup-completion signaling mechanism (e.g., asyncio.Event) to the lock base class that is signaled when async_setup completes, including on failure paths. This mechanism must ensure that any code waiting on setup completion is unblocked regardless of whether setup succeeds or raises an exception (e.g., via try/finally or equivalent).",
+      "tier": "core",
+      "weight": 0.27,
+      "rationale": "README headline ask: 'Fix a race condition...where two config entries sharing the same lock produce Coordinator missing warnings.' User Turn 0 plan specifies adding _setup_complete Event. Oracle adds _setup_complete asyncio.Event field at _base.py:128, wraps async_setup in try/finally at _base.py:298-303 to always call .set(). Corresponds to gold_setup_complete_field + gold_setup_complete_both_paths verification gates."
+    },
+    {
+      "id": "goal_2",
+      "goal": "When a second config entry reuses an existing lock instance (lock already exists in shared state), the code must await the setup-completion signal before proceeding with entity creation. This prevents the 'Coordinator missing' race condition where entities are created before the coordinator exists.",
+      "tier": "core",
+      "weight": 0.27,
+      "rationale": "README: 'two config entries sharing the same lock...fail to create entities on startup.' User Turn 0 plan: await setup on lock reuse. Oracle adds 'await lock.async_wait_for_setup()' at __init__.py:498 in the lock-reuse branch of async_update_listener. Corresponds to gold_lock_reuse_await verification gate."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Fix the 'Unable to remove unknown job listener' error on reload by replacing the try/except ValueError pattern with a flag-based approach: track whether the one-time HOMEASSISTANT_STARTED listener has fired, and conditionally skip the unsubscribe call if the event already fired (listener already auto-removed).",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "README: 'fix an Unable to remove unknown job listener error on reload caused by trying to unsubscribe an already-removed one-time listener.' User Turns 78-91 discuss the nonlocal/started pattern. Oracle at __init__.py:330-344 uses 'started = False', nonlocal in _on_started, and 'if not started: unsub()' in _safe_unsub. Corresponds to gold_safe_unsub_flag + bronze_on_started_nonlocal verification gates."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Add tests verifying that two config entries sharing the same lock both create entities without 'Coordinator missing' warnings, and that reused locks have a non-null coordinator after setup completes.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "README silver_new_tests_exist gate. User Turn 217 emphasizes tests should validate behavior. Oracle adds test_overlapping_locks_both_entries_get_entities and test_coordinator_exists_after_setup in tests/test_init.py:531-615."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Add a test verifying that unloading a config entry after the HOMEASSISTANT_STARTED event has already fired does not produce 'Unable to remove unknown job' log errors.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "This is the regression test for the listener unsubscribe fix. Oracle adds test_reload_after_started_no_listener_error in tests/test_init.py:573-604. The test sets up during CoreState.starting, fires EVENT_HOMEASSISTANT_STARTED, then unloads and asserts no error log."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Add tests covering the early return paths in the duplicate code handler: when the code slot is cleared/None before the task runs, when no config entry manages the slot, and when the enabled entity is not found.",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "User Turn 347: 'we need to test early returns in handle duplicate code.' Oracle adds three test functions in tests/providers/test_zwave_js.py: test_handle_duplicate_code_early_return_code_slot_cleared, test_handle_duplicate_code_early_return_no_matching_entry, test_handle_duplicate_code_early_return_entity_not_found."
+    }
+  ],
+  "decomposition_notes": "3 cores + 3 secondaries. Default ratio: sum_mult = 3*4 + 3*1 = 15. Each core = 4/15 ≈ 0.267, each secondary = 1/15 ≈ 0.067. Adjusted to 0.27/0.27/0.26 for cores and 0.07/0.07/0.06 for secondaries to sum exactly to 1.00. Goals 1-3 capture the two primary bugfixes (race condition + listener unsubscribe) which are the headline asks from Turn 0. Goals 4-6 capture explicit user requests for tests from later turns (Turns 196-217 for overlapping lock tests, and Turn 347 for early-return tests). The user's encapsulation concern (Turn 196: public API for setup_complete) and refactoring request (Turn 250: move into _async_setup) are folded into goal_1's behavioral description rather than being separate goals, since they are implementation means to achieve the setup-completion signaling behavior. All goals are described behaviorally to accept any equivalent implementation."
+}

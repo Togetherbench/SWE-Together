@@ -1,0 +1,41 @@
+{
+  "task_name": "unsloth-idefics3-fix",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Create a new Python module under unsloth/models/ that defines a FastIdefics3Model class with at least one method or base class inheritance, making the class importable as a top-level symbol from that module",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Primary deliverable from intent_2/intent_4 (start full Unsloth implementation / begin development). Maps to F2P tests 3 (class defined with methods) and 7 (symbol resolvable from new module). The user's entire session is about creating Idefics3 support — the model class is the centerpiece."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Register idefics3 in the VLLM_SUPPORTED_VLM list in vision.py and export FastIdefics3Model from unsloth/models/__init__.py via a relative import from the new module, while preserving all existing VLM entries and exports",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Required for Idefics3 to be recognized by Unsloth's VLM dispatch. Maps to F2P tests 1 (idefics3 in VLLM_SUPPORTED_VLM), 2 (FastIdefics3Model imported in __init__.py), and upstream gates (registration + export). P2P gates verify no existing entries are lost. Derived from intent_2, intent_4, and the user_simulation_prompt's 'Files that should be created/modified' section."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement a from_pretrained method or inheritance chain that connects FastIdefics3Model to the Hugging Face Idefics3ForConditionalGeneration or AutoModelForVision2Seq class, enabling model loading",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Essential for actually loading models. Maps to F2P test 4 (from_pretrained references Idefics3 HF class). The user tested loading in Colab (turns 14-22), showing this is a load-bearing requirement. Derived from intent_7 (create github-ready version) and the entire debugging arc (turns 14-22)."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Address the requires_grad_pre_hook compatibility issue so that Idefics3 models do not crash on forward pass with empty tuple inputs — either by patching/wrapping the hook, overriding get_input_embeddings to return a proper embedding layer, or modifying unsloth_zoo's peft_utils to handle the Idefics3 architecture gracefully",
+      "tier": "secondary",
+      "weight": 0.12,
+      "rationale": "The blocking runtime bug reported across turns 20-22 and 31 (intent_13 through intent_21). The user repeatedly hit RuntimeError from requires_grad_pre_hook. Intent_16 explicitly asks 'Is it possible for us to make unsloth_zoo support Idefics3 architecture?' Intent_18 is a correction challenging the agent's assumptions about VLM support. Maps to F2P test 5 (hook compatibility fix present). Classified as secondary rather than core because the test checks for presence of fix code patterns rather than runtime behavior, and many agents may create the module without reaching this deep debugging stage."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Include LoRA target module configuration (projection layer names like q_proj, k_proj, v_proj, etc., or delegation to existing LoRA config utilities) in the new idefics module",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "The user's original goal is fine-tuning (SFT, DPO, GRPO) which requires LoRA configuration. Maps to F2P test 6 (LoRA target_modules configuration). Derived from intent_0 (investigate finetuning) and intent_2 (full Unsloth implementation including LoRA support)."
+    }
+  ],
+  "decomposition_notes": "3 cores + 2 secondaries. Default ratio would be 4*3 + 1*2 = 14, giving each core 4/14≈0.286 and each sec 1/14≈0.071. Adjusted weights upward for goal_1 and goal_2 (0.30 each) since they are the most fundamental — without these the entire feature doesn't exist. Goal_3 (from_pretrained) gets 0.20 as it's essential but often comes for free with inheritance. Goal_4 (hook fix) gets 0.12 — elevated above default secondary because it was the primary debugging focus across 10+ turns and is the 'hard' part of this task. Goal_5 (LoRA config) gets 0.08 as it's important but relatively mechanical. Weights sum to 1.00. The F2P tests 1-7 all map to goals 1-5, with tests 3+7→goal_1, tests 1+2→goal_2, test 4→goal_3, test 5→goal_4, test 6→goal_5. Upstream gates overlap with goals 1-2. P2P regression gates are not scored as goals but are implicit in goal_2's 'preserving all existing entries' clause."
+}

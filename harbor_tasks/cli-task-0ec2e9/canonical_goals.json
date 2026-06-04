@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-0ec2e9",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "In the turn-end lifecycle handler, merge git-status modified files as a fallback into the transcript-derived modified files list, so that tracked files with working-tree changes are included in shadow branch checkpoints even when the agent uses an unrecognized tool or the transcript format changes",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "README headline ask: 'git-status modified files are merged with transcript-extracted files in the lifecycle handlers'. User Turn 1 reports the bug; Turn 5 pushes agent to realize git-status fallback was missing. Oracle adds mergeUnique call at lifecycle.go:305 inside handleLifecycleTurnEnd. Test manifest gate 'git_status_fallback' (F2P) directly validates this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "In the subagent-end lifecycle handler, apply the same git-status modified files fallback merge so subagent checkpoints also capture files missed by transcript parsing",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "README: 'adds a fallback... ensuring that any tracked file with working-tree changes is included'. Oracle adds the same mergeUnique call at lifecycle.go:542 inside handleLifecycleSubagentEnd. Test manifest gate 'merge_unique_lifecycle' checks both handlers."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement a deduplication mechanism so that when git-status files are merged with transcript-extracted files, duplicate entries are eliminated",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "The merge must avoid duplicates since transcript parsing and git-status may overlap. Oracle implements mergeUnique helper at state.go:330-346. Test manifest gate 'merge_unique_func' checks signature and non-trivial body."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Add unit tests for the deduplication/merge logic covering at least: disjoint inputs, overlapping inputs, and empty inputs",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Oracle adds TestMergeUnique at state_test.go:701-747 with 6 subtests. Test manifest gate 'merge_unique_tests' (F2P) requires tests to compile and pass. install_config.json FAIL_TO_PASS targets TestMergeUnique."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Remove stale 'patch' references from comments in the OpenCode transcript-parsing code (e.g., comments listing tool names should not include 'patch' as a recognized tool)",
+      "tier": "polish",
+      "weight": 0.1,
+      "rationale": "User Turn 6: 'can you check the opencode related code files for any mention of patch there is at least one more in comments'. Oracle updates two comments in transcript.go removing 'patch' from the listed tool names (lines 170 and 190)."
+    }
+  ],
+  "decomposition_notes": "2 cores + 2 secondaries + 1 polish. Default ratio would be 4*2 + 1*2 + 0.25*1 = 10.25, giving each core = 0.39, each sec = 0.098, polish = 0.024. However, I deviated: the comment cleanup (Turn 6) is a small but explicit user ask, so I weighted it at 0.10 (same as secondaries) rather than the default 0.024. This also reflects that behavioral equivalence for the core goals is what matters most — the specific helper function name/structure is irrelevant, only the behavior of merging git-status modified files matters. The two core goals are split because the user's bug affects both turn-end and subagent-end handlers independently; an agent might fix one but miss the other. Weights sum to 1.0."
+}

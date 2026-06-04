@@ -1,0 +1,55 @@
+{
+  "task_name": "dataclaw-anonymizer-bugfix",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Fix word-boundary matching so that usernames adjacent to underscores (e.g., 'config_alice_settings') are anonymized correctly, replacing the broken \\b approach with character-class lookarounds or equivalent",
+      "tier": "core",
+      "weight": 0.24,
+      "rationale": "User turn T2 pushes agent to find bugs; the \\b word-boundary bug is highlighted in the original buggy docstring. F2P tests underscore_adjacent (0.15) and underscore_prefix (0.10) verify this. Oracle uses (?<![a-zA-Z0-9])...(?![a-zA-Z0-9]) lookarounds at anonymizer.py:22."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Fix _replace_username (and extras handling) to avoid substring matches — 'alex' must not be replaced inside 'alexis'. Must use word-boundary-aware matching instead of naive str.replace",
+      "tier": "core",
+      "weight": 0.24,
+      "rationale": "Buggy base uses str.replace for _replace_username causing substring corruption. F2P test substring_safety (0.10) verifies this. F2P test anonymizer_extras_underscore (0.10) also depends on proper word-boundary-aware extras matching. Oracle replaces str.replace with regex pattern at anonymizer.py:110-111."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Support Windows backslash paths (\\Users\\<name>\\) for short usernames, and implement the custom home directory parameter so non-standard home paths (e.g., /opt/data/joe) are anonymized for short usernames",
+      "tier": "core",
+      "weight": 0.24,
+      "rationale": "Two documented bugs: no \\Users\\ backslash support for short usernames, and home parameter accepted but never used. F2P tests windows_backslash_short (0.15) and custom_home_short (0.15) verify these. Oracle adds backslashes to the short username pattern at anonymizer.py:28 and implements _get_custom_home_pattern at anonymizer.py:32-39."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Ensure case-insensitive matching works for username replacement (both long usernames in anonymize_text and in _replace_username)",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "F2P test case_insensitive (0.10) verifies that 'ALICE' and 'Alice' are both replaced when username is 'alice'. Oracle uses re.IGNORECASE flag at anonymizer.py:22."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Add test coverage in tests/test_anonymizer.py for the bug fixes (word-boundary, substring safety, Windows paths, custom home, case insensitivity)",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "User turn T4 explicitly asks: 'Add tests in tests/test_anonymizer.py to cover the changes.' This is a direct user request for test coverage of the fixed behaviors."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Cache/compile regex patterns so that repeated calls to anonymize_text and Anonymizer.text do not recompile patterns on every invocation (e.g., via lru_cache, module-level pre-compilation, or similar caching strategy)",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "User turn T5 explicitly asks: 'Compile the regexes in the anonymizer. How else can we speedup the anonymizer?' F2P test compile_caching (0.15) verifies that re.compile is not called proportionally to call count. Oracle uses @functools.lru_cache decorators on pattern-building functions."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Maintain backward compatibility: anonymize_path must remain importable (as alias or equivalent), all existing public symbols (anonymize_text, Anonymizer, _hash_username, _replace_username) must remain importable with the same signatures",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "P2P regression gates verify import of all public symbols and basic functionality. The oracle preserves anonymize_path = anonymize_text at anonymizer.py:68. Breaking the public API would cause P2P gate failures capping reward to 0."
+    }
+  ],
+  "decomposition_notes": "3 cores + 4 secondaries. Default ratio: sum_mult = 3*4 + 4*1 = 16. Each core = 4/16 = 0.25, each sec = 1/16 = 0.0625. Adjusted slightly: cores at 0.24 each (0.72 total) and secondaries at 0.07 each (0.28 total) to sum to 1.00. The three core goals map to the headline bugs the user is asked to find and fix (turns T1-T3): word-boundary, substring safety, and Windows/custom-home support. Secondary goals cover the explicit follow-up user requests (tests in T4, regex caching in T5) plus backward compatibility which is enforced by P2P gates. Case insensitivity is secondary because it naturally falls out of fixing the word-boundary bug with re.IGNORECASE — it's a sub-aspect of the core fix rather than an independent headline ask."
+}

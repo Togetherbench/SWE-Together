@@ -1,0 +1,34 @@
+{
+  "task_name": "checkout-l2-l3-payment-data",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Define Checkout.com-specific data structures for L2 order-level data (with fields for tax amount, discount amount, duty amount, shipping amount) and L3 line-item data (with fields for commodity_code, unit_of_measure, unit_price, quantity, and related per-item amounts)",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "User instruction asks to add L2/L3 payment data support for Checkout.com. The oracle defines CheckoutProcessing (order-level L2 with tax/discount/duty/shipping fields at transformers.rs:286-293) and CheckoutLineItem (L3 with commodity_code/unit_of_measure/unit_price at transformers.rs:311-322). Test gates B and C verify these structs exist with required fields."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Add L2/L3 data fields to the Checkout.com PaymentsRequest struct and populate them from the router data's l2_l3_data source in the payment request construction (TryFrom impl or equivalent), so that when l2_l3_data is present, processing/order-level and line-item data are included in the outgoing API request",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Core integration requirement: the new structs must be wired into PaymentsRequest and populated. Oracle adds customer/processing/shipping/items fields to PaymentsRequest (transformers.rs:342-346) and maps from item.router_data.l2_l3_data in the TryFrom impl (transformers.rs:574-616). Test gates A, D, and E verify the processing field exists on PaymentsRequest, l2_l3_data is accessed, and the field is populated."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Map customer data (customer ID and tax registration number) and shipping data (destination country, destination zip, origin zip) from L2/L3 data into corresponding Checkout.com request structures",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "The Checkout.com L2/L3 API includes customer and shipping fields alongside processing and line items. Oracle defines CheckoutCustomer (transformers.rs:279-282), CheckoutShipping/CheckoutShippingAddress (transformers.rs:296-307), and maps them from l2_l3_data (transformers.rs:577-595). These are part of the complete L2/L3 integration but less central than the order-level and line-item structs."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Ensure no regressions to existing PaymentsRequest fields (processing_channel_id, three_ds, etc.) and that the modified code compiles successfully",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "P2P regression safety: the existing PaymentsRequest must retain its core fields. Test gate F checks compilation, and P2P gates verify processing_channel_id and three_ds are preserved. Oracle preserves all existing fields while adding the new ones (transformers.rs:326-347)."
+    }
+  ],
+  "decomposition_notes": "2 cores + 2 secondaries. Using the suggested ratio: sum_mult = 2*4 + 2*1 = 10, so each core = 4/10 = 0.40, each secondary = 1/10 = 0.10. Total: 2*0.40 + 2*0.10 = 1.00. This is a single-turn feature implementation task (no follow-up user turns). The two core goals capture the essential structural (goal_1: define L2/L3 structs) and integration (goal_2: wire into PaymentsRequest + populate from l2_l3_data) aspects. The two secondary goals cover additional field mappings (goal_3: customer + shipping) and correctness/regression safety (goal_4: compilation + field preservation). Note: test gate E fails on the oracle due to a regex mismatch (oracle uses `let request = Self{...}; Ok(request)` instead of `Ok(Self{...})`), but the behavior is correct — the rubric captures the behavioral intent, not the regex pattern."
+}

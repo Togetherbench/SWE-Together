@@ -1,0 +1,41 @@
+{
+  "task_name": "rudel-task-468289",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Add three new columns to the Diesel schema (schema_v2.rs): 'attempts_group_id' in the payment_attempt table block, and 'active_attempts_group_id' plus 'active_attempt_id_type' in the payment_intent table block. Columns must be placed in the correct table! macro blocks and compile via Diesel DSL.",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "Foundational schema change required by the task. Test Gate 1 checks column placement in schema_v2.rs; Gate 2 validates DSL compilation. Oracle: crates/diesel_models/src/schema_v2.rs adds attempts_group_id as Nullable<Varchar> to payment_attempt block and active_attempts_group_id + active_attempt_id_type as Nullable<Varchar> to payment_intent block."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Add corresponding fields to the Diesel model structs for both read and insert/new variants: PaymentAttempt and PaymentAttemptNew must have an 'attempts_group_id' field; PaymentIntent and PaymentIntentNew (or equivalent insertable struct) must have 'active_attempts_group_id' and 'active_attempt_id_type' fields. The diesel_models crate must compile with the v2 feature.",
+      "tier": "core",
+      "weight": 0.37,
+      "rationale": "Without fields on the Diesel structs, the columns cannot be read/written. Test Gates 3 and 4 probe these fields with synthetic code. Oracle: crates/diesel_models/src/payment_attempt.rs adds attempts_group_id to both PaymentAttempt and PaymentAttemptNew; crates/diesel_models/src/payment_intent.rs adds active_attempts_group_id and active_attempt_id_type to PaymentIntent (with propagation in PaymentIntentUpdateInternal)."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Propagate the new fields through all downstream crates so the full workspace compiles with the v2 feature: domain model structs (PaymentIntent, PaymentAttempt in hyperswitch_domain_models) must include the fields with proper conversion logic, and Kafka event structs in the router crate must destructure/include the fields.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "Test Gates 6 and 7 check that hyperswitch_domain_models and router compile with v2. Upstream gate f2p_upstream_domain_kafka_propagation checks field presence in domain models and kafka event files. Oracle propagates to: crates/hyperswitch_domain_models/src/payments.rs, payments/payment_attempt.rs, payments/payment_intent.rs, and 4 kafka files under crates/router/src/services/kafka/."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Create SQL migration files (up.sql and down.sql) with ALTER TABLE statements adding all three new columns: 'attempts_group_id' on payment_attempt, 'active_attempts_group_id' on payment_intent, and 'active_attempt_id_type' on payment_intent.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "Database column additions require migration files. Test Gate 5 searches for migration up.sql files with the correct ALTER TABLE statements. Upstream gate f2p_upstream_migration_completeness checks all 3 columns present. Oracle creates v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/ with up.sql (ADD COLUMN IF NOT EXISTS) and down.sql (DROP COLUMN IF EXISTS)."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Define a new enum type for the 'active_attempt_id_type' column with at least two variants representing an attempt group ID mode and a single attempt ID mode (with single attempt ID as the default). The enum must support serialization/deserialization and Diesel storage.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "The active_attempt_id_type column needs a typed enum rather than a raw string. Oracle defines ActiveAttemptIDType in crates/common_enums/src/enums.rs with variants AttemptsGroupID and AttemptID (default), with derive macros for serde, strum, diesel_enum, and ToSchema."
+    }
+  ],
+  "decomposition_notes": "Single-turn task to add 3 new database columns for split payments across the Hyperswitch codebase. 2 core goals cover the foundational schema + diesel model layer (the primary ask). 3 secondary goals cover downstream propagation, migrations, and enum definition. Weights: 2 cores + 3 secondaries → sum_mult = 2*4 + 3*1 = 11 → core ≈ 4/11 ≈ 0.36, secondary ≈ 1/11 ≈ 0.09. Adjusted goal_2 to 0.37 for clean sum to 1.00. Goals are behavioral and implementation-agnostic: any structurally equivalent approach (different field names notwithstanding the test probes, different file organization) that achieves the same compilation and migration outcomes would satisfy them."
+}

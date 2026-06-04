@@ -1,0 +1,41 @@
+{
+  "task_name": "vibecomfy-debug-97c34b",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Extract TASK_ALIASES from knowledge.py into a dedicated shared module with an expand_query (or equivalent) function, and have knowledge.py import from that shared module instead of keeping aliases inline. The shared module must contain 25+ alias entries, be focused (not a copy of ComfyKnowledge), and the expand function must preserve the original query term, expand known alias keys to their synonym lists, and handle edge cases without crashing.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Headline integration ask from intents 7-8 (user says 'use both approaches, update directly'). F2P-1 tests shared alias module existence; F2P-2 tests expand_query behavior (6 sub-checks). Upstream gate f2p_upstream_aliases (weight 0.24) also validates this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Integrate analysis.py workflow-analysis capabilities (upstream, downstream, path-finding, analyze_workflow) into the MCP server by adding new MCP tool definitions that wrap these functions. The MCP server must import from analysis.py, reference at least 2 analysis functions, define at least 2 new analysis-flavored tools (e.g., upstream/downstream/trace/path), and have actionable tool descriptions. All modules must still import cleanly.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Primary task from README + intents 7-9 ('think through how to integrate precisely'). F2P-3 (0.18 weight) checks MCP exposes analysis tools with 6 sub-checks. F2P-4 (0.12 weight) checks analysis functions are callable end-to-end. P2P gates check imports remain stable."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Create a test suite (tests/ directory with test files) that covers the shared search/alias module and analysis wrapper functions. Tests must reference TASK_ALIASES or expand_query AND analysis functions (analyze_workflow/find_upstream/find_downstream/find_path). pytest must be able to collect and run the tests without errors.",
+      "tier": "secondary",
+      "weight": 0.12,
+      "rationale": "Explicitly requested in intent_11 ('create a test for every tool function'). F2P-7 (0.10 weight) checks test coverage exists. Upstream gate f2p_upstream_pytest (weight 0.20) runs pytest tests/ to rc=0."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Reorganize the single monolithic comfy-nodes skill into multiple (3+) focused skills, each with its own SKILL.md containing proper frontmatter (name, description with triggers). Skills should cover distinct concerns (e.g., node development, workflow analysis, node search/registry).",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Explicitly requested across intents 17-30 and corrective intents 28, 30 ('are our skills not very broad right now?'). F2P-6 (0.13 weight) checks for 3+ focused skills with frontmatter triggers."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Create .mcp.json auto-discovery configuration that references the MCP server module, and track the 'mcp' dependency in a requirements file (requirements.txt or pyproject.toml).",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Requested in intents 27 ('And what about the MCP?') and 36 ('any requirements we need?'). F2P-5 (0.10 weight) checks .mcp.json exists with mcpServers entry + mcp listed as dependency."
+    }
+  ],
+  "decomposition_notes": "2 cores + 3 secondaries. Default ratio gives 4/11≈0.36 per core, 1/11≈0.09 per secondary. Adjusted slightly: cores at 0.34 each (0.68 total) to give more weight to secondaries (0.32 total), reflecting that tests carry heavy upstream gate weight (0.20) and skills reorganization was a sustained multi-turn user focus across intents 17-39. Final weights: 0.34+0.34+0.12+0.10+0.10 = 1.00. No oracle patch available; goals derived from user_dialogue.md intents (especially request/correction kinds) + F2P test structure in test.sh + test_manifest.yaml gate weights."
+}

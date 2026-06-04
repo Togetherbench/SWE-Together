@@ -1,0 +1,41 @@
+{
+  "task_name": "gemini-voyager-task-16a5c7",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Rename the extension display name (extName) from 'Gemini Voyager' to a new name not containing 'Gemini Voyager' in ALL locale message files (ar, en, es, fr, ja, ko, pt, ru, zh, zh_TW). The extName value must be non-empty and must not contain the literal phrase 'Gemini Voyager'.",
+      "tier": "core",
+      "weight": 0.37,
+      "rationale": "User Turn 1 headline ask: rename the extension to comply with Google trademark complaint. extName is the Chrome extension's display name — the primary target of the trademark notice. Oracle changes extName.message in all 10 locale files under src/locales/*/messages.json. Test gate F2P_LOCALE_EXTNAME (weight 0.30) verifies this."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Remove 'Gemini Voyager' from all export/generated-content footer strings across all export services (PDF, image, markdown, deep research PDF, and deep research markdown formatter). The footer text visible to end users in exported documents must no longer contain the literal phrase 'Gemini Voyager'. GitHub URLs may remain unchanged.",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "User Turn 1: rename user-facing strings in the extension. Export footers are rendered in user-exported PDFs, images, and markdown files — directly user-visible branded text. Oracle changes footer strings in 5 export-related source files. Test gate F2P_EXPORT_FOOTERS (weight 0.25) verifies this across all export services."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Rename the prompt manager title (pm_title) from 'Gemini Voyager' to a new name not containing 'Gemini Voyager' in ALL locale message files (ar, en, es, fr, ja, ko, pt, ru, zh, zh_TW). The pm_title value must be non-empty.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "User Turn 1: all user-facing 'Gemini Voyager' strings in the extension must be renamed. pm_title is the prompt manager panel title shown to users. Oracle changes pm_title.message in all 10 locale files. Test gate F2P_LOCALE_PMTITLE (weight 0.20) verifies this."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Rename the hardcoded prompt manager title text in the runtime code that assigns the title via textContent. Both assignment sites (initial render and UI refresh) must no longer contain 'Gemini Voyager'. The assigned value must be non-empty.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "User Turn 1: rename extension-facing strings. The prompt manager title is set via hardcoded string assignments in two places in the prompt manager source. Oracle changes both titleText.textContent assignments. Test gate F2P_PROMPT_TITLE_RUNTIME (weight 0.15) verifies both sites are renamed."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Update the export formatter test expectations so they no longer assert the presence of the literal phrase 'Gemini Voyager'. The test should validate the new name or a compatible assertion.",
+      "tier": "secondary",
+      "weight": 0.09,
+      "rationale": "The MarkdownFormatter test has a toContain assertion for the brand name in the footer. After renaming the footer, this test assertion must be updated to match. Oracle updates the test expectation. Test gate F2P_TEST_UPDATED (weight 0.10) verifies no toContain still hard-codes 'Gemini Voyager'."
+    }
+  ],
+  "decomposition_notes": "Single-headline task: rename 'Gemini Voyager' to 'Voyager' for Google trademark compliance. Decomposed into 5 behavioral goals matching the 5 test gates. Two core goals cover the most critical user-visible surfaces (extension name displayed in Chrome, export document footers). Three secondary goals cover the prompt manager title (locale + runtime) and test consistency. Weights follow 2-core + 3-secondary default ratio: sum_mult = 2*4 + 3*1 = 11, each core ≈ 4/11, each sec ≈ 1/11. Adjusted core weights to 0.37 + 0.36 to sum cleanly to 1.00. The changelog_rate_chrome locale changes in the oracle patch are not included as a separate goal since they are not verified by any test gate, and the user explicitly requested 'only the most necessary' changes. Goals are implementation-agnostic: any non-empty replacement that removes the literal 'Gemini Voyager' phrase is accepted (user floated both 'Voyager' and 'Gem Voyager')."
+}

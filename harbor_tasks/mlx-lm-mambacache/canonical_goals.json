@@ -1,0 +1,55 @@
+{
+  "task_name": "mlx-lm-mambacache",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Add merge and extract batching methods to ArraysCache so that multiple single-batch ArraysCache instances can be merged along the batch dimension into one, and individual batches can be extracted back out. merge() should be a classmethod that concatenates cache arrays along axis 0; extract(idx) should return a new single-batch ArraysCache with the arrays sliced at the given index.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "intent_96/98: user asks to implement batching for MambaCache/ArraysCache in mlx-lm. Tests t2_f2p_arrayscache_merge_extract (0.128) and t2_f2p_merge_caches_arrayscache (0.144) validate this. ArraysCache is the base class for MambaCache, so enabling batching here is the foundation of the entire feature."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Update _merge_caches() in generate.py to handle ArraysCache (and its subclass MambaCache) in addition to KVCache and RotatingKVCache. When encountering an ArraysCache layer, it should merge them using the new merge capability. When encountering a CacheList layer (hybrid model with mixed cache types), it should recursively merge each sub-cache.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "intent_96: user reports 'MLX LM doesnt allow batch+caching with Qwen3-Next-80B' — the root cause is _merge_caches raising ValueError for MambaCache/CacheList. Tests t2_f2p_merge_caches_arrayscache (0.144) and t2_f2p_merge_caches_cachelist_hybrid (0.144) directly validate this."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Add merge and extract methods to CacheList that recursively merge/extract the contained sub-caches. merge() should be a classmethod that takes a list of CacheLists and produces a merged CacheList; extract(idx) should produce a CacheList with each sub-cache extracted at the given index.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Hybrid models like Qwen3-Next use CacheList containing MambaCache+KVCache per layer. Test t2_f2p_cachelist_merge_extract (0.104) validates this. Required for full hybrid model batching support."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Add _lengths/right-padding support to ArraysCache via prepare() and finalize() methods. When prepare() is called with right_padding, the cache should store _lengths (the actual sequence lengths). finalize() should clear _lengths. When only left_padding is provided (no right_padding), _lengths should not be set.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "intent_102: user explicitly asks 'add the _lengths feature to our PR' after learning about PR #690. Test t4_f2p_lengths_right_padding (0.12) validates prepare/finalize/_lengths behavior."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Ensure that when _lengths is set on ArraysCache, mask construction (via make_mask or equivalent) produces a mask that marks positions beyond the actual length as invalid (right-padding positions are masked out).",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "This is the behavioral consequence of _lengths — without correct masking, right-padded sequences would attend to padding tokens. Test t4_f2p_make_mask_lengths (0.08) validates mask correctness."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Create a test file (tests/test_mamba_cache_batching.py or similar) with passing tests that cover ArraysCache/MambaCache/CacheList batching functionality.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "intent_98: user asks for 'thorough performance testing'. Test t2_f2p_test_file_present_passes (0.08) checks for a test file with passing tests referencing the cache classes."
+    },
+    {
+      "id": "goal_7",
+      "goal": "All modified/created Python files (cache.py, generate.py, test file) must be syntactically valid and importable.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Test f2p_upstream_bd8a7d6f (0.2) runs py_compile on the three key files. This is a basic correctness gate included in weighted scoring."
+    }
+  ],
+  "decomposition_notes": "2 cores + 5 secondaries. Default ratio gives 4/(4*2+5*1) = 4/13 ≈ 0.31 per core, 1/13 ≈ 0.077 per secondary. Adjusted weights to reflect the relative F2P test weights: goal_1 and goal_2 are the two core goals (0.30 each = 0.60 total), with secondaries distributed proportionally to their F2P test weights. goal_7 (syntax validity) gets a reduced weight since it's a basic gate rather than a feature. Sum = 0.30 + 0.30 + 0.10 + 0.10 + 0.08 + 0.07 + 0.05 = 1.00. The task is Mode B (no oracle patch), so goals are derived from user intents 96-103 and the 8 F2P tests in test.sh. The workspace is in the buggy state where _merge_caches only handles KVCache/RotatingKVCache."
+}

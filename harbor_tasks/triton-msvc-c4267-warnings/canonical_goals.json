@@ -1,0 +1,20 @@
+{
+  "task_name": "triton-msvc-c4267-warnings",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Fix the size_t-to-unsigned narrowing conversion in the lambda capture of the partition->walk call inside lowerKernelBarriers, where the loop variable from llvm::enumerate is size_t but is used as std::optional<unsigned> (passed to lowerBarrier and lowerCallOp). The fix must ensure the captured variable is explicitly narrowed to unsigned (e.g., via static_cast<unsigned> in the capture list, or casting at each call site).",
+      "tier": "core",
+      "weight": 0.5,
+      "rationale": "User Turn 1 pastes MSVC C4267 build error referencing line ~99 in WarpSpecializeUtility.cpp (lambda capture idx from llvm::enumerate). The oracle fixes this at line 97 with idx = static_cast<unsigned>(idx) in the lambda capture. This single fix resolves both the lowerBarrier(op, numWarps, idx, ...) and lowerCallOp(callOp, numWarps, idx, ...) narrowing sites since they share the same captured variable. Corresponds to test gates gate_a_barrier_arg and gate_b_callop_arg."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Fix the size_t-to-unsigned narrowing conversion in the op->getResult(i) call inside convertOpTypes, where the loop variable i from llvm::enumerate is size_t but getResult expects unsigned. The fix must ensure the argument is explicitly narrowed to unsigned (e.g., via static_cast<unsigned>).",
+      "tier": "core",
+      "weight": 0.5,
+      "rationale": "User Turn 1 error log includes a second template instantiation context at this site. The README explicitly lists this as the second bug (line ~249). The oracle fixes this at line 249 with op->getResult(static_cast<unsigned>(i)). Corresponds to test gate gate_e_getresult. E2E eval history shows agents that fix only one of the two sites score 0.60 reward, confirming both fixes are required for full completion."
+    }
+  ],
+  "decomposition_notes": "This is a focused two-bug fix task. Both bugs are size_t-to-unsigned narrowing conversions (MSVC C4267 treated as error via /WX) in WarpSpecializeUtility.cpp. The user's error paste references both sites. The oracle patch touches exactly two lines. The test suite has additional bonus gates (GEPArg, toErase, getArgument narrowing) but these are explicitly marked 'bonus: not required by instruction' and the oracle does not fix them. Post-fix user turns (Turn 2: asking about getResult signature, Turn 3: header search shortcut) are informational and do not request code changes, so they are not included as goals. With 2 core goals: each weight = 4/8 = 0.50, sum = 1.0."
+}

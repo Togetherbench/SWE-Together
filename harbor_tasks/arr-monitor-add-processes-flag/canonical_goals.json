@@ -1,0 +1,34 @@
+{
+  "task_name": "arr-monitor-merge-and-document",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "IGNORE_EXTENSIONS set includes .exe and .msi entries (without losing existing entries like .nfo)",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Initial task is to merge PRs; one feature branch adds .exe/.msi to IGNORE_EXTENSIONS. F2P test G1 checks this. Upstream gate f2p_upstream_exe_msi_ext (0.5 weight) validates it. Oracle adds these at arr-monitor.py IGNORE_EXTENSIONS set."
+    },
+    {
+      "id": "goal_2",
+      "goal": "A CLI flag for adding new processes (named --add-new-processes or equivalent) is registered in argparse, visible in --help output, plumbed into the monitoring loop, and the monitoring loop actually calls the process-discovery function and adds newly found PIDs when the flag is active",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Initial task merges the feature branch implementing this flag; user follow-up T7 asks to document it in --help. F2P tests G2 (help text), G3 (argparse registration), G4 (signature + call site plumbing), G5 (runtime rescanning with pid_list extension) all verify this. Upstream gate f2p_upstream_help_flag (0.5 weight) checks --help presence. Oracle implements this across run_monitor signature, monitoring loop body, and main() argparse+call site."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Using --add-new-processes without --all produces a validation error mentioning that --all is required",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "The flag logically requires --all mode. F2P test G6 checks that running with --add-new-processes alone exits non-zero with a message referencing --all. Oracle implements this as a post-parse check in main()."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Short option -A is registered for --add-new-processes and short option -a is registered for --all",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "User turns T8 ('Give it a short option as well') and T9 ('-A, most likely. -a should be equivalent to --all.') explicitly request these short aliases. Oracle adds -A and -a to the respective add_argument calls and updates epilog examples to use them."
+    }
+  ],
+  "decomposition_notes": "2 cores + 2 secondaries. Default ratio gives 4/10=0.40 per core, 1/10=0.10 per secondary, summing to 1.00. Core 1 covers the IGNORE_EXTENSIONS merge (one PR branch), Core 2 covers the --add-new-processes feature end-to-end (the other PR branch + documentation follow-up). Secondary goals cover the validation guard and short-option aliases requested in later user turns. The git merge/push/branch-cleanup workflow steps are not graded as behavioral goals — they are process steps, not code deliverables. The test.sh inner gates G1-G6 map naturally onto these 4 goals (G2-G5 collectively verify goal_2's end-to-end behavior)."
+}

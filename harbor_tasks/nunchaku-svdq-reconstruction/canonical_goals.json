@@ -1,0 +1,41 @@
+{
+  "task_name": "nunchaku-implement-a56d1e",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Reconstruct weights correctly for square-shape parameters (attn.to_out.0, attn.to_add_out) with max_diff < 0.1 against weight_approx ground truth",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "README headline: 'reconstruct the original BF16 weight matrix'. user_simulation_prompt Turn 1: 'write a new script that reconstructs weight given the groundtruth'. Test.sh Gate 2 checks SQUARE_OK >= 2. Oracle achieves diffs ~0.015 for these params (reconstruct_weight.py lines 93-130)."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Reconstruct weights correctly for all 4 rectangular-shape parameters (img_mlp.net.0.proj, img_mlp.net.2, txt_mlp.net.0.proj, txt_mlp.net.2) with max_diff < 0.1 against weight_approx ground truth",
+      "tier": "core",
+      "weight": 0.36,
+      "rationale": "user_simulation_prompt Turn 3: 'test the weight reconstruction using all 6 parameters'. README: 'The data in the folder pt are the groundtruth for the parameters attn.to_out.0, attn.to_add_out, img_mlp.net.0.proj, img_mlp.net.2, txt_mlp.net.0.proj, txt_mlp.net.2'. Test.sh Gate 3 checks RECT_OK >= 4. Rectangular shapes (12288x3072 or 3072x12288) exercise non-square edge cases in unpacking. Oracle achieves diffs 0.012-0.017 for these params."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Implement a scale unpack function that correctly reverses the nunchaku scale packing layout (not merely a transpose of wscales), producing correct per-group scales for dequantization",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "README: 'implement the inverses of pack_weight, pack_scale, and pack_lowrank_weight'. Base file has BUG comment: 'wscales just transposed, not properly unpacked'. Oracle adds unpack_svdq_scale with reshape+permute at reconstruct_weight.py lines 47-53. Without correct scale unpack, reconstruction diffs are very large."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Implement a lowrank unpack function that correctly reverses the nunchaku lowrank weight packing for both proj_up (down=False) and proj_down (down=True) projections",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "README: 'implement the inverses of pack_weight, pack_scale, and pack_lowrank_weight'. Base file has BUG comment: 'proj_up / proj_down not unpacked'. Oracle adds unpack_svdq_lowrank at reconstruct_weight.py lines 55-89. Without correct lowrank unpack, the low-rank approximation term is wrong."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Fix the qweight unpack to correctly reverse the nunchaku tiled bit-packing layout (correct reshape dimensions and inverse permutation)",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README: 'implement the inverses of pack_weight'. Base file has BUG comments: 'wrong reshape dimensions' and 'wrong inverse permute' in unpack_svdq_qweight. Oracle fixes the permute to (0, 3, 6, 4, 8, 1, 2, 7, 5, 9) at reconstruct_weight.py line 44. The base version is partially working but gets wrong results."
+    }
+  ],
+  "decomposition_notes": "2 cores + 3 secondaries. Default ratio gives 4/11 ≈ 0.36 per core, 1/11 ≈ 0.09 per secondary. Adjusted secondary weights slightly (0.10, 0.10, 0.08) to reflect that scale and lowrank unpacking are entirely missing in the base (bigger lift) while qweight unpack is partially implemented (smaller fix). Weights sum to 1.00. Goal 1 and Goal 2 split the 'full reconstruction' requirement by shape class (square vs rectangular) because the test.sh explicitly gates on these separately and rectangular shapes exercise additional edge cases in the unpacking code. Goals 3-5 capture the three sub-stage implementations (scale, lowrank, qweight unpack fixes) which are the stated core challenge in the README. The oracle achieves 0.85 reward (passes all at medium tolerance but not tight <0.005 tolerance, likely due to bf16 rounding)."
+}

@@ -1,0 +1,41 @@
+{
+  "task_name": "nunchaku-implement-a136a8",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Fix quantize_residual so that torch.abs(...).max(dim=-1, keepdim=True) extracts the .values from the returned namedtuple, allowing subsequent arithmetic to work correctly and returning the expected shapes/dtypes (int8 qweight, float scales)",
+      "tier": "core",
+      "weight": 0.29,
+      "rationale": "README bug #1; user_simulation_prompt Turn 2 asks 'Is there any other issue in quantize.py?'; oracle fixes line 72 adding .values; F2P tests 1 (0.12) and 2 (0.10) verify this"
+    },
+    {
+      "id": "goal_2",
+      "goal": "Fix quantize_awq_layer so that weight.min(dim=-1, keepdim=True) and weight.max(dim=-1, keepdim=True) both extract .values from the returned namedtuples, allowing scale/zero computation to proceed without crash and returning correct shapes/dtypes",
+      "tier": "core",
+      "weight": 0.29,
+      "rationale": "README bug #2; same Turn 2 trigger; oracle fixes lines 152-153 adding .values to both min and max; F2P test 3 (0.15) verifies this"
+    },
+    {
+      "id": "goal_3",
+      "goal": "Fix the f-string bug in main() where tensor key construction uses variable references {weight} and {bias} instead of string literals, so that the f-strings produce correct key names like '{name}.weight' and '{name}.bias'",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "README bug #4; oracle fixes lines 272-273 changing {weight}/{bias} to literal .weight/.bias; F2P test 7 (0.10) verifies no buggy f-string pattern remains and correct pattern exists"
+    },
+    {
+      "id": "goal_4",
+      "goal": "Simplify the nested double for-loop in pack_awq_qweight to use at most one for-loop, using bitwise-or augmented assignment (|=) rather than sum(), preserving the same packing semantics",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "user_simulation_prompt Turn 3: 'Can we simplify the loop in pack_awq_qweight?'; Turn 4 correction: keep |= not sum(); oracle replaces nested g/j loops with single i-in-range(8) loop; F2P test 6 (0.10) checks at most 1 for-loop, has |= augmented assign, no sum()"
+    },
+    {
+      "id": "goal_5",
+      "goal": "The simplified pack_awq_qweight must produce functionally correct output matching the canonical 4-bit AWQ interleaved packing layout, so that pack+unpack roundtrip reconstructs weights with low error",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Functional correctness of the Turn 3-4 simplification; F2P tests 4 (0.25, roundtrip reconstruction <0.5 error) and 5 (0.18, bit-exact canonical pack match) verify this; note: oracle itself fails these tests due to an indexing bug in its simplified loop, but an ideal solution should pass them"
+    }
+  ],
+  "decomposition_notes": "3 cores + 2 secondaries. Default ratio: each core = 4/14 ≈ 0.286, each secondary = 1/14 ≈ 0.071. Rounded to 0.29+0.29+0.28+0.07+0.07 = 1.00. The oracle patch fixes bugs 1,2,4 (tests 1,3,6,7 pass) but its pack_awq_qweight simplification has an indexing error causing tests 4,5 to fail — goal_5 captures functional correctness which an ideal solution should achieve. README bug #3 (.contiguous() after .permute()) is NOT actually a bug in the existing code since it uses .reshape() not .view(), is not tested, and the oracle doesn't fix it — so it's excluded from goals."
+}

@@ -1,0 +1,41 @@
+{
+  "task_name": "amytis-task-e3714e",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Replace all uses of the 'in' operator for own-property checks on customPaths with a prototype-safe alternative (e.g., Object.hasOwn) across all 4 affected source files: the URL validation utility, the series listing page, the post page, and the paginated series listing page. After the fix, series slugs that happen to match Object.prototype property names (e.g., 'toString', 'constructor') must no longer be incorrectly excluded from autoPaths routing when customPaths is empty.",
+      "tier": "core",
+      "weight": 0.39,
+      "rationale": "README headline ask and Turn 1 bug report: 'if customPaths is empty, the autoPaths: true configuration doesn't seem to work.' Root cause is `seriesSlug in customPaths` checking the prototype chain. Oracle replaces all 7 occurrences of `... in customPaths` with `Object.hasOwn(customPaths, ...)` across src/lib/urls.ts:44, src/app/[slug]/page.tsx:23,52, src/app/[slug]/[postSlug]/page.tsx:52,186, src/app/[slug]/page/[page]/page.tsx:20,51."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Fix Chinese/Unicode URL routing under autoPaths with output:'export' — ensure that percent-encoded Unicode post slugs do not cause missing-parameter errors from generateStaticParams(). In development mode, encoded variants of Unicode postSlugs should be included in the static params so the dev server can resolve percent-encoded URLs. In production, only the raw (unencoded) slugs should be emitted.",
+      "tier": "core",
+      "weight": 0.39,
+      "rationale": "Turn 2 explicit bug report: 'if autoPaths is set to true and we use the series path, the Chinese URL of the post breaks. The error states that the page is missing a parameter in generateStaticParams().' Oracle adds percent-encoding workaround at src/app/[slug]/[postSlug]/page.tsx:83-95, gated on NODE_ENV !== 'production'."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Add a collision guard in the autoPaths series routing: when generating static params for series listings (both unpaginated and paginated), skip any series slug that collides with another series' custom path value — not just its key. This prevents route conflicts when a series slug matches the custom URL prefix assigned to a different series.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Derived from code review feedback (Turns 7-18) that the user endorsed: 'if that are real bugs, and worth fix, I think we need take them seriously and fix them' (Turn 17). Oracle adds customPathValues collision check at src/app/[slug]/page.tsx:48,53 and src/app/[slug]/page/[page]/page.tsx:48,52."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Add test coverage for the autoPaths/customPaths bug fix, including: (a) autoPaths works when customPaths is empty, (b) prototype-inherited property names (e.g., 'toString') are handled correctly, (c) Unicode series slugs are included, (d) customPaths overrides are respected, and (e) Unicode postSlug encoding behavior differs between dev and production.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "User Turn 11: 'if test coverage is valuable, why not fix?' — explicit request for tests. Oracle adds ~100 lines of new test cases in tests/unit/static-params.test.ts covering autoPaths enabled scenarios, Unicode slugs, customPaths override precedence, and encoded variant behavior."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Deduplicate the repeated series-slug resolution logic (matching customPaths entries or falling back to autoPaths) by extracting it into a shared helper or otherwise reducing the copy-pasted inline expressions in the series listing and paginated listing pages.",
+      "tier": "polish",
+      "weight": 0.02,
+      "rationale": "DRY cleanup not explicitly requested but performed by oracle. The same 3-line expression (Object.entries(customPaths).find(...) ?? autoPaths fallback) was duplicated in generateMetadata and page component in both src/app/[slug]/page.tsx and src/app/[slug]/page/[page]/page.tsx. Oracle extracts resolveSeriesSlug() helpers at page.tsx:19-24 and page/[page]/page.tsx:17-22."
+    }
+  ],
+  "decomposition_notes": "2 cores + 2 secondaries + 1 polish → default ratio gives 4/10.25≈0.39 per core, 1/10.25≈0.10 per secondary, 0.25/10.25≈0.02 for polish. Sums to 0.39+0.39+0.10+0.10+0.02 = 1.00. Core goals derive from the two explicit bug reports (Turn 1: autoPaths broken with empty customPaths; Turn 2: Chinese URLs break). Secondary goals derive from code review engagement (Turns 7-18) where user endorsed fixing real bugs and adding test coverage. Polish goal captures the DRY refactor which was not user-requested. The test.sh F2P tests empirically confirm the core fix (AST checks for Object.hasOwn presence and no 'in' on customPaths) plus behavioral verifier tests. Note: all goals are behavioral — any equivalent approach (e.g., hasOwnProperty.call, Object.prototype.hasOwnProperty.call) that achieves prototype-safe property checking is acceptable."
+}

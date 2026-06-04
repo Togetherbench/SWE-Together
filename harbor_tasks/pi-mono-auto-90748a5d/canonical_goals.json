@@ -1,0 +1,34 @@
+{
+  "task_name": "pi-mono-auto-90748a5d",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "readClipboardImage converts unsupported image formats (especially BMP from WSL2/WSLg clipboard) to PNG before returning, so callers always receive a supported image format",
+      "tier": "core",
+      "weight": 0.58,
+      "rationale": "Primary task ask derived from user_simulation_prompt.md T4-T6: user explicitly says 'readClipboardImage should just ensure it returns a supported image format'. Oracle implements this at clipboard-image.ts:193-199 by checking isSupportedImageMimeType and calling convertToPng for unsupported formats."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The format conversion logic resides in the clipboard module (the file/module containing readClipboardImage), NOT in calling code like interactive-mode or any higher-level consumer",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "user_simulation_prompt.md T4: 'why doesn't this happen solely in the clipboard code path?', T5: 'why is it in the interactive-mode.ts?', T6: 'readClipboardImage should just ensure it returns a supported image format'. Oracle places convertToPng and isSupportedImageMimeType in clipboard-image.ts, with no conversion code in interactive-mode.ts."
+    },
+    {
+      "id": "goal_3",
+      "goal": "A test exists verifying that when the clipboard provides BMP image data (as WSLg does), readClipboardImage returns a PNG image with correct mime type and valid PNG content (e.g., PNG magic bytes)",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "Standard practice for a bug fix; oracle adds clipboard-image-bmp-conversion.test.ts and modifies clipboard-image.test.ts both containing 'converts BMP to PNG on Wayland/WSLg' test that verifies mimeType='image/png' and PNG magic bytes 0x89 0x50 0x4E 0x47. This is also the F2P test in install_config.json."
+    },
+    {
+      "id": "goal_4",
+      "goal": "A changelog entry is added under the Unreleased/Fixed section attributing the clipboard BMP fix to the original PR contributor (@lightningRalf / PR #1112)",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "user_simulation_prompt.md T9: 'did you add a proper changelog entry attributed to the contributor? you should'. Oracle adds to CHANGELOG.md: 'Fixed clipboard image paste on WSL2/WSLg... ([#1112]... by [@lightningRalf]...)'"
+    }
+  ],
+  "decomposition_notes": "1 core + 3 secondaries. Default ratio gives sum_mult = 1*4 + 3*1 = 7; core = 4/7 = 0.571, each secondary = 1/7 = 0.143. Rounded to 0.58 + 3*0.14 = 1.00. The core goal encompasses the headline behavioral fix: readClipboardImage handling BMP-to-PNG conversion. The oracle uses the existing photon library for conversion, but the user said 'implement locally' (T7) so native implementations are also valid — the rubric is implementation-agnostic, requiring only the behavioral outcome. The architectural placement (goal_2) is secondary because the user explicitly requested it across 3 turns but it's really a constraint on how goal_1 is achieved. Commit/push (T8) is omitted as a process goal. The README was empty so all goals derive from user_simulation_prompt.md turns + oracle patch behavior."
+}

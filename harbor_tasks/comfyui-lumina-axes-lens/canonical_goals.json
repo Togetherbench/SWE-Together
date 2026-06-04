@@ -1,0 +1,41 @@
+{
+  "task_name": "comfyui-fix-a3be2d",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Create a new Lumina-specific RoPE embedding class (not the original EmbedND) that accepts axes_lens as a parameter, precomputes RoPE frequency tables from it, and is used as NextDiT's rope_embedder in place of EmbedND",
+      "tier": "core",
+      "weight": 0.55,
+      "rationale": "README headline: 'EmbedND doesn't accept axes_lens at all... The fix is to create a new LuminaEmbedND class (or equivalent) that accepts and uses axes_lens.' User Turn 4: 'Implement axes_lens in ComfyUI. To minimize the change to other models than Lumina2, you may create a new class to replace EmbedND in model.py.' Oracle creates LuminaEmbedND at model.py:355-388, wires it into NextDiT at model.py:540."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The new class's forward pass produces numerically correct RoPE embeddings — for in-range position indices, the output must be equivalent to computing rope() on-the-fly (as the original EmbedND does)",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "The whole point of the precomputation is efficiency, not changed semantics. test.sh gates match_sequential and match_random_inrange verify numeric equivalence with atol/rtol=1e-3. Oracle precomputes via rope() then uses F.embedding for lookup."
+    },
+    {
+      "id": "goal_3",
+      "goal": "axes_lens is meaningfully used — different axes_lens values produce correspondingly-sized precomputed tables/buffers, and the class stores or respects the axes_lens configuration",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "The bug was that axes_lens was stored but ignored. test.sh gate axes_lens_respected verifies that constructing with smaller axes_lens produces appropriately-sized buffers. Oracle registers per-axis buffers sized to axes_lens[i] at model.py:363-367."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Change is localized to the Lumina model file — the original EmbedND class (in flux/layers.py) is not modified and continues to work for non-Lumina models; model.py remains valid Python and NextDiT is still instantiable with axes_lens",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "User Turn 4: 'To minimize the change to other models than Lumina2.' test.sh gates p2p_upstream_ast_parse and p2p_upstream_nextdit verify non-regression. Oracle only touches model.py, leaves flux/layers.py EmbedND intact."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The implementation handles standard usage correctly: deterministic (repeated calls produce identical output without mutating input tensors), and works with batched inputs",
+      "tier": "polish",
+      "weight": 0.05,
+      "rationale": "test.sh gates deterministic_no_mutation and batched_correct verify robustness. These are basic correctness properties expected of any well-implemented embedding layer."
+    }
+  ],
+  "decomposition_notes": "Single core goal (the main implementation ask) + 3 secondaries (correctness, axes_lens usage, localization) + 1 polish (robustness). Using N_core=1, N_sec=3, N_pol=1: sum_mult = 4 + 3 + 0.25 = 7.25. Default weights: core=0.5517, sec=0.1379, pol=0.0345. Adjusted to 0.55, 0.14, 0.13, 0.13, 0.05 (sum=1.00) — polish slightly up-weighted since determinism and batching are basic functional requirements. The oracle has a shape bug in its forward path (view dimensions don't match flattened buffer size), but the behavioral intent is clear and the rubric is written implementation-agnostically. Turn 5 ('What's the difference...') is a conceptual question requiring no code change, so it is not included as a goal."
+}

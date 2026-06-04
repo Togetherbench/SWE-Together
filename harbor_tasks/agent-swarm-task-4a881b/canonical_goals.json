@@ -1,0 +1,62 @@
+{
+  "task_name": "agent-swarm-task-4a881b",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Add a scheduleType column (with values 'recurring' and 'one_time') to the scheduled_tasks table via a new migration, and relax the CHECK constraint so one-time schedules do not require cronExpression or intervalMs. The initial/fresh-DB schema must also reflect these changes.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "README key change #1 (Database migration). Oracle adds 002_one_time_schedules.sql migration and updates 001_initial.sql. Test manifest gate G1_MIGRATION_SCHEMA (weight 0.12) + G2_TYPES_SCHEMA (0.08) cover this. This is foundational — without it, nothing else works."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Auto-disable one-time schedules after execution: across all execution paths (normal execution, missed-schedule recovery, manual 'run now', and error handling), a one-time schedule must be disabled (enabled=false), have nextRunAt cleared, and must NOT call calculateNextRun. This applies in the scheduler core and HTTP API trigger-now endpoint.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "README key change #4 (Scheduler: auto-disable one-time after execution, skip calculateNextRun). Test manifest gate G4_SCHEDULER_ONETIME (weight 0.20). This is the primary behavioral requirement of the feature."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Support creating one-time schedules via the MCP create-schedule tool: accept scheduleType, delayMs, and runAt parameters. Validate that one-time schedules use delayMs or runAt (not cron/interval), and recurring schedules use cron/interval (not delayMs/runAt). Compute nextRunAt from delayMs or runAt for one-time schedules.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "README key change #5 (MCP tools: accept delayMs/runAt for one-time). Test manifest gate G5_MCP_CREATE_ONETIME (weight 0.15). Oracle implements comprehensive validation in create-schedule.ts."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Support creating/updating one-time schedules via the HTTP API (POST/PUT /api/schedules): validate scheduleType, delayMs, runAt parameters with the same constraints as MCP. GET endpoint supports scheduleType and hideCompleted query filters.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README key change #6 (HTTP API). Test manifest gate G6_HTTP_API_ONETIME (weight 0.10). Oracle adds validation logic in src/http/schedules.ts and filter params in src/http/stats.ts."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The list-schedules MCP tool supports filtering by scheduleType and a hideCompleted parameter that hides completed (disabled + executed) one-time schedules by default.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README key change #5 (MCP tools: add scheduleType/hideCompleted filters). Test manifest gate G7_MCP_LIST_FILTER (weight 0.06). Oracle adds these params in list-schedules.ts and filtering in db.ts getScheduledTasks."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The update-schedule tool/endpoint rejects updates on completed one-time schedules (those that are disabled and have a lastRunAt). One-time schedules do not recalculate nextRunAt via cron/interval logic when updated.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README key change #5 (MCP tools). Test manifest gate G9_MCP_UPDATE_RESTRICT (weight 0.05). Oracle adds guard in both update-schedule.ts (MCP) and schedules.ts (HTTP)."
+    },
+    {
+      "id": "goal_7",
+      "goal": "The TypeScript types and Zod schema include scheduleType ('recurring' | 'one_time') with a default of 'recurring'. The refine/validation allows one-time schedules without cron/interval. The DB layer (row type, mapper, create/update functions) all include scheduleType.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README key changes #2-3 (Types, DB layer). Test manifest gates G2_TYPES_SCHEMA (0.08) and G3_DB_LAYER (0.06). Oracle changes src/types.ts, src/be/db.ts."
+    },
+    {
+      "id": "goal_8",
+      "goal": "The UI (React frontend) displays schedule type information: a badge distinguishing one-time from recurring schedules in both the schedules list view and the schedule detail view, with appropriate display of timing info (execution time for one-time vs cron/interval for recurring). The frontend type definition includes scheduleType.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "README key change #7 (UI: show schedule type badges). Test manifest gate G8_UI_TYPES (0.04). Oracle changes new-ui/src/pages/schedules/page.tsx, new-ui/src/pages/schedules/[id]/page.tsx, new-ui/src/api/types.ts."
+    }
+  ],
+  "decomposition_notes": "3 core goals (schema, auto-disable, MCP create) + 5 secondary goals (HTTP API, list filtering, update restrictions, types/DB layer, UI). Using ratio: cores at 0.20 each (3×0.20=0.60), secondaries at 0.08 each (5×0.08=0.40), total=1.00. Cores weighted equally because the schema change, auto-disable behavior, and MCP creation support are all independently essential for the feature to work. Version bump (user Turn 3) excluded as a process/release goal rather than a behavioral feature goal. The F2P tests in install_config.json test existing CRUD + calculateNextRun functionality — they verify backward compatibility (the schema changes must not break existing recurring schedule operations), which is implicitly covered by goals 1 and 7. Test manifest gates map well to these goals: G1+G2→goal_1/goal_7, G3→goal_7, G4→goal_2, G5→goal_3, G6→goal_4, G7→goal_5, G8→goal_8, G9→goal_6."
+}

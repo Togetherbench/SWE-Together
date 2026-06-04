@@ -1,0 +1,48 @@
+{
+  "task_name": "light-protocol-implement-7adad1",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Add \"idempotent\" as a recognized key in the associated_token namespace's valid-keys constant, so the macro parser accepts `associated_token::idempotent` without erroring on an unknown key",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "User Turn 1 plan TODO 1a: add idempotent to ASSOCIATED_TOKEN_NAMESPACE_KEYS. F2P gate g1 (0.20). Oracle: light_account_keywords.rs adds \"idempotent\" to the ASSOCIATED_TOKEN_NAMESPACE_KEYS array."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement a boolean-flag parsing mechanism so that `associated_token::idempotent` (bare keyword, no `= value`) is accepted as true, absence means false, and writing `associated_token::idempotent = <value>` produces an error",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "User Turn 1 plan TODO 1b/1c: add boolean flag infrastructure (constant + helper function). F2P gate g2 (0.20). Oracle: light_account_keywords.rs adds BOOLEAN_FLAG_KEYS_BY_NAMESPACE and is_boolean_flag_key(); light_account.rs parse paths reject `= value` for boolean flags."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Add an `idempotent` boolean field to the AtaField struct (or equivalent ATA configuration type) so the parsed flag value can be stored and later used by codegen",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "User Turn 1 plan TODO 3a: extend AtaField with idempotent: bool. F2P gate g3 (0.20). Oracle: light_account.rs AtaField struct gains `pub idempotent: bool`."
+    },
+    {
+      "id": "goal_4",
+      "goal": "In the function that builds/constructs an AtaField from parsed key-value pairs, handle the \"idempotent\" key by extracting and tracking its value (e.g., via a local variable or match arm)",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "User Turn 1 plan TODO 3b/3c: wire idempotent parsing into build_ata_field. F2P gate g4 (0.15). Oracle: light_account.rs build_ata_field adds `let mut idempotent: bool = false` and a match arm for \"idempotent\"."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Pass the parsed idempotent value through to the AtaField struct constructor so it is stored on the resulting struct instance (not just parsed and discarded)",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "User Turn 1 plan TODO 3d: include idempotent in Ok(AtaField { ... }). F2P gate g5 (0.15). Oracle: light_account.rs build_ata_field returns AtaField { ..., idempotent }."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Add the `associated_token::idempotent` flag to at least one existing test site in sdk-tests that asserts idempotent ATA behavior, preserving backward-compatible behavior for that site",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "User Turn 8: 'add the idempotent flag to the other one that asserts idempotent behavior'. F2P gate g6 (0.10). Oracle: sdk-tests single_ata.rs gains `associated_token::idempotent` on its light_account attribute."
+    }
+  ],
+  "decomposition_notes": "3 cores + 3 secondaries. Weights directly mirror the F2P test gate weights (g1-g6: 0.20, 0.20, 0.20, 0.15, 0.15, 0.10) which sum to 1.0 and were designed by the task author. The first three goals are core because they represent the fundamental macro infrastructure (namespace key registration, boolean-flag parse mechanism, struct field) — without any one of these the feature is broken. Goals 4-5 are secondary because they extend the parsing plumbing. Goal 6 is secondary because the user initially said 'don't update existing sites' but then selectively asked for one site to be updated (Turn 8). All goals are behavioral and implementation-agnostic."
+}

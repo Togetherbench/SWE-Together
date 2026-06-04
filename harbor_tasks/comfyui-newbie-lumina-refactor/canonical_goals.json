@@ -1,0 +1,48 @@
+{
+  "task_name": "comfyui-refactor-d3a759",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "NewBie model is refactored to inherit from or integrate into Lumina's NextDiT class rather than being a standalone reimplementation. The code uses idiomatic ComfyUI operations (e.g. operations.Linear, operations.RMSNorm) and removes anti-pattern helper functions such as _pop_unexpected_kwargs and _fallback_operations. No kwargs popping or hardcoded fallback values.",
+      "tier": "core",
+      "weight": 0.45,
+      "rationale": "README headline: 'refactor NewBie PR to follow ComfyUI conventions'; user_simulation_prompt Turn 1 + T4: 'use operation_settings.get(\"operations\").Linear, no kwargs popping'. Oracle creates comfy/ldm/newbie/model.py:12 as thin subclass of NextDiT, removes all _pop_unexpected_kwargs/_fallback_operations. Oracle also enhances lumina/model.py NextDiT to accept clip_text_dim/clip_img_dim (line 380-381)."
+    },
+    {
+      "id": "goal_2",
+      "goal": "No nn.init weight initialization calls (e.g. nn.init.xavier_, nn.init.normal_, nn.init.zeros_) in the NewBie model code. In ComfyUI, model weights are loaded from checkpoints, not initialized in __init__.",
+      "tier": "secondary",
+      "weight": 0.11,
+      "rationale": "user_simulation_prompt T5: 'Do we need to init the model parameters in NewBieNextDiT?'; T6: 'there is no nn.init in Lumina. The model parameters will be loaded later in ComfyUI.' Oracle newbie/model.py has no nn.init calls."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The forward pass uses the Lumina convention for timesteps and return value: t = 1.0 - timesteps (not t = timesteps) and returns -img (not img).",
+      "tier": "secondary",
+      "weight": 0.11,
+      "rationale": "user_simulation_prompt T9: 'why does it have t = timesteps and return img, while Lumina has t = 1.0 - timesteps and return -img?' Oracle implements this at newbie/model.py:65 (t = 1.0 - timesteps) and line 111 (return -img), and lumina/model.py:614,673."
+    },
+    {
+      "id": "goal_4",
+      "goal": "No try/except block wrapping the forward logic (this breaks torch.compile). The forward path should use direct iteration or indexing instead.",
+      "tier": "secondary",
+      "weight": 0.11,
+      "rationale": "user_simulation_prompt T8: 'the try ... except ... may cause problem with torch.compile. Can we rewrite it without try ... except ...?' Oracle newbie/model.py and lumina/model.py _forward have no try/except. Test F2P-3 verifies lumina/model.py _forward body is not wrapped in Try."
+    },
+    {
+      "id": "goal_5",
+      "goal": "No custom apply_model override on the NewBie model class. The standard BaseModel.apply_model pipeline should be used.",
+      "tier": "secondary",
+      "weight": 0.11,
+      "rationale": "README: 'apply_model override in NewBieImage (unnecessary, base class handles this)'. Test F2P-5 checks no apply_model method on any class with NewBie in its name. Oracle has no apply_model in newbie/model.py or on any NewBie class in model_base.py."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Conditioning for clip_text_pooled uses CONDRegular (not CONDCrossAttn). Pooled CLIP features are per-batch vectors, not cross-attention sequences.",
+      "tier": "secondary",
+      "weight": 0.11,
+      "rationale": "user_simulation_prompt T12: 'Why does NewBie use CONDCrossAttn for c_crossattn, while Lumina2 uses CONDRegular?' Test F2P-4 verifies clip_text_pooled window uses CONDRegular not CONDCrossAttn. Oracle state in model_base.py:1115 uses CONDRegular."
+    }
+  ],
+  "decomposition_notes": "1 core + 5 secondaries. Default ratio: sum_mult = 1*4 + 5*1 = 9; core = 4/9 ≈ 0.44, sec = 1/9 ≈ 0.11. Bumped core to 0.45 for clean summation (0.45 + 5*0.11 = 1.00). The core goal encompasses the structural refactor (reuse Lumina, idiomatic ops, remove anti-patterns) which is the headline ask from Turn 1 and T4. Secondary goals are specific convention fixes the user pointed out across Turns 5-12. All goals are behavioral — an agent could achieve them via different code structures (e.g. integrating NewBie features directly into Lumina vs. creating a thin subclass). The oracle modifies lumina/model.py and creates newbie/model.py as a thin NextDiT subclass. Note: the oracle does not modify model_base.py (it already has CONDRegular from the base commit), so goal_6 is about preserving/ensuring the correct conditioning type, not necessarily modifying model_base.py."
+}
