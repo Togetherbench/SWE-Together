@@ -53,10 +53,10 @@ gates:
   kind: P2P_REGRESSION
   weight: 0.0
   description: 'upstream(reg): cargo_metadata_workspace @ c5c0e67'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/hyperswitch-8389_p2p_bundle.yaml
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
 - id: p2p_upstream_27c5f56d
   turn: null
   kind: P2P_REGRESSION
   weight: 0.0
   description: 'upstream(reg): rust_files_nonempty @ c5c0e67'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/hyperswitch-8389_p2p_bundle.yaml
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

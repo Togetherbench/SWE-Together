@@ -67,10 +67,10 @@ gates:
   kind: P2P_REGRESSION
   weight: 0.0
   description: 'upstream(reg): tsc_noemit @ bcee1dc'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-medialightbox-refactor_p2p_bundle.yaml
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
 - id: p2p_upstream_cdf050a5
   turn: null
   kind: P2P_REGRESSION
   weight: 0.0
   description: 'upstream(reg): npm_run_build @ bcee1dc'
-  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states; bundle=staging/ci_inventory/reigh-medialightbox-refactor_p2p_bundle.yaml
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

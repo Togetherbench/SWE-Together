@@ -67,4 +67,4 @@ gates:
   kind: F2P
   weight: 0.2
   description: 'upstream(F2P): py_compile_changed @ e21a773'
-  notes: v043 F2P; reason=fail_on_buggy (rc_base=1) -> pass_on_fix; bundle=staging/ci_inventory/sd-scripts-multiresolution-compat_p2p_bundle.yaml
+  notes: v043 F2P; reason=fail_on_buggy (rc_base=1) -> pass_on_fix
