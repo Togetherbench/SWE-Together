@@ -73,8 +73,6 @@ data-pipeline/scripts/one_off/*.result.json
 
 # Offline graph generation byproducts (kept in releases / cache, not source)
 task_list_graph_*.txt
-analysis/offline_graph_instructor/trace_graph_*.json
-analysis/offline_graph_instructor/trace_graph_*.txt
 
 # Pilot/analysis plot outputs — regenerable from `scripts/`, not source
 eval/pilot_study_*.png
