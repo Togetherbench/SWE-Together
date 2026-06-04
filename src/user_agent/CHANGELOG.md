@@ -3,6 +3,33 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## Unreleased
+
+- **masked-proxy providers now actually reach localhost:4210** (mini-swe +
+  opencode): the `minimaxd/`/`glmd/`/`ark/` masking path launched the
+  in-sandbox proxy but never pointed the inner agent at it, so every call
+  401'd at real api.anthropic.com with the placeholder key (mm27 smoke,
+  2026-06-03; same class as the deepseek 401s of 2026-05-29). Fixes:
+  - `user_enabled_mini_swe_agent._build_run_commands` injects
+    `ANTHROPIC_API_BASE` + `ANTHROPIC_BASE_URL` = `http://localhost:4210`
+    when `_using_proxied_provider` (we exec inner commands ourselves via
+    `exec_with_budget`, bypassing Harbor's `extra_env` merge).
+  - `user_enabled_opencode._opencode_thinking_patch_command` writes
+    `provider.anthropic.options.baseURL = 'http://localhost:4210/v1'` into
+    opencode.json (@ai-sdk/anthropic has no env-var base-URL override; config
+    persists in the sandbox so `--session` resume turns inherit it).
+- **opencode CLI pinned to 1.15.13**: `UserEnabledOpenCode`'s
+  `opencode_version` default changes `None` → `"1.15.13"`. Previously the
+  unset version fell through to `npm i -g opencode-ai@latest` in Harbor's
+  `install-opencode.sh.j2` — and since opencode installs at agent-setup time
+  per trial (unlike CC, which is baked into images at 2.1.108), a multi-day
+  cohort could silently mix CLI versions. 1.15.13 is what all completed
+  `mm27_lite_oc_r1` trials (2026-06-03) actually installed, so the pin is
+  drift-free for the in-flight cohort. Mirrors the mini-swe-agent
+  `mswea_version="2.3.0"` pin. Verified end-to-end: factory construction with
+  run_eval's exact kwargs → `npm i -g opencode-ai@1.15.13` in the rendered
+  install script → live install reports 1.15.13.
+
 ## v1.0 — 2026-05-31
 
 **Stabilization release: mini-swe-agent + opencode wrappers production-ready

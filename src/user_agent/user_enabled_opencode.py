@@ -107,7 +107,14 @@ class UserEnabledOpenCode(BaseAgent):
         # recommended default for complex / multi-turn tasks (see
         # https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking).
         reasoning_effort: str | None = "high",
-        opencode_version: str | None = None,
+        # Pin the in-sandbox opencode-ai CLI version for reproducibility
+        # (mirrors mswea_version in user_enabled_mini_swe_agent). Unlike
+        # Claude Code (baked into task images at 2.1.108), opencode installs
+        # at agent-setup time per trial — without a pin, Harbor's
+        # install-opencode.sh.j2 falls through to `npm i -g opencode-ai@latest`
+        # and a multi-day cohort can silently mix CLI versions mid-run.
+        # 1.15.13 is what the mm27 lite cohort (2026-06-03) actually installed.
+        opencode_version: str | None = "1.15.13",
         **kwargs,
     ):
         # `minimaxd/`, `glmd/`, `ark/`, etc. are our naming convention for
@@ -405,6 +412,22 @@ class UserEnabledOpenCode(BaseAgent):
             "p = pathlib.Path.home()/'.config/opencode/opencode.json'\n"
             "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
             "prov = cfg.setdefault('provider', {})\n"
+        )
+        if self._using_proxied_provider:
+            # Route opencode's anthropic provider (@ai-sdk/anthropic) to the
+            # in-sandbox proxy on localhost:4210. The masked model name puts
+            # us on the 'anthropic' provider, whose default baseURL is
+            # api.anthropic.com/v1 — and unlike LiteLLM there is no env-var
+            # override; baseURL must come from opencode.json provider
+            # options. Without this, every call 401s at real Anthropic with
+            # the placeholder key (mm27 smoke, 2026-06-03). The SDK appends
+            # "/messages" to baseURL, so "/v1" stays in the value. Config
+            # persists in the sandbox, so --session resume turns inherit it.
+            script += (
+                "prov.setdefault('anthropic', {}).setdefault('options', {})"
+                "['baseURL'] = 'http://localhost:4210/v1'\n"
+            )
+        script += (
             "for name in list(prov):\n"
             "    opts = prov[name].setdefault('options', {})\n"
             f"    opts['reasoning'] = {{'max_tokens': {max_tokens}}}\n"

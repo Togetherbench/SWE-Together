@@ -320,6 +320,22 @@ class UserEnabledMiniSweAgent(BaseAgent):
                 # Route LiteLLM through the in-sandbox proxy → ChatGPT OAuth
                 c.env["OPENAI_BASE_URL"] = "http://127.0.0.1:4220/v1"
                 c.env["OPENAI_API_KEY"] = "placeholder"
+            if self._using_proxied_provider:
+                # Route LiteLLM's anthropic provider to the in-sandbox proxy
+                # on localhost:4210 (launched in setup() when
+                # LITELLM_PROXY_MODEL is set). The masked model name
+                # ("anthropic/claude-sonnet-4-6") makes LiteLLM pick the
+                # anthropic provider, which resolves its endpoint from
+                # ANTHROPIC_API_BASE (canonical, all versions) falling back
+                # to ANTHROPIC_BASE_URL (≥1.82.x). We exec the inner agent's
+                # commands ourselves (exec_with_budget), bypassing Harbor's
+                # BaseInstalledAgent.run() extra_env merge — so without this
+                # injection LiteLLM dispatches to api.anthropic.com with the
+                # placeholder key and 401s every call (mm27 smoke,
+                # 2026-06-03; same class as the deepseek 401s of 2026-05-29).
+                # LiteLLM appends "/v1/messages" to the base itself.
+                c.env["ANTHROPIC_API_BASE"] = "http://localhost:4210"
+                c.env["ANTHROPIC_BASE_URL"] = "http://localhost:4210"
         return cmds
 
     @staticmethod
