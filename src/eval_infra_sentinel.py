@@ -47,6 +47,31 @@ MIN_TURNS_FOR_NO_PROGRESS = 5
 # could theoretically be a real edit; we've never seen ≥2 in a healthy run.
 PARSE_FAILURE_THRESHOLD = 2
 
+# Agent-transcript filenames across the harnesses we run (Claude Code,
+# opencode, mini-swe-agent). Exactly one of these is the real transcript for
+# a given trial; a present-but-empty one means the harness launched but the
+# agent produced nothing (e.g. the opencode-gpt launch-hang: 0-byte
+# opencode.txt, 9 tasks × 3 reps in the lite70 cohort).
+AGENT_TRANSCRIPT_NAMES = ("claude-code.txt", "opencode.txt", "mini-swe-agent.txt")
+
+
+def _is_empty_transcript(path: Path) -> bool:
+    """True iff the file exists and is empty (0 bytes, or whitespace-only for
+    a tiny file). A *missing* file is NOT empty — that's the pre-result /
+    incomplete-artifacts case handled elsewhere."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+    if size == 0:
+        return True
+    if size <= 16:  # cheap whitespace-only check without reading big files
+        try:
+            return path.read_text(errors="replace").strip() == ""
+        except OSError:
+            return False
+    return False
+
 
 @dataclass
 class TrialSignals:
@@ -61,6 +86,8 @@ class TrialSignals:
     all_tool_calls: int = 0
     api_retry_count: int = 0
     result_subtypes: list[str] = field(default_factory=list)
+    transcript_present_but_empty: bool = False
+    empty_transcript_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -142,6 +169,15 @@ def collect_signals(trial_dir: Path) -> TrialSignals:
             sig.patch_bytes = patch_path.stat().st_size
         except OSError:
             sig.patch_bytes = 0
+    # Present-but-empty agent transcript = harness launched, agent produced
+    # nothing. Checked across all harness transcript names because opencode /
+    # mini-swe-agent don't write claude-code.txt (so _stream_signals above
+    # sees zero turns and the no_agent_progress detector can't fire for them).
+    agent_dir = trial_dir / "agent"
+    present = [agent_dir / n for n in AGENT_TRANSCRIPT_NAMES if (agent_dir / n).exists()]
+    if present and all(_is_empty_transcript(p) for p in present):
+        sig.transcript_present_but_empty = True
+        sig.empty_transcript_names = [p.name for p in present]
     return sig
 
 
@@ -241,6 +277,19 @@ def _detect_parse_failure_corruption(sig: TrialSignals) -> tuple[bool, str, dict
     ), {"hit_count": hits, "api_retry_count": sig.api_retry_count}
 
 
+def _detect_empty_transcript(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
+    """Harness wrote a transcript file but it's empty (0 bytes). The agent
+    never produced output — e.g. the opencode-gpt launch-hang. Distinct from
+    a *missing* transcript (pre-result / incomplete artifacts), which stays
+    ok at this layer."""
+    if not sig.transcript_present_but_empty:
+        return False, "", {}
+    return True, (
+        f"Agent transcript present but empty: {sig.empty_transcript_names} "
+        f"— harness launched but produced no output (patch is empty too)"
+    ), {"empty_transcripts": sig.empty_transcript_names}
+
+
 def _detect_no_agent_progress(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
     if sig.patch_bytes > EMPTY_PATCH_BYTES:
         return False, "", {}
@@ -263,6 +312,7 @@ def _detect_no_agent_progress(sig: TrialSignals) -> tuple[bool, str, dict[str, A
 # "no_agent_progress" detector runs last so a real provider error gets the
 # precise reason in its sidecar instead of the generic one.
 DETECTORS: list[tuple[str, Any]] = [
+    ("empty_transcript", _detect_empty_transcript),
     ("provider_402_balance", _detect_provider_402_balance),
     ("provider_429_quota", _detect_provider_429_quota),
     ("provider_401_auth", _detect_provider_401_auth),
@@ -584,6 +634,19 @@ def detect_B10_missing_result_or_artifacts(trial: Path) -> bool:
     return (not has_agent_patch and not has_agent_transcript) or (has_reward and not has_agent_transcript)
 
 
+def detect_B11_empty_transcript(trial: Path) -> bool:
+    """B11: agent transcript file present but empty (0 bytes) — the harness
+    launched but the agent produced no output. Distinct from B10 (transcript
+    *missing*): here result.json + a (0-byte) transcript both exist, so the
+    trial looks complete but is a dead data point. This is the opencode-gpt
+    launch-hang (9 lite70 tasks, 3/3 reps each, ~12% of the gpt cohort)."""
+    agent = trial / "agent"
+    present = [agent / n for n in AGENT_TRANSCRIPT_NAMES if (agent / n).exists()]
+    if not present:
+        return False
+    return all(_is_empty_transcript(p) for p in present)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Rerun policy
 # ──────────────────────────────────────────────────────────────────────
@@ -592,7 +655,7 @@ def detect_B10_missing_result_or_artifacts(trial: Path) -> bool:
 # Trials with infra signals that still produced a useful patch + reward
 # DO NOT need rerun — the model recovered through transient infra noise.
 
-INFRA_CODES_RERUN_WORTH = ("B2", "B3", "B7", "B8", "B9", "B10", "A2")
+INFRA_CODES_RERUN_WORTH = ("B2", "B3", "B7", "B8", "B9", "B10", "B11", "A2")
 INFRA_CODES_FAIR_ZERO   = ("B4", "B6", "A1", "A1b", "B1", "A3")
 
 BUG_DETECTORS: list[tuple[str, str, Any]] = [
@@ -608,6 +671,7 @@ BUG_DETECTORS: list[tuple[str, str, Any]] = [
     ("B8", "tool/env access mismatch (external_dir denied, pwsh missing)", detect_B8_tool_or_env_access_mismatch),
     ("B9", "final.patch empty but turn patches contain real git diffs", detect_B9_final_patch_capture_gap),
     ("B10", "missing result.json / incomplete trial artifacts", detect_B10_missing_result_or_artifacts),
+    ("B11", "agent transcript present but empty (harness launched, no output)", detect_B11_empty_transcript),
 ]
 
 
