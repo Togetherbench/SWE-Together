@@ -5,8 +5,12 @@ jobs/
 .env
 trials/
 trials-*/
-trials_*/        # underscore-suffixed eval-result dirs (kimi25, glm51, mm25, mm27, etc.) — protect from `git clean -fd`
-_swechat_revalidate_*/   # bulk revalidation runs (133MB+ trial dirs)
+# NOTE: .gitignore does NOT support trailing inline comments — a `pattern  # text`
+# line is treated as one literal pattern and matches nothing. Keep comments on their own line.
+# underscore-suffixed eval-result dirs (kimi25, glm51, mm25, mm27, etc.) — protect from `git clean -fd`
+trials_*/
+# bulk revalidation runs (133MB+ trial dirs)
+_swechat_revalidate_*/
 __pycache__/
 session_collection/
 .claude/worktrees/
@@ -76,6 +80,7 @@ task_list_graph_*.txt
 
 # Pilot/analysis plot outputs — regenerable from `scripts/`, not source
 eval/pilot_study_*.png
+eval/*_70task.png
 analysis/*.png
 analysis/*.md
 
@@ -83,3 +88,9 @@ analysis/*.md
 eval/canonical_plan.example.json
 eval/canonical_plan_*.json
 eval/pilot_study_*.md
+
+# Published release bundles — multi-GB, regenerable via the release pipeline
+release/
+
+# macOS / OS junk
+.DS_Store
