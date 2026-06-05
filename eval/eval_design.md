@@ -50,61 +50,30 @@ We do **not** resolve this by picking one. We accept that the sim is both an ins
    - **Phase 2 — per-trial scoring, run k times per task per agent.** Reads the frozen rubric, asks the judge to mark each goal `met:true/false` against the agent's patch, then computes `judge_score = sum(weight × met)` mechanically. Writes `judge_verdict.json` per trial.
 
    `run_batch.py` auto-runs Phase 1 for any task in the plan that's missing a rubric (one-time, cached) before dispatching the Phase 2 sandbox pool. The legacy single-pass judge ([`correctness/judge_one.py`](correctness/judge_one.py)) is deprecated.
-2. **Clean.** For each of the k trials, measure **intent divergence** via [`eval/intent_coverage`](intent_coverage/) (`overall_score` / `coverage_rate` / `scope_precision`). Drop the trial when divergence is large or coverage is low (i.e. the sim wandered off the oracle's task). Report `mean(judge_score)` and `var(judge_score)` over the **cleaned** subset, plus the number of trials that survived the filter. **Filter protocol** — see §"Filter protocol (step 2)" below.
+2. **Characterize (no drop).** For each of the k trials, measure **intent divergence** via [`eval/intent_coverage`](intent_coverage/) (`overall_score` / `coverage_rate` / `scope_precision`) as a **diagnostic only**. Report `mean(judge_score)` and `var(judge_score)` over **all k trials** — no trial is dropped. See §"Step 2 is diagnostic-only — we no longer filter" below for why the former filter was removed.
 3. **Characterize.** On the surviving trials, run a panel of **user-behavior measurements** — user effort (§"Proposal" below), per-tier specificity distribution, intervention count, abandonment / give-up rate, etc. These are not aggregated into the correctness number; they sit alongside it so a reader can see *how* the sim got the agent to the score it got. Implementation lives at [`eval/user_behavior/`](user_behavior/).
 
-### Filter protocol (step 2) — V2 canonical
+### Step 2 is diagnostic-only — we no longer filter
 
-**Canonical spec lives at [`FILTER_DESIGN.md`](FILTER_DESIGN.md).** This section is a one-page summary; the design rationale, the gap between "filter sim-failure" intent and what coverage observation can actually identify, and the migration from legacy A/B/C are documented there.
+Earlier revisions dropped "sim-noise" trials before computing Block 1 (a four-condition rule on `overall_score` + `judge_score` + a within-cohort outlier test + peer-proof). **That filter has been removed — every replicate is kept.** An audit of the 70-task × opus-×3 set showed the premise did not hold:
 
-V2 is a single rule with two new guards. A trial is dropped iff **all four** conditions hold:
+- **Coverage does not predict success.** `coverage_rate ↔ judge_score` Pearson r ≈ 0.01; `ground_truth_remaining ↔ judge_score` r ≈ 0.03. Whatever intent-coverage measures, it is statistically independent of whether the agent solved the task — so dropping a trial for low coverage removes data without removing noise.
+- **The signal it keyed on is unstable.** `coverage_rate` swings > 0.2 across identical replicates on ~1 task in 9 (one task spanned 0.0–1.0), driven by the sim's own run-to-run non-determinism, not by trial quality.
+- **Edge cases are degenerate.** `n_intents = 0` forces `coverage = 1.0` (vacuous); a mega-session task (one trace spanning multiple projects) inflates the denominator and pushes coverage to ≈ 0.03 even when the relevant sub-task was fully covered.
 
-```python
-SUCCESS_THRESHOLD       = 0.85
-SIGMA_K, ABS_FLOOR, MAGNITUDE_GAP = 1.0, 0.50, 0.10
-FILTER_SIM_SILENT_SKIP  = 4         # ≤ 1 prescriptive hint or ≤ 2 directional hints
+Dropping trials on a metric that is noisy, occasionally vacuous, and uncorrelated with the outcome it was meant to clean biased the headline more than it cleaned it. We now report `mean(judge_score)` / `var(judge_score)` over **all k replicates** and keep intent-coverage as a **diagnostic** (Block 2) — reported alongside the score, never used to remove data.
 
-def is_sim_noise_v2(trial, peers_in_same_cohort_task):
-    # 0. skip near-silent autonomy (don't penalize a trial when sim barely spoke)
-    if trial.effort_cost is not None and trial.effort_cost <= FILTER_SIM_SILENT_SKIP:
-        return False
-    # 1. within-cohort cov 3-AND outlier (was legacy Filter A)
-    covs = [p.overall_score for p in peers if p.overall_score is not None]
-    if len(covs) < 2: return False
-    med, sd = statistics.median(covs), statistics.pstdev(covs)
-    if not (trial.overall_score < med - SIGMA_K * sd
-            and trial.overall_score < ABS_FLOOR
-            and (med - trial.overall_score) > MAGNITUDE_GAP): return False
-    # 2. judge agrees this is a bad trial (closes alt-path autonomy)
-    if trial.judge_score >= SUCCESS_THRESHOLD: return False
-    # 3. peer-proof: ≥1 same-(cohort,task) peer cleared BOTH cov AND judge
-    if not any(p.overall_score is not None and p.overall_score >= ABS_FLOOR
-               and p.judge_score >= SUCCESS_THRESHOLD
-               for p in peers if p is not trial): return False
-    return True
-```
-
-**Two new guards** vs the legacy `clean_trials()` (3-AND on `overall_score` alone):
-
-- **Condition 0 — sim_silent short-circuit.** Trials where sim sent ≤ 1 prescriptive hint (effort ≤ 4) are protected from the filter regardless of coverage. Without this, the legacy `ABS_FLOOR = 0.50` rule errantly killed near-autonomy successes (`effort = 0` → `cov = 0` by definition; the legacy filter then fires).
-- **Condition 2 — judge-low AND-guard.** Trials where `judge_score ≥ 0.85` are protected regardless of coverage. Without this, the filter drops alt-path autonomy where the agent succeeded via a non-oracle route.
-
-**Removed from V2:** legacy Block 2 Guard 1 (cohort-level outlier on `overall_score`). It assumed different cohorts use different sims; in our same-sim cross-model default it systematically drops the most autonomous cohort. See [`FILTER_DESIGN.md`](FILTER_DESIGN.md) §4.
-
-After filtering, report **four numbers** per (task, agent):
+After step 1, report per (task, agent):
 
 ```
-n_total      = k                                  # replicates we started with
-n_surviving  = len(kept)                          # passed V2 filter
-mean_judge   = mean(t.judge_score for t in kept)  # cleaned correctness number
-var_judge    = pvariance(t.judge_score for t in kept)
+n_total      = k                                       # all replicates, none dropped
+mean_judge   = mean(t.judge_score for t in n_total)    # correctness number
+var_judge    = pvariance(t.judge_score for t in n_total)
 ```
 
-Never collapse `n_surviving` into the headline — a low survival count is itself a signal worth reporting alongside the cleaned mean. Default thresholds calibrated on the 39-task × 4-cohort × 3-rep dataset; see [`FILTER_DESIGN.md`](FILTER_DESIGN.md) §6 for sensitivity.
+(`n_surviving` / `n_dropped` remain in `eval_report.json` for schema stability; `n_dropped` is now always 0, `n_surviving == n_total`.)
 
-**Honest framing.** Coverage alone cannot strictly distinguish sim-failure from agent-driven low coverage (scope creep, autonomy, alt-path). V2 drops trials where (cov low + judge low + peer-proof of feasibility); the dropped trial does not represent the agent's true ceiling, but the exact source (sim noise vs agent variance) is undetermined. Strict sim-failure identification requires a fixed-agent baseline experiment — see [`FILTER_DESIGN.md`](FILTER_DESIGN.md) §7.
-
-This is what the three blocks below operationalize: Block 1 is the cleaned correctness number with effort as a second axis; Block 2 is the V2 filter (the cleaning step itself); Block 3 is benchmark fidelity. **No composite score across blocks.**
+The three blocks below: Block 1 is the correctness number with effort as a second axis; Block 2 is sim-health **diagnostics** (reported, never used to drop); Block 3 is benchmark fidelity. **No composite score across blocks.**
 
 ---
 
@@ -220,7 +189,7 @@ def self_completion(replicates):
 ```
 
 Reading the panel:
-- **`mean@3`** = "if I sample one rep at random, what soft score do I expect?" Reliability premium — punishes high-variance cohorts. **Most sensitive to Block 2 sim-noise filter**.
+- **`mean@3`** = "if I sample one rep at random, what soft score do I expect?" Reliability premium — punishes high-variance cohorts. Computed over all k reps (no sim-noise filtering).
 - **`pass@1`** = "single-shot success rate" — what fraction of trials clear the binary bar. Sensitive to threshold (multiple thresholds reported).
 - **`pass@3`** = "best-of-3 ceiling" — capability under retry. **Robust to sim noise** (best-rep dominates).
 - **`effort_AUC`** = pass@1-cumulative AUC over budgets `[0, max_k]`. Per-task fraction of reps satisfying `(judge ≥ T AND effort_cost ≤ k)`, averaged across tasks, averaged across k. **Monotone non-decreasing in k** (unlike the legacy per-trial `success_at_k`, which selected only in-budget trials and produced non-monotone curves — pilot10 §"success@k weirdness" documents the symptom; the cumulative redefinition resolves it).
@@ -251,23 +220,21 @@ For benchmark hygiene, the Oracle's per-task `effort_cost` floor is the right re
 | `min_effort_to_success(task, model)` P50 | `median(min(r.effort_cost) over r with judge_score ≥ 0.85)` | "typical hint budget you need per task" |
 | `effort_per_matched_intent` | `effort_cost / matched_intents` | sim health check — if sim fragments one oracle intent into many small msgs, per-intent cost drops; flags sim verbosity |
 
-### Block 2 — Sim health (filter, not rank)
+### Block 2 — Sim health (diagnostic, no drop)
 
-Block 2 applies the **V2 unified filter** (see §"Filter protocol (step 2)" above and [`FILTER_DESIGN.md`](FILTER_DESIGN.md)). Trials dropped here are removed before Block 1 computes anything. Block 2 never enters ranking directly.
+Block 2 **reports** sim-health signals alongside the score; it **never removes trials** and never enters ranking. (It was formerly a trial-dropping filter — removed; see §"Step 2 is diagnostic-only — we no longer filter".)
 
-**V2 drops a trial iff all four conditions hold:** ① sim was substantively active (`effort_cost > 4`), ② trial's `overall_score` is a 3-AND within-cohort outlier, ③ judge agrees the trial failed (`judge_score < 0.85`), ④ at least one same-(cohort, task) peer cleared **both** `overall_score ≥ 0.50` and `judge_score ≥ 0.85`. See [`FILTER_DESIGN.md`](FILTER_DESIGN.md) §3 for the canonical pseudocode and §5 for what V2 actually identifies (versus what the design intends).
+Per (task, agent) the panel surfaces `coverage_rate` / `scope_precision`, sim verbosity (`effort_per_matched_intent`), intervention count, and `ground_truth_remaining` at stop. These are read as flags, not gates:
 
-**Sim noise is multi-faceted.** V2 + the panel metrics together handle the design's enumerated sim behaviors:
-
-| sim behavior | V2 / metric handling |
+| sim behavior | diagnostic signal (reported, not acted on) |
 |---|---|
-| sim over-anchors with cohort-divergent specificity | V2 conditions 1 + 2 + 3 (within-cohort cov outlier + judge low + peer-proof) |
-| sim skips critical intents (cursor mis-routed) | V2 conditions 1 + 2 + 3 (generalizes legacy Guard 2's critical-intent peer-proof) |
-| sim silent (intv=0) — strong model self-drives | V2 condition 0 skips these; **`self_completion` counts them** (POSITIVE signal) |
-| sim funnels all agents to same terminal state | Block 4 — task discriminability flag (diagnostic) |
-| agent scope-creep / alt-path autonomy | V2 condition 2 (`judge ≥ 0.85`) protects alt-path; V2 cannot cleanly distinguish scope-creep from sim noise — see [`FILTER_DESIGN.md`](FILTER_DESIGN.md) §2 |
+| sim over-anchors with cohort-divergent specificity | low `coverage_rate` + low `scope_precision` on a trial whose peers scored higher |
+| sim skips critical intents (cursor mis-routed) | high `ground_truth_remaining` at stop with low `coverage_rate` |
+| sim silent (intv = 0) — strong model self-drives | `effort_cost = 0`; **`self_completion` counts these** (POSITIVE signal) |
+| sim funnels all agents to same terminal state | Block 4 — task discriminability flag |
+| sim non-determinism | `coverage_rate` variance across the k replicates of a (task, agent) pair |
 
-**Legacy filter components** (Filter A within-cohort 3-AND, Block 2 Guard 1 cohort-level, Block 2 Guard 2 critical-intent peer-proof) are subsumed or removed. See [`FILTER_DESIGN.md`](FILTER_DESIGN.md) §3 mapping table and §4 for the reasoning behind removing Guard 1 in same-sim cross-model experiments.
+Because coverage is statistically independent of `judge_score` (r ≈ 0.01, see above), **none of these may be folded into the headline** — they exist to explain *how* a trial unfolded and to flag tasks/sims worth re-auditing, not to adjust the correctness number.
 
 ### Block 3 — Benchmark fidelity
 
@@ -302,12 +269,12 @@ Block 4 is **diagnostic, not ranking** — it tells benchmark designers which ta
 
 | metric | measures | role |
 |---|---|---|
-| `intent_coverage.overall_score` | did the sim cover the oracle's intents? | **Block 2 — cohort filter** (drop sim-divergent cohorts) |
+| `intent_coverage.overall_score` | did the sim cover the oracle's intents? | **Block 2 — sim-health diagnostic** (reported, never drops) |
 | `effort_cost` | how specific were the sim's hints? | **Block 1 — leaderboard ranking dimension** |
 
 They are independent: a sim can be high-coverage low-effort (vague but on-topic) or low-coverage high-effort (off-topic but very specific). Mixing them would re-couple "did the sim get there" with "did the agent get there", which is exactly what the disentanglement story breaks.
 
-Practical rule: **filter cohorts by Block 2, then rank survivors by Block 1**. Never average across blocks.
+Practical rule: **rank by Block 1; read Block 2 as a diagnostic alongside it**. No trials or cohorts are dropped, and no averaging across blocks.
 
 ---
 

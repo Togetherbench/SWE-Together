@@ -46,16 +46,6 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PY = sys.executable
 
-# Step 2 V2 filter constants — see eval/FILTER_DESIGN.md for canonical spec
-# and the rationale for each guard (sim_silent short-circuit, judge-low AND,
-# peer-proof). Legacy Block 2 Guard 1 (cohort-level outlier) is intentionally
-# absent: in same-sim cross-model experiments it systematically drops the more
-# autonomous cohort. See FILTER_DESIGN.md §4.
-SIGMA_K                 = 1.0
-ABS_FLOOR               = 0.50
-MAGNITUDE_GAP           = 0.10
-FILTER_SIM_SILENT_SKIP  = 4    # effort ≤ 1 prescriptive hint or ≤ 2 directional hints
-
 # Block 1 — Capability constants (eval_design.md §"Block 1").
 SUCCESS_THRESHOLD = 0.85
 EFFORT_AUC_MAX_K  = 10
@@ -267,82 +257,16 @@ def join_trial_artefacts(job: dict) -> dict:
     }
 
 
-# ── filter (step 2 clean) — V2 canonical, see eval/FILTER_DESIGN.md ──────────
-
-def is_sim_noise_v2(trial: dict, peers: list[dict]) -> bool:
-    """V2 unified rule. Drop trial iff ALL four conditions hold; any single
-    failure → keep. Peers = other replicates in the SAME (cohort, task) group.
-
-    See eval/FILTER_DESIGN.md for the design rationale, the gap between
-    "filter sim-failure" intent and what coverage alone can identify, and
-    why legacy Filter B (cohort-level outlier) is excluded.
-    """
-    # 0. NEW: skip near-silent autonomy (mechanism c in FILTER_DESIGN.md §2)
-    eff = trial.get("effort_cost")
-    if eff is not None and eff <= FILTER_SIM_SILENT_SKIP:
-        return False
-
-    o = trial.get("overall_score")
-    if o is None:
-        return False
-
-    # 1. Within-cohort cov 3-AND outlier (was legacy Filter A).
-    # Median/sd over the (cohort, task) group including this trial.
-    valid_covs = [o] + [p["overall_score"] for p in peers if p.get("overall_score") is not None]
-    if len(valid_covs) < 2:
-        return False
-    median = statistics.median(valid_covs)
-    sd     = statistics.pstdev(valid_covs)
-    if not (o < median - SIGMA_K * sd
-            and o < ABS_FLOOR
-            and (median - o) > MAGNITUDE_GAP):
-        return False
-
-    # 2. NEW: judge agrees this is a bad trial (closes mechanism e: alt-path autonomy)
-    j = trial.get("judge_score")
-    if j is None or j >= SUCCESS_THRESHOLD:
-        return False
-
-    # 3. Peer-proof: ≥1 peer cleared BOTH cov AND judge.
-    # Generalizes legacy Filter C (critical-intent peer-proof) to the cov+judge plane.
-    if not any(
-        p.get("overall_score") is not None and p["overall_score"] >= ABS_FLOOR
-        and p.get("judge_score") is not None and p["judge_score"] >= SUCCESS_THRESHOLD
-        for p in peers
-    ):
-        return False
-
-    return True
-
+# ── filtering removed — every replicate trial is kept, none dropped ──────────
 
 def clean_trials(trials: list[dict]) -> tuple[list[dict], list[dict]]:
-    """`eval_design.md` §"Filter protocol (step 2)" — V2 canonical.
+    """Filtering is disabled: keep every trial, drop none.
 
-    Groups trials by cohort, applies is_sim_noise_v2 to each (cohort, task)
-    sub-group. Same signature as the legacy clean_trials (returns
-    `kept, dropped`) so call sites don't change. By construction V2 cannot
-    drop all replicates of a (cohort, task) group (peer-proof condition 3
-    requires ≥1 surviving peer), so the safety-fallback "restore best" is a
-    no-op in normal operation but kept for robustness across cross-cohort
-    edge cases.
+    Retained as a passthrough (same `kept, dropped` signature) so the call
+    site and per-task output schema (`n_surviving`/`n_dropped`) are unchanged;
+    `n_dropped` is now always 0.
     """
-    by_cohort: dict[str, list[dict]] = defaultdict(list)
-    for t in trials:
-        by_cohort[t.get("cohort", "")].append(t)
-
-    kept: list[dict] = []
-    dropped: list[dict] = []
-    for group in by_cohort.values():
-        for t in group:
-            peers = [p for p in group if p is not t]
-            (dropped if is_sim_noise_v2(t, peers) else kept).append(t)
-
-    if not kept:                                    # safety: never drop everything
-        best = max(trials, key=lambda t: ((t.get("judge_score") or 0),
-                                          (t.get("overall_score") or 0)))
-        kept = [best]
-        dropped = [t for t in trials if t is not best]
-    return kept, dropped
+    return list(trials), []
 
 
 # ── Block 1 — effort-aware metrics ───────────────────────────────────────────
@@ -488,9 +412,7 @@ def render_markdown(per_task: list[dict], rollup: dict, args) -> str:
         f"- tasks root: `{args.tasks_root}`",
         f"- n tasks: {rollup['n_tasks']}",
         f"- success threshold: judge_score ≥ {SUCCESS_THRESHOLD}",
-        f"- filter (V2): σ_k={SIGMA_K}, abs_floor={ABS_FLOOR}, gap={MAGNITUDE_GAP}, "
-        f"sim_silent_skip={FILTER_SIM_SILENT_SKIP}, judge_AND={SUCCESS_THRESHOLD}  "
-        f"(see eval/FILTER_DESIGN.md)",
+        f"- filter: disabled (all replicate trials kept)",
         "",
         "## Headline (cross-task means)",
         "",
@@ -691,15 +613,7 @@ def main() -> int:
         "tasks_root": str(args.tasks_root.resolve()),
         "cohorts": sorted({j["cohort"] for j in jobs}),
         "n_trials": len(flat),
-        "filter": {
-            "version": "v2",
-            "spec": "eval/FILTER_DESIGN.md",
-            "sigma_k": SIGMA_K,
-            "abs_floor": ABS_FLOOR,
-            "magnitude_gap": MAGNITUDE_GAP,
-            "sim_silent_skip": FILTER_SIM_SILENT_SKIP,
-            "judge_and_threshold": SUCCESS_THRESHOLD,
-        },
+        "filter": {"version": "disabled", "spec": None},
         "success_threshold": SUCCESS_THRESHOLD,
         "cross_task": rollup,
         "per_task": per_task,

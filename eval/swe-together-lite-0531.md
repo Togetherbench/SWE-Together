@@ -6,7 +6,7 @@
 
 **Scope**: how to read the three correctness metrics (pass@1, stable solve rate, pass@3) on the 70-task × 6-cohort × 3-rep dataset (DS · Opus · GPT × mini-swe-agent · opencode), why **stable solve rate best matches deployment intuition**, and the recommended leaderboard headline structure.
 
-**Companion docs**: [`eval_design.md`](eval_design.md) (metric specs), [`FILTER_DESIGN.md`](FILTER_DESIGN.md) (V2 filter).
+**Companion docs**: [`eval_design.md`](eval_design.md) (metric specs). *(Trial filtering was removed — intent-coverage is now a diagnostic only; see `eval_design.md` §"Step 2 is diagnostic-only".)*
 
 ---
 
