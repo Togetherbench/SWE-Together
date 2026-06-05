@@ -19,5 +19,20 @@
       "note": "Valid no_canonical stub with category stripped_export. Schema fields _task_name/_status/_category/_reason/_extraction/_sync_note all present and self-consistent. No patch claimed.",
       "kind": "round2"
     }
-  ]
+  ],
+  "_rescope": {
+    "applied": true,
+    "date": "2026-06-05",
+    "source_turns": [
+      108,
+      117
+    ],
+    "source_messages": [
+      931,
+      1107
+    ],
+    "prev_n_turns": 279,
+    "prev_n_messages": 2525,
+    "reason": "original session was a multi-project mega-session (cv-jd-matcher web app + MLX-LM caching + unsloth-GRPO research); sliced to the MLX-LM ArraysCache/MambaCache batching sub-task that this task actually grades. Fixed instruction.md (was cv-jd opener), oracle_session.jsonl (279->10 turns), oracle_intents.json (234->8), original_session.json (2525->177 msgs). Resolves intent-coverage denominator pollution (was 0.03)."
+  }
 }
