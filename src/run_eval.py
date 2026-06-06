@@ -139,8 +139,12 @@ def is_task_completed(task_name: str, trials_dir: Path) -> bool:
     """
     if not trials_dir.exists():
         return False
+    # Harbor truncates trial dir names to 32 chars of task name; match on
+    # the truncated prefix or long-named tasks (4 in lite70) are NEVER
+    # seen as complete and get re-run on every --skip-existing relaunch.
+    dir_prefix = task_name[:32] + "__"
     for d in trials_dir.iterdir():
-        if not (d.is_dir() and d.name.startswith(task_name + "__")):
+        if not (d.is_dir() and d.name.startswith(dir_prefix)):
             continue
         result_path = d / "result.json"
         if not result_path.exists():

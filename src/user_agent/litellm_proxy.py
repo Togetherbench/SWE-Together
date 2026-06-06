@@ -78,11 +78,22 @@ class Proxy(http.server.BaseHTTPRequestHandler):
         headers = {{}}
         for k, v in self.headers.items():
             k_lower = k.lower()
-            if k_lower in ("host", "content-length"):
+            # accept-encoding: NEVER forward. litellm/httpx advertises gzip;
+            # MiniMax compresses non-streaming JSON bodies; we strip the
+            # content-encoding RESPONSE header below but stream the raw
+            # (compressed) bytes — the client then dies with "'utf-8' codec
+            # can't decode byte 0x8b in position 1" (gzip magic) and the
+            # whole agent turn fails. 71% of mini_mm27 lite70 trials zeroed
+            # this way (2026-06-05). Force identity so upstream never
+            # compresses. Streaming SSE (claude-code, opencode) was immune —
+            # event-streams don't get gzipped — which is why this hid for
+            # months.
+            if k_lower in ("host", "content-length", "accept-encoding"):
                 continue
             if strip_beta and k_lower == "anthropic-beta":
                 continue
             headers[k] = v
+        headers["Accept-Encoding"] = "identity"
         if is_or:
             headers["Authorization"] = f"Bearer {{FALLBACK_KEY}}"
             headers["HTTP-Referer"] = "https://togetherbench.com"

@@ -255,8 +255,10 @@ def classify_cell(
         return CellStatus(model_tag, replicate, task,
                           CellState.NOT_STARTED, None, 0)
 
+    # Harbor truncates trial dir names to 32 chars of task name — match on
+    # the truncated prefix (same fix as run_eval.is_task_completed).
     matches = [d for d in cohort.iterdir()
-               if d.is_dir() and d.name.startswith(task + "__")]
+               if d.is_dir() and d.name.startswith(task[:32] + "__")]
     if not matches:
         return CellStatus(model_tag, replicate, task,
                           CellState.NOT_STARTED, None, 0)
