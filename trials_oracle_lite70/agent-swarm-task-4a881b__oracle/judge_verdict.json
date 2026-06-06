@@ -1,0 +1,58 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "src/be/migrations/002_one_time_schedules.sql: new migration adds scheduleType column with CHECK(scheduleType IN ('recurring','one_time')) and relaxed constraint allowing one_time without cron/interval. src/be/migrations/001_initial.sql:236-239: fresh-DB schema updated identically. Both include idx_scheduled_tasks_type index."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "src/scheduler/scheduler.ts: (1) executeSchedule ~line 133-144: one_time sets enabled=false, nextRunAt=null, skips calculateNextRun. (2) recoverMissedSchedules ~line 46-55: same auto-disable for one_time. (3) runScheduleNow ~line 293-305: same auto-disable. (4) error handler ~line 189-193: sets enabled=false for one_time on error. src/http/schedules.ts ~line 191-200: trigger-now endpoint auto-disables one_time."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "src/tools/schedules/create-schedule.ts: accepts scheduleType, delayMs, runAt in inputSchema. Validates one_time cannot use cron/interval, requires delayMs or runAt (not both), runAt must be future. Validates recurring cannot use delayMs/runAt, requires cron/interval. Computes nextRunAt from delayMs (Date.now()+delayMs) or runAt for one_time."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "src/http/schedules.ts: POST handler validates scheduleType/delayMs/runAt with same constraints as MCP (lines 43-88). PUT handler rejects completed one_time (lines 251-261), skips cron/interval recalc for one_time (lines 295-322). src/http/stats.ts: GET supports scheduleType and hideCompleted query params (lines 84-93)."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "src/tools/schedules/list-schedules.ts: scheduleType and hideCompleted added to inputSchema with hideCompleted defaulting to true. Passed through to getScheduledTasks. src/be/db.ts: getScheduledTasks filters by scheduleType and applies hideCompleted filter (AND NOT (scheduleType='one_time' AND enabled=0))."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "src/tools/schedules/update-schedule.ts ~lines 129-149: rejects updates on completed one_time (disabled + lastRunAt). Lines 212-240: one_time schedules skip cron/interval nextRunAt recalculation. src/http/schedules.ts ~lines 251-261 and 295-300: same guards in HTTP endpoint."
+    },
+    {
+      "id": "goal_7",
+      "met": true,
+      "evidence": "src/types.ts: ScheduledTaskSchema has scheduleType z.enum(['recurring','one_time']).default('recurring'). Refine allows one_time without cron/interval. src/be/db.ts: ScheduledTaskRow has scheduleType:string, rowToScheduledTask maps it, CreateScheduledTaskData/UpdateScheduledTaskData include scheduleType, create/update SQL includes scheduleType."
+    },
+    {
+      "id": "goal_8",
+      "met": true,
+      "evidence": "new-ui/src/api/types.ts: scheduleType added to ScheduledTask interface. new-ui/src/pages/schedules/page.tsx: Badge column with amber/emerald styling for one_time/recurring, schedule column shows execution time for one_time. new-ui/src/pages/schedules/[id]/page.tsx: Badge in detail view, timing section shows 'Executed At'/'Runs At' for one_time vs cron/interval for recurring."
+    }
+  ],
+  "judge_notes": "All 8 goals met. Agent implemented the complete one-time scheduled tasks feature: migration + fresh schema (goal 1), auto-disable across all 5 execution paths (goal 2), MCP create with full validation (goal 3), HTTP API create/update/list with filters (goal 4), list-schedules MCP filtering (goal 5), update-schedule rejection of completed one-time (goal 6), types/Zod/DB layer (goal 7), and UI badges + timing display (goal 8). test.sh confirms reward=1.0 with all 8 FAIL_TO_PASS tests passing and 0 failures across 30 tests.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "agent-swarm-task-4a881b",
+  "trial_id": "agent-swarm-task-4a881b__oracle",
+  "judge_elapsed_sec": 85.7,
+  "sandbox_id": "ivrgv4mxylryn6ltr9qwr",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 8
+}

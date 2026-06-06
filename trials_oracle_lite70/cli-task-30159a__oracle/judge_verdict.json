@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "versioncheck_test.go:237-296 — 8 table-driven subtests using t.Run covering homebrew cellar, homebrew opt, linuxbrew, mise, username mise, username homebrew, unknown path, and executable error. All 8 pass per test.sh output (subtests=8 pass=true)."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "versioncheck.go:263 — '/homebrew/' replaced with '/opt/homebrew/' || '/linuxbrew/' (plus existing '/Cellar/'). versioncheck.go:267 — '/mise/' replaced with '/mise/installs/'. F2P_PATH_SPECIFICITY gate confirms hits=4, loose_homebrew=False, loose_mise=False."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "versioncheck.go:248 — 'var executablePath = os.Executable' at package scope. versioncheck.go:252 — updateCommand calls executablePath() instead of os.Executable(). F2P_NO_DIRECT_OS_EXEC and F2P_EXEC_INDIRECTION both pass."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "versioncheck_test.go:275-282 — subtest 'username mise not detected as mise install' with path '/home/mise/bin/entire' expects curl fallback. Lines 283-286 — subtest 'username homebrew not detected as brew install' with path '/home/homebrew/bin/entire' expects curl fallback."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "test.sh final reward: 1.000000. All F2P gates pass including F2P_TEST_DETERMINISTIC (8 subtests passing). No regressions detected."
+    }
+  ],
+  "judge_notes": "All 5 goals met. The agent produced a clean patch that exactly addresses the task: extracted os.Executable into an overridable var, tightened path patterns to prevent username false positives, and replaced the non-deterministic test with 8 table-driven subtests. test.sh confirms reward=1.0 with all gates passing. Score = 0.36 + 0.36 + 0.09 + 0.09 + 0.10 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cli-task-30159a",
+  "trial_id": "cli-task-30159a__oracle",
+  "judge_elapsed_sec": 72.2,
+  "sandbox_id": "icsao3czy17zcns9ihr25",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

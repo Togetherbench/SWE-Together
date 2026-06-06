@@ -1,0 +1,572 @@
+diff --git a/cmd/entire/cli/integration_test/deferred_finalization_test.go b/cmd/entire/cli/integration_test/deferred_finalization_test.go
+index 509b3b3..a8f5409 100644
+--- a/cmd/entire/cli/integration_test/deferred_finalization_test.go
++++ b/cmd/entire/cli/integration_test/deferred_finalization_test.go
+@@ -347,11 +347,11 @@ func TestShadow_CarryForward_ActiveSession(t *testing.T) {
+ // for remaining files can still get checkpoint trailers.
+ //
+ // Flow:
+-//  1. Agent touches files A and B, then stops (IDLE)
+-//  2. User commits only file A → checkpoint #1
+-//  3. Session is IDLE, but still has file B pending
+-//  4. User commits file B → checkpoint #2 (if carry-forward for IDLE is implemented)
+-//     or no trailer (if IDLE sessions don't carry forward)
++// 1. Agent touches files A and B, then stops (IDLE)
++// 2. User commits only file A → checkpoint #1
++// 3. Session is IDLE, but still has file B pending
++// 4. User commits file B → checkpoint #2 (if carry-forward for IDLE is implemented)
++//    or no trailer (if IDLE sessions don't carry forward)
+ func TestShadow_CarryForward_IdleSession(t *testing.T) {
+ 	t.Parallel()
+ 
+diff --git a/cmd/entire/cli/session/state.go b/cmd/entire/cli/session/state.go
+index 47ca535..2eb1b63 100644
+--- a/cmd/entire/cli/session/state.go
++++ b/cmd/entire/cli/session/state.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
++	"log/slog"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+@@ -13,6 +14,7 @@ import (
+ 	"github.com/entireio/cli/cmd/entire/cli/agent"
+ 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+ 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
++	"github.com/entireio/cli/cmd/entire/cli/logging"
+ 	"github.com/entireio/cli/cmd/entire/cli/validation"
+ )
+ 
+@@ -159,6 +161,18 @@ type PromptAttribution struct {
+ // NormalizeAfterLoad applies backward-compatible migrations to state loaded from disk.
+ // Call this after deserializing a State from JSON.
+ func (s *State) NormalizeAfterLoad() {
++	// Normalize legacy phase values. "active_committed" was removed in favor of
++	// the state machine handling commits during ACTIVE phase.
++	if s.Phase == "active_committed" {
++		logCtx := logging.WithComponent(context.Background(), "session")
++		logging.Info(logCtx, "migrating legacy active_committed phase to active",
++			slog.String("session_id", s.SessionID),
++		)
++		s.Phase = PhaseActive
++	}
++	// Also normalize via PhaseFromString to handle any other legacy/unknown values.
++	s.Phase = PhaseFromString(string(s.Phase))
++
+ 	// Migrate transcript fields: CheckpointTranscriptStart replaces both
+ 	// CondensedTranscriptLines and TranscriptLinesAtStart from older state files.
+ 	if s.CheckpointTranscriptStart == 0 {
+diff --git a/cmd/entire/cli/strategy/content_overlap.go b/cmd/entire/cli/strategy/content_overlap.go
+new file mode 100644
+index 0000000..bdbf416
+--- /dev/null
++++ b/cmd/entire/cli/strategy/content_overlap.go
+@@ -0,0 +1,281 @@
++package strategy
++
++import (
++	"context"
++	"log/slog"
++
++	"github.com/entireio/cli/cmd/entire/cli/logging"
++	"github.com/go-git/go-git/v5"
++	"github.com/go-git/go-git/v5/plumbing"
++	"github.com/go-git/go-git/v5/plumbing/object"
++)
++
++// Content-aware overlap detection for checkpoint management.
++//
++// These functions determine whether a commit contains session-related work by comparing
++// file content (not just filenames) against the shadow branch. This enables accurate
++// detection of the "reverted and replaced" scenario where a user:
++// 1. Reverts session changes (e.g., git checkout -- file.txt)
++// 2. Creates completely different content in the same file
++// 3. Commits the new content
++//
++// In this scenario, the commit should NOT get a checkpoint trailer because the
++// session's work was discarded, not incorporated.
++//
++// The key distinction:
++// - Modified files (exist in parent commit): Always count as overlap, regardless of
++//   content changes. The user is editing session's work.
++// - New files (don't exist in parent): Require content match against shadow branch.
++//   If content differs completely, the session's work was likely reverted & replaced.
++
++// filesOverlapWithContent checks if any file in filesTouched overlaps with the committed
++// content, using content-aware comparison to detect the "reverted and replaced" scenario.
++//
++// This is used in PostCommit to determine if a session has work in the commit.
++func filesOverlapWithContent(repo *git.Repository, shadowBranchName string, headCommit *object.Commit, filesTouched []string) bool {
++	logCtx := logging.WithComponent(context.Background(), "checkpoint")
++
++	// Build set of filesTouched for quick lookup
++	touchedSet := make(map[string]bool)
++	for _, f := range filesTouched {
++		touchedSet[f] = true
++	}
++
++	// Get HEAD commit tree (the committed content)
++	headTree, err := headCommit.Tree()
++	if err != nil {
++		logging.Debug(logCtx, "filesOverlapWithContent: failed to get HEAD tree, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return len(filesTouched) > 0 // Fall back: assume overlap if any files touched
++	}
++
++	// Get shadow branch tree (the session's content)
++	refName := plumbing.NewBranchReferenceName(shadowBranchName)
++	shadowRef, err := repo.Reference(refName, true)
++	if err != nil {
++		logging.Debug(logCtx, "filesOverlapWithContent: shadow branch not found, falling back to filename check",
++			slog.String("branch", shadowBranchName),
++			slog.String("error", err.Error()),
++		)
++		return len(filesTouched) > 0 // Fall back: assume overlap if any files touched
++	}
++
++	shadowCommit, err := repo.CommitObject(shadowRef.Hash())
++	if err != nil {
++		logging.Debug(logCtx, "filesOverlapWithContent: failed to get shadow commit, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return len(filesTouched) > 0
++	}
++
++	shadowTree, err := shadowCommit.Tree()
++	if err != nil {
++		logging.Debug(logCtx, "filesOverlapWithContent: failed to get shadow tree, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return len(filesTouched) > 0
++	}
++
++	// Get the parent commit tree to determine if files are modified vs newly created.
++	// For modified files (exist in parent), we count as overlap regardless of content
++	// because the user is editing the session's work.
++	// For newly created files (don't exist in parent), we check content to detect
++	// the "reverted and replaced" scenario where user deleted session's work and
++	// created something completely different.
++	var parentTree *object.Tree
++	if headCommit.NumParents() > 0 {
++		if parent, err := headCommit.Parent(0); err == nil {
++			if pTree, err := parent.Tree(); err == nil {
++				parentTree = pTree
++			}
++		}
++	}
++
++	// Check each file in filesTouched
++	for _, filePath := range filesTouched {
++		// Get file from HEAD tree
++		headFile, err := headTree.File(filePath)
++		if err != nil {
++			// File not in HEAD commit - doesn't count as overlap
++			continue
++		}
++
++		// Check if this is a modified file (exists in parent) or new file
++		isModified := false
++		if parentTree != nil {
++			if _, err := parentTree.File(filePath); err == nil {
++				isModified = true
++			}
++		}
++
++		// Modified files always count as overlap (user edited session's work)
++		if isModified {
++			logging.Debug(logCtx, "filesOverlapWithContent: modified file counts as overlap",
++				slog.String("file", filePath),
++			)
++			return true
++		}
++
++		// For new files, check content against shadow branch
++		shadowFile, err := shadowTree.File(filePath)
++		if err != nil {
++			// File not in shadow branch - this shouldn't happen but skip it
++			logging.Debug(logCtx, "filesOverlapWithContent: file in filesTouched but not in shadow branch",
++				slog.String("file", filePath),
++			)
++			continue
++		}
++
++		// Compare by hash (blob hash) - exact content match required for new files
++		if headFile.Hash == shadowFile.Hash {
++			logging.Debug(logCtx, "filesOverlapWithContent: new file content match found",
++				slog.String("file", filePath),
++				slog.String("hash", headFile.Hash.String()),
++			)
++			return true
++		}
++
++		logging.Debug(logCtx, "filesOverlapWithContent: new file content mismatch (may be reverted & replaced)",
++			slog.String("file", filePath),
++			slog.String("head_hash", headFile.Hash.String()),
++			slog.String("shadow_hash", shadowFile.Hash.String()),
++		)
++	}
++
++	logging.Debug(logCtx, "filesOverlapWithContent: no overlapping files found",
++		slog.Int("files_checked", len(filesTouched)),
++	)
++	return false
++}
++
++// stagedFilesOverlapWithContent checks if any staged file overlaps with filesTouched,
++// distinguishing between modified files (always overlap) and new files (check content).
++//
++// For modified files (already exist in HEAD), we count as overlap because the user
++// is editing the session's work. For new files (don't exist in HEAD), we require
++// content match to detect the "reverted and replaced" scenario.
++//
++// This is used in PrepareCommitMsg for carry-forward scenarios.
++func stagedFilesOverlapWithContent(repo *git.Repository, shadowTree *object.Tree, stagedFiles, filesTouched []string) bool {
++	logCtx := logging.WithComponent(context.Background(), "checkpoint")
++
++	// Build set of filesTouched for quick lookup
++	touchedSet := make(map[string]bool)
++	for _, f := range filesTouched {
++		touchedSet[f] = true
++	}
++
++	// Get HEAD tree to determine if files are being modified or newly created
++	head, err := repo.Head()
++	if err != nil {
++		logging.Debug(logCtx, "stagedFilesOverlapWithContent: failed to get HEAD, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return hasOverlappingFiles(stagedFiles, filesTouched)
++	}
++	headCommit, err := repo.CommitObject(head.Hash())
++	if err != nil {
++		logging.Debug(logCtx, "stagedFilesOverlapWithContent: failed to get HEAD commit, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return hasOverlappingFiles(stagedFiles, filesTouched)
++	}
++	headTree, err := headCommit.Tree()
++	if err != nil {
++		logging.Debug(logCtx, "stagedFilesOverlapWithContent: failed to get HEAD tree, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return hasOverlappingFiles(stagedFiles, filesTouched)
++	}
++
++	// Get the git index to access staged file hashes
++	idx, err := repo.Storer.Index()
++	if err != nil {
++		logging.Debug(logCtx, "stagedFilesOverlapWithContent: failed to get index, falling back to filename check",
++			slog.String("error", err.Error()),
++		)
++		return hasOverlappingFiles(stagedFiles, filesTouched)
++	}
++
++	// Check each staged file
++	for _, stagedPath := range stagedFiles {
++		if !touchedSet[stagedPath] {
++			continue // Not in filesTouched, skip
++		}
++
++		// Check if this is a modified file (exists in HEAD) or new file
++		_, headErr := headTree.File(stagedPath)
++		isModified := headErr == nil
++
++		// Modified files always count as overlap (user edited session's work)
++		if isModified {
++			logging.Debug(logCtx, "stagedFilesOverlapWithContent: modified file counts as overlap",
++				slog.String("file", stagedPath),
++			)
++			return true
++		}
++
++		// For new files, check content against shadow branch
++		// Find the index entry to get the staged file's hash
++		var stagedHash plumbing.Hash
++		found := false
++		for _, entry := range idx.Entries {
++			if entry.Name == stagedPath {
++				stagedHash = entry.Hash
++				found = true
++				break
++			}
++		}
++		if !found {
++			continue // Not in index (shouldn't happen but be safe)
++		}
++
++		// Get file from shadow branch tree
++		shadowFile, err := shadowTree.File(stagedPath)
++		if err != nil {
++			// File not in shadow branch - doesn't count as content match
++			logging.Debug(logCtx, "stagedFilesOverlapWithContent: file not in shadow tree",
++				slog.String("file", stagedPath),
++			)
++			continue
++		}
++
++		// Compare hashes - for new files, require exact content match
++		if stagedHash == shadowFile.Hash {
++			logging.Debug(logCtx, "stagedFilesOverlapWithContent: new file content match found",
++				slog.String("file", stagedPath),
++				slog.String("hash", stagedHash.String()),
++			)
++			return true
++		}
++
++		logging.Debug(logCtx, "stagedFilesOverlapWithContent: new file content mismatch (may be reverted & replaced)",
++			slog.String("file", stagedPath),
++			slog.String("staged_hash", stagedHash.String()),
++			slog.String("shadow_hash", shadowFile.Hash.String()),
++		)
++	}
++
++	logging.Debug(logCtx, "stagedFilesOverlapWithContent: no overlapping files found",
++		slog.Int("staged_files", len(stagedFiles)),
++		slog.Int("files_touched", len(filesTouched)),
++	)
++	return false
++}
++
++// hasOverlappingFiles checks if any file in stagedFiles appears in filesTouched.
++// This is a fallback when content-aware comparison isn't possible.
++func hasOverlappingFiles(stagedFiles, filesTouched []string) bool {
++	touchedSet := make(map[string]bool)
++	for _, f := range filesTouched {
++		touchedSet[f] = true
++	}
++
++	for _, staged := range stagedFiles {
++		if touchedSet[staged] {
++			return true
++		}
++	}
++	return false
++}
+diff --git a/cmd/entire/cli/strategy/manual_commit_condensation.go b/cmd/entire/cli/strategy/manual_commit_condensation.go
+index 9e9765d..c731a93 100644
+--- a/cmd/entire/cli/strategy/manual_commit_condensation.go
++++ b/cmd/entire/cli/strategy/manual_commit_condensation.go
+@@ -451,6 +451,74 @@ func (s *ManualCommitStrategy) extractSessionDataFromLiveTranscript(state *Sessi
+ 	return data, nil
+ }
+ 
++// extractSessionDataFromLiveTranscript extracts session data directly from the live transcript file.
++// This is used for mid-session commits where no shadow branch exists yet.
++func (s *ManualCommitStrategy) extractSessionDataFromLiveTranscript(state *SessionState) (*ExtractedSessionData, error) {
++	data := &ExtractedSessionData{}
++
++	// Read the live transcript
++	if state.TranscriptPath == "" {
++		return nil, fmt.Errorf("no transcript path in session state")
++	}
++
++	liveData, err := os.ReadFile(state.TranscriptPath) //nolint:gosec // path from session state
++	if err != nil {
++		return nil, fmt.Errorf("failed to read live transcript: %w", err)
++	}
++
++	if len(liveData) == 0 {
++		return nil, fmt.Errorf("live transcript is empty")
++	}
++
++	fullTranscript := string(liveData)
++	data.Transcript = liveData
++	data.FullTranscriptLines = countTranscriptItems(state.AgentType, fullTranscript)
++	data.Prompts = extractUserPrompts(state.AgentType, fullTranscript)
++	data.Context = generateContextFromPrompts(data.Prompts)
++
++	// Extract files from transcript since state.FilesTouched may be empty for mid-session commits
++	// (no SaveChanges/Stop has been called yet to populate it)
++	if len(state.FilesTouched) > 0 {
++		data.FilesTouched = state.FilesTouched
++	} else {
++		// Extract modified files from transcript
++		ag, agErr := agent.GetByAgentType(state.AgentType)
++		if agErr == nil {
++			if analyzer, ok := ag.(agent.TranscriptAnalyzer); ok {
++				modifiedFiles, _, extractErr := analyzer.ExtractModifiedFilesFromOffset(state.TranscriptPath, state.CheckpointTranscriptStart)
++				if extractErr == nil && len(modifiedFiles) > 0 {
++					// Normalize to repo-relative paths
++					basePath := state.WorktreePath
++					if basePath == "" {
++						if wp, wpErr := GetWorktreePath(); wpErr == nil {
++							basePath = wp
++						}
++					}
++					if basePath != "" {
++						normalized := make([]string, 0, len(modifiedFiles))
++						for _, f := range modifiedFiles {
++							if rel := paths.ToRelativePath(f, basePath); rel != "" {
++								normalized = append(normalized, rel)
++							} else {
++								normalized = append(normalized, f)
++							}
++						}
++						modifiedFiles = normalized
++					}
++					data.FilesTouched = modifiedFiles
++				}
++			}
++		}
++	}
++
++	// Calculate token usage from the extracted transcript portion
++	if len(data.Transcript) > 0 {
++		data.TokenUsage = calculateTokenUsage(state.AgentType, data.Transcript, state.CheckpointTranscriptStart)
++	}
++
++	return data, nil
++}
++
+ // countTranscriptItems counts lines (JSONL) or messages (JSON) in a transcript.
+ // For Claude Code and JSONL-based agents, this counts lines.
+ // For Gemini CLI and JSON-based agents, this counts messages.
+diff --git a/cmd/entire/cli/strategy/manual_commit_hooks.go b/cmd/entire/cli/strategy/manual_commit_hooks.go
+index 0c880fe..0a54155 100644
+--- a/cmd/entire/cli/strategy/manual_commit_hooks.go
++++ b/cmd/entire/cli/strategy/manual_commit_hooks.go
+@@ import (
+ 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+ 	"github.com/entireio/cli/cmd/entire/cli/logging"
+ 	"github.com/entireio/cli/cmd/entire/cli/paths"
++	"github.com/entireio/cli/redact"
+ 	"github.com/entireio/cli/cmd/entire/cli/session"
+ 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
+ 	"github.com/entireio/cli/cmd/entire/cli/trailers"
+@@ -266,6 +267,7 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(commitMsgFile string, source str
+ 		return nil //nolint:nilerr // Intentional: hooks must be silent on failure
+ 	}
+ 
++
+ 	// Fast path: when an agent is committing (ACTIVE session + no TTY), skip
+ 	// content detection and interactive prompts. The agent can't respond to TTY
+ 	// prompts and the content detection can miss mid-session work (no shadow
+@@ -587,6 +589,14 @@ func (s *ManualCommitStrategy) PostCommit() error {
+ 			slog.Any("files", filesTouchedBefore),
+ 		)
+ 
++		logging.Debug(logCtx, "post-commit: carry-forward prep",
++			slog.String("session_id", state.SessionID),
++			slog.Bool("is_active", state.Phase.IsActive()),
++			slog.String("transcript_path", state.TranscriptPath),
++			slog.Int("files_touched_before", len(filesTouchedBefore)),
++			slog.Any("files", filesTouchedBefore),
++		)
++
+ 		condensed := false
+ 
+ 		// Dispatch strategy-specific actions.
+@@ -1019,6 +1029,14 @@ func (s *ManualCommitStrategy) sessionHasNewContentFromLiveTranscript(repo *git.
+ // 1. Most agent file modifications use the Write/Edit tools which are tracked
+ // 2. Shell-based modifications are relatively rare in practice
+ // 3. The consequence (missing a checkpoint trailer) is minor - the transcript is still saved
++//
++// KNOWN LIMITATION: This function relies on transcript analysis to detect file modifications.
++// If the agent makes file modifications via shell commands (e.g., `sed`, `mv`, `cp`) that
++// aren't captured in the transcript's file modification tracking, those modifications may
++// not be detected. This is an acceptable edge case because:
++// 1. Most agent file modifications use the Write/Edit tools which are tracked
++// 2. Shell-based modifications are relatively rare in practice
++// 3. The consequence (missing a checkpoint trailer) is minor - the transcript is still saved
+ func (s *ManualCommitStrategy) sessionHasNewContentInCommittedFiles(state *SessionState, committedFiles map[string]struct{}) bool {
+ 	logCtx := logging.WithComponent(context.Background(), "checkpoint")
+ 
+@@ -1569,8 +1587,19 @@ func (s *ManualCommitStrategy) getLastPrompt(repo *git.Repository, state *Sessio
+ //nolint:unparam // error return required by interface but hooks must return nil
+ func (s *ManualCommitStrategy) HandleTurnEnd(state *SessionState) error {
+ 	// Finalize all checkpoints from this turn with the full transcript.
+-	// Best-effort: log warnings but don't fail the hook.
+-	s.finalizeAllTurnCheckpoints(state)
++	//
++	// IMPORTANT: This is best-effort - errors are logged but don't fail the hook.
++	// Failing here would prevent session cleanup and could leave state inconsistent.
++	// The provisional transcript from PostCommit is already persisted, so the
++	// checkpoint isn't lost - it just won't have the complete transcript.
++	errCount := s.finalizeAllTurnCheckpoints(state)
++	if errCount > 0 {
++		logCtx := logging.WithComponent(context.Background(), "checkpoint")
++		logging.Warn(logCtx, "HandleTurnEnd completed with errors (best-effort)",
++			slog.String("session_id", state.SessionID),
++			slog.Int("error_count", errCount),
++		)
++	}
+ 	return nil
+ }
+ 
+@@ -1580,9 +1609,11 @@ func (s *ManualCommitStrategy) HandleTurnEnd(state *SessionState) error {
+ // This is called at turn end (stop hook). During the turn, PostCommit wrote whatever
+ // transcript was available at commit time. Now we have the complete transcript and
+ // replace it so every checkpoint has the full prompt-to-stop context.
+-func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
++//
++// Returns the number of errors encountered (best-effort: continues processing on error).
++func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) int {
+ 	if len(state.TurnCheckpointIDs) == 0 {
+-		return // No mid-turn commits to finalize
++		return 0 // No mid-turn commits to finalize
+ 	}
+ 
+ 	logCtx := logging.WithComponent(context.Background(), "checkpoint")
+@@ -1592,13 +1623,15 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
+ 		slog.Int("checkpoint_count", len(state.TurnCheckpointIDs)),
+ 	)
+ 
++	errCount := 0
++
+ 	// Read full transcript from live transcript file
+ 	if state.TranscriptPath == "" {
+ 		logging.Warn(logCtx, "finalize: no transcript path, skipping",
+ 			slog.String("session_id", state.SessionID),
+ 		)
+ 		state.TurnCheckpointIDs = nil
+-		return
++		return 1 // Count as error - all checkpoints will be skipped
+ 	}
+ 
+ 	fullTranscript, err := os.ReadFile(state.TranscriptPath)
+@@ -1608,7 +1641,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
+ 			slog.String("transcript_path", state.TranscriptPath),
+ 		)
+ 		state.TurnCheckpointIDs = nil
+-		return
++		return 1 // Count as error - all checkpoints will be skipped
+ 	}
+ 
+ 	// Extract prompts and context from the full transcript
+@@ -1625,7 +1658,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
+ 			slog.String("error", err.Error()),
+ 		)
+ 		state.TurnCheckpointIDs = nil
+-		return
++		return 1 // Count as error - all checkpoints will be skipped
+ 	}
+ 	for i, p := range prompts {
+ 		prompts[i] = redact.String(p)
+@@ -1639,7 +1672,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
+ 			slog.String("error", err.Error()),
+ 		)
+ 		state.TurnCheckpointIDs = nil
+-		return
++		return 1 // Count as error - all checkpoints will be skipped
+ 	}
+ 	store := checkpoint.NewGitStore(repo)
+ 
+@@ -1651,6 +1684,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
+ 				slog.String("checkpoint_id", cpIDStr),
+ 				slog.String("error", parseErr.Error()),
+ 			)
++			errCount++
+ 			continue
+ 		}
+ 
+@@ -1667,6 +1701,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState) {
+ 				slog.String("checkpoint_id", cpIDStr),
+ 				slog.String("error", updateErr.Error()),
+ 			)
++			errCount++
+ 			continue
+ 		}
+ 

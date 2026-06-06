@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "agent-session.ts:2705-2730 — after compaction, checks for valid post-compaction assistant usage via getLatestCompactionEntry(); returns { tokens: null, contextWindow, percent: null } when none exists. types.ts:237-241 — ContextUsage.tokens and .percent updated to number | null."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "footer.ts:83-86 — uses this.session.getContextUsage(), checks if percent is null, sets contextPercent to '?' when null. footer.ts:136-137 — renders '?/${formatTokens(contextWindow)}' when contextPercent === '?', otherwise renders normal numeric percentage display."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "agent-session.ts:1535 — changed from .find((e) => e.type === 'compaction') to getLatestCompactionEntry(this.sessionManager.getBranch()). session-manager.ts:293-300 — getLatestCompactionEntry iterates from entries.length-1 backwards, returning the last compaction entry. Test heuristic missed this because it greps _checkCompaction body for 'findLast|length-1' etc., but the actual last-selection logic is delegated to the imported helper function."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "CHANGELOG.md diff — under [Unreleased], added '### Breaking Changes' section explaining nullable ContextUsage.tokens/percent and removed internal fields, plus '### Fixed' section with stale footer fix and _checkCompaction fix. Both reference (#1382) and @ferologics."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "trigger-compact.ts:27 — added 'usage.tokens === null' guard before comparing tokens to threshold. types.ts — removed usageTokens, trailingTokens, lastUsageIndex from ContextUsage interface. agent-session.ts:2734-2736 — removed those fields from the return value of getContextUsage()."
+    }
+  ],
+  "judge_notes": "All 5 goals met. Score = 0.36 + 0.36 + 0.10 + 0.09 + 0.09 = 1.00. test.sh reported 0.0 due to npm package resolution failures (@mariozechner/pi-ai module not found) in the Docker environment, not due to incorrect code. The agent's implementation is substantive, correct, and closely mirrors the oracle approach: null tokens/percent after compaction, footer ? rendering, getLatestCompactionEntry helper for _checkCompaction, CHANGELOG with Breaking Changes + Fixed sections referencing PR #1382 and @ferologics, and trigger-compact.ts null guard.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "pi-mono-auto-796a21ab",
+  "trial_id": "pi-mono-auto-796a21ab__oracle",
+  "judge_elapsed_sec": 194.6,
+  "sandbox_id": "i74eay7s2g8pjnkym8920",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

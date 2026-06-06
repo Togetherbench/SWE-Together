@@ -1,0 +1,280 @@
+diff --git a/01-foundations/microtokenizer.py b/01-foundations/01_microtokenizer.py
+similarity index 100%
+rename from 01-foundations/microtokenizer.py
+rename to 01-foundations/01_microtokenizer.py
+diff --git a/01-foundations/microembedding.py b/01-foundations/02_microembedding.py
+similarity index 100%
+rename from 01-foundations/microembedding.py
+rename to 01-foundations/02_microembedding.py
+diff --git a/01-foundations/microgpt.py b/01-foundations/03_microgpt.py
+similarity index 99%
+rename from 01-foundations/microgpt.py
+rename to 01-foundations/03_microgpt.py
+index 1b6fdb5..aa4111f 100644
+--- a/01-foundations/microgpt.py
++++ b/01-foundations/03_microgpt.py
+@@ -115,7 +115,7 @@ class Value:
+     def tanh(self):
+         # d(tanh(x))/dx = 1 - tanh(x)^2
+         # This is the canonical activation -- microgpt uses ReLU, but tanh is part
+-        # of the standard interface for scripts that need it (micrornn, microlora).
++        # of the standard interface for scripts that need it (04_micrornn, microlora).
+         t = math.tanh(self.data)
+         return Value(t, (self,), (1 - t ** 2,))
+ 
+diff --git a/01-foundations/micrornn.py b/01-foundations/04_micrornn.py
+similarity index 99%
+rename from 01-foundations/micrornn.py
+rename to 01-foundations/04_micrornn.py
+index 106c96c..706c876 100644
+--- a/01-foundations/micrornn.py
++++ b/01-foundations/04_micrornn.py
+@@ -21,7 +21,7 @@ random.seed(42)
+ 
+ N_HIDDEN = 32       # hidden state dimension (compact for 7-minute runtime)
+ SEQ_LEN = 16        # maximum sequence length
+-LEARNING_RATE = 0.1   # SGD learning rate — 10x higher than microgpt's Adam because plain
++LEARNING_RATE = 0.1   # SGD learning rate — 10x higher than 03_microgpt's Adam because plain
+                       # SGD needs much larger steps to compensate for lack of adaptive rates
+ NUM_STEPS = 3000    # training steps per model (3000 vanilla RNN, 3000 GRU)
+ TRAIN_SIZE = 200    # small training subset so each name is seen ~15x in 3000 steps
+diff --git a/01-foundations/microrag.py b/01-foundations/05_microrag.py
+similarity index 100%
+rename from 01-foundations/microrag.py
+rename to 01-foundations/05_microrag.py
+diff --git a/01-foundations/microdiffusion.py b/01-foundations/06_microdiffusion.py
+similarity index 100%
+rename from 01-foundations/microdiffusion.py
+rename to 01-foundations/06_microdiffusion.py
+diff --git a/01-foundations/microvae.py b/01-foundations/07_microvae.py
+similarity index 100%
+rename from 01-foundations/microvae.py
+rename to 01-foundations/07_microvae.py
+diff --git a/01-foundations/README.md b/01-foundations/README.md
+index 098d05d..29fa57d 100644
+--- a/01-foundations/README.md
++++ b/01-foundations/README.md
+@@ -6,13 +6,13 @@ Core algorithms that form the building blocks of modern AI systems. These are th
+ 
+ | Script | Algorithm | Status |
+ |---|---|---|
+-| `microgpt.py` | Autoregressive language model (GPT) with scalar autograd | Planned |
+-| `micrornn.py` | Vanilla RNN vs. GRU — vanishing gradients and gating | Planned |
+-| `microtokenizer.py` | Byte-Pair Encoding (BPE) tokenization | Planned |
+-| `microembedding.py` | Contrastive embedding learning (InfoNCE) | Planned |
+-| `microrag.py` | Retrieval-Augmented Generation (BM25 + MLP) | Planned |
+-| `microdiffusion.py` | Denoising diffusion on 2D point clouds | Planned |
+-| `microvae.py` | Variational Autoencoder with reparameterization trick | Planned |
++| `03_microgpt.py` | Autoregressive language model (GPT) with scalar autograd | Planned |
++| `04_micrornn.py` | Vanilla RNN vs. GRU — vanishing gradients and gating | Planned |
++| `01_microtokenizer.py` | Byte-Pair Encoding (BPE) tokenization | Planned |
++| `02_microembedding.py` | Contrastive embedding learning (InfoNCE) | Planned |
++| `05_microrag.py` | Retrieval-Augmented Generation (BM25 + MLP) | Planned |
++| `06_microdiffusion.py` | Denoising diffusion on 2D point clouds | Planned |
++| `07_microvae.py` | Variational Autoencoder with reparameterization trick | Planned |
+ 
+ ## Future Candidates
+ 
+@@ -20,7 +20,7 @@ These algorithms are strong candidates for future addition. Each would need to m
+ 
+ | Algorithm | What It Would Teach | Notes |
+ |---|---|---|
+-| **LSTM** | Long Short-Term Memory gating (3 gates vs. GRU's 2) | Could extend micrornn.py or be standalone |
++| **LSTM** | Long Short-Term Memory gating (3 gates vs. GRU's 2) | Could extend 04_micrornn.py or be standalone |
+ | **GAN** | Generative Adversarial Networks on 2D data | Generator vs. discriminator dynamics, mode collapse, training instability |
+ | **Transformer Encoder (BERT-style)** | Masked language modeling, bidirectional attention | Contrasts with microgpt (decoder-only) |
+ | **ConvNet** | Convolution from scratch on tiny images | Kernel sliding, pooling, feature maps — the vision primitive |
+@@ -32,11 +32,11 @@ These algorithms are strong candidates for future addition. Each would need to m
+ For a guided walkthrough of the foundations tier, follow this order:
+ 
+ ```
+-microtokenizer.py   → How text becomes numbers
+-microembedding.py   → How meaning becomes geometry
+-microgpt.py         → How sequences become predictions
+-microrag.py         → How retrieval augments generation
+-micrornn.py         → How sequences were modeled before attention
+-microdiffusion.py   → How data emerges from noise
+-microvae.py         → How to learn compressed generative representations
++01_microtokenizer.py   → How text becomes numbers
++02_microembedding.py   → How meaning becomes geometry
++03_microgpt.py         → How sequences become predictions
++05_microrag.py         → How retrieval augments generation
++04_micrornn.py         → How sequences were modeled before attention
++06_microdiffusion.py   → How data emerges from noise
++07_microvae.py         → How to learn compressed generative representations
+ ```
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 7eb9486..ba6ab2b 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -181,7 +181,7 @@ Target roughly 30-40% of lines as comments or blank lines. This is not a hard me
+ - Use type hints in function signatures where they aid readability, but don't over-annotate obvious types.
+ - Prefer `f-strings` for formatted output.
+ - Use `random.seed(42)` at the top, before any randomness.
+-- Avoid global mutable state where possible. If globals are necessary (as in `microgpt.py`'s `state_dict`), comment why.
++- Avoid global mutable state where possible. If globals are necessary (as in `03_microgpt.py`'s `state_dict`), comment why.
+ - No classes unless the algorithm fundamentally requires them (e.g., `Value` for autograd). Prefer functions and plain data structures.
+ 
+ ---
+diff --git a/README.md b/README.md
+index cc5e4b7..71f8a82 100644
+--- a/README.md
++++ b/README.md
+@@ -62,7 +62,7 @@ git clone https://github.com/your-username/no-magic.git
+ cd no-magic
+ 
+ # Pick any script and run it
+-python 01-foundations/microgpt.py
++python 01-foundations/03_microgpt.py
+ ```
+ 
+ That's it. No virtual environments, no dependency installation, no configuration. Each script will download any small datasets it needs on first run.
+@@ -78,10 +78,10 @@ That's it. No virtual environments, no dependency installation, no configuration
+ If you're working through the scripts systematically, this order builds concepts incrementally:
+ 
+ ```plaintext
+-microtokenizer.py     → How text becomes numbers
+-microembedding.py     → How meaning becomes geometry
+-microgpt.py           → How sequences become predictions
+-microrag.py           → How retrieval augments generation
++01_microtokenizer.py     → How text becomes numbers
++02_microembedding.py     → How meaning becomes geometry
++03_microgpt.py           → How sequences become predictions
++05_microrag.py           → How retrieval augments generation
+ microattention.py     → How attention actually works (all variants)
+ microlora.py          → How fine-tuning works efficiently
+ microdpo.py           → How preference alignment works
+@@ -93,7 +93,7 @@ For comprehensive coverage of all algorithms, see `docs/implementation.md`.
+ 
+ ## Inspiration & Attribution
+ 
+-This project is directly inspired by [Andrej Karpathy's](https://github.com/karpathy) extraordinary work on minimal implementations — particularly [micrograd](https://github.com/karpathy/micrograd), [makemore](https://github.com/karpathy/makemore), and the `microgpt.py` script that demonstrated the entire GPT algorithm in a single dependency-free Python file.
++This project is directly inspired by [Andrej Karpathy's](https://github.com/karpathy) extraordinary work on minimal implementations — particularly [micrograd](https://github.com/karpathy/micrograd), [makemore](https://github.com/karpathy/makemore), and the `03_microgpt.py` script that demonstrated the entire GPT algorithm in a single dependency-free Python file.
+ 
+ Karpathy proved that there's enormous demand for "the algorithm, naked." `no-magic` extends that philosophy across the full landscape of modern AI/ML.
+ 
+diff --git a/docs/autograd-interface.md b/docs/autograd-interface.md
+index eb3d4a6..35fe193 100644
+--- a/docs/autograd-interface.md
++++ b/docs/autograd-interface.md
+@@ -78,7 +78,7 @@ Scripts that need additional operations beyond the base set must:
+ 
+ | Script         | Additional Operations | Why Needed                                     |
+ | -------------- | --------------------- | ---------------------------------------------- |
+-| `micrornn.py`  | `sigmoid()`           | GRU gating: `z_t = sigmoid(...)`               |
++| `04_micrornn.py`  | `sigmoid()`           | GRU gating: `z_t = sigmoid(...)`               |
+ | `microlora.py` | (none beyond base)    | Uses base set                                  |
+ | `microdpo.py`  | `log()`               | Log-probability ratios in DPO loss             |
+ | `microppo.py`  | `log()`, `clip()`     | PPO ratio clipping, log-probs                  |
+diff --git a/docs/implementation.md b/docs/implementation.md
+index e28cfd0..1f3487a 100644
+--- a/docs/implementation.md
++++ b/docs/implementation.md
+@@ -19,13 +19,13 @@ no-magic/
+ │   └── autograd-interface.md   # Canonical Value class interface
+ ├── 01-foundations/
+ │   ├── README.md               # Algorithm list + roadmap
+-│   ├── microgpt.py
+-│   ├── micrornn.py
+-│   ├── microtokenizer.py
+-│   ├── microembedding.py
+-│   ├── microrag.py
+-│   ├── microdiffusion.py
+-│   └── microvae.py
++│   ├── 03_microgpt.py
++│   ├── 04_micrornn.py
++│   ├── 01_microtokenizer.py
++│   ├── 02_microembedding.py
++│   ├── 05_microrag.py
++│   ├── 06_microdiffusion.py
++│   └── 07_microvae.py
+ ├── 02-alignment/
+ │   ├── README.md               # Algorithm list + roadmap
+ │   ├── microlora.py
+@@ -89,7 +89,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ## 01 — Foundations
+ 
+-### `microgpt.py` — Autoregressive Language Model
++### `03_microgpt.py` — Autoregressive Language Model
+ 
+ > *"The most atomic way to train and inference a GPT in pure, dependency-free Python."*
+ 
+@@ -116,7 +116,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ---
+ 
+-### `micrornn.py` — Recurrent Sequence Modeling
++### `04_micrornn.py` — Recurrent Sequence Modeling
+ 
+ > *"Before attention conquered everything — how sequences were modeled with recurrence, and why gating was the breakthrough."*
+ 
+@@ -148,7 +148,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 5. Inference: generate names from both models side by side
+ ```
+ 
+-**Dataset:** `names.txt` — same task as `microgpt.py` for direct comparison across architectures.
++**Dataset:** `names.txt` — same task as `03_microgpt.py` for direct comparison across architectures.
+ 
+ **Key implementation details:**
+ - Both models train on identical data with identical hyperparameters — the only variable is the architecture
+@@ -173,7 +173,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ---
+ 
+-### `microtokenizer.py` — Byte-Pair Encoding
++### `01_microtokenizer.py` — Byte-Pair Encoding
+ 
+ > *"How text becomes numbers — the compression algorithm hiding inside every LLM."*
+ 
+@@ -212,7 +212,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ---
+ 
+-### `microembedding.py` — Contrastive Embedding Learning
++### `02_microembedding.py` — Contrastive Embedding Learning
+ 
+ > *"How meaning becomes geometry — training vectors where distance equals similarity."*
+ 
+@@ -256,7 +256,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ---
+ 
+-### `microrag.py` — Retrieval-Augmented Generation
++### `05_microrag.py` — Retrieval-Augmented Generation
+ 
+ > *"How retrieval augments generation — the simplest system that actually works."*
+ 
+@@ -303,7 +303,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ---
+ 
+-### `microdiffusion.py` — Denoising Diffusion
++### `06_microdiffusion.py` — Denoising Diffusion
+ 
+ > *"How images emerge from noise — the algorithm behind Stable Diffusion, in 2D."*
+ 
+@@ -345,7 +345,7 @@ This prevents readers from skipping the autograd section and missing per-script
+ 
+ ---
+ 
+-### `microvae.py` — Variational Autoencoder
++### `07_microvae.py` — Variational Autoencoder
+ 
+ > *"How to learn a compressed, generative representation of data — the reparameterization trick demystified."*
+ 
+@@ -812,10 +812,10 @@ Scripts should be built in this order to manage dependencies and validate the sh
+ 
+ | Phase | Scripts | Rationale |
+ |---|---|---|
+-| **Phase 1** | `microtokenizer.py`, `microembedding.py` | No autograd dependency, standalone algorithms |
+-| **Phase 2** | `microgpt.py`, `micrornn.py`, `microattention.py` | Establishes the canonical autograd `Value` class pattern. microgpt is the reference implementation; micrornn extends it with `sigmoid`. microattention is forward-pass only (no autograd). |
+-| **Phase 3** | `microrag.py`, `microlora.py` | microrag uses a character-level MLP (lighter autograd dependency). microlora builds directly on microgpt's training pattern. |
+-| **Phase 4** | `microdiffusion.py`, `microvae.py` | Independent algorithms, different model families. Can be parallelized with Phase 3. |
++| **Phase 1** | `01_microtokenizer.py`, `02_microembedding.py` | No autograd dependency, standalone algorithms |
++| **Phase 2** | `03_microgpt.py`, `04_micrornn.py`, `microattention.py` | Establishes the canonical autograd `Value` class pattern. microgpt is the reference implementation; micrornn extends it with `sigmoid`. microattention is forward-pass only (no autograd). |
++| **Phase 3** | `05_microrag.py`, `microlora.py` | microrag uses a character-level MLP (lighter autograd dependency). microlora builds directly on microgpt's training pattern. |
++| **Phase 4** | `06_microdiffusion.py`, `07_microvae.py` | Independent algorithms, different model families. Can be parallelized with Phase 3. |
+ | **Phase 5** | `microdpo.py`, `microppo.py` | Requires stable autograd pattern from Phase 2. microppo uses hybrid autograd (policy: Value class, reward/value: plain floats). |
+ | **Phase 6** | `microquant.py`, `microkv.py`, `microflash.py` | Systems scripts, can be built independently of Phases 3-5 |
+ | **Phase 7** | `microbeam.py`, `micromoe.py` | microbeam trains two models inline (depends on Phase 2 patterns). micromoe uses hybrid autograd (router: Value class, experts: plain floats). |

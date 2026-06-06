@@ -1,0 +1,53 @@
+{
+  "judge_score": 0.93,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "anonymizer.py:20-22 — _get_username_pattern uses (?<![a-zA-Z0-9])...(?![a-zA-Z0-9]) lookarounds instead of \\b. F2P tests underscore_adjacent (+0.15) and underscore_prefix (+0.10) both PASS."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "anonymizer.py:107-111 — _replace_username now uses _get_username_pattern(username).sub() instead of str.replace. Anonymizer.text() at lines 89-103 uses a compiled regex pattern with lookarounds for extras instead of iterating with _replace_username/str.replace. F2P tests substring_safety (+0.10) and anonymizer_extras_underscore (+0.10) both PASS."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "anonymizer.py:26-28 — _get_short_username_path_pattern uses [/\\\\-]+ which matches both forward slashes and backslashes for Windows paths. anonymizer.py:32-39 — _get_custom_home_pattern implements custom home directory support, used at lines 54-62 in anonymize_text. F2P tests windows_backslash_short (+0.15) and custom_home_short (+0.15) both PASS."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "anonymizer.py:22 — _get_username_pattern uses re.IGNORECASE flag. anonymizer.py:28 — _get_short_username_path_pattern also uses re.IGNORECASE. F2P test case_insensitive (+0.10) PASS."
+    },
+    {
+      "id": "goal_5",
+      "met": false,
+      "evidence": "The agent rewrote tests/test_anonymizer.py but replaced it with the 'base' test suite (the docstring literally says 'These are the tests the agent finds on checkout'). No new tests were added for: word-boundary with underscores (e.g., config_alice_settings), substring safety (alex vs alexis), Windows backslash paths (\\Users\\), custom home directories (/opt/data/joe), or regex caching. Grep for 'underscore|substring|alexis|backslash|custom_home' in test file returns only docstring mentions."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "anonymizer.py:19,25,31 — @functools.lru_cache(maxsize=32) decorators on _get_username_pattern, _get_short_username_path_pattern, and _get_custom_home_pattern. F2P test compile_caching (+0.15) PASS."
+    },
+    {
+      "id": "goal_7",
+      "met": true,
+      "evidence": "anonymizer.py:68 — anonymize_path = anonymize_text alias preserved. All public symbols (anonymize_text, Anonymizer, _hash_username, _replace_username, anonymize_path) remain importable with same signatures. GATE import: PASS. P2P regression guards: PASS."
+    }
+  ],
+  "judge_notes": "Agent achieved a perfect 1.0 on test.sh (all F2P and P2P tests pass). All 3 core goals met: word-boundary fix with lookarounds, substring safety via regex in _replace_username and extras, and Windows backslash + custom home support. All secondary goals met except goal_5 (test coverage): the agent replaced the test file with the base test suite rather than adding new tests for the specific bug fixes. Score = 0.24+0.24+0.24+0.07+0+0.07+0.07 = 0.93.",
+  "judge_reported_score": 0.93,
+  "judge_reported_verdict": "equivalent",
+  "task": "dataclaw-anonymizer-tests",
+  "trial_id": "dataclaw-anonymizer-tests__oracle",
+  "judge_elapsed_sec": 123.0,
+  "sandbox_id": "ikao90b3hodxkkjeyykh9",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 7
+}

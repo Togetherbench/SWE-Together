@@ -1,0 +1,129 @@
+diff --git a/cmd/entire/cli/e2e_test/agent_runner.go b/cmd/entire/cli/e2e_test/agent_runner.go
+index 89fd8c1..81bef8c 100644
+--- a/cmd/entire/cli/e2e_test/agent_runner.go
++++ b/cmd/entire/cli/e2e_test/agent_runner.go
+@@ -9,7 +9,6 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"os/exec"
+-	"strings"
+ 	"time"
+ )
+ 
+@@ -264,28 +263,15 @@ func (r *GeminiCLIRunner) RunPrompt(ctx context.Context, workDir string, prompt
+ }
+ 
+ func (r *GeminiCLIRunner) RunPromptWithTools(ctx context.Context, workDir string, prompt string, tools []string) (*AgentResult, error) {
+-	// Build command: gemini -m <model> -p "<prompt>" --approval-mode auto_edit --allowed-tools <tools>
+-	// --approval-mode auto_edit: auto-approves edit tools (write_file, replace) while prompting for others
+-	// --allowed-tools: comma-separated list of tools that bypass confirmation (e.g., git commands)
++	// Build command: gemini -m <model> -p "<prompt>" --approval-mode yolo
++	// --approval-mode yolo: auto-approves all tools (safe for E2E tests in isolated temp dirs)
++	// Note: We use yolo mode because Gemini's --allowed-tools requires exact command matching
++	// (e.g., "ShellTool(git add)" won't match "git add hello.go"), making it impractical for tests.
++	_ = tools // tools parameter ignored - yolo mode approves everything
+ 	args := []string{
+ 		"-m", r.Model,
+ 		"-p", prompt,
+-		"--approval-mode", "auto_edit",
+-	}
+-
+-	// Add default git tools that should be allowed without confirmation
+-	defaultAllowedTools := []string{
+-		"ShellTool(git status)",
+-		"ShellTool(git add)",
+-		"ShellTool(git commit)",
+-		"ShellTool(git diff)",
+-		"ShellTool(git log)",
+-	}
+-
+-	// Merge with any additional tools passed in
+-	allTools := append(defaultAllowedTools, tools...)
+-	if len(allTools) > 0 {
+-		args = append(args, "--allowed-tools", strings.Join(allTools, ","))
++		"--approval-mode", "yolo",
+ 	}
+ 
+ 	// Create context with timeout
+@@ -296,6 +282,17 @@ func (r *GeminiCLIRunner) RunPromptWithTools(ctx context.Context, workDir string
+ 	cmd := exec.CommandContext(ctx, "gemini", args...)
+ 	cmd.Dir = workDir
+ 
++	// Set ENTIRE_TEST_TTY=1 so git hooks (prepare-commit-msg) skip interactive prompts.
++	// Without this, when Gemini runs "git commit -m", the hook tries to read from /dev/tty
++	// and hangs because there's no human to respond.
++	cmd.Env = append(os.Environ(), "ENTIRE_TEST_TTY=1")
++
++	// Explicitly attach /dev/null to stdin to prevent hanging in non-interactive mode
++	if devNull, openErr := os.Open(os.DevNull); openErr == nil {
++		defer devNull.Close()
++		cmd.Stdin = devNull
++	}
++
+ 	var stdout, stderr bytes.Buffer
+ 	cmd.Stdout = &stdout
+ 	cmd.Stderr = &stderr
+diff --git a/cmd/entire/cli/strategy/content_overlap.go b/cmd/entire/cli/strategy/content_overlap.go
+index 9319257..62dff59 100644
+--- a/cmd/entire/cli/strategy/content_overlap.go
++++ b/cmd/entire/cli/strategy/content_overlap.go
+@@ -388,8 +388,24 @@ func filesWithRemainingAgentChanges(
+ 	var remaining []string
+ 
+ 	for _, filePath := range filesTouched {
+-		// If file wasn't committed at all, it definitely has remaining changes
++		// If file wasn't committed in THIS commit, check if it's already in HEAD
++		// (committed in a previous commit). If content matches shadow branch,
++		// it's fully committed and doesn't need carry-forward.
+ 		if _, wasCommitted := committedFiles[filePath]; !wasCommitted {
++			// Check if file exists in HEAD (commit tree)
++			headFile, headErr := commitTree.File(filePath)
++			if headErr == nil {
++				// File exists in HEAD - check if it matches shadow branch
++				shadowFile, shadowErr := shadowTree.File(filePath)
++				if shadowErr == nil && headFile.Hash == shadowFile.Hash {
++					// Content matches - file was fully committed in a previous commit
++					logging.Debug(logCtx, "filesWithRemainingAgentChanges: file already in HEAD with matching content, skipping",
++						slog.String("file", filePath),
++					)
++					continue
++				}
++			}
++			// File not in HEAD or content doesn't match shadow - needs carry-forward
+ 			remaining = append(remaining, filePath)
+ 			logging.Debug(logCtx, "filesWithRemainingAgentChanges: file not committed, keeping",
+ 				slog.String("file", filePath),
+diff --git a/cmd/entire/cli/strategy/manual_commit_hooks.go b/cmd/entire/cli/strategy/manual_commit_hooks.go
+index e4e3353..ddaf36b 100644
+--- a/cmd/entire/cli/strategy/manual_commit_hooks.go
++++ b/cmd/entire/cli/strategy/manual_commit_hooks.go
+@@ -38,6 +38,15 @@ func hasTTY() bool {
+ 	if v := os.Getenv("ENTIRE_TEST_TTY"); v != "" {
+ 		return v == "1"
+ 	}
++
++	// Gemini CLI sets GEMINI_CLI=1 when running shell commands.
++	// Gemini subprocesses may have access to the user's TTY, but they can't
++	// actually respond to interactive prompts. Treat them as non-TTY.
++	// See: https://geminicli.com/docs/tools/shell/
++	if os.Getenv("GEMINI_CLI") != "" {
++		return false
++	}
++
+ 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+ 	if err != nil {
+ 		return false
+@@ -58,6 +67,13 @@ func askConfirmTTY(prompt string, context string, defaultYes bool) bool {
+ 		return defaultYes
+ 	}
+ 
++	// Gemini CLI sets GEMINI_CLI=1 when running shell commands (including git commit).
++	// The agent can't respond to TTY prompts, so use the default to avoid hanging.
++	// See: https://geminicli.com/docs/tools/shell/
++	if os.Getenv("GEMINI_CLI") != "" {
++		return defaultYes
++	}
++
+ 	// Open /dev/tty for both reading and writing
+ 	// This is the controlling terminal, which works even when stdin/stderr are redirected
+ 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)

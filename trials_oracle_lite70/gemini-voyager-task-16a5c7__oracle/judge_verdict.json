@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "All 10 locale files (ar, en, es, fr, ja, ko, pt, ru, zh, zh_TW) have extName.message changed from 'Gemini Voyager' to 'Voyager'. Confirmed by test gate F2P_LOCALE_EXTNAME [PASS]."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "All 5 export services updated: DeepResearchPDFPrintService.ts:174, ImageExportService.ts:157+296, MarkdownFormatter.ts:229, PDFPrintService.ts:627, formatter.ts:157. All footers now say 'Voyager' instead of 'Gemini Voyager'. Confirmed by test gate F2P_EXPORT_FOOTERS [PASS]."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "All 10 locale files have pm_title.message changed from 'Gemini Voyager' to 'Voyager'. Confirmed by test gate F2P_LOCALE_PMTITLE [PASS]."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "src/pages/content/prompt/index.ts: both titleText.textContent assignments changed from 'Gemini Voyager' to 'Voyager' (initial render ~line 478 and refreshUITexts ~line 962). Confirmed by test gate F2P_PROMPT_TITLE_RUNTIME [PASS]."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "src/features/export/services/__tests__/MarkdownFormatter.test.ts: toContain('Gemini Voyager') changed to toContain('Voyager'). Confirmed by test gate F2P_TEST_UPDATED [PASS]."
+    }
+  ],
+  "judge_notes": "All 5 goals met. Agent renamed 'Gemini Voyager' to 'Voyager' across all required surfaces: 10 locale extName values, 10 locale pm_title values, 5 export footer strings, 2 runtime titleText.textContent assignments, and 1 test expectation. test.sh confirms all 5 gates pass with final reward 1.0. Score = 0.37+0.36+0.09+0.09+0.09 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "gemini-voyager-task-16a5c7",
+  "trial_id": "gemini-voyager-task-16a5c7__oracle",
+  "judge_elapsed_sec": 51.1,
+  "sandbox_id": "ic9d9kx3oe2mgg1zvykau",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

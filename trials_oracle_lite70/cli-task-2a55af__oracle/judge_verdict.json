@@ -1,0 +1,33 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "rewind.go:646-655 — old SplitN logic replaced with `return filepath.Base(metadataDir)`. Full UUIDs like '0544a0f5-46a6-41b3-a89c-e7804df731b8' are now returned intact instead of being truncated to 'a89c-e7804df731b8'."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "rewind_test.go:5-129 — TestExtractSessionIDFromMetadata with 8 table-driven subtests covering: (1) UUID session IDs (2 cases), (2) legacy date-prefixed IDs (2 cases), (3) auto-commit sharded paths (2 cases), (4) simple IDs (2 cases). The UUID cases would fail with the old SplitN logic. test.sh confirms FAIL_TO_PASS: 1/1 with reward=1.0."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "rewind.go:291-296 (runRewindInteractive) and rewind.go:493-497 (runRewindToInternal) — both call sites now prefer `selectedPoint.SessionID` and fall back to `extractSessionIDFromMetadata(selectedPoint.MetadataDir)` only when the struct field is empty."
+    }
+  ],
+  "judge_notes": "All 3 goals met. Goal 1 (core, 0.44): extractSessionIDFromMetadata returns filepath.Base(metadataDir) instead of SplitN truncation. Goal 2 (core, 0.44): comprehensive TestExtractSessionIDFromMetadata with 8 subtests covering UUID, legacy, auto-commit, and simple formats. Goal 3 (secondary, 0.12): both interactive and non-interactive rewind paths prefer SessionID from trailer with fallback to path extraction. test.sh confirms reward=1.0 with all tests passing. Score = 0.44 + 0.44 + 0.12 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cli-task-2a55af",
+  "trial_id": "cli-task-2a55af__oracle",
+  "judge_elapsed_sec": 97.9,
+  "sandbox_id": "ibmdktpin0i89t21tspcs",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 3
+}

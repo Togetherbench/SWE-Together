@@ -1,0 +1,53 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "pkg/metricstore/config.go: Interval field removed from both Checkpoints struct (line ~62, was `Interval string \\`json:\"interval\"\\``) and Cleanup struct (line ~83, was `Interval string \\`json:\"interval\"\\``). Test gate F2P_STRUCTS_NO_INTERVAL=PASS confirms via AST check."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "pkg/metricstore/checkpoint.go: ParseDuration block (6 lines with Keys.Checkpoints.Interval, error check, and zero check) replaced with `const checkpointInterval = 12 * time.Hour` and `d := checkpointInterval`. Test gate F2P_CHECKPOINT_HARDCODED=PASS confirms has_12h_const=True and no refs to Keys.Checkpoints.Interval."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "pkg/metricstore/archive.go: Archive branch now passes Keys.RetentionInMemory (not Keys.Cleanup.Interval) to cleanUpWorker. Delete branch also passes Keys.RetentionInMemory and the fallback block `if Keys.Cleanup.Interval == \"\" { ... }` is removed. Test gate F2P_CLEANUP_USES_RETENTION=PASS (retention_refs=2, cleanup_interval_ref=False)."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "pkg/metricstore/config.go: Default Keys initialization changed from `FileFormat: \"json\"` to `FileFormat: \"wal\"`. Test gate F2P_DEFAULT_WAL=PASS (wal_default=True, json_default=False)."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "pkg/metricstore/configSchema.go: Removed interval property from checkpoints properties, removed interval property from cleanup properties, removed \"interval\" from cleanup conditional required array (was `\"required\": [\"interval\", \"directory\"]`, now `\"required\": [\"directory\"]`), removed `\"required\": [\"interval\"]` from checkpoints. Test gate F2P_SCHEMA_NO_INTERVAL=PASS."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "configs/config.json: Removed `\"interval\": \"12h\"` from checkpoints and `\"interval\": \"48h\"` from cleanup. configs/config-demo.json: Removed `\"interval\": \"12h\"` from checkpoints. Test gate F2P_CONFIGS_NO_INTERVAL=PASS (both config.json_clean=True and config-demo.json_clean=True)."
+    },
+    {
+      "id": "goal_7",
+      "met": true,
+      "evidence": "pkg/metricstore/configSchema.go: Top-level required array changed from `[\"checkpoints\", \"retention-in-memory\", \"memory-cap\"]` to `[\"retention-in-memory\", \"memory-cap\"]`. Test gate F2P_SCHEMA_NO_INTERVAL=PASS (chk_in_top_required=False)."
+    }
+  ],
+  "judge_notes": "All 7 goals met. The agent's patch cleanly implements all requested changes across 6 files. test.sh reports 0.9 (the 0.1 miss is F2P_SOURCE_FILES_MODIFIED which checks git-level file modification metadata — a process gate not represented in the behavioral rubric). The patch also removes file-format from config-demo.json which wasn't requested but doesn't break anything. Score = 3*0.25 + 4*0.0625 = 1.0 → equivalent.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cc-backend-task-ceb685",
+  "trial_id": "cc-backend-task-ceb685__oracle",
+  "judge_elapsed_sec": 73.3,
+  "sandbox_id": "ir70g6490fk2bgbeq3jt0",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 7
+}

@@ -1,0 +1,43 @@
+{
+  "judge_score": 0.93,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "dispatch_utils.h patch adds `else if (head_dim == 256) { constexpr int HEAD_DIM = 256; __VA_ARGS__ }` at lines 30-32, exactly matching the required macro extension."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "core.py:265 — `elif head_dim_og > 128 and head_dim_og < 256:` with pad(q/k/v, (0, 256 - head_dim_og)) at lines 266-268, and `elif head_dim_og > 256: raise ValueError` at line 269. Function sageattn_qk_int8_pv_fp16_triton correctly updated. Goal requires 'at least one attention function'."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "fused.cu:908 (inside DISPATCH_HEAD_DIM block) — `constexpr int CTA_SIZE = (HEAD_DIM == 256) ? 32 : 64;` CTA_SIZE=32 when HEAD_DIM=256 satisfies CTA_SIZE*HEAD_DIM<=8192 (32*256=8192). static_assert preserved at line 912."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "fused.cu:864 — `constexpr int CTA_SIZE_HOST = 64;` replaces old `CTA_SIZE = 64`. Used in padding arithmetic at lines 884 and 897: `padded_num_tokens = (num_tokens + CTA_SIZE_HOST - 1) / CTA_SIZE_HOST * CTA_SIZE_HOST;`"
+    },
+    {
+      "id": "goal_5",
+      "met": false,
+      "evidence": "Only sageattn_qk_int8_pv_fp16_triton (core.py:265) was updated. The other 4 functions (sageattn_varlen:422, sageattn_qk_int8_pv_fp16_cuda:570, sageattn_qk_int8_pv_fp8_cuda:759, sageattn_qk_int8_pv_fp8_cuda_sm90:935) still have the original `elif head_dim_og > 128: raise ValueError`."
+    }
+  ],
+  "judge_notes": "Agent correctly implements all 3 core changes (dispatch macro, core.py padding for 1 function, fused.cu CTA_SIZE conditional) and the CTA_SIZE_HOST separation. Only missed updating the remaining 4 of 5 attention functions in core.py (secondary goal). test.sh confirms reward=1.0 (all 10 tests pass). Score = 3*0.286 + 1*0.071 + 0 = 0.929 rounded to 0.93.",
+  "judge_reported_score": 0.93,
+  "judge_reported_verdict": "equivalent",
+  "task": "sageattention-headdim-256",
+  "trial_id": "sageattention-headdim-256__oracle",
+  "judge_elapsed_sec": 74.9,
+  "sandbox_id": "i2mqxmfc7jgw0ftzienpo",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

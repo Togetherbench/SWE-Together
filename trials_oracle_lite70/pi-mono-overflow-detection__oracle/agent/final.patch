@@ -1,0 +1,57 @@
+diff --git a/packages/ai/test/context-overflow.test.ts b/packages/ai/test/context-overflow.test.ts
+index b1a24fe..1aa98fb 100644
+--- a/packages/ai/test/context-overflow.test.ts
++++ b/packages/ai/test/context-overflow.test.ts
+@@ -327,29 +327,32 @@ describe("Context overflow error handling", () => {
+ 
+ 	// =============================================================================
+ 	// z.ai
+-	// Special case: Sometimes accepts overflow silently, sometimes rate limits
+-	// Detection via usage.input > contextWindow when successful
++	// Special case: may return explicit overflow error text, may accept overflow silently,
++	// or may rate limit instead
+ 	// =============================================================================
+ 
+ 	describe.skipIf(!process.env.ZAI_API_KEY)("z.ai", () => {
+-		it("glm-4.5-flash - should detect overflow via isContextOverflow (silent overflow or rate limit)", async () => {
++		it("glm-4.5-flash - should detect overflow via isContextOverflow when z.ai reports it", async () => {
+ 			const model = getModel("zai", "glm-4.5-flash");
+ 			const result = await testContextOverflow(model, process.env.ZAI_API_KEY!);
+ 			logResult(result);
+ 
+ 			// z.ai behavior is inconsistent:
++			// - Sometimes returns explicit overflow error text via non-standard finish_reason handling
+ 			// - Sometimes accepts overflow and returns successfully with usage.input > contextWindow
+ 			// - Sometimes returns rate limit error
+-			// Either way, isContextOverflow should detect it (via usage check or we skip if rate limited)
+-			if (result.stopReason === "stop") {
++			if (result.stopReason === "error") {
++				if (result.errorMessage?.match(/model_context_window_exceeded/i)) {
++					expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
++				} else {
++					console.log("  z.ai returned non-overflow error (possibly rate limited), skipping overflow detection");
++				}
++			} else if (result.stopReason === "stop") {
+ 				if (result.hasUsageData && result.usage.input > model.contextWindow) {
+ 					expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+ 				} else {
+ 					console.log("  z.ai returned stop without overflow usage data, skipping overflow detection");
+ 				}
+-			} else {
+-				// Rate limited or other error - just log and pass
+-				console.log("  z.ai returned error (possibly rate limited), skipping overflow detection");
+ 			}
+ 		}, 120000);
+ 	});
+diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md
+index ebc1f02..ff91ea4 100644
+--- a/packages/coding-agent/CHANGELOG.md
++++ b/packages/coding-agent/CHANGELOG.md
+@@ -1039,6 +1039,7 @@ Examples:
+ ### Fixed
+ - Fixed custom tool collapsed/expanded rendering in HTML exports. Custom tools that define different collapsed vs expanded displays now render correctly in exported HTML, with expandable sections when both states differ and direct display when only expanded exists ([#1934](https://github.com/badlogic/pi-mono/pull/1934) by [@aliou](https://github.com/aliou))
+ - Fixed tmux startup guidance and keyboard setup warnings for modified key handling, including Ghostty `shift+enter=text:\n` remap guidance and tmux `extended-keys-format` detection ([#1872](https://github.com/badlogic/pi-mono/issues/1872))
++- Fixed z.ai context overflow recovery so `model_context_window_exceeded` errors trigger auto-compaction instead of surfacing as unhandled stop reason failures ([#1937](https://github.com/badlogic/pi-mono/issues/1937))
+ - Fixed autocomplete selection ignoring typed text: highlight now follows the first prefix match as the user types, and exact matches are always selected on Enter ([#1931](https://github.com/badlogic/pi-mono/pull/1931) by [@aliou](https://github.com/aliou))
+ - Fixed slash-command Tab completion to immediately open argument completions when available ([#1481](https://github.com/badlogic/pi-mono/pull/1481) by [@barapa](https://github.com/barapa))
+ - Fixed explicit `pi -e <path>` extensions losing command and tool conflicts to discovered extensions by giving CLI-loaded extensions higher precedence ([#1896](https://github.com/badlogic/pi-mono/issues/1896))

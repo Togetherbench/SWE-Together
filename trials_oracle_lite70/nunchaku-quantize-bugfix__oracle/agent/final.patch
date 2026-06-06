@@ -1,0 +1,63 @@
+diff --git a/quantize.py b/quantize.py
+index 0000000..1111111 100644
+--- a/quantize.py
++++ b/quantize.py
+@@ -69,7 +69,7 @@
+ 
+     residual = residual.view(N, K // group_size, group_size)
+ 
+-    wscales = torch.abs(residual).max(dim=-1, keepdim=True)
++    wscales = torch.abs(residual).max(dim=-1, keepdim=True).values
+     wscales = wscales / 7
+     # Avoid zero division
+     wscales = torch.clamp(wscales, min=1e-5)
+@@ -122,18 +122,16 @@
+     device = weight.device
+     assert weight.dtype == torch.int32
+ 
+-    weight = weight.view(N, K // 32, 32)
++    # Reshape (N, K) -> (N, K // 32, 4 groups, 4 j, 2 k)
++    weight = weight.view(N, K // 32, 4, 4, 2)
+     packed = torch.zeros((N, K // 32, 4), device=device, dtype=torch.int32)
+-    for g in range(4):
+-        shift_low = 4 * g
+-        shift_high = 16 + 4 * g
+-        for j in range(4):
+-            idx_even = 8 * g + 2 * j
+-            idx_odd = 8 * g + 2 * j + 1
+-            w_even = weight[:, :, idx_even]
+-            w_odd = weight[:, :, idx_odd]
+-            packed[:, :, j] |= w_even << shift_low
+-            packed[:, :, j] |= w_odd << shift_high
++    # shifts: 4*g + 16*k_idx (k_idx=0 even, k_idx=1 odd)
++    for i in range(8):
++        g = i // 2
++        k_idx = i % 2
++        shift = 4 * g + 16 * k_idx
++        # Within a group of 4 j-values, even/odd select via k_idx
++        packed |= (weight[:, :, g, :, k_idx] << shift)
+ 
+     packed = packed.view(N // 4, K // 2)
+     return packed
+@@ -151,8 +149,8 @@
+     weight = weight.float()
+     weight = weight.view(N, K // group_size, group_size)
+ 
+-    w_min = weight.min(dim=-1, keepdim=True)
+-    w_max = weight.max(dim=-1, keepdim=True)
++    w_min = weight.min(dim=-1, keepdim=True).values
++    w_max = weight.max(dim=-1, keepdim=True).values
+     wscales = (w_max - w_min) / 15
+     # Avoid zero division
+     wscales = torch.clamp(wscales, min=1e-5)
+@@ -271,8 +269,8 @@
+             # Quantize AWQ layers
+             awq_layers = ["img_mod.1", "txt_mod.1"]
+             for name in awq_layers:
+-                weight = get_b(f"{name}.{weight}")
+-                bias = get_b(f"{name}.{bias}")
++                weight = get_b(f"{name}.weight")
++                bias = get_b(f"{name}.bias")
+ 
+                 device = "cuda"
+                 outs = quantize_awq_layer(weight.to(device))

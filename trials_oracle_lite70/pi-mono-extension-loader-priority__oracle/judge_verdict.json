@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "All four ordering locations correctly swap project-before-global: loader.ts:486-495 (extensions discovery: project .pi/extensions before global agentDir/extensions), package-manager.ts:722-729 (package collection: project before global), package-manager.ts:743-766 (settings-based resource resolution: projectEntries before globalEntries with matching scope/baseDir), package-manager.ts:1600-1665 (auto-discovered resources: project addResources calls moved before user addResources calls). F2P verifier tests EXT_ORDER, SKILL_ORDER, THEME_ORDER all pass. CMD_ORDER fails but 'commands' is not a ResourceType in the codebase (type ResourceType = 'extensions' | 'skills' | 'prompts' | 'themes' at package-manager.ts:101) — commands are registered by extensions, not auto-discovered as files, so that test is inapplicable."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "resource-loader.ts:384-390 — removed filter that dropped conflicting extension paths; now all extensions stay loaded and conflicts are reported as errors/diagnostics only. runner.ts:301-312 — tool dedup via Map (first-registration-wins). runner.ts:329-333 — flag dedup via allFlags.has check. runner.ts:429-451 — command dedup: commandOwners Map tracks first registrant, skip + warning diagnostic for duplicates. loader.ts:173-176 — flagValues.has(name) guard ensures first flag default wins."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "packages/coding-agent/CHANGELOG.md — '### Breaking Changes' section added under [Unreleased] with two bullet points: (1) resource precedence now project-first before user-global, (2) extension registration conflicts no longer unload the entire later extension."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "Tests written in extensions-runner.test.ts: 'keeps first tool when two extensions register the same name' (line 284-318) and 'keeps first flag when two extensions register the same name' (line 326-354). Tests written in resource-loader.test.ts: 'should prefer project resources over user on name collisions' (line 95-139, covering prompts/skills/themes) and 'should keep both extensions loaded when command names collide' (line 141-199, verifying 2 extensions loaded, project deploy wins, both unique commands accessible). Tests can't execute in this sandbox due to missing @mariozechner/pi-ai build artifacts (same issue affects ALL pre-existing extension-runner and resource-loader tests), but test logic is correct and covers both (a) project resource precedence and (b) extensions remaining loaded with first-registered winning."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "interactive-mode.ts:732 — changed from [groups.user, groups.project, groups.path] to [groups.project, groups.user, groups.path], showing project resource group before user/global in interactive mode display."
+    }
+  ],
+  "judge_notes": "Agent's patch covers all 5 goals comprehensively. The core ordering change (goal 1) is implemented across all 4 code locations matching the oracle. The conflict handling (goal 2) correctly removes the extension-unloading filter and adds first-registration-wins dedup for tools, flags, and commands. CHANGELOG (goal 3) and display ordering (goal 5) match oracle. Tests (goal 4) are well-written but fail in the sandbox due to a pre-existing dependency resolution issue (@mariozechner/pi-ai package not built) that also blocks ALL existing extension-runner and resource-loader tests — this is an environment limitation, not an agent error. F2P verifier confirms EXT_ORDER, SKILL_ORDER, THEME_ORDER pass (0.75 reward); CMD_ORDER failure is because 'commands' aren't a ResourceType in the codebase. Score = 0.55 + 0.14 + 0.14 + 0.14 + 0.03 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "pi-mono-extension-loader-priority",
+  "trial_id": "pi-mono-extension-loader-priority__oracle",
+  "judge_elapsed_sec": 192.6,
+  "sandbox_id": "ivq02lpwtkyqqzfwrvexe",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

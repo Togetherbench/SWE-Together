@@ -1,0 +1,38 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "recovery_incoming.rs:472-488 — PaymentGet+PaymentsRetrieveRequest replaced with PaymentGetListAttempts+PaymentAttemptListRequest+PaymentAttemptListResponse. Uses payments_list_attempts_using_payment_intent_id instead of payments_core with PSync. Test gates F2P6 (0.15), F2P7 (0.10), F2P8 (0.10) all pass."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "charge_id: Option<String> added to BillingConnectorPaymentsSyncResponse (router_response_types/revenue_recovery.rs:36), RevenueRecoveryAttemptData (revenue_recovery.rs:56), and propagated via From impl (revenue_recovery.rs:283). Also added to diesel model PaymentAttemptRecoveryData, domain PaymentAttemptRevenueRecoveryData, and api_models PaymentAttemptRevenueRecoveryData. Test gates F2P1, F2P2, F2P3 all pass."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "stripebilling/transformers.rs:564 — charge_id: Some(charge_details.charge_id.clone()); chargebee/transformers.rs:513 — charge_id: None; recurly/transformers.rs:212 — charge_id: None. F2P4 fails due to known awk regex bug (\\s not supported), not a code issue (per decomposition_notes). F2P5 passes."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "recovery_incoming.rs:494-512 — charge_id.as_ref().map(find_by_charge_id).unwrap_or_else(find_by_connector_transaction_id). Both lookup methods implemented on PaymentAttemptListResponse (payments.rs). charge_id takes priority, connector_transaction_id is fallback. F2P10 passes."
+    }
+  ],
+  "judge_notes": "All 4 goals met. The agent correctly: (1) replaced PaymentGet with PaymentGetListAttempts and PaymentAttemptListRequest in recovery webhooks flow; (2) added charge_id to BillingConnectorPaymentsSyncResponse, RevenueRecoveryAttemptData, and all intermediate structs with proper propagation; (3) wired charge_id in stripebilling (Some), chargebee (None), and recurly (None) transformers; (4) implemented charge_id-first lookup with connector_transaction_id fallback. Test.sh scored 0.80; F2P4 fails due to known awk \\s regex bug (not a code issue per decomposition_notes), and F2P9 fails because the agent correctly retains connector_transaction_id lookup as fallback (oracle also retains it per decomposition_notes). Score = 0.4+0.4+0.1+0.1 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "hyperswitch-8394",
+  "trial_id": "hyperswitch-8394__oracle",
+  "judge_elapsed_sec": 123.1,
+  "sandbox_id": "ig9sa1lnhg3ovre46u2cb",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 4
+}

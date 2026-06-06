@@ -1,0 +1,48 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "light_account_keywords.rs: ASSOCIATED_TOKEN_NAMESPACE_KEYS changed from &[\"authority\", \"mint\"] to &[\"authority\", \"mint\", \"idempotent\"]. test.sh gate g1 passes."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "light_account_keywords.rs: BOOLEAN_FLAG_KEYS_BY_NAMESPACE constant and is_boolean_flag_key() function added. light_account.rs: two parse paths reject `= value` for boolean flags with error \"is a boolean flag\", and bare keyword synthesizes `syn::parse_quote!(true)`. Unit test test_parse_associated_token_idempotent_with_value_fails confirms rejection. test.sh gate g2 passes."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "light_account.rs:134 — `pub idempotent: bool` added to AtaField struct. test.sh gate g3 passes."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "light_account.rs build_ata_field: `let mut idempotent: bool = false;` and match arm `\"idempotent\" => { idempotent = true; }` added. test.sh gate g4 passes."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "light_account.rs build_ata_field return: `idempotent` field included in `Ok(AtaField { has_init, owner, mint, idempotent })`. test.sh gate g5 passes."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "sdk-tests single_ata.rs: existing #[light_account] attribute changed to include `associated_token::idempotent` flag. test.sh gate g6 passes."
+    }
+  ],
+  "judge_notes": "All 6 goals met. The agent's patch adds 'idempotent' to ASSOCIATED_TOKEN_NAMESPACE_KEYS, implements boolean flag infrastructure (BOOLEAN_FLAG_KEYS_BY_NAMESPACE + is_boolean_flag_key()), adds pub idempotent: bool to AtaField, wires parsing in build_ata_field, passes the value to the struct constructor, and adds the flag to the existing single_ata.rs test site. test.sh confirms 6/6 gates passed with reward=1.0. Score = 0.20+0.20+0.20+0.15+0.15+0.10 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "light-protocol-implement-7adad1",
+  "trial_id": "light-protocol-implement-7adad1__oracle",
+  "judge_elapsed_sec": 58.4,
+  "sandbox_id": "i9g8n71848siaoc1n3m6v",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 6
+}

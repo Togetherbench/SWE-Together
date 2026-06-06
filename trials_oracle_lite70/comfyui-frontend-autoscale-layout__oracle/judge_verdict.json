@@ -1,0 +1,43 @@
+{
+  "judge_score": 0.9,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "ensureCorrectLayoutScale.ts:2 imports snapPoint from measure; line 40 reads settingStore.get('pysssss.SnapToGrid'); lines 56-60 define applySnap helper that conditionally calls snapPoint(pos, snapSize); applySnap(posTarget) called for nodes (line 75), reroutes (line 124), ioNodes (line 156), and groups (line 185). Test t1_f2p_snap_utility_invoked and t1_f2p_setting_read_in_function both passed."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "ensureCorrectLayoutScale.ts: sizeTarget tuples created and applySnap called for nodes (lines 80-84), ioNodes (lines 161-165), and groups (lines 190-194). Both posTarget and sizeTarget are snapped for each element type. Test t3_f2p_snap_called_multiple_times passed."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "ensureCorrectLayoutScale.ts:2 imports LiteGraph from '@/lib/litegraph/src/LGraph'; line 41: const snapSize = settingStore.get('Comfy.SnapToGrid.GridSize') || LiteGraph.CANVAS_GRID_SIZE. No magic number 10. Test t2_f2p_no_magic_ten_fallback passed."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "ensureCorrectLayoutScale.ts:81-82 uses lgNode.size[0] and lgNode.size[1] symmetrically for width and height. No mixing of lgNode.width with lgNode.size[1]. Test t4_f2p_symmetric_dimension_access passed."
+    },
+    {
+      "id": "goal_5",
+      "met": false,
+      "evidence": "Test t5_f2p_module_transpiles FAILED (transpile_failed). The patch introduced missing newlines at hunk boundaries (e.g., line 6 concatenates two import statements on one line: '...layoutMutations'import { LayoutSource...'; line 64 concatenates 'get(node.id)    if (!lgNode) continue'; line 91 concatenates two assignments). These are TypeScript syntax errors. test.sh reward was 0.85 (missing 0.15 for transpile)."
+    }
+  ],
+  "judge_notes": "Agent implemented the full snap-to-grid feature correctly: conditional snapping of positions and sizes for nodes/reroutes/ioNodes/groups using pysssss.SnapToGrid setting, LiteGraph.CANVAS_GRID_SIZE fallback (no magic numbers), and symmetric size[0]/size[1] access. The only failure is Goal 5: the patch has missing newlines at hunk boundaries causing TypeScript syntax errors (transpile test failed). Score = 0.36 + 0.36 + 0.09 + 0.09 + 0 = 0.90.",
+  "judge_reported_score": 0.9,
+  "judge_reported_verdict": "equivalent",
+  "task": "comfyui-frontend-autoscale-layout",
+  "trial_id": "comfyui-frontend-autoscale-layout__oracle",
+  "judge_elapsed_sec": 130.0,
+  "sandbox_id": "i7gub8905eo07ktflztl4",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

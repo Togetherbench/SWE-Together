@@ -1,0 +1,48 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "File exists at 01-foundations/microtokenizer.py with 227 lines, 7 functions (load_data, get_pair_counts, apply_merge, train_bpe, build_vocab, encode, decode). AST anti-stub passes with 4 functions having body depth >= 3. py_compile syntax check passes. Script runs to completion with exit 0 within 120s timeout."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "Script tests 6 round-trip cases: 'Emma', 'Xiomara', 'Mary-Jane', \"O'Brien\", '', 'Z' — all produce [PASS]. Test harness confirms 6 PASS, 0 FAIL. Lines 192-203 implement the test loop with encode/decode round-trip verification."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "Script output: 'ratio: 2.01x'. Test harness confirms compression ratio 2.01x >= 1.5x. Lines 209-215 compute and print the ratio in the expected format."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "Test harness counts 9 merge progress lines matching 'merge N/M' pattern. Lines 112-118 print at i==0 and every 32 merges: merge 1/256, 32/256, 64/256, 96/256, 128/256, 160/256, 192/256, 224/256, 256/256."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "Imports: __future__, os, random, urllib.request, collections.Counter — all stdlib. Test harness gate_stdlib confirms PASS with no external imports found."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "Line 32: DATA_URL = 'https://raw.githubusercontent.com/karpathy/makemore/master/names.txt'. Script downloads and trains on this dataset. Script output confirms: 'Downloading names.txt...' followed by 'Corpus: 228,145 bytes'."
+    }
+  ],
+  "judge_notes": "All 6 goals met. The agent produced a complete, correct 227-line BPE tokenizer that matches the oracle implementation closely (same URL, same NUM_MERGES=256, same test strings, same compression ratio of 2.01x). All test gates pass. Score = 0.27+0.27+0.27+0.07+0.06+0.06 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "no-magic-task-ce67d5",
+  "trial_id": "no-magic-task-ce67d5__oracle",
+  "judge_elapsed_sec": 135.6,
+  "sandbox_id": "i1gz9ghbhd282wr4gu57y",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 6
+}

@@ -1,0 +1,58 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "github_copilot.rs:452 — needs_responses_api() checks gpt-5.4*, gpt-5.2-pro, codex-*; line 461 — is_responses_api_required_error() checks for unsupported_api_for_model. Routing: line 488 routes known models in complete(), line 577 in stream_completion(). Error fallback: line 531 retries on HTTP 400 + unsupported_api_for_model in complete(); line 855 falls back to stream_responses_api in stream_chat_completions."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "github_copilot.rs:590 — complete_responses() builds request body with model, input (via split_responses_instructions_and_input), optional instructions from system messages, and optional tools in flat format (to_responses_api_tools). Sends POST to /responses, parses via parse_responses_completion() which extracts text content, tool calls, and usage stats."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "github_copilot.rs:652 — stream_responses_api() sends SSE streaming request to /responses with stream:true. Processes SSE via process_responses_sse_line() handling text deltas, tool call start/args/completion, response.completed with usage, error/failed events. Uses finalize_responses_stream() for pending tool calls and Done event."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "openai_compat.rs:884 — split_responses_instructions_and_input() moved to shared module; openai_compat.rs:915 — responses_output_index() (renamed from ws_output_index) moved to shared. openai.rs no longer defines either (grep returns 0 matches for definitions). openai.rs:23 imports both from super::openai_compat."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "openai_compat.rs:951 — process_responses_sse_line() handles text deltas, tool call lifecycle, completion/usage, errors. Line 927 — ResponsesStreamState struct tracks tool_calls, completed_tool_calls, current_tool_index, usage. Line 1042 — finalize_responses_stream() emits pending ToolCallComplete + Done. Line 1068 — parse_responses_completion() parses non-streaming JSON."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "github_copilot.rs patch adds (\"gpt-5.4\", \"GPT-5.4 (Copilot)\"), (\"gpt-5.4-pro\", \"GPT-5.4 Pro (Copilot)\"), (\"gpt-5.2-pro\", \"GPT-5.2 Pro (Copilot)\") to COPILOT_MODELS constant. Test copilot_models_include_gpt54 verifies their presence."
+    },
+    {
+      "id": "goal_7",
+      "met": true,
+      "evidence": "36 test annotations in patch. Tests cover: needs_responses_api (2 tests), is_responses_api_required_error (2 tests), complete_responses parsing (3 tests), split_responses_instructions_and_input (4 tests), responses_output_index (5 tests), process_responses_sse_line (10 tests), finalize_responses_stream (2 tests), parse_responses_completion (5 tests), model catalog (1 test). All 28 FAIL_TO_PASS tests pass."
+    },
+    {
+      "id": "goal_8",
+      "met": true,
+      "evidence": "test.sh output: 'test result: ok. 214 passed; 0 failed; 0 ignored' — reward=1.0000, FAIL_TO_PASS: 28/28. No regressions in existing tests."
+    }
+  ],
+  "judge_notes": "All 8 goals met. Agent implemented complete Responses API support for GitHub Copilot provider: model-based routing with error fallback, non-streaming and streaming implementations, shared utilities moved to compat module, new SSE parsing functions, model catalog updates, and comprehensive tests. All 214 tests pass with 0 failures, including all 28 FAIL_TO_PASS tests. Score = 3*0.235 + 5*0.059 = 0.705 + 0.295 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "moltis-task-8769bd",
+  "trial_id": "moltis-task-8769bd__oracle",
+  "judge_elapsed_sec": 215.6,
+  "sandbox_id": "i557uflyc6jw9f882wre9",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 8
+}

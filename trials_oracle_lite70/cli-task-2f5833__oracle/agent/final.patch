@@ -1,0 +1,1187 @@
+diff --git a/cmd/entire/cli/agent/agent.go b/cmd/entire/cli/agent/agent.go
+index ee7e77dd0a..2d7c388e9e 100644
+--- a/cmd/entire/cli/agent/agent.go
++++ b/cmd/entire/cli/agent/agent.go
+@@ -147,9 +147,6 @@ type TranscriptAnalyzer interface {
+ 
+ 	// ExtractPrompts extracts user prompts from the transcript starting at the given offset.
+ 	ExtractPrompts(sessionRef string, fromOffset int) ([]string, error)
+-
+-	// ExtractSummary extracts a summary of the session from the transcript.
+-	ExtractSummary(sessionRef string) (string, error)
+ }
+ 
+ // TranscriptPreparer is called before ReadTranscript to handle agent-specific
+diff --git a/cmd/entire/cli/agent/claudecode/lifecycle.go b/cmd/entire/cli/agent/claudecode/lifecycle.go
+index e1c42c380b..0e495e1bdd 100644
+--- a/cmd/entire/cli/agent/claudecode/lifecycle.go
++++ b/cmd/entire/cli/agent/claudecode/lifecycle.go
+@@ -104,36 +104,6 @@ func (c *ClaudeCodeAgent) ExtractPrompts(sessionRef string, fromOffset int) ([]s
+ 	return prompts, nil
+ }
+ 
+-// ExtractSummary extracts the last assistant message as a session summary.
+-func (c *ClaudeCodeAgent) ExtractSummary(sessionRef string) (string, error) {
+-	data, err := os.ReadFile(sessionRef) //nolint:gosec // Path comes from agent hook input
+-	if err != nil {
+-		return "", fmt.Errorf("failed to read transcript: %w", err)
+-	}
+-
+-	lines, parseErr := transcript.ParseFromBytes(data)
+-	if parseErr != nil {
+-		return "", fmt.Errorf("failed to parse transcript: %w", parseErr)
+-	}
+-
+-	// Walk backward to find last assistant text block
+-	for i := len(lines) - 1; i >= 0; i-- {
+-		if lines[i].Type != transcript.TypeAssistant {
+-			continue
+-		}
+-		var msg transcript.AssistantMessage
+-		if err := json.Unmarshal(lines[i].Message, &msg); err != nil {
+-			continue
+-		}
+-		for _, block := range msg.Content {
+-			if block.Type == transcript.ContentTypeText && block.Text != "" {
+-				return block.Text, nil
+-			}
+-		}
+-	}
+-	return "", nil
+-}
+-
+ // PrepareTranscript waits for Claude Code's async transcript flush to complete.
+ // Claude writes a hook_progress sentinel entry after flushing all pending writes.
+ func (c *ClaudeCodeAgent) PrepareTranscript(ctx context.Context, sessionRef string) error {
+diff --git a/cmd/entire/cli/agent/geminicli/lifecycle.go b/cmd/entire/cli/agent/geminicli/lifecycle.go
+index 9a598e3e8c..6e6c190f73 100644
+--- a/cmd/entire/cli/agent/geminicli/lifecycle.go
++++ b/cmd/entire/cli/agent/geminicli/lifecycle.go
+@@ -89,15 +89,6 @@ func (g *GeminiCLIAgent) ExtractPrompts(sessionRef string, fromOffset int) ([]st
+ 	return prompts, nil
+ }
+ 
+-// ExtractSummary extracts the last assistant message as a session summary.
+-func (g *GeminiCLIAgent) ExtractSummary(sessionRef string) (string, error) {
+-	data, err := os.ReadFile(sessionRef) //nolint:gosec // Path comes from agent hook input
+-	if err != nil {
+-		return "", fmt.Errorf("failed to read transcript: %w", err)
+-	}
+-	return ExtractLastAssistantMessage(data)
+-}
+-
+ // CalculateTokenUsage computes token usage from the transcript starting at the given message offset.
+ func (g *GeminiCLIAgent) CalculateTokenUsage(transcriptData []byte, fromOffset int) (*agent.TokenUsage, error) {
+ 	var transcript struct {
+diff --git a/cmd/entire/cli/agent/geminicli/transcript.go b/cmd/entire/cli/agent/geminicli/transcript.go
+index 4959b4c829..03c21c6d15 100644
+--- a/cmd/entire/cli/agent/geminicli/transcript.go
++++ b/cmd/entire/cli/agent/geminicli/transcript.go
+@@ -198,27 +198,6 @@ func ExtractAllUserPromptsFromTranscript(transcript *GeminiTranscript) []string
+ 	return prompts
+ }
+ 
+-// ExtractLastAssistantMessage extracts the last gemini response from transcript data
+-func ExtractLastAssistantMessage(data []byte) (string, error) {
+-	transcript, err := ParseTranscript(data)
+-	if err != nil {
+-		return "", err
+-	}
+-
+-	return ExtractLastAssistantMessageFromTranscript(transcript), nil
+-}
+-
+-// ExtractLastAssistantMessageFromTranscript extracts the last gemini response from a parsed transcript
+-func ExtractLastAssistantMessageFromTranscript(transcript *GeminiTranscript) string {
+-	for i := len(transcript.Messages) - 1; i >= 0; i-- {
+-		msg := transcript.Messages[i]
+-		if msg.Type == MessageTypeGemini && msg.Content != "" {
+-			return msg.Content
+-		}
+-	}
+-	return ""
+-}
+-
+ // GetLastMessageID returns the ID of the last message in the transcript.
+ // Returns empty string if the transcript is empty or the last message has no ID.
+ func GetLastMessageID(data []byte) (string, error) {
+diff --git a/cmd/entire/cli/agent/opencode/transcript.go b/cmd/entire/cli/agent/opencode/transcript.go
+index aebed95515..e29144280f 100644
+--- a/cmd/entire/cli/agent/opencode/transcript.go
++++ b/cmd/entire/cli/agent/opencode/transcript.go
+@@ -227,32 +227,6 @@ func (a *OpenCodeAgent) ExtractPrompts(sessionRef string, fromOffset int) ([]str
+ 	return prompts, nil
+ }
+ 
+-// ExtractSummary extracts the last assistant message content as a summary.
+-func (a *OpenCodeAgent) ExtractSummary(sessionRef string) (string, error) {
+-	session, err := parseExportSessionFromFile(sessionRef)
+-	if err != nil {
+-		if os.IsNotExist(err) {
+-			return "", nil
+-		}
+-		return "", err
+-	}
+-	if session == nil {
+-		return "", nil
+-	}
+-
+-	for i := len(session.Messages) - 1; i >= 0; i-- {
+-		msg := session.Messages[i]
+-		if msg.Info.Role == roleAssistant {
+-			content := ExtractTextFromParts(msg.Parts)
+-			if content != "" {
+-				return content, nil
+-			}
+-		}
+-	}
+-
+-	return "", nil
+-}
+-
+ // ExtractTextFromParts extracts text content from message parts.
+ func ExtractTextFromParts(parts []Part) string {
+ 	var texts []string
+diff --git a/cmd/entire/cli/agent/opencode/transcript_test.go b/cmd/entire/cli/agent/opencode/transcript_test.go
+index d24008aee4..12affb9e82 100644
+--- a/cmd/entire/cli/agent/opencode/transcript_test.go
++++ b/cmd/entire/cli/agent/opencode/transcript_test.go
+@@ -491,39 +491,6 @@ func TestExtractPrompts(t *testing.T) {
+ 	}
+ }
+ 
+-func TestExtractSummary(t *testing.T) {
+-	t.Parallel()
+-	ag := &OpenCodeAgent{}
+-	path := writeTestTranscript(t, testExportJSON)
+-
+-	summary, err := ag.ExtractSummary(path)
+-	if err != nil {
+-		t.Fatalf("unexpected error: %v", err)
+-	}
+-	if summary != "Done fixing util.go." {
+-		t.Errorf("expected summary 'Done fixing util.go.', got %q", summary)
+-	}
+-}
+-
+-func TestExtractSummary_EmptyTranscript(t *testing.T) {
+-	t.Parallel()
+-	ag := &OpenCodeAgent{}
+-	emptySession := ExportSession{Info: SessionInfo{ID: "empty"}, Messages: []ExportMessage{}}
+-	data, err := json.Marshal(emptySession)
+-	if err != nil {
+-		t.Fatalf("failed to marshal empty session: %v", err)
+-	}
+-	path := writeTestTranscript(t, string(data))
+-
+-	summary, err := ag.ExtractSummary(path)
+-	if err != nil {
+-		t.Fatalf("unexpected error: %v", err)
+-	}
+-	if summary != "" {
+-		t.Errorf("expected empty summary, got %q", summary)
+-	}
+-}
+-
+ func TestCalculateTokenUsage(t *testing.T) {
+ 	t.Parallel()
+ 	ag := &OpenCodeAgent{}
+diff --git a/cmd/entire/cli/integration_test/deferred_finalization_test.go b/cmd/entire/cli/integration_test/deferred_finalization_test.go
+index b376b5d5f7..190618e2a2 100644
+--- a/cmd/entire/cli/integration_test/deferred_finalization_test.go
++++ b/cmd/entire/cli/integration_test/deferred_finalization_test.go
+@@ -37,7 +37,7 @@ func TestShadow_DeferredTranscriptFinalization(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session (ACTIVE)
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create feature function", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -244,7 +244,7 @@ func TestShadow_CarryForward_ActiveSession(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session (ACTIVE)
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create files A, B, and C", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -403,8 +403,8 @@ func TestShadow_CarryForward_IdleSession(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmit(sess.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(sess.ID, "Create files A and B"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create multiple files
+@@ -478,7 +478,7 @@ func TestShadow_AgentCommitsMidTurn_UserCommitsRemainder(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session (ACTIVE)
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create files A, B, and C", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -601,7 +601,7 @@ func TestShadow_MultipleCommits_SameActiveTurn(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session (ACTIVE)
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create files A, B, and C", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -724,8 +724,8 @@ func TestShadow_OverlapCheck_UnrelatedCommit(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmit(sess.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(sess.ID, "Create file A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create file A through session
+@@ -781,8 +781,8 @@ func TestShadow_OverlapCheck_PartialOverlap(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmit(sess.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(sess.ID, "Create file A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create file A through session
+@@ -831,8 +831,8 @@ func TestShadow_SessionDepleted_ManualEditNoCheckpoint(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmit(sess.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(sess.ID, "Create files A, B, and C"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create 3 files through session
+@@ -921,8 +921,8 @@ func TestShadow_RevertedFiles_ManualEditNoCheckpoint(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmit(sess.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(sess.ID, "Create files A, B, and C"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create 3 files through session
+@@ -998,7 +998,7 @@ func TestShadow_ResetSession_ClearsTurnCheckpointIDs(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session (ACTIVE)
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create feature function", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -1084,7 +1084,7 @@ func TestShadow_EndedSession_UserCommitsRemainingFiles(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session (ACTIVE)
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create files A and B", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -1216,7 +1216,7 @@ func TestShadow_DeletedFiles_CheckpointAndCarryForward(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Create new_file.go and delete old_a.go", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+@@ -1311,7 +1311,7 @@ func TestShadow_CarryForward_ModifiedExistingFiles(t *testing.T) {
+ 	sess := env.NewSession()
+ 
+ 	// Start session
+-	if err := env.SimulateUserPromptSubmitWithTranscriptPath(sess.ID, sess.TranscriptPath); err != nil {
++	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sess.ID, "Update MVC files", sess.TranscriptPath); err != nil {
+ 		t.Fatalf("user-prompt-submit failed: %v", err)
+ 	}
+ 
+diff --git a/cmd/entire/cli/integration_test/hooks.go b/cmd/entire/cli/integration_test/hooks.go
+index bab19336aa..dfcde72087 100644
+--- a/cmd/entire/cli/integration_test/hooks.go
++++ b/cmd/entire/cli/integration_test/hooks.go
+@@ -56,6 +56,21 @@ func (r *HookRunner) SimulateUserPromptSubmit(sessionID string) error {
+ 	return r.runHookWithInput("user-prompt-submit", input)
+ }
+ 
++// SimulateUserPromptSubmitWithPrompt simulates the UserPromptSubmit hook
++// with an explicit user prompt. The prompt is passed to the lifecycle handler
++// and appended to the filesystem prompt.txt.
++func (r *HookRunner) SimulateUserPromptSubmitWithPrompt(sessionID, prompt string) error {
++	r.T.Helper()
++
++	input := map[string]string{
++		"session_id":      sessionID,
++		"transcript_path": "",
++		"prompt":          prompt,
++	}
++
++	return r.runHookWithInput("user-prompt-submit", input)
++}
++
+ // SimulateUserPromptSubmitWithTranscriptPath simulates the UserPromptSubmit hook
+ // with an explicit transcript path. This is needed for mid-session commit detection
+ // which reads the live transcript to detect ongoing sessions.
+@@ -70,6 +85,21 @@ func (r *HookRunner) SimulateUserPromptSubmitWithTranscriptPath(sessionID, trans
+ 	return r.runHookWithInput("user-prompt-submit", input)
+ }
+ 
++// SimulateUserPromptSubmitWithPromptAndTranscriptPath simulates the UserPromptSubmit
++// hook with both an explicit prompt and transcript path. This combines the behavior
++// of SimulateUserPromptSubmitWithPrompt and SimulateUserPromptSubmitWithTranscriptPath.
++func (r *HookRunner) SimulateUserPromptSubmitWithPromptAndTranscriptPath(sessionID, prompt, transcriptPath string) error {
++	r.T.Helper()
++
++	input := map[string]string{
++		"session_id":      sessionID,
++		"transcript_path": transcriptPath,
++		"prompt":          prompt,
++	}
++
++	return r.runHookWithInput("user-prompt-submit", input)
++}
++
+ // SimulateUserPromptSubmitWithResponse simulates the UserPromptSubmit hook
+ // and returns the parsed hook response (for testing blocking behavior).
+ func (r *HookRunner) SimulateUserPromptSubmitWithResponse(sessionID string) (*HookResponse, error) {
+@@ -280,6 +310,13 @@ func (env *TestEnv) SimulateUserPromptSubmit(sessionID string) error {
+ 	return runner.SimulateUserPromptSubmit(sessionID)
+ }
+ 
++// SimulateUserPromptSubmitWithPrompt is a convenience method on TestEnv.
++func (env *TestEnv) SimulateUserPromptSubmitWithPrompt(sessionID, prompt string) error {
++	env.T.Helper()
++	runner := NewHookRunner(env.RepoDir, env.ClaudeProjectDir, env.T)
++	return runner.SimulateUserPromptSubmitWithPrompt(sessionID, prompt)
++}
++
+ // SimulateUserPromptSubmitWithTranscriptPath is a convenience method on TestEnv.
+ // This is needed for mid-session commit detection which reads the live transcript.
+ func (env *TestEnv) SimulateUserPromptSubmitWithTranscriptPath(sessionID, transcriptPath string) error {
+@@ -288,6 +325,13 @@ func (env *TestEnv) SimulateUserPromptSubmitWithTranscriptPath(sessionID, transc
+ 	return runner.SimulateUserPromptSubmitWithTranscriptPath(sessionID, transcriptPath)
+ }
+ 
++// SimulateUserPromptSubmitWithPromptAndTranscriptPath is a convenience method on TestEnv.
++func (env *TestEnv) SimulateUserPromptSubmitWithPromptAndTranscriptPath(sessionID, prompt, transcriptPath string) error {
++	env.T.Helper()
++	runner := NewHookRunner(env.RepoDir, env.ClaudeProjectDir, env.T)
++	return runner.SimulateUserPromptSubmitWithPromptAndTranscriptPath(sessionID, prompt, transcriptPath)
++}
++
+ // SimulateUserPromptSubmitWithResponse is a convenience method on TestEnv.
+ func (env *TestEnv) SimulateUserPromptSubmitWithResponse(sessionID string) (*HookResponse, error) {
+ 	env.T.Helper()
+diff --git a/cmd/entire/cli/integration_test/manual_commit_workflow_test.go b/cmd/entire/cli/integration_test/manual_commit_workflow_test.go
+index 735376d59f..704cfecd0e 100644
+--- a/cmd/entire/cli/integration_test/manual_commit_workflow_test.go
++++ b/cmd/entire/cli/integration_test/manual_commit_workflow_test.go
+@@ -57,8 +57,8 @@ func TestShadow_FullWorkflow(t *testing.T) {
+ 	t.Log("Phase 2: Starting session and creating first checkpoint")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create authentication module"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Verify session state file exists in .git/entire-sessions/
+@@ -102,8 +102,8 @@ func TestShadow_FullWorkflow(t *testing.T) {
+ 	t.Log("Phase 3: Creating second checkpoint (continuing same session)")
+ 
+ 	// Continue the same session (not a new session) - this is the expected Claude behavior
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit (checkpoint 2) failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Add password hashing"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (checkpoint 2) failed: %v", err)
+ 	}
+ 
+ 	// Create hash.go and modify auth.go
+@@ -188,8 +188,8 @@ func TestShadow_FullWorkflow(t *testing.T) {
+ 	t.Log("Phase 5: Creating checkpoint after rewind (continuing same session)")
+ 
+ 	// Continue the same session after rewind
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit (after rewind) failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Use bcrypt for hashing"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (after rewind) failed: %v", err)
+ 	}
+ 
+ 	// Reset transcript builder for next checkpoint
+@@ -273,8 +273,8 @@ func TestShadow_FullWorkflow(t *testing.T) {
+ 
+ 	// Start new session
+ 	session4 := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session4.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit (session4) failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session4.ID, "Add session management"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (session4) failed: %v", err)
+ 	}
+ 
+ 	// Create session management file
+@@ -642,8 +642,8 @@ func TestShadow_TranscriptCondensation(t *testing.T) {
+ 
+ 	// Start session and create checkpoint with transcript
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create main.go with hello world"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create a file change
+@@ -727,8 +727,8 @@ func TestShadow_FullTranscriptContext(t *testing.T) {
+ 
+ 	// Start first session
+ 	session1 := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session1.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session1.ID, "Create function A in a.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// First prompt: create file A
+@@ -743,6 +743,9 @@ func TestShadow_FullTranscriptContext(t *testing.T) {
+ 	session1.TranscriptBuilder.AddAssistantMessage("Done creating function A!")
+ 
+ 	// Second prompt in same session: create file B
++	if err := env.SimulateUserPromptSubmitWithPrompt(session1.ID, "Now create function B in b.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (second prompt) failed: %v", err)
++	}
+ 	fileBContent := "package main\n\nfunc B() {}\n"
+ 	env.WriteFile("b.go", fileBContent)
+ 
+@@ -792,8 +795,8 @@ func TestShadow_FullTranscriptContext(t *testing.T) {
+ 
+ 	// Continue the session with a new prompt
+ 	// First, simulate another user prompt submit to track the new base
+-	if err := env.SimulateUserPromptSubmit(session1.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit (continued) failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session1.ID, "Finally, create function C in c.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (continued) failed: %v", err)
+ 	}
+ 
+ 	// Third prompt: create file C
+@@ -877,8 +880,8 @@ func TestShadow_RewindAndCondensation(t *testing.T) {
+ 	t.Log("Phase 1: Create first checkpoint with prompt 1")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A in a.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// First prompt: create file A
+@@ -1013,8 +1016,8 @@ func TestShadow_RewindPreservesUntrackedFilesFromSessionStart(t *testing.T) {
+ 	t.Log("Phase 1: Create first checkpoint")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// First prompt: create file A
+@@ -1136,8 +1139,8 @@ func TestShadow_IntermediateCommitsWithoutPrompts(t *testing.T) {
+ 	t.Log("Phase 1: Start session and create checkpoint")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A in a.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// First prompt: create file A
+@@ -1190,8 +1193,8 @@ func TestShadow_IntermediateCommitsWithoutPrompts(t *testing.T) {
+ 	t.Log("Phase 4: New Claude work and commit")
+ 
+ 	// Now user enters new prompt and does more work
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function B in b.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	fileBContent := "package main\n\nfunc B() {}\n"
+@@ -1264,8 +1267,8 @@ func TestShadow_FullTranscriptCondensationWithIntermediateCommits(t *testing.T)
+ 	t.Log("Phase 1: Session with two prompts")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// First prompt
+@@ -1278,6 +1281,9 @@ func TestShadow_FullTranscriptCondensationWithIntermediateCommits(t *testing.T)
+ 	session.TranscriptBuilder.AddToolResult(toolID1)
+ 
+ 	// Second prompt in same session
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function B"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (second prompt) failed: %v", err)
++	}
+ 	fileBContent := "package main\n\nfunc B() {}\n"
+ 	env.WriteFile("b.go", fileBContent)
+ 
+@@ -1311,10 +1317,13 @@ func TestShadow_FullTranscriptCondensationWithIntermediateCommits(t *testing.T)
+ 	}
+ 	t.Logf("First checkpoint prompts:\n%s", prompt1Content)
+ 
+-	t.Log("Phase 3: Continue session with third prompt (no SimulateUserPromptSubmit)")
++	t.Log("Phase 3: Continue session with third prompt")
++
++	// Submit the new prompt through the hook so it gets recorded in prompt.txt
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function C"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (third prompt) failed: %v", err)
++	}
+ 
+-	// Continue working WITHOUT calling SimulateUserPromptSubmit
+-	// This simulates the case where HEAD moved but InitializeSession wasn't called
+ 	fileCContent := "package main\n\nfunc C() {}\n"
+ 	env.WriteFile("c.go", fileCContent)
+ 
+@@ -1332,7 +1341,7 @@ func TestShadow_FullTranscriptCondensationWithIntermediateCommits(t *testing.T)
+ 		t.Fatalf("SimulateStop (second) failed: %v", err)
+ 	}
+ 
+-	t.Log("Phase 4: Second commit (without intermediate prompt submit)")
++	t.Log("Phase 4: Second commit")
+ 
+ 	env.GitCommitWithShadowHooks("Add function C", "c.go")
+ 	commit2Hash := env.GetHeadHash()
+@@ -1394,8 +1403,8 @@ func TestShadow_RewindPreservesUntrackedFilesWithExistingShadowBranch(t *testing
+ 
+ 	// First session - creates the shadow branch
+ 	session1 := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session1.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session1.ID, "Create old.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	env.WriteFile("old.go", "package main\n")
+@@ -1423,8 +1432,8 @@ func TestShadow_RewindPreservesUntrackedFilesWithExistingShadowBranch(t *testing
+ 
+ 	// Continue the SAME session (Claude resumes with the same session ID)
+ 	// This is the expected behavior - continuing work on the same base commit
+-	if err := env.SimulateUserPromptSubmit(session1.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit (continue session) failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session1.ID, "Create A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (continue session) failed: %v", err)
+ 	}
+ 
+ 	// Reset transcript builder for next checkpoint
+@@ -1456,8 +1465,8 @@ func TestShadow_RewindPreservesUntrackedFilesWithExistingShadowBranch(t *testing
+ 	t.Log("Phase 3: Create third checkpoint")
+ 
+ 	// Continue the session for the third checkpoint
+-	if err := env.SimulateUserPromptSubmit(session1.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit (checkpoint 3) failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session1.ID, "Create B"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt (checkpoint 3) failed: %v", err)
+ 	}
+ 
+ 	// Reset transcript builder for next checkpoint
+@@ -1526,8 +1535,8 @@ func TestShadow_TrailerRemovalSkipsCondensation(t *testing.T) {
+ 	t.Log("Phase 1: Create session with content")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	fileAContent := "package main\n\nfunc A() {}\n"
+@@ -1577,8 +1586,8 @@ func TestShadow_TrailerRemovalSkipsCondensation(t *testing.T) {
+ 	t.Log("Phase 4: Now commit WITH trailer (user keeps it)")
+ 
+ 	// Continue session with new content
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function B"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	fileBContent := "package main\n\nfunc B() {}\n"
+@@ -1644,8 +1653,8 @@ func TestShadow_SessionsBranchCommitTrailers(t *testing.T) {
+ 
+ 	// Start session and create checkpoint
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create main.go"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	fileContent := "package main\n\nfunc main() {}\n"
+diff --git a/cmd/entire/cli/integration_test/mid_session_rebase_test.go b/cmd/entire/cli/integration_test/mid_session_rebase_test.go
+index 12a1b3f76d..4afd31df7b 100644
+--- a/cmd/entire/cli/integration_test/mid_session_rebase_test.go
++++ b/cmd/entire/cli/integration_test/mid_session_rebase_test.go
+@@ -65,8 +65,8 @@ func TestShadow_MidSessionRebaseMigration(t *testing.T) {
+ 	t.Log("Phase 2: Starting session and creating first checkpoint")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create first file change
+@@ -197,17 +197,9 @@ func TestShadow_MidSessionRebaseMigration(t *testing.T) {
+ 	// ========================================
+ 	t.Log("Phase 6: Verifying rewind still works after migration")
+ 
+-	// Find checkpoint 1 (before rebase)
+-	var checkpoint1ID string
+-	for _, p := range points {
+-		if p.Message == "Create function A" {
+-			checkpoint1ID = p.ID
+-			break
+-		}
+-	}
+-	if checkpoint1ID == "" {
+-		t.Fatalf("Could not find checkpoint 1 in rewind points")
+-	}
++	// Find checkpoint 1 (before rebase) — it is the oldest rewind point.
++	// Points are sorted most recent first, so checkpoint 1 is the last entry.
++	checkpoint1ID := points[len(points)-1].ID
+ 
+ 	// Rewind to checkpoint 1
+ 	if err := env.Rewind(checkpoint1ID); err != nil {
+@@ -284,8 +276,8 @@ func TestShadow_CommitThenRebaseMidSession(t *testing.T) {
+ 	t.Log("Phase 2: Starting session and creating first checkpoint")
+ 
+ 	session := env.NewSession()
+-	if err := env.SimulateUserPromptSubmit(session.ID); err != nil {
+-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
++	if err := env.SimulateUserPromptSubmitWithPrompt(session.ID, "Create function A"); err != nil {
++		t.Fatalf("SimulateUserPromptSubmitWithPrompt failed: %v", err)
+ 	}
+ 
+ 	// Create file and checkpoint
+diff --git a/cmd/entire/cli/lifecycle.go b/cmd/entire/cli/lifecycle.go
+index ab25ae3adc..98784dce42 100644
+--- a/cmd/entire/cli/lifecycle.go
++++ b/cmd/entire/cli/lifecycle.go
+@@ -14,7 +14,6 @@ import (
+ 	"log/slog"
+ 	"os"
+ 	"path/filepath"
+-	"strings"
+ 	"time"
+ 
+ 	"github.com/entireio/cli/cmd/entire/cli/agent"
+@@ -138,6 +137,26 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
+ 		return err
+ 	}
+ 
++	// Append prompt to prompt.txt on filesystem so it's available for
++	// mid-turn commits (before SaveStep writes it to the shadow branch).
++	// Prompts are separated by "\n\n---\n\n" to support multiple turns.
++	if event.Prompt != "" {
++		sessionDir := paths.SessionMetadataDirFromSessionID(sessionID)
++		if sessionDirAbs, absErr := paths.AbsPath(ctx, sessionDir); absErr == nil {
++			if mkErr := os.MkdirAll(sessionDirAbs, 0o750); mkErr == nil {
++				promptPath := filepath.Join(sessionDirAbs, paths.PromptFileName)
++				existing, _ := os.ReadFile(promptPath) //nolint:gosec // session metadata path
++				var content string
++				if len(existing) > 0 {
++					content = string(existing) + "\n\n---\n\n" + event.Prompt
++				} else {
++					content = event.Prompt
++				}
++				_ = os.WriteFile(promptPath, []byte(content), 0o600)
++			}
++		}
++	}
++
+ 	// Ensure strategy setup and initialize session
+ 	if err := strategy.EnsureSetup(ctx); err != nil {
+ 		logging.Warn(logCtx, "failed to ensure strategy setup",
+@@ -234,28 +253,10 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
+ 	// Subagent transcripts live in <transcriptDir>/<modelSessionID>/subagents/
+ 	subagentsDir := filepath.Join(filepath.Dir(transcriptRef), event.SessionID, "subagents")
+ 
+-	// Extract metadata via agent interface (prompts, summary, modified files)
+-	var allPrompts []string
+-	var summary string
++	// Extract metadata via agent interface (modified files)
+ 	var modifiedFiles []string
+ 
+ 	if analyzer, ok := ag.(agent.TranscriptAnalyzer); ok {
+-		// Extract prompts
+-		if prompts, promptErr := analyzer.ExtractPrompts(transcriptRef, transcriptOffset); promptErr != nil {
+-			logging.Warn(logCtx, "failed to extract prompts",
+-				slog.String("error", promptErr.Error()))
+-		} else {
+-			allPrompts = prompts
+-		}
+-
+-		// Extract summary
+-		if s, sumErr := analyzer.ExtractSummary(transcriptRef); sumErr != nil {
+-			logging.Warn(logCtx, "failed to extract summary",
+-				slog.String("error", sumErr.Error()))
+-		} else {
+-			summary = s
+-		}
+-
+ 		// Extract modified files - prefer SubagentAwareExtractor if available to include subagent files
+ 		if subagentExtractor, subOk := ag.(agent.SubagentAwareExtractor); subOk {
+ 			if files, fileErr := subagentExtractor.ExtractAllModifiedFiles(transcriptData, transcriptOffset, subagentsDir); fileErr != nil {
+@@ -275,28 +276,10 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
+ 		}
+ 	}
+ 
+-	// Write prompts file
+-	promptFile := filepath.Join(sessionDirAbs, paths.PromptFileName)
+-	promptContent := strings.Join(allPrompts, "\n\n---\n\n")
+-	if err := os.WriteFile(promptFile, []byte(promptContent), 0o600); err != nil {
+-		return fmt.Errorf("failed to write prompt file: %w", err)
+-	}
+-	logging.Debug(logCtx, "extracted prompts",
+-		slog.Int("count", len(allPrompts)),
+-		slog.String("path", sessionDir+"/"+paths.PromptFileName))
+-
+-	// Write summary file
+-	summaryFile := filepath.Join(sessionDirAbs, paths.SummaryFileName)
+-	if err := os.WriteFile(summaryFile, []byte(summary), 0o600); err != nil {
+-		return fmt.Errorf("failed to write summary file: %w", err)
+-	}
+-	logging.Debug(logCtx, "extracted summary",
+-		slog.String("path", sessionDir+"/"+paths.SummaryFileName))
+-
+-	// Generate commit message from last prompt
++	// Generate commit message from last prompt (read from session state, set at TurnStart)
+ 	lastPrompt := ""
+-	if len(allPrompts) > 0 {
+-		lastPrompt = allPrompts[len(allPrompts)-1]
++	if sessionState, stateErr := strategy.LoadSessionState(ctx, sessionID); stateErr == nil && sessionState != nil {
++		lastPrompt = sessionState.LastPrompt
+ 	}
+ 	commitMessage := generateCommitMessage(lastPrompt, ag.Type())
+ 	logging.Debug(logCtx, "using commit message",
+diff --git a/cmd/entire/cli/paths/paths.go b/cmd/entire/cli/paths/paths.go
+index 210789ded0..cae723c9d5 100644
+--- a/cmd/entire/cli/paths/paths.go
++++ b/cmd/entire/cli/paths/paths.go
+@@ -23,7 +23,6 @@ const (
+ // Metadata file names
+ const (
+ 	PromptFileName           = "prompt.txt"
+-	SummaryFileName          = "summary.txt"
+ 	TranscriptFileName       = "full.jsonl"
+ 	TranscriptFileNameLegacy = "full.log"
+ 	MetadataFileName         = "metadata.json"
+diff --git a/cmd/entire/cli/session/state.go b/cmd/entire/cli/session/state.go
+index 517efc209e..1c97dfe0e2 100644
+--- a/cmd/entire/cli/session/state.go
++++ b/cmd/entire/cli/session/state.go
+@@ -143,8 +143,10 @@ type State struct {
+ 	// TranscriptPath is the path to the live transcript file (for mid-session commit detection)
+ 	TranscriptPath string `json:"transcript_path,omitempty"`
+ 
+-	// FirstPrompt is the first user prompt that started this session (truncated for display)
+-	FirstPrompt string `json:"first_prompt,omitempty"`
++	// LastPrompt is the most recent user prompt for this session (truncated for display).
++	// Updated on every turn start (UserPromptSubmit). JSON tag kept as "first_prompt"
++	// for backward compatibility with existing state files.
++	LastPrompt string `json:"last_prompt,omitempty"`
+ 
+ 	// PromptAttributions tracks user and agent line changes at each prompt start.
+ 	// This enables accurate attribution by capturing user edits between checkpoints.
+diff --git a/cmd/entire/cli/status.go b/cmd/entire/cli/status.go
+index 9fc70ae250..af9699b9ab 100644
+--- a/cmd/entire/cli/status.go
++++ b/cmd/entire/cli/status.go
+@@ -316,8 +316,8 @@ func writeActiveSessions(ctx context.Context, w io.Writer, sty statusStyles) {
+ 			}
+ 
+ 			// Line 2: > "first prompt" (chevron + quoted, truncated)
+-			if st.FirstPrompt != "" {
+-				prompt := stringutil.TruncateRunes(st.FirstPrompt, 60, "...")
++			if st.LastPrompt != "" {
++				prompt := stringutil.TruncateRunes(st.LastPrompt, 60, "...")
+ 				fmt.Fprintf(w, "%s \"%s\"\n", sty.render(sty.dim, ">"), prompt)
+ 			}
+ 
+diff --git a/cmd/entire/cli/status_test.go b/cmd/entire/cli/status_test.go
+index aa59115dd0..3a2cfa789c 100644
+--- a/cmd/entire/cli/status_test.go
++++ b/cmd/entire/cli/status_test.go
+@@ -388,7 +388,7 @@ func TestWriteActiveSessions(t *testing.T) {
+ 			WorktreePath:        "/Users/test/repo",
+ 			StartedAt:           now.Add(-2 * time.Hour),
+ 			LastInteractionTime: &recentInteraction,
+-			FirstPrompt:         "Fix auth bug in login flow",
++			LastPrompt:          "Fix auth bug in login flow",
+ 			AgentType:           types.AgentType("Claude Code"),
+ 			TokenUsage: &agent.TokenUsage{
+ 				InputTokens:  800,
+@@ -399,7 +399,7 @@ func TestWriteActiveSessions(t *testing.T) {
+ 			SessionID:    "def-5678-session",
+ 			WorktreePath: "/Users/test/repo",
+ 			StartedAt:    now.Add(-15 * time.Minute),
+-			FirstPrompt:  "Add dark mode support for the entire application and all components",
++			LastPrompt:   "Add dark mode support for the entire application and all components",
+ 			AgentType:    agent.AgentTypeCursor,
+ 			TokenUsage: &agent.TokenUsage{
+ 				InputTokens:  500,
+@@ -452,7 +452,7 @@ func TestWriteActiveSessions(t *testing.T) {
+ 		t.Errorf("Expected first prompt with chevron, got: %s", output)
+ 	}
+ 
+-	// Session without FirstPrompt should NOT show a prompt line
++	// Session without LastPrompt should NOT show a prompt line
+ 	lines := strings.Split(output, "\n")
+ 	for _, line := range lines {
+ 		if strings.Contains(line, "ghi-901") {
+@@ -515,7 +515,7 @@ func TestWriteActiveSessions_ActiveTimeOmittedWhenClose(t *testing.T) {
+ 		WorktreePath:        "/Users/test/repo",
+ 		StartedAt:           startedAt,
+ 		LastInteractionTime: &lastInteraction,
+-		FirstPrompt:         "test prompt",
++		LastPrompt:          "test prompt",
+ 		AgentType:           types.AgentType("Claude Code"),
+ 	}
+ 
+diff --git a/cmd/entire/cli/strategy/manual_commit_condensation.go b/cmd/entire/cli/strategy/manual_commit_condensation.go
+index 7aa1dbe297..5f59a2288e 100644
+--- a/cmd/entire/cli/strategy/manual_commit_condensation.go
++++ b/cmd/entire/cli/strategy/manual_commit_condensation.go
+@@ -7,6 +7,7 @@ import (
+ 	"fmt"
+ 	"log/slog"
+ 	"os"
++	"path/filepath"
+ 	"strings"
+ 
+ 	"github.com/entireio/cli/cmd/entire/cli/agent"
+@@ -464,8 +465,16 @@ func (s *ManualCommitStrategy) extractSessionData(ctx context.Context, repo *git
+ 	if fullTranscript != "" {
+ 		data.Transcript = []byte(fullTranscript)
+ 		data.FullTranscriptLines = countTranscriptItems(agentType, fullTranscript)
+-		// Extract only prompts from the current checkpoint portion (not the entire session)
+-		data.Prompts = extractCheckpointPrompts(agentType, data.Transcript, checkpointTranscriptStart)
++		// Read prompts from shadow branch tree (source of truth after SaveStep)
++		if file, fileErr := tree.File(metadataDir + "/" + paths.PromptFileName); fileErr == nil {
++			if content, contentErr := file.Contents(); contentErr == nil && content != "" {
++				data.Prompts = splitPromptContent(content)
++			}
++		}
++		// Filesystem fallback (written at turn start, covers mid-turn commits)
++		if len(data.Prompts) == 0 {
++			data.Prompts = readPromptsFromFilesystem(ctx, sessionID)
++		}
+ 	}
+ 
+ 	// Use tracked files from session state (not all files in tree)
+@@ -503,8 +512,7 @@ func (s *ManualCommitStrategy) extractSessionDataFromLiveTranscript(ctx context.
+ 	fullTranscript := string(liveData)
+ 	data.Transcript = liveData
+ 	data.FullTranscriptLines = countTranscriptItems(state.AgentType, fullTranscript)
+-	// Extract only prompts from the current checkpoint portion (not the entire session)
+-	data.Prompts = extractCheckpointPrompts(state.AgentType, data.Transcript, state.CheckpointTranscriptStart)
++	data.Prompts = readPromptsFromFilesystem(ctx, state.SessionID)
+ 
+ 	// Extract files from transcript since state.FilesTouched may be empty for mid-session commits
+ 	// (no SaveStep/Stop has been called yet to populate it)
+@@ -726,6 +734,51 @@ func extractUserPromptsFromLines(lines []string) []string {
+ 	return prompts
+ }
+ 
++// splitPromptContent splits prompt.txt content on the "\n\n---\n\n" separator.
++// Returns nil if content is empty.
++func splitPromptContent(content string) []string {
++	if content == "" {
++		return nil
++	}
++	parts := strings.Split(content, "\n\n---\n\n")
++	var result []string
++	for _, p := range parts {
++		trimmed := strings.TrimSpace(p)
++		if trimmed != "" {
++			result = append(result, trimmed)
++		}
++	}
++	return result
++}
++
++// readPromptsFromFilesystem reads prompt.txt from the filesystem session metadata directory.
++// This file is written at turn start and updated at each SaveStep, providing prompt data
++// even for mid-turn commits where the shadow branch may not have been updated.
++func readPromptsFromFilesystem(ctx context.Context, sessionID string) []string {
++	sessionDir := paths.SessionMetadataDirFromSessionID(sessionID)
++	sessionDirAbs, err := paths.AbsPath(ctx, sessionDir)
++	if err != nil {
++		return nil
++	}
++	data, err := os.ReadFile(filepath.Join(sessionDirAbs, paths.PromptFileName)) //nolint:gosec // path from session ID
++	if err != nil || len(data) == 0 {
++		return nil
++	}
++	return splitPromptContent(string(data))
++}
++
++// clearFilesystemPrompt removes the filesystem prompt.txt for a session.
++// Called after condensation so subsequent checkpoints start fresh.
++func clearFilesystemPrompt(ctx context.Context, sessionID string) {
++	sessionDir := paths.SessionMetadataDirFromSessionID(sessionID)
++	sessionDirAbs, err := paths.AbsPath(ctx, sessionDir)
++	if err != nil {
++		return
++	}
++	promptPath := filepath.Join(sessionDirAbs, paths.PromptFileName)
++	_ = os.Remove(promptPath) //nolint:errcheck // best-effort cleanup
++}
++
+ // CondenseSessionByID force-condenses a session by its ID and cleans up.
+ // This is used by "entire doctor" to salvage stuck sessions.
+ func (s *ManualCommitStrategy) CondenseSessionByID(ctx context.Context, sessionID string) error {
+diff --git a/cmd/entire/cli/strategy/manual_commit_hooks.go b/cmd/entire/cli/strategy/manual_commit_hooks.go
+index 17129ec8a9..fdecb31bb6 100644
+--- a/cmd/entire/cli/strategy/manual_commit_hooks.go
++++ b/cmd/entire/cli/strategy/manual_commit_hooks.go
+@@ -970,6 +970,13 @@ func (s *ManualCommitStrategy) postCommitProcessSession(
+ 		if len(remainingFiles) > 0 {
+ 			s.carryForwardToNewShadowBranch(ctx, repo, state, remainingFiles)
+ 		}
++
++		// Clear filesystem prompt.txt only when ALL files are committed.
++		// If carry-forward files remain, the prompt must persist so the next
++		// condensation (triggered by the next commit) can read it.
++		if len(remainingFiles) == 0 {
++			clearFilesystemPrompt(ctx, state.SessionID)
++		}
+ 	}
+ 
+ 	// Mark ENDED sessions as fully condensed when no carry-forward remains.
+@@ -1041,6 +1048,10 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
+ 	state.PendingPromptAttribution = nil
+ 	state.FilesTouched = nil
+ 
++	// NOTE: filesystem prompt.txt is NOT cleared here. The caller (PostCommit handler)
++	// decides whether to clear it based on carry-forward: if remaining files exist,
++	// the prompt must persist so the next condensation can read it.
++
+ 	// Save checkpoint ID so subsequent commits can reuse it (e.g., amend restores trailer)
+ 	state.LastCheckpointID = checkpointID
+ 
+@@ -1674,7 +1685,7 @@ func addCheckpointTrailerWithComment(message string, checkpointID id.CheckpointI
+ //
+ // agentType is the human-readable name of the agent (e.g., "Claude Code").
+ // transcriptPath is the path to the live transcript file (for mid-session commit detection).
+-// userPrompt is the user's prompt text (stored truncated as FirstPrompt for display).
++// userPrompt is the user's prompt text (stored truncated as LastPrompt for display).
+ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID string, agentType types.AgentType, transcriptPath string, userPrompt string, model string) error {
+ 	repo, err := OpenRepository(ctx)
+ 	if err != nil {
+@@ -1712,9 +1723,9 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID
+ 			state.ModelName = model
+ 		}
+ 
+-		// Backfill FirstPrompt if empty (for sessions created before the first_prompt field was added)
+-		if state.FirstPrompt == "" && userPrompt != "" {
+-			state.FirstPrompt = truncatePromptForStorage(userPrompt)
++		// Update LastPrompt on every turn so condensation always has the current prompt
++		if userPrompt != "" {
++			state.LastPrompt = truncatePromptForStorage(userPrompt)
+ 		}
+ 
+ 		// Update transcript path if provided (may change on session resume)
+@@ -1975,6 +1986,42 @@ func extractLastPrompt(content string) string {
+ 	return ""
+ }
+ 
++// TODO: check if its duplicated
++// readPromptsFromShadowBranch reads prompt.txt from the shadow branch tree.
++// Returns all prompts split on "\n\n---\n\n", or nil if prompt.txt is not available.
++func readPromptsFromShadowBranch(_ context.Context, repo *git.Repository, state *SessionState) []string {
++	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
++	refName := plumbing.NewBranchReferenceName(shadowBranchName)
++	ref, err := repo.Reference(refName, true)
++	if err != nil {
++		return nil
++	}
++
++	commit, err := repo.CommitObject(ref.Hash())
++	if err != nil {
++		return nil
++	}
++
++	tree, err := commit.Tree()
++	if err != nil {
++		return nil
++	}
++
++	metadataDir := paths.EntireMetadataDir + "/" + state.SessionID
++	promptPath := metadataDir + "/" + paths.PromptFileName
++	file, err := tree.File(promptPath)
++	if err != nil {
++		return nil
++	}
++
++	content, err := file.Contents()
++	if err != nil {
++		return nil
++	}
++
++	return splitPromptContent(content)
++}
++
+ // HandleTurnEnd dispatches strategy-specific actions emitted when an agent turn ends.
+ // The primary job is to finalize all checkpoints from this turn with the full transcript.
+ //
+@@ -2047,8 +2094,20 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
+ 		return 1 // Count as error - all checkpoints will be skipped
+ 	}
+ 
+-	// Extract prompts from the full transcript
+-	prompts := extractUserPrompts(state.AgentType, string(fullTranscript))
++	// Open repository (needed for shadow branch prompt reading and checkpoint store)
++	repo, err := OpenRepository(ctx)
++	if err != nil {
++		logging.Warn(logCtx, "finalize: failed to open repository",
++			slog.String("error", err.Error()),
++		)
++		state.TurnCheckpointIDs = nil
++		return 1 // Count as error - all checkpoints will be skipped
++	}
++
++	prompts := readPromptsFromShadowBranch(ctx, repo, state)
++	if len(prompts) == 0 {
++		prompts = readPromptsFromFilesystem(ctx, state.SessionID)
++	}
+ 
+ 	// Redact secrets before writing — matches WriteCommitted behavior.
+ 	// The live transcript on disk contains raw content; redaction must happen
+@@ -2066,15 +2125,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
+ 		prompts[i] = redact.String(p)
+ 	}
+ 
+-	// Open repository and create checkpoint store
+-	repo, err := OpenRepository(ctx)
+-	if err != nil {
+-		logging.Warn(logCtx, "finalize: failed to open repository",
+-			slog.String("error", err.Error()),
+-		)
+-		state.TurnCheckpointIDs = nil
+-		return 1 // Count as error - all checkpoints will be skipped
+-	}
+ 	store := checkpoint.NewGitStore(repo)
+ 
+ 	// Update each checkpoint with the full transcript
+diff --git a/cmd/entire/cli/strategy/manual_commit_session.go b/cmd/entire/cli/strategy/manual_commit_session.go
+index fb3c6931bd..1d8092a598 100644
+--- a/cmd/entire/cli/strategy/manual_commit_session.go
++++ b/cmd/entire/cli/strategy/manual_commit_session.go
+@@ -191,7 +191,7 @@ func (s *ManualCommitStrategy) CountOtherActiveSessionsWithCheckpoints(ctx conte
+ // A partial state may exist if the concurrent session warning was shown.
+ // agentType is the human-readable name of the agent (e.g., "Claude Code").
+ // transcriptPath is the path to the live transcript file (for mid-session commit detection).
+-// userPrompt is the user's prompt text (stored truncated as FirstPrompt for display).
++// userPrompt is the user's prompt text (stored truncated as LastPrompt for display).
+ func (s *ManualCommitStrategy) initializeSession(ctx context.Context, repo *git.Repository, sessionID string, agentType types.AgentType, transcriptPath string, userPrompt string, model string) (*SessionState, error) {
+ 	head, err := repo.Head()
+ 	if err != nil {
+@@ -239,7 +239,7 @@ func (s *ManualCommitStrategy) initializeSession(ctx context.Context, repo *git.
+ 		AgentType:             agentType,
+ 		ModelName:             model,
+ 		TranscriptPath:        transcriptPath,
+-		FirstPrompt:           truncatePromptForStorage(userPrompt),
++		LastPrompt:            truncatePromptForStorage(userPrompt),
+ 	}
+ 
+ 	if err := s.saveSessionState(ctx, state); err != nil {
+diff --git a/cmd/entire/cli/strategy/manual_commit_test.go b/cmd/entire/cli/strategy/manual_commit_test.go
+index 28eaaa8ec2..9e6a47030a 100644
+--- a/cmd/entire/cli/strategy/manual_commit_test.go
++++ b/cmd/entire/cli/strategy/manual_commit_test.go
+@@ -2979,6 +2979,11 @@ func TestCondenseSession_GeminiTranscript(t *testing.T) {
+ 		t.Fatalf("failed to write transcript: %v", err)
+ 	}
+ 
++	// Write prompt.txt (simulating what lifecycle does at turn start / turn end)
++	if err := os.WriteFile(filepath.Join(metadataDirAbs, paths.PromptFileName), []byte("Create a new file"), 0o644); err != nil {
++		t.Fatalf("failed to write prompt file: %v", err)
++	}
++
+ 	// Create modified file
+ 	if err := os.WriteFile(testFile, []byte("modified by gemini"), 0o644); err != nil {
+ 		t.Fatalf("failed to modify file: %v", err)
+@@ -3133,6 +3138,11 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {
+ 		t.Fatalf("failed to write transcript: %v", err)
+ 	}
+ 
++	// Write prompt.txt for checkpoint 1 (simulating what lifecycle does)
++	if err := os.WriteFile(filepath.Join(metadataDirAbs, paths.PromptFileName), []byte("Add a main function"), 0o644); err != nil {
++		t.Fatalf("failed to write prompt file: %v", err)
++	}
++
+ 	// Modify file for checkpoint 1
+ 	if err := os.WriteFile(testFile, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+ 		t.Fatalf("failed to modify file: %v", err)
+@@ -3202,6 +3212,12 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {
+ 		t.Fatalf("failed to update transcript: %v", err)
+ 	}
+ 
++	// Simulate condensation clearing prompt.txt (condenseAndUpdateState does this),
++	// then lifecycle appending the new prompt at turn start.
++	if err := os.WriteFile(filepath.Join(metadataDirAbs, paths.PromptFileName), []byte("Now add error handling"), 0o644); err != nil {
++		t.Fatalf("failed to write prompt file: %v", err)
++	}
++
+ 	// Modify file for checkpoint 2
+ 	if err := os.WriteFile(testFile, []byte("package main\n\nfunc main() {\n\tif err := run(); err != nil {\n\t\tpanic(err)\n\t}\n}\n"), 0o644); err != nil {
+ 		t.Fatalf("failed to modify file: %v", err)
+diff --git a/cmd/entire/cli/strategy/manual_commit_types.go b/cmd/entire/cli/strategy/manual_commit_types.go
+index 2fb7470cb8..65d490157d 100644
+--- a/cmd/entire/cli/strategy/manual_commit_types.go
++++ b/cmd/entire/cli/strategy/manual_commit_types.go
+@@ -14,14 +14,14 @@ const (
+ 	// logsOnlyScanLimit is the maximum number of commits to scan for logs-only points.
+ 	logsOnlyScanLimit = 50
+ 
+-	// maxFirstPromptRunes is the maximum rune length for FirstPrompt stored in session state.
+-	maxFirstPromptRunes = 100
++	// maxLastPromptRunes is the maximum rune length for LastPrompt stored in session state.
++	maxLastPromptRunes = 100
+ )
+ 
+ // truncatePromptForStorage collapses whitespace and truncates a user prompt
+-// for storage in FirstPrompt fields.
++// for storage in LastPrompt.
+ func truncatePromptForStorage(prompt string) string {
+-	return stringutil.TruncateRunes(stringutil.CollapseWhitespace(prompt), maxFirstPromptRunes, "...")
++	return stringutil.TruncateRunes(stringutil.CollapseWhitespace(prompt), maxLastPromptRunes, "...")
+ }
+ 
+ // SessionState is an alias for session.State.

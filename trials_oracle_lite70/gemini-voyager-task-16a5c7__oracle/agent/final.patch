@@ -1,0 +1,409 @@
+diff --git a/src/features/export/services/DeepResearchPDFPrintService.ts b/src/features/export/services/DeepResearchPDFPrintService.ts
+index 9358d624e..ff169b2a6 100644
+--- a/src/features/export/services/DeepResearchPDFPrintService.ts
++++ b/src/features/export/services/DeepResearchPDFPrintService.ts
+@@ -171,7 +171,7 @@ export class DeepResearchPDFPrintService {
+           <div class="gv-dr-print-report">${bodyHtml}</div>
+         </div>
+         <div class="gv-dr-print-footer">
+-          <p>Exported from <a href="https://github.com/Nagi-ovo/gemini-voyager">Gemini Voyager</a></p>
++          <p>Exported from <a href="https://github.com/Nagi-ovo/gemini-voyager">Voyager</a></p>
+           <p>Generated on ${this.escapeHTML(date)}</p>
+         </div>
+       </div>
+diff --git a/src/features/export/services/ImageExportService.ts b/src/features/export/services/ImageExportService.ts
+index 877a3dc38..ce04efd83 100644
+--- a/src/features/export/services/ImageExportService.ts
++++ b/src/features/export/services/ImageExportService.ts
+@@ -154,7 +154,7 @@ export class ImageExportService {
+ 
+     const footerHtml = `
+       <footer class="gv-image-export-footer">
+-        <div>Exported from Gemini Voyager</div>
++        <div>Exported from Voyager</div>
+         <div>Generated on ${this.escapeHTML(date)}</div>
+       </footer>
+     `;
+@@ -293,7 +293,7 @@ export class ImageExportService {
+ 
+     const footerHtml = `
+       <footer class="gv-image-export-footer">
+-        <div>Exported from Gemini Voyager</div>
++        <div>Exported from Voyager</div>
+         <div>Generated on ${this.escapeHTML(date)}</div>
+       </footer>
+     `;
+diff --git a/src/features/export/services/MarkdownFormatter.ts b/src/features/export/services/MarkdownFormatter.ts
+index ce5253d80..dc1044933 100644
+--- a/src/features/export/services/MarkdownFormatter.ts
++++ b/src/features/export/services/MarkdownFormatter.ts
+@@ -226,7 +226,7 @@ export class MarkdownFormatter {
+    */
+   private static formatFooter(metadata: ConversationMetadata): string {
+     return [
+-      `*Exported from [Gemini Voyager](https://github.com/Nagi-ovo/gemini-voyager)*`,
++      `*Exported from [Voyager](https://github.com/Nagi-ovo/gemini-voyager)*`,
+       `*Generated on ${this.formatDate(metadata.exportedAt)}*`,
+     ].join('  \n'); // Two spaces for line break
+   }
+diff --git a/src/features/export/services/PDFPrintService.ts b/src/features/export/services/PDFPrintService.ts
+index 774576665..f36f860cd 100644
+--- a/src/features/export/services/PDFPrintService.ts
++++ b/src/features/export/services/PDFPrintService.ts
+@@ -624,7 +624,7 @@ export class PDFPrintService {
+   private static renderFooter(metadata: ConversationMetadata): string {
+     return `
+       <div class="gv-print-footer">
+-        <p>Exported from <a href="https://github.com/Nagi-ovo/gemini-voyager">Gemini Voyager</a> • ${metadata.count} conversation turns</p>
++        <p>Exported from <a href="https://github.com/Nagi-ovo/gemini-voyager">Voyager</a> • ${metadata.count} conversation turns</p>
+         <p>Generated on ${this.formatDate(metadata.exportedAt)}</p>
+       </div>
+     `;
+diff --git a/src/features/export/services/__tests__/MarkdownFormatter.test.ts b/src/features/export/services/__tests__/MarkdownFormatter.test.ts
+index 412fc7478..26937e9ff 100644
+--- a/src/features/export/services/__tests__/MarkdownFormatter.test.ts
++++ b/src/features/export/services/__tests__/MarkdownFormatter.test.ts
+@@ -79,7 +79,7 @@ describe('MarkdownFormatter', () => {
+     it('should include footer', () => {
+       const markdown = MarkdownFormatter.format(mockTurns, mockMetadata);
+ 
+-      expect(markdown).toContain('Gemini Voyager');
++      expect(markdown).toContain('Voyager');
+       expect(markdown).toContain('Generated on');
+     });
+ 
+diff --git a/src/locales/ar/messages.json b/src/locales/ar/messages.json
+index 55cbab252..213b38af2 100644
+--- a/src/locales/ar/messages.json
++++ b/src/locales/ar/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "هل أعجبك Gemini Voyager؟ تقييمك على متجر Chrome الإلكتروني يساعد الآخرين على اكتشافه!",
++    "message": "هل أعجبك Voyager؟ تقييمك على متجر Chrome الإلكتروني يساعد الآخرين على اكتشافه!",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/en/messages.json b/src/locales/en/messages.json
+index 2bc2735d5..ecabc081c 100644
+--- a/src/locales/en/messages.json
++++ b/src/locales/en/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1316,7 +1316,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "Love Gemini Voyager? A quick rating on the Chrome Web Store makes a huge difference!",
++    "message": "Love Voyager? A quick rating on the Chrome Web Store makes a huge difference!",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/es/messages.json b/src/locales/es/messages.json
+index 13920e404..05cd6388e 100644
+--- a/src/locales/es/messages.json
++++ b/src/locales/es/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "¿Te gusta Gemini Voyager? ¡Una valoración en la Chrome Web Store ayuda a otros a descubrirlo!",
++    "message": "¿Te gusta Voyager? ¡Una valoración en la Chrome Web Store ayuda a otros a descubrirlo!",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/fr/messages.json b/src/locales/fr/messages.json
+index 15fc68cf7..e22535d8c 100644
+--- a/src/locales/fr/messages.json
++++ b/src/locales/fr/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "Vous aimez Gemini Voyager ? Une note sur le Chrome Web Store aide d'autres utilisateurs à le découvrir !",
++    "message": "Vous aimez Voyager ? Une note sur le Chrome Web Store aide d'autres utilisateurs à le découvrir !",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/ja/messages.json b/src/locales/ja/messages.json
+index 295fbbe8b..b28d3f501 100644
+--- a/src/locales/ja/messages.json
++++ b/src/locales/ja/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "Gemini Voyager を気に入っていただけましたか？Chrome ウェブストアでの評価が大きな励みになります！",
++    "message": "Voyager を気に入っていただけましたか？Chrome ウェブストアでの評価が大きな励みになります！",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/ko/messages.json b/src/locales/ko/messages.json
+index 4e9e174fa..6acc4501c 100644
+--- a/src/locales/ko/messages.json
++++ b/src/locales/ko/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "Gemini Voyager가 마음에 드시나요? Chrome 웹 스토어에 평점을 남겨 더 많은 분들이 발견할 수 있게 해주세요!",
++    "message": "Voyager가 마음에 드시나요? Chrome 웹 스토어에 평점을 남겨 더 많은 분들이 발견할 수 있게 해주세요!",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/pt/messages.json b/src/locales/pt/messages.json
+index bcbab156d..6d193411a 100644
+--- a/src/locales/pt/messages.json
++++ b/src/locales/pt/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "Gosta do Gemini Voyager? Uma avaliação na Chrome Web Store ajuda outros a descobri-lo!",
++    "message": "Gosta do Voyager? Uma avaliação na Chrome Web Store ajuda outros a descobri-lo!",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/ru/messages.json b/src/locales/ru/messages.json
+index 6b955069f..0313a0f66 100644
+--- a/src/locales/ru/messages.json
++++ b/src/locales/ru/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Extension name"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "Language label"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "Prompt Manager title"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "Нравится Gemini Voyager? Оценка в Chrome Web Store помогает другим пользователям найти расширение!",
++    "message": "Нравится Voyager? Оценка в Chrome Web Store помогает другим пользователям найти расширение!",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/zh/messages.json b/src/locales/zh/messages.json
+index 16939cfc0..e7cbe536b 100644
+--- a/src/locales/zh/messages.json
++++ b/src/locales/zh/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "扩展程序名称"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "语言标签"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "面板标题"
+   },
+   "pm_add": {
+@@ -1316,7 +1316,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "觉得 Gemini Voyager 好用吗？在 Chrome 应用商店给个好评，能帮助更多人发现它！",
++    "message": "觉得 Voyager 好用吗？在 Chrome 应用商店给个好评，能帮助更多人发现它！",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/locales/zh_TW/messages.json b/src/locales/zh_TW/messages.json
+index 37695f01f..79a511e74 100644
+--- a/src/locales/zh_TW/messages.json
++++ b/src/locales/zh_TW/messages.json
+@@ -1,6 +1,6 @@
+ {
+   "extName": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "擴充功能名稱"
+   },
+   "extDescription": {
+@@ -52,7 +52,7 @@
+     "description": "語言標籤"
+   },
+   "pm_title": {
+-    "message": "Gemini Voyager",
++    "message": "Voyager",
+     "description": "面板標題"
+   },
+   "pm_add": {
+@@ -1308,7 +1308,7 @@
+     "description": "Changelog annotation pointing to docs icon"
+   },
+   "changelog_rate_chrome": {
+-    "message": "覺得 Gemini Voyager 好用嗎？在 Chrome 線上應用程式商店給個好評，幫助更多人發現它！",
++    "message": "覺得 Voyager 好用嗎？在 Chrome 線上應用程式商店給個好評，幫助更多人發現它！",
+     "description": "Chrome Web Store rating prompt in changelog modal"
+   },
+   "changelog_rate_chrome_cta": {
+diff --git a/src/pages/content/deepResearch/formatter.ts b/src/pages/content/deepResearch/formatter.ts
+index 4dd081585..d1c457f28 100644
+--- a/src/pages/content/deepResearch/formatter.ts
++++ b/src/pages/content/deepResearch/formatter.ts
+@@ -154,7 +154,7 @@ export async function formatToMarkdown(content: ThinkingContent): Promise<string
+ 
+   // Footer
+   parts.push('\n---\n');
+-  parts.push('*Generated by [Gemini Voyager](https://github.com/Nagi-ovo/gemini-voyager)*');
++  parts.push('*Generated by [Voyager](https://github.com/Nagi-ovo/gemini-voyager)*');
+ 
+   return parts.join('\n');
+ }
+diff --git a/src/pages/content/prompt/index.ts b/src/pages/content/prompt/index.ts
+index 7f053b11d..070765f8e 100644
+--- a/src/pages/content/prompt/index.ts
++++ b/src/pages/content/prompt/index.ts
+@@ -475,7 +475,7 @@ export async function startPromptManager(): Promise<{ destroy: () => void }> {
+     const titleRow = createEl('div', 'gv-pm-title-row');
+     const title = createEl('div', 'gv-pm-title');
+     const titleText = document.createElement('span');
+-    titleText.textContent = 'Gemini Voyager';
++    titleText.textContent = 'Voyager';
+     title.appendChild(titleText);
+ 
+     const manifestVersion = chrome?.runtime?.getManifest?.()?.version;
+@@ -959,7 +959,7 @@ export async function startPromptManager(): Promise<{ destroy: () => void }> {
+ 
+     function refreshUITexts(): void {
+       // Keep custom icon + label
+-      titleText.textContent = 'Gemini Voyager';
++      titleText.textContent = 'Voyager';
+       addBtn.textContent = i18n.t('pm_add');
+       searchInput.placeholder = i18n.t('pm_search_placeholder');
+       importBtn.textContent = i18n.t('pm_import');

@@ -1,0 +1,351 @@
+diff --git a/api-reference/README.md b/api-reference/README.md
+index b0343f44e62..ef3537d6b73 100644
+--- a/api-reference/README.md
++++ b/api-reference/README.md
+@@ -45,4 +45,4 @@ npx @mintlify/scraping@latest openapi-file v1/openapi_spec_v1.json  -o v1
+ This will generate files in [api-reference](api-reference) folder. These routes should be added to the [mint.json](mint.json) file under navigation, under respective group.
+ 
+ 
+-NOTE: For working with V2 API reference, replace every occurence of `v1` with `v2` in above commands
+\ No newline at end of file
++NOTE: For working with V2 API reference, replace every occurrence of `v1` with `v2` in above commands
+\ No newline at end of file
+diff --git a/api-reference/v2/openapi_spec_v2.json b/api-reference/v2/openapi_spec_v2.json
+index b213d96accd..853b0c3c5b5 100644
+--- a/api-reference/v2/openapi_spec_v2.json
++++ b/api-reference/v2/openapi_spec_v2.json
+@@ -15711,6 +15711,11 @@
+               }
+             ],
+             "nullable": true
++          },
++          "charge_id": {
++            "type": "string",
++            "example": "ch_123abc456def789ghi012klmn",
++            "nullable": true
+           }
+         }
+       },
+diff --git a/crates/api_models/src/payments.rs b/crates/api_models/src/payments.rs
+index cb5480ed1f4..25e85c3f90c 100644
+--- a/crates/api_models/src/payments.rs
++++ b/crates/api_models/src/payments.rs
+@@ -1668,6 +1668,9 @@ pub struct PaymentAttemptRevenueRecoveryData {
+     /// Flag to find out whether an attempt was created by external or internal system.
+     #[schema(value_type = Option<TriggeredBy>, example = "internal")]
+     pub attempt_triggered_by: common_enums::TriggeredBy,
++    // stripe specific field used to identify duplicate attempts.
++    #[schema(value_type = Option<String>, example = "ch_123abc456def789ghi012klmn")]
++    pub charge_id: Option<String>,
+ }
+ 
+ #[derive(
+@@ -5812,22 +5815,34 @@ pub struct PaymentsResponse {
+ }
+ 
+ #[cfg(feature = "v2")]
+-impl PaymentsResponse {
++impl PaymentAttemptListResponse {
+     pub fn find_attempt_in_attempts_list_using_connector_transaction_id(
+-        self,
++        &self,
+         connector_transaction_id: &common_utils::types::ConnectorTransactionId,
+     ) -> Option<PaymentAttemptResponse> {
+-        self.attempts
+-            .as_ref()
+-            .and_then(|attempts| {
+-                attempts.iter().find(|attempt| {
+-                    attempt
+-                        .connector_payment_id
++        self.payment_attempt_list.iter().find_map(|attempt| {
++            attempt
++                .connector_payment_id
++                .as_ref()
++                .filter(|txn_id| *txn_id == connector_transaction_id)
++                .map(|_| attempt.clone())
++        })
++    }
++    pub fn find_attempt_in_attempts_list_using_charge_id(
++        &self,
++        charge_id: String,
++    ) -> Option<PaymentAttemptResponse> {
++        self.payment_attempt_list.iter().find_map(|attempt| {
++            attempt.feature_metadata.as_ref().and_then(|metadata| {
++                metadata.revenue_recovery.as_ref().and_then(|recovery| {
++                    recovery
++                        .charge_id
+                         .as_ref()
+-                        .is_some_and(|txn_id| txn_id == connector_transaction_id)
++                        .filter(|id| **id == charge_id)
++                        .map(|_| attempt.clone())
+                 })
+             })
+-            .cloned()
++        })
+     }
+ }
+ 
+diff --git a/crates/diesel_models/src/payment_attempt.rs b/crates/diesel_models/src/payment_attempt.rs
+index fa373d2305b..473502ad746 100644
+--- a/crates/diesel_models/src/payment_attempt.rs
++++ b/crates/diesel_models/src/payment_attempt.rs
+@@ -3708,6 +3708,8 @@ pub struct PaymentAttemptFeatureMetadata {
+ #[diesel(sql_type = diesel::pg::sql_types::Jsonb)]
+ pub struct PaymentAttemptRecoveryData {
+     pub attempt_triggered_by: common_enums::TriggeredBy,
++    // stripe specific field used to identify duplicate attempts.
++    pub charge_id: Option<String>,
+ }
+ #[cfg(feature = "v2")]
+ common_utils::impl_to_sql_from_sql_json!(PaymentAttemptFeatureMetadata);
+diff --git a/crates/hyperswitch_connectors/src/connectors/chargebee/transformers.rs b/crates/hyperswitch_connectors/src/connectors/chargebee/transformers.rs
+index 6436cd952e7..e0c84b4b459 100644
+--- a/crates/hyperswitch_connectors/src/connectors/chargebee/transformers.rs
++++ b/crates/hyperswitch_connectors/src/connectors/chargebee/transformers.rs
+@@ -509,6 +509,8 @@ impl TryFrom<ChargebeeWebhookBody> for revenue_recovery::RevenueRecoveryAttemptD
+             invoice_next_billing_time,
+             card_network: Some(payment_method_details.card.brand),
+             card_isin: Some(payment_method_details.card.iin),
++            // This field is none because it is specific to stripebilling.
++            charge_id: None,
+         })
+     }
+ }
+diff --git a/crates/hyperswitch_connectors/src/connectors/recurly/transformers.rs b/crates/hyperswitch_connectors/src/connectors/recurly/transformers.rs
+index 9ffd900dc45..70edb327ded 100644
+--- a/crates/hyperswitch_connectors/src/connectors/recurly/transformers.rs
++++ b/crates/hyperswitch_connectors/src/connectors/recurly/transformers.rs
+@@ -208,6 +208,8 @@ impl
+                     ),
+                     card_network: Some(item.response.payment_method.card_type),
+                     card_isin: Some(item.response.payment_method.first_six),
++                    // This none because this field is specific to stripebilling.
++                    charge_id: None,
+                 },
+             ),
+             ..item.data
+diff --git a/crates/hyperswitch_connectors/src/connectors/stripebilling/transformers.rs b/crates/hyperswitch_connectors/src/connectors/stripebilling/transformers.rs
+index 1352b874c8a..ca0875ba4ce 100644
+--- a/crates/hyperswitch_connectors/src/connectors/stripebilling/transformers.rs
++++ b/crates/hyperswitch_connectors/src/connectors/stripebilling/transformers.rs
+@@ -561,6 +561,7 @@ impl
+                     )),
+                     // Todo: Fetch Card issuer details. Generally in the other billing connector we are getting card_issuer using the card bin info. But stripe dosent provide any such details. We should find a way for stripe billing case
+                     card_isin: None,
++                    charge_id: Some(charge_details.charge_id.clone()),
+                 },
+             ),
+             ..item.data
+diff --git a/crates/hyperswitch_domain_models/src/payments.rs b/crates/hyperswitch_domain_models/src/payments.rs
+index 99ce4ca17f3..25e194ca391 100644
+--- a/crates/hyperswitch_domain_models/src/payments.rs
++++ b/crates/hyperswitch_domain_models/src/payments.rs
+@@ -746,6 +746,8 @@ impl PaymentIntent {
+             invoice_next_billing_time: None,
+             card_isin: None,
+             card_network: None,
++            // No charge id is present here since it is an internal payment and we didn't call connector yet.
++            charge_id: None,
+         })
+     }
+ 
+diff --git a/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs b/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs
+index 56e0942431c..c35fbc3163e 100644
+--- a/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs
++++ b/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs
+@@ -726,6 +726,12 @@ impl PaymentAttempt {
+             revenue_recovery: Some({
+                 PaymentAttemptRevenueRecoveryData {
+                     attempt_triggered_by: request.triggered_by,
++                    charge_id: request.feature_metadata.as_ref().and_then(|metadata| {
++                        metadata
++                            .revenue_recovery
++                            .as_ref()
++                            .and_then(|data| data.charge_id.clone())
++                    }),
+                 }
+             }),
+         };
+@@ -2781,6 +2787,8 @@ pub struct PaymentAttemptFeatureMetadata {
+ #[derive(Debug, Clone, serde::Serialize, PartialEq)]
+ pub struct PaymentAttemptRevenueRecoveryData {
+     pub attempt_triggered_by: common_enums::TriggeredBy,
++    // stripe specific field used to identify duplicate attempts.
++    pub charge_id: Option<String>,
+ }
+ 
+ #[cfg(feature = "v2")]
+@@ -2791,6 +2799,7 @@ impl From<&PaymentAttemptFeatureMetadata> for DieselPaymentAttemptFeatureMetadat
+                 .as_ref()
+                 .map(|recovery_data| DieselPassiveChurnRecoveryData {
+                     attempt_triggered_by: recovery_data.attempt_triggered_by,
++                    charge_id: recovery_data.charge_id.clone(),
+                 });
+         Self { revenue_recovery }
+     }
+@@ -2803,6 +2812,7 @@ impl From<DieselPaymentAttemptFeatureMetadata> for PaymentAttemptFeatureMetadata
+             item.revenue_recovery
+                 .map(|recovery_data| PaymentAttemptRevenueRecoveryData {
+                     attempt_triggered_by: recovery_data.attempt_triggered_by,
++                    charge_id: recovery_data.charge_id,
+                 });
+         Self { revenue_recovery }
+     }
+diff --git a/crates/hyperswitch_domain_models/src/revenue_recovery.rs b/crates/hyperswitch_domain_models/src/revenue_recovery.rs
+index 837d5d90839..0485644628a 100644
+--- a/crates/hyperswitch_domain_models/src/revenue_recovery.rs
++++ b/crates/hyperswitch_domain_models/src/revenue_recovery.rs
+@@ -52,6 +52,8 @@ pub struct RevenueRecoveryAttemptData {
+     pub card_network: Option<common_enums::CardNetwork>,
+     /// card isin
+     pub card_isin: Option<String>,
++    /// stripe specific id used to validate duplicate attempts in revenue recovery flow
++    pub charge_id: Option<String>,
+ }
+ 
+ /// This is unified struct for Revenue Recovery Invoice Data and it is constructed from billing connectors
+@@ -278,6 +280,7 @@ impl
+             invoice_next_billing_time: invoice_details.next_billing_at,
+             card_network: billing_connector_payment_details.card_network.clone(),
+             card_isin: billing_connector_payment_details.card_isin.clone(),
++            charge_id: billing_connector_payment_details.charge_id.clone(),
+         }
+     }
+ }
+diff --git a/crates/hyperswitch_domain_models/src/router_response_types/revenue_recovery.rs b/crates/hyperswitch_domain_models/src/router_response_types/revenue_recovery.rs
+index 8dd6aa2e74c..3df81e6b66d 100644
+--- a/crates/hyperswitch_domain_models/src/router_response_types/revenue_recovery.rs
++++ b/crates/hyperswitch_domain_models/src/router_response_types/revenue_recovery.rs
+@@ -32,6 +32,8 @@ pub struct BillingConnectorPaymentsSyncResponse {
+     pub card_network: Option<common_enums::CardNetwork>,
+     /// card isin
+     pub card_isin: Option<String>,
++    /// stripe specific id used to validate duplicate attempts.
++    pub charge_id: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone)]
+diff --git a/crates/router/src/core/payments/transformers.rs b/crates/router/src/core/payments/transformers.rs
+index 5d40a603cbb..65f526af2e3 100644
+--- a/crates/router/src/core/payments/transformers.rs
++++ b/crates/router/src/core/payments/transformers.rs
+@@ -4989,6 +4989,7 @@ impl
+         let revenue_recovery = feature_metadata.revenue_recovery.as_ref().map(|recovery| {
+             api_models::payments::PaymentAttemptRevenueRecoveryData {
+                 attempt_triggered_by: recovery.attempt_triggered_by,
++                charge_id: recovery.charge_id.clone(),
+             }
+         });
+         Self { revenue_recovery }
+diff --git a/crates/router/src/core/routing/helpers.rs b/crates/router/src/core/routing/helpers.rs
+index 1dd965a71ce..666d0020260 100644
+--- a/crates/router/src/core/routing/helpers.rs
++++ b/crates/router/src/core/routing/helpers.rs
+@@ -1539,7 +1539,7 @@ pub async fn push_metrics_with_update_window_for_contract_based_routing(
+                 routing_events::RoutingEngine::IntelligentRouter,
+                 routing_events::ApiMethod::Grpc)
+                 .change_context(errors::ApiErrorResponse::InternalServerError)
+-                .attach_printable("ContractRouting-Intelligent-Router: Failed to contruct RoutingEventsBuilder")?
++                .attach_printable("ContractRouting-Intelligent-Router: Failed to construct RoutingEventsBuilder")?
+                 .trigger_event(state, closure)
+                 .await
+                 .change_context(errors::ApiErrorResponse::InternalServerError)
+diff --git a/crates/router/src/core/webhooks/recovery_incoming.rs b/crates/router/src/core/webhooks/recovery_incoming.rs
+index cc4e08861ac..f13caeefb76 100644
+--- a/crates/router/src/core/webhooks/recovery_incoming.rs
++++ b/crates/router/src/core/webhooks/recovery_incoming.rs
+@@ -467,45 +467,49 @@ impl RevenueRecoveryAttempt {
+         )>,
+         errors::RevenueRecoveryError,
+     > {
+-        let attempt_response = Box::pin(payments::payments_core::<
+-            router_flow_types::payments::PSync,
+-            api_payments::PaymentsResponse,
+-            _,
+-            _,
+-            _,
+-            hyperswitch_domain_models::payments::PaymentStatusData<
+-                router_flow_types::payments::PSync,
+-            >,
+-        >(
+-            state.clone(),
+-            req_state.clone(),
+-            merchant_context.clone(),
+-            profile.clone(),
+-            payments::operations::PaymentGet,
+-            api_payments::PaymentsRetrieveRequest {
+-                force_sync: false,
+-                expand_attempts: true,
+-                param: None,
+-                all_keys_required: None,
+-                merchant_connector_details: None,
+-            },
+-            payment_intent.payment_id.clone(),
+-            payments::CallConnectorAction::Avoid,
+-            hyperswitch_domain_models::payments::HeaderPayload::default(),
+-        ))
+-        .await;
++        let attempt_response =
++            Box::pin(payments::payments_list_attempts_using_payment_intent_id::<
++                payments::operations::PaymentGetListAttempts,
++                api_payments::PaymentAttemptListResponse,
++                _,
++                payments::operations::payment_attempt_list::PaymentGetListAttempts,
++                hyperswitch_domain_models::payments::PaymentAttemptListData<
++                    payments::operations::PaymentGetListAttempts,
++                >,
++            >(
++                state.clone(),
++                req_state.clone(),
++                merchant_context.clone(),
++                profile.clone(),
++                payments::operations::PaymentGetListAttempts,
++                api_payments::PaymentAttemptListRequest {
++                    payment_intent_id: payment_intent.payment_id.clone(),
++                },
++                payment_intent.payment_id.clone(),
++                hyperswitch_domain_models::payments::HeaderPayload::default(),
++            ))
++            .await;
+         let response = match attempt_response {
+             Ok(services::ApplicationResponse::JsonWithHeaders((payments_response, _))) => {
+-                let final_attempt =
+-                    self.0
+-                        .connector_transaction_id
+-                        .as_ref()
+-                        .and_then(|transaction_id| {
+-                            payments_response
+-                                .find_attempt_in_attempts_list_using_connector_transaction_id(
+-                                    transaction_id,
+-                                )
+-                        });
++                let final_attempt = self
++                    .0
++                    .charge_id
++                    .as_ref()
++                    .map(|charge_id| {
++                        payments_response
++                            .find_attempt_in_attempts_list_using_charge_id(charge_id.clone())
++                    })
++                    .unwrap_or_else(|| {
++                        self.0
++                            .connector_transaction_id
++                            .as_ref()
++                            .and_then(|transaction_id| {
++                                payments_response
++                                    .find_attempt_in_attempts_list_using_connector_transaction_id(
++                                        transaction_id,
++                                    )
++                            })
++                    });
+                 let payment_attempt =
+                     final_attempt.map(|attempt_res| revenue_recovery::RecoveryPaymentAttempt {
+                         attempt_id: attempt_res.id.to_owned(),
+@@ -613,6 +617,7 @@ impl RevenueRecoveryAttempt {
+             revenue_recovery: Some(api_payments::PaymentAttemptRevenueRecoveryData {
+                 // Since we are recording the external paymenmt attempt, this is hardcoded to External
+                 attempt_triggered_by: triggered_by,
++                charge_id: self.0.charge_id.clone(),
+             }),
+         };
+ 

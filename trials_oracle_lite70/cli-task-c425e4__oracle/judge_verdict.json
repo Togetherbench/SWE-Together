@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "mise-tasks/lint/mise:10 — start delimiter changed from /^run = \"\"\"/ to /^[ \\t]*run = \"\"\"/; line 18 — closing delimiter changed from /^\"\"\"/ to /^[ \\t]*\"\"\"/. Manual test G1 confirms: indented \"\"\" block with 4 content lines detected (RC=1, output: 'mise.toml:6: multi-line script (4 lines) should be extracted')."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "mise-tasks/lint/mise:10 — start delimiter for ''' also updated to /^[ \\t]*run = '''/; line 18 — closing ''' updated to /^[ \\t]*'''/. Manual test G3 confirms: indented ''' block detected (RC=1, output: 'multi-line script (4 lines)')."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "mise-tasks/lint/mise:17-26 — closing delimiter check now comes BEFORE lines++, and 'next' skips the delimiter line. Manual test G5 confirms: 5 content lines reported as '(5 lines)', not '(6 lines)'."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "The /^[ \\t]*/ pattern includes zero-whitespace case. Manual test G4 confirms: non-indented block with 4 content lines detected (RC=1)."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "mise-tasks/lint/mise:20 — 'if (lines > 3)' threshold preserved. Manual test G2 confirms: 3-line block not flagged (RC=0, empty output)."
+    }
+  ],
+  "judge_notes": "Agent's patch is functionally identical to the oracle patch. All 5 behavioral gates pass when tested manually. The awk patterns now allow leading whitespace for both start and closing delimiters (\"\"\" and '''), the line count excludes the closing delimiter, non-indented blocks still work, and short blocks aren't flagged. Score = 0.50 + 0.125×4 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cli-task-c425e4",
+  "trial_id": "cli-task-c425e4__oracle",
+  "judge_elapsed_sec": 82.0,
+  "sandbox_id": "i5wxhn18pi1ftt8djjdz4",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

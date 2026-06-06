@@ -1,0 +1,57 @@
+diff --git a/library/train_util.py b/library/train_util.py
+index e5645cea..ac2e31a1 100644
+--- a/library/train_util.py
++++ b/library/train_util.py
+@@ -806,7 +806,7 @@ class BaseDataset(torch.utils.data.Dataset):
+         self.num_train_images = num_train_images
+         self.num_reg_images = num_reg_images
+ 
+-    def filter_registered_images_by_orig_resolution(self) -> int:
++    def filter_registered_images_by_orig_resolution(self, update_counts: bool = True) -> int:
+         if not self.has_orig_resolution_filter():
+             return 0
+ 
+@@ -819,7 +819,7 @@ class BaseDataset(torch.utils.data.Dataset):
+             del self.image_to_subset[image_key]
+             filtered_count += 1
+ 
+-        if filtered_count > 0:
++        if filtered_count > 0 and update_counts:
+             self.update_dataset_image_counts()
+ 
+         return filtered_count
+@@ -1951,7 +1951,7 @@ class BaseDataset(torch.utils.data.Dataset):
+ class DreamBoothDataset(BaseDataset):
+     IMAGE_INFO_CACHE_FILE = "metadata_cache.json"
+ 
+-    def register_regularization_images(
++    def register_balanced_regularization_images(
+         self, reg_infos: Sequence[Tuple[ImageInfo, DreamBoothSubset]], num_train_images: int
+     ) -> None:
+         if len(reg_infos) == 0 or num_train_images <= 0:
+@@ -1991,14 +1991,13 @@ class DreamBoothDataset(BaseDataset):
+         for info, subset in reg_infos:
+             info.num_repeats = subset.num_repeats
+ 
+-        self.register_regularization_images(reg_infos, num_train_images)
++        self.register_balanced_regularization_images(reg_infos, num_train_images)
+ 
+     def filter_registered_images_by_orig_resolution(self) -> int:
+-        filtered_count = super().filter_registered_images_by_orig_resolution()
++        filtered_count = super().filter_registered_images_by_orig_resolution(update_counts=not self.is_training_dataset)
+ 
+         if filtered_count > 0 and self.is_training_dataset:
+             self.rebalance_regularization_images()
+-            self.update_dataset_image_counts()
+ 
+         return filtered_count
+ 
+@@ -2282,7 +2281,7 @@ class DreamBoothDataset(BaseDataset):
+         if num_reg_images == 0:
+             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
+         else:
+-            self.register_regularization_images(reg_infos, num_train_images)
++            self.register_balanced_regularization_images(reg_infos, num_train_images)
+ 
+         self.num_reg_images = num_reg_images
+ 
