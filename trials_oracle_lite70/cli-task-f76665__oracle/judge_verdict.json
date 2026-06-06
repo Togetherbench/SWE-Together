@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "manual_commit_hooks.go:663 — 'if isActive && isRecentInteraction(lastInteraction) { return true }' short-circuits the overlap check for genuinely-active sessions. The shouldCondenseWithOverlapCheck signature now takes lastInteraction *time.Time, and callers at :601 and :624 pass state.LastInteractionTime."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "manual_commit_hooks.go:694 — 'const activeSessionInteractionThreshold = 24 * time.Hour'; manual_commit_hooks.go:698 — isRecentInteraction() checks lastInteraction != nil && time.Since(*lastInteraction) < activeSessionInteractionThreshold. Stale sessions (nil or old LastInteractionTime) fall through to the overlap check."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "phase_postcommit_test.go:2147-2248 — TestPostCommit_ActiveSession_DifferentFilesThanCommit_ShouldCondense: sets up ACTIVE session with FilesTouched=['.gitstats_cache.sqlite3'] and recent LastInteractionTime, commits different files (README.md, org_commit_activity.py), asserts condensation happens (entire/checkpoints/v1 branch exists). Test passes per test.sh reward=1.0."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "phase_postcommit_test.go:1712-1713 — staleTime := time.Now().Add(-48 * time.Hour); staleState.LastInteractionTime = &staleTime. phase_postcommit_test.go:1764-1765 — now := time.Now(); newState.LastInteractionTime = &now. Test passes per test.sh reward=1.0."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "Both integration and E2E tests added: integration_test/mid_session_commit_test.go:287-373 (TestShadowStrategy_MidTurnCommit_DifferentFilesThanCheckpoint) exercises Turn 1 Stop + Turn 2 mid-turn commit with different files; e2e/tests/mid_turn_commit_test.go:1-62 (TestMidTurnCommit_DifferentFilesThanPreviousTurn) is a full E2E test with agent prompts, including TODO comment about 'new agent validation' category per user Turn 10."
+    }
+  ],
+  "judge_notes": "All 5 goals met. The agent's patch exactly matches the oracle approach: (1) short-circuits overlap check for active+recent sessions, (2) adds 24h threshold via isRecentInteraction(), (3) adds unit regression test, (4) updates stale session test with proper timestamps, (5) adds both integration and E2E tests. test.sh confirms reward=1.0 with all FAIL_TO_PASS tests passing. Score = 0.36+0.36+0.09+0.09+0.10 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cli-task-f76665",
+  "trial_id": "cli-task-f76665__oracle",
+  "judge_elapsed_sec": 118.7,
+  "sandbox_id": "ihpazilwrn5z5grg3856t",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

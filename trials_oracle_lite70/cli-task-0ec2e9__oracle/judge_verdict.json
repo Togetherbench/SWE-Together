@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "lifecycle.go:302 — inside handleLifecycleTurnEnd, adds `relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))` within the `if changes != nil` block, merging git-status modified files as fallback."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "lifecycle.go:542 — inside handleLifecycleSubagentEnd, adds the same `relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))` within the `if changes != nil` block."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "state.go:330-348 — `mergeUnique(base, extra []string) []string` uses a `seen` map to deduplicate, appending only unseen elements from extra into base."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "state_test.go:701-764 — TestMergeUnique with 6 subtests: 'disjoint sets', 'overlapping sets', 'empty extra', 'empty base', 'both empty', 'identical sets'. All pass (test.sh reward=1.0)."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "transcript.go:170 changed from 'edit, write, patch' to 'edit, write'; transcript.go:190 changed from 'edit, write, patch' to 'edit, write'. Both stale 'patch' references removed."
+    }
+  ],
+  "judge_notes": "All 5 goals met. The agent's patch exactly matches the expected behavioral changes: mergeUnique helper in state.go, fallback merge in both handleLifecycleTurnEnd and handleLifecycleSubagentEnd in lifecycle.go, comprehensive unit tests in state_test.go, and stale 'patch' comment cleanup in transcript.go. test.sh confirms reward=1.0 with all FAIL_TO_PASS tests passing. Score = 0.35+0.35+0.10+0.10+0.10 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cli-task-0ec2e9",
+  "trial_id": "cli-task-0ec2e9__oracle",
+  "judge_elapsed_sec": 120.2,
+  "sandbox_id": "imctxz4q32tgy5xhtxfoo",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

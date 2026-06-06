@@ -1,0 +1,38 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "clipboard-image.ts:194-199 — readClipboardImage checks !isSupportedImageMimeType(image.mimeType) and calls convertToPng(image.bytes) for unsupported formats, returning { bytes: pngBytes, mimeType: 'image/png' }. The convertToPng function (lines 66-82) uses Photon to decode and re-encode as PNG. Test confirms BMP → PNG conversion with PNG magic bytes."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "All conversion logic (isSupportedImageMimeType at line 57, convertToPng at line 66, and the conversion check at line 194) resides in clipboard-image.ts. No changes to interactive-mode.ts or any other consumer. Agent patch only touches clipboard-image.ts, clipboard-image.test.ts, clipboard-image-bmp-conversion.test.ts, and CHANGELOG.md."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "clipboard-image-bmp-conversion.test.ts:47-64 — test 'converts BMP to PNG on Wayland/WSLg' creates a 1x1 BMP, mocks wl-paste to return it with image/bmp mime type, calls readClipboardImage with Wayland env, asserts mimeType === 'image/png' and checks PNG magic bytes (0x89, 0x50, 0x4E, 0x47). Test passes: grep of test_run.log confirms '✓ ... converts BMP to PNG on Wayland/WSLg 41ms'."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "CHANGELOG.md:9-11 — under [Unreleased] / ### Fixed: 'Fixed clipboard image paste on WSL2/WSLg writing invalid PNG files when clipboard provides `image/bmp` format. BMP images are now converted to PNG before saving. ([#1112](...) by [@lightningRalf](...))'"
+    }
+  ],
+  "judge_notes": "All 4 goals met. Score = 0.58 + 0.14 + 0.14 + 0.14 = 1.00. The agent correctly placed BMP-to-PNG conversion inside readClipboardImage in clipboard-image.ts (using Photon, matching the oracle approach), added a well-structured test that passes (both in the new bmp-conversion test file and a rewritten clipboard-image.test.ts), and added a proper changelog entry with attribution. The test.sh reward of 0.0 is a test-harness artifact: the vitest parser returns full path-prefixed test names but the F2P key is the short name only — the test itself passes as confirmed by grepping the log output.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "pi-mono-auto-90748a5d",
+  "trial_id": "pi-mono-auto-90748a5d__oracle",
+  "judge_elapsed_sec": 147.8,
+  "sandbox_id": "i7s5wxneb6ebmhoai8tpi",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 4
+}

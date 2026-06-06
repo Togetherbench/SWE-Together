@@ -1,0 +1,605 @@
+diff --git a/api-reference/v1/openapi_spec_v1.json b/api-reference/v1/openapi_spec_v1.json
+index ee3ac6ea3ac..e3db673db67 100644
+--- a/api-reference/v1/openapi_spec_v1.json
++++ b/api-reference/v1/openapi_spec_v1.json
+@@ -28661,6 +28661,11 @@
+               }
+             ],
+             "nullable": true
++          },
++          "billing_processor_id": {
++            "type": "string",
++            "description": "Merchant Connector id to be stored for billing_processor connector",
++            "nullable": true
+           }
+         },
+         "additionalProperties": false
+@@ -29013,6 +29018,11 @@
+               }
+             ],
+             "nullable": true
++          },
++          "billing_processor_id": {
++            "type": "string",
++            "description": "Merchant Connector id to be stored for billing_processor connector",
++            "nullable": true
+           }
+         }
+       },
+diff --git a/api-reference/v2/openapi_spec_v2.json b/api-reference/v2/openapi_spec_v2.json
+index 8c768053eb1..45110efc24f 100644
+--- a/api-reference/v2/openapi_spec_v2.json
++++ b/api-reference/v2/openapi_spec_v2.json
+@@ -22274,6 +22274,11 @@
+             ],
+             "default": "skip",
+             "nullable": true
++          },
++          "billing_processor_id": {
++            "type": "string",
++            "description": "Merchant Connector id to be stored for billing_processor connector",
++            "nullable": true
+           }
+         },
+         "additionalProperties": false
+@@ -22576,6 +22581,11 @@
+               }
+             ],
+             "nullable": true
++          },
++          "billing_processor_id": {
++            "type": "string",
++            "description": "Merchant Connector id to be stored for billing_processor connector",
++            "nullable": true
+           }
+         }
+       },
+diff --git a/crates/api_models/src/admin.rs b/crates/api_models/src/admin.rs
+index e0483b19503..08b3a08f619 100644
+--- a/crates/api_models/src/admin.rs
++++ b/crates/api_models/src/admin.rs
+@@ -2210,6 +2210,10 @@ pub struct ProfileCreate {
+ 
+     /// External Vault Connector Details
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
++
++    /// Merchant Connector id to be stored for billing_processor connector
++    #[schema(value_type = Option<String>)]
++    pub billing_processor_id: Option<id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[nutype::nutype(
+@@ -2367,6 +2371,10 @@ pub struct ProfileCreate {
+     /// Enable split payments, i.e., split the amount between multiple payment methods
+     #[schema(value_type = Option<SplitTxnsEnabled>, default = "skip")]
+     pub split_txns_enabled: Option<common_enums::SplitTxnsEnabled>,
++
++    /// Merchant Connector id to be stored for billing_processor connector
++    #[schema(value_type = Option<String>)]
++    pub billing_processor_id: Option<id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -2567,6 +2575,10 @@ pub struct ProfileResponse {
+ 
+     /// External Vault Connector Details
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
++
++    /// Merchant Connector id to be stored for billing_processor connector
++    #[schema(value_type = Option<String>)]
++    pub billing_processor_id: Option<id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v2")]
+@@ -2737,6 +2749,10 @@ pub struct ProfileResponse {
+     #[schema(value_type = Option<RevenueRecoveryAlgorithmType>, example = "cascading")]
+     pub revenue_recovery_retry_algorithm_type:
+         Option<common_enums::enums::RevenueRecoveryAlgorithmType>,
++
++    /// Merchant Connector id to be stored for billing_processor connector
++    #[schema(value_type = Option<String>)]
++    pub billing_processor_id: Option<id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -2927,6 +2943,10 @@ pub struct ProfileUpdate {
+ 
+     /// External Vault Connector Details
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
++
++    /// Merchant Connector id to be stored for billing_processor connector
++    #[schema(value_type = Option<String>)]
++    pub billing_processor_id: Option<id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v2")]
+@@ -3079,6 +3099,10 @@ pub struct ProfileUpdate {
+     /// Enable split payments, i.e., split the amount between multiple payment methods
+     #[schema(value_type = Option<SplitTxnsEnabled>, default = "skip")]
+     pub split_txns_enabled: Option<common_enums::SplitTxnsEnabled>,
++
++    /// Merchant Connector id to be stored for billing_processor connector
++    #[schema(value_type = Option<String>)]
++    pub billing_processor_id: Option<id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema)]
+diff --git a/crates/diesel_models/src/business_profile.rs b/crates/diesel_models/src/business_profile.rs
+index 17641cee59b..d0e44927127 100644
+--- a/crates/diesel_models/src/business_profile.rs
++++ b/crates/diesel_models/src/business_profile.rs
+@@ -80,6 +80,7 @@ pub struct Profile {
+     pub dispute_polling_interval: Option<primitive_wrappers::DisputePollingIntervalInHours>,
+     pub is_manual_retry_enabled: Option<bool>,
+     pub always_enable_overcapture: Option<primitive_wrappers::AlwaysEnableOvercaptureBool>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+     pub is_external_vault_enabled: Option<bool>,
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
+ }
+@@ -141,6 +142,7 @@ pub struct ProfileNew {
+     pub merchant_country_code: Option<common_types::payments::MerchantCountryCode>,
+     pub dispute_polling_interval: Option<primitive_wrappers::DisputePollingIntervalInHours>,
+     pub is_manual_retry_enabled: Option<bool>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+     pub is_external_vault_enabled: Option<bool>,
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
+ }
+@@ -203,6 +205,7 @@ pub struct ProfileUpdateInternal {
+     pub dispute_polling_interval: Option<primitive_wrappers::DisputePollingIntervalInHours>,
+     pub is_manual_retry_enabled: Option<bool>,
+     pub always_enable_overcapture: Option<primitive_wrappers::AlwaysEnableOvercaptureBool>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+     pub is_external_vault_enabled: Option<bool>,
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
+ }
+@@ -264,6 +267,7 @@ impl ProfileUpdateInternal {
+             always_enable_overcapture,
+             is_external_vault_enabled,
+             external_vault_connector_details,
++            billing_processor_id,
+         } = self;
+         Profile {
+             profile_id: source.profile_id,
+@@ -357,6 +361,7 @@ impl ProfileUpdateInternal {
+                 .or(source.is_external_vault_enabled),
+             external_vault_connector_details: external_vault_connector_details
+                 .or(source.external_vault_connector_details),
++            billing_processor_id: billing_processor_id.or(source.billing_processor_id),
+         }
+     }
+ }
+@@ -423,6 +428,7 @@ pub struct Profile {
+     pub dispute_polling_interval: Option<primitive_wrappers::DisputePollingIntervalInHours>,
+     pub is_manual_retry_enabled: Option<bool>,
+     pub always_enable_overcapture: Option<primitive_wrappers::AlwaysEnableOvercaptureBool>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+     pub is_external_vault_enabled: Option<bool>,
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
+     pub routing_algorithm_id: Option<common_utils::id_type::RoutingId>,
+@@ -497,6 +503,7 @@ pub struct ProfileNew {
+     pub merchant_business_country: Option<common_enums::CountryAlpha2>,
+     pub merchant_category_code: Option<common_enums::MerchantCategoryCode>,
+     pub merchant_country_code: Option<common_types::payments::MerchantCountryCode>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+     pub routing_algorithm_id: Option<common_utils::id_type::RoutingId>,
+     pub order_fulfillment_time: Option<i64>,
+     pub order_fulfillment_time_origin: Option<common_enums::OrderFulfillmentTimeOrigin>,
+@@ -558,6 +565,7 @@ pub struct ProfileUpdateInternal {
+     pub merchant_business_country: Option<common_enums::CountryAlpha2>,
+     pub merchant_category_code: Option<common_enums::MerchantCategoryCode>,
+     pub merchant_country_code: Option<common_types::payments::MerchantCountryCode>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+     pub routing_algorithm_id: Option<common_utils::id_type::RoutingId>,
+     pub order_fulfillment_time: Option<i64>,
+     pub order_fulfillment_time_origin: Option<common_enums::OrderFulfillmentTimeOrigin>,
+@@ -604,6 +612,7 @@ impl ProfileUpdateInternal {
+             always_collect_shipping_details_from_wallet_connector,
+             tax_connector_id,
+             is_tax_connector_enabled,
++            billing_processor_id,
+             routing_algorithm_id,
+             order_fulfillment_time,
+             order_fulfillment_time_origin,
+@@ -729,6 +738,7 @@ impl ProfileUpdateInternal {
+             split_txns_enabled: split_txns_enabled.or(source.split_txns_enabled),
+             is_manual_retry_enabled: None,
+             always_enable_overcapture: None,
++            billing_processor_id: billing_processor_id.or(source.billing_processor_id),
+         }
+     }
+ }
+diff --git a/crates/diesel_models/src/schema.rs b/crates/diesel_models/src/schema.rs
+index 9316c470d99..0f4732577d7 100644
+--- a/crates/diesel_models/src/schema.rs
++++ b/crates/diesel_models/src/schema.rs
+@@ -257,6 +257,8 @@ diesel::table! {
+         dispute_polling_interval -> Nullable<Int4>,
+         is_manual_retry_enabled -> Nullable<Bool>,
+         always_enable_overcapture -> Nullable<Bool>,
++        #[max_length = 64]
++        billing_processor_id -> Nullable<Varchar>,
+         is_external_vault_enabled -> Nullable<Bool>,
+         external_vault_connector_details -> Nullable<Jsonb>,
+     }
+diff --git a/crates/diesel_models/src/schema_v2.rs b/crates/diesel_models/src/schema_v2.rs
+index 5433c9ca5ad..e745eff97d7 100644
+--- a/crates/diesel_models/src/schema_v2.rs
++++ b/crates/diesel_models/src/schema_v2.rs
+@@ -252,6 +252,8 @@ diesel::table! {
+         dispute_polling_interval -> Nullable<Int4>,
+         is_manual_retry_enabled -> Nullable<Bool>,
+         always_enable_overcapture -> Nullable<Bool>,
++        #[max_length = 64]
++        billing_processor_id -> Nullable<Varchar>,
+         is_external_vault_enabled -> Nullable<Bool>,
+         external_vault_connector_details -> Nullable<Jsonb>,
+         #[max_length = 64]
+diff --git a/crates/hyperswitch_domain_models/src/business_profile.rs b/crates/hyperswitch_domain_models/src/business_profile.rs
+index 3672db0dd16..095e2a392c5 100644
+--- a/crates/hyperswitch_domain_models/src/business_profile.rs
++++ b/crates/hyperswitch_domain_models/src/business_profile.rs
+@@ -85,6 +85,7 @@ pub struct Profile {
+     pub is_manual_retry_enabled: Option<bool>,
+     pub always_enable_overcapture: Option<primitive_wrappers::AlwaysEnableOvercaptureBool>,
+     pub external_vault_details: ExternalVaultDetails,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -241,6 +242,7 @@ pub struct ProfileSetter {
+     pub is_manual_retry_enabled: Option<bool>,
+     pub always_enable_overcapture: Option<primitive_wrappers::AlwaysEnableOvercaptureBool>,
+     pub external_vault_details: ExternalVaultDetails,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -307,6 +309,7 @@ impl From<ProfileSetter> for Profile {
+             is_manual_retry_enabled: value.is_manual_retry_enabled,
+             always_enable_overcapture: value.always_enable_overcapture,
+             external_vault_details: value.external_vault_details,
++            billing_processor_id: value.billing_processor_id,
+         }
+     }
+ }
+@@ -376,6 +379,7 @@ pub struct ProfileGeneralUpdate {
+     pub always_enable_overcapture: Option<primitive_wrappers::AlwaysEnableOvercaptureBool>,
+     pub is_external_vault_enabled: Option<common_enums::ExternalVaultEnabled>,
+     pub external_vault_connector_details: Option<ExternalVaultConnectorDetails>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -463,6 +467,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                     always_enable_overcapture,
+                     is_external_vault_enabled,
+                     external_vault_connector_details,
++                    billing_processor_id,
+                 } = *update;
+ 
+                 let is_external_vault_enabled = match is_external_vault_enabled {
+@@ -528,6 +533,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                     always_enable_overcapture,
+                     is_external_vault_enabled,
+                     external_vault_connector_details,
++                    billing_processor_id,
+                 }
+             }
+             ProfileUpdate::RoutingAlgorithmUpdate {
+@@ -588,6 +594,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::DynamicRoutingAlgorithmUpdate {
+                 dynamic_routing_algorithm,
+@@ -645,6 +652,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::ExtendedCardInfoUpdate {
+                 is_extended_card_info_enabled,
+@@ -702,6 +710,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::ConnectorAgnosticMitUpdate {
+                 is_connector_agnostic_mit_enabled,
+@@ -759,6 +768,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::NetworkTokenizationUpdate {
+                 is_network_tokenization_enabled,
+@@ -816,6 +826,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::CardTestingSecretKeyUpdate {
+                 card_testing_secret_key,
+@@ -873,6 +884,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::AcquirerConfigMapUpdate {
+                 acquirer_config_map,
+@@ -930,6 +942,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 always_enable_overcapture: None,
+                 is_external_vault_enabled: None,
+                 external_vault_connector_details: None,
++                billing_processor_id: None,
+             },
+         }
+     }
+@@ -1010,6 +1023,7 @@ impl super::behaviour::Conversion for Profile {
+             always_enable_overcapture: self.always_enable_overcapture,
+             is_external_vault_enabled,
+             external_vault_connector_details,
++            billing_processor_id: self.billing_processor_id,
+         })
+     }
+ 
+@@ -1133,6 +1147,7 @@ impl super::behaviour::Conversion for Profile {
+             is_manual_retry_enabled: item.is_manual_retry_enabled,
+             always_enable_overcapture: item.always_enable_overcapture,
+             external_vault_details,
++            billing_processor_id: item.billing_processor_id,
+         })
+     }
+ 
+@@ -1200,6 +1215,7 @@ impl super::behaviour::Conversion for Profile {
+             is_manual_retry_enabled: self.is_manual_retry_enabled,
+             is_external_vault_enabled,
+             external_vault_connector_details,
++            billing_processor_id: self.billing_processor_id,
+         })
+     }
+ }
+@@ -1262,6 +1278,7 @@ pub struct Profile {
+     pub merchant_category_code: Option<api_enums::MerchantCategoryCode>,
+     pub merchant_country_code: Option<common_types::payments::MerchantCountryCode>,
+     pub split_txns_enabled: common_enums::SplitTxnsEnabled,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v2")]
+@@ -1320,6 +1337,7 @@ pub struct ProfileSetter {
+     pub merchant_category_code: Option<api_enums::MerchantCategoryCode>,
+     pub merchant_country_code: Option<common_types::payments::MerchantCountryCode>,
+     pub split_txns_enabled: common_enums::SplitTxnsEnabled,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v2")]
+@@ -1383,6 +1401,7 @@ impl From<ProfileSetter> for Profile {
+             merchant_category_code: value.merchant_category_code,
+             merchant_country_code: value.merchant_country_code,
+             split_txns_enabled: value.split_txns_enabled,
++            billing_processor_id: value.billing_processor_id,
+         }
+     }
+ }
+@@ -1571,6 +1590,7 @@ pub struct ProfileGeneralUpdate {
+     pub merchant_country_code: Option<common_types::payments::MerchantCountryCode>,
+     pub revenue_recovery_retry_algorithm_type: Option<common_enums::RevenueRecoveryAlgorithmType>,
+     pub split_txns_enabled: Option<common_enums::SplitTxnsEnabled>,
++    pub billing_processor_id: Option<common_utils::id_type::MerchantConnectorAccountId>,
+ }
+ 
+ #[cfg(feature = "v2")]
+@@ -1653,6 +1673,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                     merchant_country_code,
+                     revenue_recovery_retry_algorithm_type,
+                     split_txns_enabled,
++                    billing_processor_id,
+                 } = *update;
+                 Self {
+                     profile_name,
+@@ -1707,6 +1728,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                     merchant_category_code,
+                     merchant_country_code,
+                     split_txns_enabled,
++                    billing_processor_id,
+                 }
+             }
+             ProfileUpdate::RoutingAlgorithmUpdate {
+@@ -1764,6 +1786,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::ExtendedCardInfoUpdate {
+                 is_extended_card_info_enabled,
+@@ -1819,6 +1842,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::ConnectorAgnosticMitUpdate {
+                 is_connector_agnostic_mit_enabled,
+@@ -1874,6 +1898,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::DefaultRoutingFallbackUpdate {
+                 default_fallback_routing,
+@@ -1929,6 +1954,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::NetworkTokenizationUpdate {
+                 is_network_tokenization_enabled,
+@@ -1984,6 +2010,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::CollectCvvDuringPaymentUpdate {
+                 should_collect_cvv_during_payment,
+@@ -2039,6 +2066,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::DecisionManagerRecordUpdate {
+                 three_ds_decision_manager_config,
+@@ -2094,6 +2122,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::CardTestingSecretKeyUpdate {
+                 card_testing_secret_key,
+@@ -2149,6 +2178,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+             ProfileUpdate::RevenueRecoveryAlgorithmUpdate {
+                 revenue_recovery_retry_algorithm_type,
+@@ -2205,6 +2235,7 @@ impl From<ProfileUpdate> for ProfileUpdateInternal {
+                 merchant_category_code: None,
+                 merchant_country_code: None,
+                 split_txns_enabled: None,
++                billing_processor_id: None,
+             },
+         }
+     }
+@@ -2287,6 +2318,7 @@ impl super::behaviour::Conversion for Profile {
+             split_txns_enabled: Some(self.split_txns_enabled),
+             is_manual_retry_enabled: None,
+             always_enable_overcapture: None,
++            billing_processor_id: self.billing_processor_id,
+         })
+     }
+ 
+@@ -2383,6 +2415,7 @@ impl super::behaviour::Conversion for Profile {
+                 merchant_category_code: item.merchant_category_code,
+                 merchant_country_code: item.merchant_country_code,
+                 split_txns_enabled: item.split_txns_enabled.unwrap_or_default(),
++                billing_processor_id: item.billing_processor_id,
+             })
+         }
+         .await
+@@ -2454,6 +2487,7 @@ impl super::behaviour::Conversion for Profile {
+             merchant_category_code: self.merchant_category_code,
+             merchant_country_code: self.merchant_country_code,
+             split_txns_enabled: Some(self.split_txns_enabled),
++            billing_processor_id: self.billing_processor_id,
+         })
+     }
+ }
+diff --git a/crates/router/src/core/admin.rs b/crates/router/src/core/admin.rs
+index caa47dfea09..cd0fc3dcadd 100644
+--- a/crates/router/src/core/admin.rs
++++ b/crates/router/src/core/admin.rs
+@@ -3485,6 +3485,7 @@ impl ProfileCreateBridge for api::ProfileCreate {
+             ))
+             .change_context(errors::ApiErrorResponse::InternalServerError)
+             .attach_printable("error while generating external vault details")?,
++            billing_processor_id: self.billing_processor_id,
+         }))
+     }
+ 
+@@ -3636,6 +3637,7 @@ impl ProfileCreateBridge for api::ProfileCreate {
+             merchant_category_code: self.merchant_category_code,
+             merchant_country_code: self.merchant_country_code,
+             split_txns_enabled: self.split_txns_enabled.unwrap_or_default(),
++            billing_processor_id: self.billing_processor_id,
+         }))
+     }
+ }
+@@ -3987,6 +3989,7 @@ impl ProfileUpdateBridge for api::ProfileUpdate {
+                 external_vault_connector_details: self
+                     .external_vault_connector_details
+                     .map(ForeignInto::foreign_into),
++                billing_processor_id: self.billing_processor_id,
+             },
+         )))
+     }
+@@ -4132,6 +4135,7 @@ impl ProfileUpdateBridge for api::ProfileUpdate {
+                 merchant_country_code: self.merchant_country_code,
+                 revenue_recovery_retry_algorithm_type,
+                 split_txns_enabled: self.split_txns_enabled,
++                billing_processor_id: self.billing_processor_id,
+             },
+         )))
+     }
+diff --git a/crates/router/src/db/events.rs b/crates/router/src/db/events.rs
+index a5ca7e29922..29acb4ecff5 100644
+--- a/crates/router/src/db/events.rs
++++ b/crates/router/src/db/events.rs
+@@ -1292,6 +1292,7 @@ mod tests {
+             is_manual_retry_enabled: None,
+             always_enable_overcapture: None,
+             external_vault_details: domain::ExternalVaultDetails::Skip,
++            billing_processor_id: None,
+         });
+ 
+         let business_profile = state
+diff --git a/crates/router/src/types/api/admin.rs b/crates/router/src/types/api/admin.rs
+index 3f96235c43f..eedac7c4016 100644
+--- a/crates/router/src/types/api/admin.rs
++++ b/crates/router/src/types/api/admin.rs
+@@ -240,6 +240,7 @@ impl ForeignTryFrom<domain::Profile> for ProfileResponse {
+             is_external_vault_enabled,
+             external_vault_connector_details: external_vault_connector_details
+                 .map(ForeignFrom::foreign_from),
++            billing_processor_id: item.billing_processor_id,
+         })
+     }
+ }
+@@ -328,6 +329,7 @@ impl ForeignTryFrom<domain::Profile> for ProfileResponse {
+             merchant_country_code: item.merchant_country_code,
+             split_txns_enabled: item.split_txns_enabled,
+             revenue_recovery_retry_algorithm_type: item.revenue_recovery_retry_algorithm_type,
++            billing_processor_id: item.billing_processor_id,
+         })
+     }
+ }
+@@ -508,5 +510,6 @@ pub async fn create_profile_from_merchant_account(
+         ))
+         .change_context(errors::ApiErrorResponse::InternalServerError)
+         .attach_printable("error while generating external_vault_details")?,
++        billing_processor_id: request.billing_processor_id,
+     }))
+ }
+diff --git a/migrations/2025-09-18-063125_add_billing_processor_id_to_business_profile/down.sql b/migrations/2025-09-18-063125_add_billing_processor_id_to_business_profile/down.sql
+new file mode 100644
+index 00000000000..bdf1f660f3c
+--- /dev/null
++++ b/migrations/2025-09-18-063125_add_billing_processor_id_to_business_profile/down.sql
+@@ -0,0 +1,2 @@
++-- This file should undo anything in `up.sql`
++ALTER TABLE business_profile DROP COLUMN IF EXISTS billing_processor_id;
+\ No newline at end of file
+diff --git a/migrations/2025-09-18-063125_add_billing_processor_id_to_business_profile/up.sql b/migrations/2025-09-18-063125_add_billing_processor_id_to_business_profile/up.sql
+new file mode 100644
+index 00000000000..983d782efc2
+--- /dev/null
++++ b/migrations/2025-09-18-063125_add_billing_processor_id_to_business_profile/up.sql
+@@ -0,0 +1,2 @@
++-- Your SQL goes here
++ALTER TABLE business_profile ADD COLUMN IF NOT EXISTS billing_processor_id VARCHAR(64);
+\ No newline at end of file

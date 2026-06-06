@@ -1,0 +1,315 @@
+diff --git a/cmd/entire/cli/config.go b/cmd/entire/cli/config.go
+index c6de778..8796a5e 100644
+--- a/cmd/entire/cli/config.go
++++ b/cmd/entire/cli/config.go
+@@ -17,8 +17,6 @@ import (
+ const (
+ 	EntireSettingsFile      = settings.EntireSettingsFile
+ 	EntireSettingsLocalFile = settings.EntireSettingsLocalFile
+-	CommitLinkingAlways     = settings.CommitLinkingAlways
+-	CommitLinkingPrompt     = settings.CommitLinkingPrompt
+ )
+ 
+ // EntireSettings is an alias for settings.EntireSettings.
+diff --git a/cmd/entire/cli/setup.go b/cmd/entire/cli/setup.go
+index 4879eb2..6a5fca2 100644
+--- a/cmd/entire/cli/setup.go
++++ b/cmd/entire/cli/setup.go
+@@ -168,10 +168,6 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
+ 		}
+ 	}
+ 
+-	// Check if this is a first-time setup before creating directories/loading settings.
+-	// settings.IsSetUp checks if .entire/settings.json exists on disk.
+-	isFirstSetup := !settings.IsSetUp(ctx)
+-
+ 	// Setup .entire directory
+ 	if _, err := setupEntireDirectory(ctx); err != nil {
+ 		return fmt.Errorf("failed to setup .entire directory: %w", err)
+@@ -186,17 +182,6 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
+ 	// Update the specific fields
+ 	settings.LocalDev = localDev
+ 	settings.Enabled = true
+-	// Set commit_linking and clean up deprecated strategy field.
+-	// New installations get "always" (auto-link); existing repos get "prompt" written
+-	// explicitly so the settings file reflects the current spec.
+-	if settings.CommitLinking == "" {
+-		if isFirstSetup {
+-			settings.CommitLinking = CommitLinkingAlways
+-		} else {
+-			settings.CommitLinking = CommitLinkingPrompt
+-		}
+-	}
+-	settings.Strategy = "" //nolint:staticcheck // Intentionally clearing deprecated field during setup
+ 
+ 	// Set push_sessions option if --skip-push-sessions flag was provided
+ 	if skipPushSessions {
+@@ -220,24 +205,14 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
+ 	}
+ 
+ 	// Save settings to the appropriate file.
+-	// commit_linking and strategy cleanup always go to settings.json (the project file)
+-	// so there's a single source of truth that users edit.
+-	if shouldUseLocal {
+-		// Save user-specific overrides to local (without commit_linking — that belongs in project settings)
+-		localSettings := *settings
+-		localSettings.CommitLinking = ""
+-		localSettings.Strategy = "" //nolint:staticcheck // Clear deprecated field from local too
+-		if err := SaveEntireSettingsLocal(ctx, &localSettings); err != nil {
+-			return fmt.Errorf("failed to save local settings: %w", err)
+-		}
+-		// Migrate project settings.json: clear deprecated strategy, write commit_linking
+-		if err := migrateProjectSettings(ctx); err != nil {
+-			return fmt.Errorf("failed to migrate project settings: %w", err)
+-		}
+-	} else {
+-		if err := SaveEntireSettings(ctx, settings); err != nil {
+-			return fmt.Errorf("failed to save settings: %w", err)
++	saveSettings := func() error {
++		if shouldUseLocal {
++			return SaveEntireSettingsLocal(ctx, settings)
+ 		}
++		return SaveEntireSettings(ctx, settings)
++	}
++	if err := saveSettings(); err != nil {
++		return fmt.Errorf("failed to save settings: %w", err)
+ 	}
+ 
+ 	if _, err := strategy.InstallGitHook(ctx, true, localDev); err != nil {
+@@ -258,17 +233,8 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
+ 		return fmt.Errorf("telemetry consent: %w", err)
+ 	}
+ 	// Save again to persist telemetry choice
+-	if shouldUseLocal {
+-		localSettings := *settings
+-		localSettings.CommitLinking = ""
+-		localSettings.Strategy = "" //nolint:staticcheck // Keep deprecated field out of local
+-		if err := SaveEntireSettingsLocal(ctx, &localSettings); err != nil {
+-			return fmt.Errorf("failed to save local settings: %w", err)
+-		}
+-	} else {
+-		if err := SaveEntireSettings(ctx, settings); err != nil {
+-			return fmt.Errorf("failed to save settings: %w", err)
+-		}
++	if err := saveSettings(); err != nil {
++		return fmt.Errorf("failed to save settings: %w", err)
+ 	}
+ 
+ 	if err := strategy.EnsureSetup(ctx); err != nil {
+@@ -612,9 +578,6 @@ func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Ag
+ 		return fmt.Errorf("failed to install hooks for %s: %w", agentName, err)
+ 	}
+ 
+-	// Check if this is a first-time setup BEFORE creating .entire directory
+-	isFirstSetup := !settings.IsSetUp(ctx)
+-
+ 	// Setup .entire directory
+ 	if _, err := setupEntireDirectory(ctx); err != nil {
+ 		return fmt.Errorf("failed to setup .entire directory: %w", err)
+@@ -630,15 +593,6 @@ func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Ag
+ 	if localDev {
+ 		settings.LocalDev = localDev
+ 	}
+-	// Set commit_linking and clean up deprecated strategy field.
+-	if settings.CommitLinking == "" {
+-		if isFirstSetup {
+-			settings.CommitLinking = CommitLinkingAlways
+-		} else {
+-			settings.CommitLinking = CommitLinkingPrompt
+-		}
+-	}
+-	settings.Strategy = "" //nolint:staticcheck // Intentionally clearing deprecated field during setup
+ 
+ 	// Set push_sessions option if --skip-push-sessions flag was provided
+ 	if skipPushSessions {
+@@ -723,29 +677,6 @@ func determineSettingsTarget(entireDir string, useLocal, useProject bool) (bool,
+ 	return false, false
+ }
+ 
+-// migrateProjectSettings loads the project settings.json directly,
+-// clears the deprecated strategy field, sets commit_linking if missing,
+-// and saves it back. This is needed when the main save goes to
+-// settings.local.json — the project file still needs cleanup.
+-func migrateProjectSettings(ctx context.Context) error {
+-	settingsFileAbs, err := paths.AbsPath(ctx, settings.EntireSettingsFile)
+-	if err != nil {
+-		return fmt.Errorf("resolving settings path: %w", err)
+-	}
+-	projectSettings, err := settings.LoadFromFile(settingsFileAbs)
+-	if err != nil {
+-		return fmt.Errorf("loading project settings: %w", err)
+-	}
+-	projectSettings.Strategy = "" //nolint:staticcheck // Intentionally clearing deprecated field
+-	if projectSettings.CommitLinking == "" {
+-		projectSettings.CommitLinking = settings.CommitLinkingPrompt
+-	}
+-	if err := settings.Save(ctx, projectSettings); err != nil {
+-		return fmt.Errorf("saving project settings: %w", err)
+-	}
+-	return nil
+-}
+-
+ // setupEntireDirectory creates the .entire directory and gitignore.
+ // Returns true if the directory was created, false if it already existed.
+ func setupEntireDirectory(ctx context.Context) (bool, error) { //nolint:unparam // already present in codebase
+diff --git a/cmd/entire/cli/strategy/manual_commit_hooks.go b/cmd/entire/cli/strategy/manual_commit_hooks.go
+index 946f79c..14fd0c6 100644
+--- a/cmd/entire/cli/strategy/manual_commit_hooks.go
++++ b/cmd/entire/cli/strategy/manual_commit_hooks.go
+@@ -56,23 +56,39 @@ func hasTTY() bool {
+ 	return true
+ }
+ 
+-// askConfirmTTY prompts the user for a yes/no confirmation via /dev/tty.
++// ttyConfirmResult represents the outcome of a TTY confirmation prompt.
++type ttyConfirmResult int
++
++const (
++	ttyConfirmYes    ttyConfirmResult = iota // User confirmed (y/yes/enter with default=yes)
++	ttyConfirmNo                             // User declined (n/no)
++	ttyConfirmAlways                         // User chose "always" (a/always)
++)
++
++// askConfirmTTY prompts the user for a yes/no/always confirmation via /dev/tty.
+ // This works even when stdin is redirected (e.g., git commit -m).
+-// Returns true for yes, false for no. If TTY is unavailable, returns the default.
+-// If context is non-empty, it is displayed on a separate line before the prompt.
+-func askConfirmTTY(prompt string, context string, defaultYes bool) bool {
++// Returns ttyConfirmYes, ttyConfirmNo, or ttyConfirmAlways.
++// If TTY is unavailable, returns ttyConfirmYes when defaultYes is true, ttyConfirmNo otherwise.
++// header is displayed as the first line (e.g., "Entire: Active Claude Code session").
++// detail lines are displayed indented below the header.
++func askConfirmTTY(header string, details []string, prompt string, defaultYes bool) ttyConfirmResult {
++	defaultResult := ttyConfirmNo
++	if defaultYes {
++		defaultResult = ttyConfirmYes
++	}
++
+ 	// In test mode, don't try to interact with the real TTY — just use the default.
+ 	// ENTIRE_TEST_TTY=1 simulates "a human is present" for the hasTTY() check
+ 	// but we can't actually read from the TTY in tests.
+ 	if os.Getenv("ENTIRE_TEST_TTY") != "" {
+-		return defaultYes
++		return defaultResult
+ 	}
+ 
+ 	// Gemini CLI sets GEMINI_CLI=1 when running shell commands (including git commit).
+ 	// The agent can't respond to TTY prompts, so use the default to avoid hanging.
+ 	// See: https://geminicli.com/docs/tools/shell/
+ 	if os.Getenv("GEMINI_CLI") != "" {
+-		return defaultYes
++		return defaultResult
+ 	}
+ 
+ 	// Open /dev/tty for both reading and writing
+@@ -80,44 +96,63 @@ func askConfirmTTY(prompt string, context string, defaultYes bool) bool {
+ 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+ 	if err != nil {
+ 		// Can't open TTY (e.g., running in CI), use default
+-		return defaultYes
++		return defaultResult
+ 	}
+ 	defer tty.Close()
+ 
+-	// Show context if provided
+-	if context != "" {
+-		fmt.Fprintf(tty, "%s\n", context)
++	// Write to tty directly, not stderr, since git hooks may redirect stderr to /dev/null
++	fmt.Fprintf(tty, "\n%s\n", header)
++	for _, line := range details {
++		fmt.Fprintf(tty, "  %s\n", line)
+ 	}
+ 
+-	// Show prompt with default indicator
+-	// Write to tty directly, not stderr, since git hooks may redirect stderr to /dev/null
+-	var hint string
++	// Show prompt with option descriptions
++	fmt.Fprintf(tty, "\n%s\n", prompt)
+ 	if defaultYes {
+-		hint = "[Y/n]"
++		fmt.Fprint(tty, "  [Y]es / [n]o / [a]lways (remember my choice): ")
+ 	} else {
+-		hint = "[y/N]"
++		fmt.Fprint(tty, "  [y]es / [N]o / [a]lways (remember my choice): ")
+ 	}
+-	fmt.Fprintf(tty, "%s %s ", prompt, hint)
+ 
+ 	// Read response
+ 	reader := bufio.NewReader(tty)
+ 	response, err := reader.ReadString('\n')
+ 	if err != nil {
+-		return defaultYes
++		return defaultResult
+ 	}
+ 
+ 	response = strings.TrimSpace(strings.ToLower(response))
+ 	switch response {
+ 	case "y", "yes":
+-		return true
++		return ttyConfirmYes
+ 	case "n", "no":
+-		return false
++		return ttyConfirmNo
++	case "a", "always":
++		return ttyConfirmAlways
+ 	default:
+ 		// Empty or invalid input - use default
+-		return defaultYes
++		return defaultResult
+ 	}
+ }
+ 
++// saveCommitLinkingAlways persists commit_linking = "always" to settings.local.json.
++// It loads the existing local settings first to preserve other overrides.
++func saveCommitLinkingAlways(ctx context.Context) error {
++	localPath, err := paths.AbsPath(ctx, settings.EntireSettingsLocalFile)
++	if err != nil {
++		return fmt.Errorf("resolving local settings path: %w", err)
++	}
++	local, err := settings.LoadFromFile(localPath)
++	if err != nil {
++		return fmt.Errorf("loading local settings: %w", err)
++	}
++	local.CommitLinking = settings.CommitLinkingAlways
++	if err := settings.SaveLocal(ctx, local); err != nil {
++		return fmt.Errorf("saving local settings: %w", err)
++	}
++	return nil
++}
++
+ // CommitMsg is called by the git commit-msg hook after the user edits the message.
+ // If the message contains only our trailer (no actual user content), strip it
+ // so git will abort the commit due to empty message.
+@@ -364,12 +399,14 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
+ 		} else {
+ 			// Prompt mode: ask user interactively whether to add trailer
+ 			// (comments won't be stripped by git in this mode)
+-			var promptContext string
++			header := "Entire: Active " + string(agentType) + " session detected"
++			var details []string
+ 			if displayPrompt != "" {
+-				promptContext = "You have an active " + string(agentType) + " session.\nLast Prompt: " + displayPrompt
++				details = append(details, "Last prompt: "+displayPrompt)
+ 			}
+ 
+-			if !askConfirmTTY("Link this commit to "+string(agentType)+" session context?", promptContext, true) {
++			result := askConfirmTTY(header, details, "Link this commit to session context?", true)
++			if result == ttyConfirmNo {
+ 				// User declined - don't add trailer
+ 				logging.Debug(logCtx, "prepare-commit-msg: user declined trailer",
+ 					slog.String("strategy", "manual-commit"),
+@@ -377,6 +414,14 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
+ 				)
+ 				return nil
+ 			}
++			if result == ttyConfirmAlways {
++				// User chose "always" - persist to settings.local.json (non-fatal if it fails)
++				if saveErr := saveCommitLinkingAlways(ctx); saveErr != nil {
++					logging.Warn(logCtx, "prepare-commit-msg: failed to save commit_linking=always",
++						slog.String("error", saveErr.Error()),
++					)
++				}
++			}
+ 			message = addCheckpointTrailer(message, checkpointID)
+ 		}
+ 	default:

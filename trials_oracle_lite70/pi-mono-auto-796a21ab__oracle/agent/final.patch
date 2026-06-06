@@ -1,0 +1,172 @@
+diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md
+index 6b2a85e..e310289 100644
+--- a/packages/coding-agent/CHANGELOG.md
++++ b/packages/coding-agent/CHANGELOG.md
+@@ -2,6 +2,15 @@
+ 
+ ## [Unreleased]
+ 
++### Breaking Changes
++
++- `ContextUsage.tokens` and `ContextUsage.percent` are now `number | null`. After compaction, context token count is unknown until the next LLM response, so these fields return `null`. Extensions that read `ContextUsage` must handle the `null` case. Removed `usageTokens`, `trailingTokens`, and `lastUsageIndex` fields from `ContextUsage` (implementation details that should not have been public) ([#1382](https://github.com/badlogic/pi-mono/pull/1382) by [@ferologics](https://github.com/ferologics))
++
++### Fixed
++
++- Fixed context usage percentage in footer showing stale pre-compaction values. After compaction the footer now shows `?/200k` until the next LLM response provides accurate usage ([#1382](https://github.com/badlogic/pi-mono/pull/1382) by [@ferologics](https://github.com/ferologics))
++- Fixed `_checkCompaction()` using the first compaction entry instead of the latest, which could cause incorrect overflow detection with multiple compactions ([#1382](https://github.com/badlogic/pi-mono/pull/1382) by [@ferologics](https://github.com/ferologics))
++
+ ## [0.52.9] - 2026-02-08
+ 
+ ### New Features
+diff --git a/packages/coding-agent/examples/extensions/trigger-compact.ts b/packages/coding-agent/examples/extensions/trigger-compact.ts
+index 6d79ed1..e947318 100644
+--- a/packages/coding-agent/examples/extensions/trigger-compact.ts
++++ b/packages/coding-agent/examples/extensions/trigger-compact.ts
+@@ -24,7 +24,7 @@ export default function (pi: ExtensionAPI) {
+ 
+ 	pi.on("turn_end", (_event, ctx) => {
+ 		const usage = ctx.getContextUsage();
+-		if (!usage || usage.tokens <= COMPACT_THRESHOLD_TOKENS) {
++		if (!usage || usage.tokens === null || usage.tokens <= COMPACT_THRESHOLD_TOKENS) {
+ 			return;
+ 		}
+ 		triggerCompaction(ctx);
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index 5f54b4a..3cb2f3f 100644
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -68,6 +68,7 @@ import type { ModelRegistry } from "./model-registry.js";
+ import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
+ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
+ import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
++import { getLatestCompactionEntry } from "./session-manager.js";
+ import type { SettingsManager } from "./settings-manager.js";
+ import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
+ import { buildSystemPrompt } from "./system-prompt.js";
+@@ -1531,9 +1532,9 @@ export class AgentSession {
+ 		// The error shouldn't trigger another compaction since we already compacted.
+ 		// Example: opus fails → switch to codex → compact → switch back to opus → opus error
+ 		// is still in context but shouldn't trigger compaction again.
+-		const compactionEntry = this.sessionManager.getBranch().find((e) => e.type === "compaction");
++		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
+ 		const errorIsFromBeforeCompaction =
+-			compactionEntry && assistantMessage.timestamp < new Date(compactionEntry.timestamp).getTime();
++			compactionEntry !== null && assistantMessage.timestamp < new Date(compactionEntry.timestamp).getTime();
+ 
+ 		// Case 1: Overflow - LLM returned context overflow error
+ 		if (sameModel && !errorIsFromBeforeCompaction && isContextOverflow(assistantMessage, contextWindow)) {
+@@ -2697,6 +2698,35 @@ export class AgentSession {
+ 		const contextWindow = model.contextWindow ?? 0;
+ 		if (contextWindow <= 0) return undefined;
+ 
++		// After compaction, the last assistant usage reflects pre-compaction context size.
++		// We can only trust usage from an assistant that responded after the latest compaction.
++		// If no such assistant exists, context token count is unknown until the next LLM response.
++		const branchEntries = this.sessionManager.getBranch();
++		const latestCompaction = getLatestCompactionEntry(branchEntries);
++
++		if (latestCompaction) {
++			// Check if there's a valid assistant usage after the compaction boundary
++			const compactionIndex = branchEntries.lastIndexOf(latestCompaction);
++			let hasPostCompactionUsage = false;
++			for (let i = branchEntries.length - 1; i > compactionIndex; i--) {
++				const entry = branchEntries[i];
++				if (entry.type === "message" && entry.message.role === "assistant") {
++					const assistant = entry.message;
++					if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
++						const contextTokens = calculateContextTokens(assistant.usage);
++						if (contextTokens > 0) {
++							hasPostCompactionUsage = true;
++						}
++						break;
++					}
++				}
++			}
++
++			if (!hasPostCompactionUsage) {
++				return { tokens: null, contextWindow, percent: null };
++			}
++		}
++
+ 		const estimate = estimateContextTokens(this.messages);
+ 		const percent = (estimate.tokens / contextWindow) * 100;
+ 
+@@ -2704,9 +2734,6 @@ export class AgentSession {
+ 			tokens: estimate.tokens,
+ 			contextWindow,
+ 			percent,
+-			usageTokens: estimate.usageTokens,
+-			trailingTokens: estimate.trailingTokens,
+-			lastUsageIndex: estimate.lastUsageIndex,
+ 		};
+ 	}
+ 
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index 24e07fb..d5afe53 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -235,12 +235,11 @@ export interface ExtensionUIContext {
+ // ============================================================================
+ 
+ export interface ContextUsage {
+-	tokens: number;
++	/** Estimated context tokens, or null if unknown (e.g. right after compaction, before next LLM response). */
++	tokens: number | null;
+ 	contextWindow: number;
+-	percent: number;
+-	usageTokens: number;
+-	trailingTokens: number;
+-	lastUsageIndex: number | null;
++	/** Context usage as percentage of context window, or null if tokens is unknown. */
++	percent: number | null;
+ }
+ 
+ export interface CompactOptions {
+diff --git a/packages/coding-agent/src/modes/interactive/components/footer.ts b/packages/coding-agent/src/modes/interactive/components/footer.ts
+index 26b2126..298f738 100644
+--- a/packages/coding-agent/src/modes/interactive/components/footer.ts
++++ b/packages/coding-agent/src/modes/interactive/components/footer.ts
+@@ -1,4 +1,3 @@
+-import type { AssistantMessage } from "@mariozechner/pi-ai";
+ import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+ import type { AgentSession } from "../../../core/agent-session.js";
+ import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
+@@ -79,22 +78,12 @@ export class FooterComponent implements Component {
+ 			}
+ 		}
+ 
+-		// Get last assistant message for context percentage calculation (skip aborted messages)
+-		const lastAssistantMessage = state.messages
+-			.slice()
+-			.reverse()
+-			.find((m) => m.role === "assistant" && m.stopReason !== "aborted") as AssistantMessage | undefined;
+-
+-		// Calculate context percentage from last message (input + output + cacheRead + cacheWrite)
+-		const contextTokens = lastAssistantMessage
+-			? lastAssistantMessage.usage.input +
+-				lastAssistantMessage.usage.output +
+-				lastAssistantMessage.usage.cacheRead +
+-				lastAssistantMessage.usage.cacheWrite
+-			: 0;
+-		const contextWindow = state.model?.contextWindow || 0;
+-		const contextPercentValue = contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
+-		const contextPercent = contextPercentValue.toFixed(1);
++		// Calculate context usage from session (handles compaction correctly).
++		// After compaction, tokens are unknown until the next LLM response.
++		const contextUsage = this.session.getContextUsage();
++		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
++		const contextPercentValue = contextUsage?.percent ?? 0;
++		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+ 
+ 		// Replace home directory with ~
+ 		let pwd = process.cwd();
+@@ -144,7 +133,8 @@ export class FooterComponent implements Component {
+ 		// Colorize context percentage based on usage
+ 		let contextPercentStr: string;
+ 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
+-		const contextPercentDisplay = `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
++		const contextPercentDisplay =
++			contextPercent === "?" ? `?/${formatTokens(contextWindow)}${autoIndicator}` : `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+ 		if (contextPercentValue > 90) {
+ 			contextPercentStr = theme.fg("error", contextPercentDisplay);
+ 		} else if (contextPercentValue > 70) {

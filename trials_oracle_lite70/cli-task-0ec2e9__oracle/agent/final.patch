@@ -1,0 +1,147 @@
+diff --git a/cmd/entire/cli/agent/opencode/transcript.go b/cmd/entire/cli/agent/opencode/transcript.go
+index fe0005e..aebed95 100644
+--- a/cmd/entire/cli/agent/opencode/transcript.go
++++ b/cmd/entire/cli/agent/opencode/transcript.go
+@@ -167,7 +167,7 @@ func ExtractModifiedFiles(data []byte) ([]string, error) {
+ }
+ 
+ // extractFilePaths extracts file paths from an OpenCode tool's state.
+-// For standard tools (edit, write, patch), the path is in input.filePath or input.path.
++// For standard tools (edit, write), the path is in input.filePath or input.path.
+ // For apply_patch (codex models), the paths are in state.metadata.files[].filePath.
+ func extractFilePaths(state *ToolState) []string {
+ 	if state == nil {
+@@ -187,7 +187,7 @@ func extractFilePaths(state *ToolState) []string {
+ 		}
+ 	}
+ 
+-	// Fall back to input keys (used by edit, write, patch).
++	// Fall back to input keys (used by edit, write).
+ 	for _, key := range []string{"filePath", "path"} {
+ 		if v, ok := state.Input[key]; ok {
+ 			if s, ok := v.(string); ok && s != "" {
+diff --git a/cmd/entire/cli/lifecycle.go b/cmd/entire/cli/lifecycle.go
+index 4264442..64fe7ca 100644
+--- a/cmd/entire/cli/lifecycle.go
++++ b/cmd/entire/cli/lifecycle.go
+@@ -297,6 +297,12 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
+ 	if changes != nil {
+ 		relNewFiles = FilterAndNormalizePaths(changes.New, repoRoot)
+ 		relDeletedFiles = FilterAndNormalizePaths(changes.Deleted, repoRoot)
++
++		// Merge git-status modified files as a fallback for transcript parsing.
++		// Transcript parsing is the primary source for modified files, but it can miss
++		// files if the agent uses an unrecognized tool or the transcript format changes.
++		// Git status catches any tracked file with working-tree changes.
++		relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))
+ 	}
+ 
+ 	// Filter transcript-extracted files to exclude files already committed to HEAD.
+@@ -533,6 +539,7 @@ func handleLifecycleSubagentEnd(ctx context.Context, ag agent.Agent, event *agen
+ 	if changes != nil {
+ 		relNewFiles = FilterAndNormalizePaths(changes.New, repoRoot)
+ 		relDeletedFiles = FilterAndNormalizePaths(changes.Deleted, repoRoot)
++		relModifiedFiles = mergeUnique(relModifiedFiles, FilterAndNormalizePaths(changes.Modified, repoRoot))
+ 	}
+ 
+ 	// If no changes, skip
+diff --git a/cmd/entire/cli/state.go b/cmd/entire/cli/state.go
+index e2891d0..c842f58 100644
+--- a/cmd/entire/cli/state.go
++++ b/cmd/entire/cli/state.go
+@@ -327,6 +327,24 @@ func FilterAndNormalizePaths(files []string, cwd string) []string {
+ 	return result
+ }
+ 
++// mergeUnique appends elements from extra into base, skipping duplicates already in base.
++func mergeUnique(base, extra []string) []string {
++	if len(extra) == 0 {
++		return base
++	}
++	seen := make(map[string]bool, len(base))
++	for _, s := range base {
++		seen[s] = true
++	}
++	for _, s := range extra {
++		if !seen[s] {
++			seen[s] = true
++			base = append(base, s)
++		}
++	}
++	return base
++}
++
+ // prePromptStateFile returns the absolute path to the pre-prompt state file for a session.
+ // Works correctly from any subdirectory within the repository.
+ func prePromptStateFile(ctx context.Context, sessionID string) string {
+diff --git a/cmd/entire/cli/state_test.go b/cmd/entire/cli/state_test.go
+index ed2052e..986d3ef 100644
+--- a/cmd/entire/cli/state_test.go
++++ b/cmd/entire/cli/state_test.go
+@@ -699,3 +699,66 @@ func TestDetectFileChanges_NilPreviouslyUntracked_ReturnsModified(t *testing.T)
+ 		t.Errorf("DetectFileChanges(context.Background(),nil) Deleted = %v, want empty", changes.Deleted)
+ 	}
+ }
++
++func TestMergeUnique(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name  string
++		base  []string
++		extra []string
++		want  []string
++	}{
++		{
++			name:  "disjoint sets",
++			base:  []string{"a.go", "b.go"},
++			extra: []string{"c.go", "d.go"},
++			want:  []string{"a.go", "b.go", "c.go", "d.go"},
++		},
++		{
++			name:  "overlapping sets",
++			base:  []string{"a.go", "b.go"},
++			extra: []string{"b.go", "c.go"},
++			want:  []string{"a.go", "b.go", "c.go"},
++		},
++		{
++			name:  "empty extra",
++			base:  []string{"a.go"},
++			extra: nil,
++			want:  []string{"a.go"},
++		},
++		{
++			name:  "empty base",
++			base:  nil,
++			extra: []string{"a.go"},
++			want:  []string{"a.go"},
++		},
++		{
++			name:  "both empty",
++			base:  nil,
++			extra: nil,
++			want:  nil,
++		},
++		{
++			name:  "identical sets",
++			base:  []string{"a.go", "b.go"},
++			extra: []string{"a.go", "b.go"},
++			want:  []string{"a.go", "b.go"},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			got := mergeUnique(tt.base, tt.extra)
++			if len(got) != len(tt.want) {
++				t.Fatalf("mergeUnique() = %v, want %v", got, tt.want)
++			}
++			for i := range got {
++				if got[i] != tt.want[i] {
++					t.Errorf("mergeUnique()[%d] = %q, want %q", i, got[i], tt.want[i])
++				}
++			}
++		})
++	}
++}

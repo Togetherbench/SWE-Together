@@ -1,0 +1,904 @@
+diff --git a/apps/web/src/components/charts/ChartTooltip.tsx b/apps/web/src/components/charts/ChartTooltip.tsx
+new file mode 100644
+index 00000000..e61b14e4
+--- /dev/null
++++ b/apps/web/src/components/charts/ChartTooltip.tsx
+@@ -0,0 +1,77 @@
++import { useChartTheme } from "@/hooks/useChartTheme";
++
++interface ChartTooltipProps {
++	active?: boolean;
++	// biome-ignore lint/suspicious/noExplicitAny: recharts payload type is complex and varies by chart
++	payload?: ReadonlyArray<any>;
++	label?: string | number;
++	nameFormatter?: (name: string) => string;
++	valueFormatter?: (value: number, name: string) => string;
++	showTotal?: boolean;
++}
++
++export function ChartTooltip({
++	active,
++	payload,
++	label,
++	nameFormatter,
++	valueFormatter,
++	showTotal = true,
++}: ChartTooltipProps) {
++	const { tooltipBg, tooltipBorder } = useChartTheme();
++
++	if (!active || !payload || payload.length === 0) return null;
++
++	const visibleItems = payload.filter((item) => item.value !== 0);
++	if (visibleItems.length === 0) return null;
++
++	const total = visibleItems.reduce((sum, item) => sum + item.value, 0);
++
++	const formatValue = (value: number, name: string): string => {
++		if (valueFormatter) return valueFormatter(value, name);
++		return value.toLocaleString();
++	};
++
++	return (
++		<div
++			className="rounded-lg shadow-lg p-3 min-w-[180px]"
++			style={{
++				backgroundColor: tooltipBg,
++				border: `1px solid ${tooltipBorder}`,
++			}}
++		>
++			{label && (
++				<div className="text-xs font-semibold text-foreground mb-2">
++					{label}
++				</div>
++			)}
++			<div className="space-y-0.5">
++				{visibleItems.map((item) => {
++					const displayName = nameFormatter
++						? nameFormatter(item.name)
++						: item.name;
++					return (
++						<div key={item.name} className="flex items-center gap-2 py-0.5">
++							<div
++								className="w-2 h-2 rounded-full flex-shrink-0"
++								style={{ backgroundColor: item.color ?? item.fill }}
++							/>
++							<span className="text-xs text-foreground flex-1">
++								{displayName}
++							</span>
++							<span className="text-xs font-semibold text-foreground">
++								{formatValue(item.value, item.name)}
++							</span>
++						</div>
++					);
++				})}
++			</div>
++			{showTotal && visibleItems.length > 1 && (
++				<div className="pt-1.5 mt-1.5 border-t border-border flex justify-between text-xs font-semibold text-foreground">
++					<span>Total</span>
++					<span>{formatValue(total, "total")}</span>
++				</div>
++			)}
++		</div>
++	);
++}
+diff --git a/apps/web/src/components/charts/DeveloperTrendChart.tsx b/apps/web/src/components/charts/DeveloperTrendChart.tsx
+index c0d67817..6e42421b 100644
+--- a/apps/web/src/components/charts/DeveloperTrendChart.tsx
++++ b/apps/web/src/components/charts/DeveloperTrendChart.tsx
+@@ -16,6 +16,7 @@ import {
+ import { InfoTooltip } from "@/components/ui/InfoTooltip";
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ const MAX_SERIES = 14;
+ const OTHER_COLOR = "#9ca3af";
+@@ -81,7 +82,7 @@ export function DeveloperTrendChart({
+ 	data,
+ 	userMap,
+ }: DeveloperTrendChartProps) {
+-	const { tooltipBg, tooltipBorder, gridStroke, axisStroke } = useChartTheme();
++	const { gridStroke, axisStroke } = useChartTheme();
+ 	const [selectedMetric, setSelectedMetric] = useState<MetricType>("sessions");
+ 	const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+ 	const toggleSeries = (key: string) =>
+@@ -108,6 +109,15 @@ export function DeveloperTrendChart({
+ 		};
+ 	}, [data]);
+ 
++	const colorMap = useMemo(() => {
++		const map = new Map<string, string>();
++		for (let i = 0; i < topDevelopers.length; i++) {
++			map.set(topDevelopers[i], DEVELOPER_COLORS[i % DEVELOPER_COLORS.length]);
++		}
++		map.set("Other", OTHER_COLOR);
++		return map;
++	}, [topDevelopers]);
++
+ 	const { chartData, seriesList } = useMemo(() => {
+ 		const existingDates = Array.from(new Set(data.map((d) => d.date))).sort();
+ 		const allDates: string[] = [];
+@@ -169,6 +179,22 @@ export function DeveloperTrendChart({
+ 		currentMetric,
+ 	]);
+ 
++	const sortedLegendPayload = useMemo(() => {
++		const totals = new Map<string, number>();
++		for (const row of chartData) {
++			for (const key of seriesList) {
++				totals.set(key, (totals.get(key) ?? 0) + ((row[key] as number) ?? 0));
++			}
++		}
++		return [...seriesList]
++			.sort((a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0))
++			.map((key) => ({
++				value: key,
++				color: colorMap.get(key) ?? OTHER_COLOR,
++				type: "square" as const,
++			}));
++	}, [chartData, seriesList, colorMap]);
++
+ 	const formatUsername = (userId: string) => {
+ 		if (userId === "Other") return "Other";
+ 		return userMap[userId] || userId.substring(0, 12);
+@@ -232,42 +258,35 @@ export function DeveloperTrendChart({
+ 							domain={[0, 100]}
+ 						/>
+ 						<Tooltip
+-							contentStyle={{
+-								backgroundColor: tooltipBg,
+-								border: `1px solid ${tooltipBorder}`,
+-								borderRadius: "8px",
+-								padding: "12px",
+-							}}
+-							formatter={(value, name) => {
+-								if (!name || name === "date" || name === "displayDate")
+-									return null;
+-								return [
+-									currentMetric.formatter((value as number) ?? 0),
+-									formatUsername(String(name)),
+-								];
+-							}}
+-							labelFormatter={(label) => label}
++							content={(props) => (
++								<ChartTooltip
++									{...props}
++									nameFormatter={formatUsername}
++									valueFormatter={(v) => currentMetric.formatter(v)}
++									showTotal={false}
++								/>
++							)}
+ 						/>
+ 						<Legend
+ 							layout="vertical"
+ 							align="right"
+ 							verticalAlign="top"
+ 							width={160}
+-							content={({ payload }) => (
++							content={() => (
+ 								<ChartLegend
+-									payload={payload}
++									payload={sortedLegendPayload}
+ 									formatter={formatUsername}
+ 									hiddenSeries={hiddenSeries}
+ 									onToggle={toggleSeries}
+ 								/>
+ 							)}
+ 						/>
+-						{topDevelopers.map((userId, index) => (
++						{topDevelopers.map((userId) => (
+ 							<Line
+ 								key={userId}
+ 								type="monotone"
+ 								dataKey={userId}
+-								stroke={DEVELOPER_COLORS[index % DEVELOPER_COLORS.length]}
++								stroke={colorMap.get(userId) ?? OTHER_COLOR}
+ 								strokeWidth={2}
+ 								dot={{ r: 3 }}
+ 								activeDot={{ r: 5 }}
+@@ -297,47 +316,36 @@ export function DeveloperTrendChart({
+ 							tickFormatter={currentMetric.formatter}
+ 						/>
+ 						<Tooltip
+-							contentStyle={{
+-								backgroundColor: tooltipBg,
+-								border: `1px solid ${tooltipBorder}`,
+-								borderRadius: "8px",
+-								padding: "12px",
+-							}}
+-							formatter={(value, name) => {
+-								if (!name || name === "date" || name === "displayDate")
+-									return null;
+-								return [
+-									currentMetric.formatter((value as number) ?? 0),
+-									formatUsername(String(name)),
+-								];
+-							}}
+-							labelFormatter={(label) => label}
++							content={(props) => (
++								<ChartTooltip
++									{...props}
++									nameFormatter={formatUsername}
++									valueFormatter={(v) => currentMetric.formatter(v)}
++									showTotal
++								/>
++							)}
+ 						/>
+ 						<Legend
+ 							layout="vertical"
+ 							align="right"
+ 							verticalAlign="top"
+ 							width={160}
+-							content={({ payload }) => (
++							content={() => (
+ 								<ChartLegend
+-									payload={payload}
++									payload={sortedLegendPayload}
+ 									formatter={formatUsername}
+ 									hiddenSeries={hiddenSeries}
+ 									onToggle={toggleSeries}
+ 								/>
+ 							)}
+ 						/>
+-						{seriesList.map((userId, index) => (
++						{seriesList.map((userId) => (
+ 							<Bar
+ 								key={userId}
+ 								dataKey={userId}
+ 								stackId="1"
+ 								hide={hiddenSeries.has(userId)}
+-								fill={
+-									userId === "Other"
+-										? OTHER_COLOR
+-										: DEVELOPER_COLORS[index % DEVELOPER_COLORS.length]
+-								}
++								fill={colorMap.get(userId) ?? OTHER_COLOR}
+ 							/>
+ 						))}
+ 					</BarChart>
+diff --git a/apps/web/src/components/charts/DimensionAnalysisChart.tsx b/apps/web/src/components/charts/DimensionAnalysisChart.tsx
+index 118e7c7c..145c5bf1 100644
+--- a/apps/web/src/components/charts/DimensionAnalysisChart.tsx
++++ b/apps/web/src/components/charts/DimensionAnalysisChart.tsx
+@@ -13,6 +13,7 @@ import {
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { formatUsername } from "@/lib/format";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ function formatCompactNumber(value: number): string {
+ 	if (value >= 1000000)
+@@ -127,6 +128,19 @@ export const DimensionAnalysisChart = memo(function DimensionAnalysisChart({
+ 				}
+ 			}
+ 			const rawSplitKeys = Array.from(allSplitValues);
++			// Sort split keys by total raw value descending
++			const splitKeyTotals = new Map<string, number>();
++			for (const item of data) {
++				for (const key of rawSplitKeys) {
++					splitKeyTotals.set(
++						key,
++						(splitKeyTotals.get(key) ?? 0) + (item.split_values?.[key] || 0),
++					);
++				}
++			}
++			rawSplitKeys.sort(
++				(a, b) => (splitKeyTotals.get(b) ?? 0) - (splitKeyTotals.get(a) ?? 0),
++			);
+ 			// Map raw split keys to display names (e.g. user IDs → names)
+ 			const splitKeyDisplayMap: Record<string, string> = {};
+ 			for (const key of rawSplitKeys) {
+@@ -193,57 +207,52 @@ export const DimensionAnalysisChart = memo(function DimensionAnalysisChart({
+ 		);
+ 	}
+ 
+-	const CustomTooltip = ({
+-		active,
+-		payload,
+-		label,
+-	}: Record<string, unknown>) => {
+-		if (active && payload && Array.isArray(payload) && payload.length) {
+-			const payloadData = (payload[0] as Record<string, unknown>)?.payload as
+-				| Record<string, unknown>
+-				| undefined;
+-			const fullName = payloadData?._fullName || label;
+-			const originalValues = payloadData?._originalValues as
+-				| Record<string, number>
+-				| undefined;
++	const renderTooltip = (props: Record<string, unknown>) => {
++		const { active, payload, label } = props;
++		if (!active || !Array.isArray(payload) || payload.length === 0) return null;
+ 
+-			return (
+-				<div className="bg-input p-3 border border-border rounded shadow-lg">
+-					<p className="font-semibold mb-2 text-foreground">
+-						{fullName as string}
+-					</p>
+-					{(payload as Record<string, unknown>[]).map(
+-						(entry, index: number) => {
+-							const displayValue =
+-								originalValues &&
+-								originalValues[entry.name as string] !== undefined
+-									? formatNumberWithCommas(originalValues[entry.name as string])
+-									: typeof entry.value === "number"
+-										? formatNumberWithCommas(entry.value)
+-										: entry.value;
++		const payloadData = (payload[0] as Record<string, unknown>)?.payload as
++			| Record<string, unknown>
++			| undefined;
++		const fullName = (payloadData?._fullName || label) as string | undefined;
++		const originalValues = payloadData?._originalValues as
++			| Record<string, number>
++			| undefined;
+ 
+-							return (
+-								<p
+-									// biome-ignore lint/suspicious/noArrayIndexKey: tooltip payload items
+-									key={index}
+-									style={{ color: entry.color as string }}
+-								>
+-									{entry.name as string}: {displayValue as string}
+-									{showPercentage &&
+-										originalValues &&
+-										originalValues[entry.name as string] !== undefined && (
+-											<span className="text-muted ml-1">
+-												({(entry.value as number).toFixed(1)}%)
+-											</span>
+-										)}
+-								</p>
+-							);
+-						},
+-					)}
+-				</div>
+-			);
+-		}
+-		return null;
++		// Build normalized items for ChartTooltip using raw values
++		const normalizedPayload = payload
++			.filter((entry: Record<string, unknown>) => {
++				const rawVal =
++					originalValues?.[entry.name as string] ?? (entry.value as number);
++				return rawVal !== 0;
++			})
++			.map((entry: Record<string, unknown>) => ({
++				name: entry.name as string,
++				value:
++					originalValues?.[entry.name as string] ?? (entry.value as number),
++				color: (entry.color ?? entry.fill) as string,
++			}));
++
++		const valueFormatter =
++			showPercentage && originalValues
++				? (v: number, name: string) => {
++						const pct = payload.find(
++							(e: Record<string, unknown>) => e.name === name,
++						);
++						const pctVal = pct ? (pct.value as number) : 0;
++						return `${formatNumberWithCommas(v)} (${pctVal.toFixed(1)}%)`;
++					}
++				: (v: number) => formatNumberWithCommas(v);
++
++		return (
++			<ChartTooltip
++				active={true}
++				payload={normalizedPayload}
++				label={fullName}
++				valueFormatter={valueFormatter}
++				showTotal={!showPercentage}
++			/>
++		);
+ 	};
+ 
+ 	return (
+@@ -283,7 +292,9 @@ export const DimensionAnalysisChart = memo(function DimensionAnalysisChart({
+ 						tick={{ fill: axisStroke, fontSize: 12 }}
+ 						interval={0}
+ 					/>
+-					<Tooltip content={<CustomTooltip />} />
++					<Tooltip
++						content={(props) => renderTooltip(props as Record<string, unknown>)}
++					/>
+ 					{split_by && (
+ 						<Legend
+ 							layout="vertical"
+diff --git a/apps/web/src/components/charts/ErrorTrendChart.tsx b/apps/web/src/components/charts/ErrorTrendChart.tsx
+index a23f6991..a971167c 100644
+--- a/apps/web/src/components/charts/ErrorTrendChart.tsx
++++ b/apps/web/src/components/charts/ErrorTrendChart.tsx
+@@ -21,6 +21,7 @@ import {
+ } from "@/components/ui/select";
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ const MAX_SERIES = 14;
+ const OTHER_COLOR = "#9ca3af";
+@@ -79,7 +80,7 @@ export function ErrorTrendChart({
+ 	onSplitByChange,
+ 	userMap,
+ }: ErrorTrendChartProps) {
+-	const { tooltipBg, tooltipBorder, gridStroke } = useChartTheme();
++	const { gridStroke } = useChartTheme();
+ 	const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+ 	const toggleSeries = (key: string) =>
+ 		setHiddenSeries((prev) => {
+@@ -88,6 +89,30 @@ export function ErrorTrendChart({
+ 			return next;
+ 		});
+ 
++	const stableColorOrder = useMemo(() => {
++		if (data.length === 0) return [];
++		const totals = new Map<string, number>();
++		for (const item of data) {
++			totals.set(
++				item.dimension,
++				(totals.get(item.dimension) ?? 0) + item.total_errors,
++			);
++		}
++		return [...totals.entries()]
++			.sort((a, b) => b[1] - a[1])
++			.slice(0, MAX_SERIES)
++			.map(([k]) => k);
++	}, [data]);
++
++	const colorMap = useMemo(() => {
++		const map = new Map<string, string>();
++		for (let i = 0; i < stableColorOrder.length; i++) {
++			map.set(stableColorOrder[i], COLORS[i % COLORS.length]);
++		}
++		map.set("Other", OTHER_COLOR);
++		return map;
++	}, [stableColorOrder]);
++
+ 	const { seriesKeys, chartData } = useMemo(() => {
+ 		if (data.length === 0) return { seriesKeys: [], chartData: [] };
+ 
+@@ -153,6 +178,14 @@ export function ErrorTrendChart({
+ 		};
+ 	}, [data, metric]);
+ 
++	const sortedLegendPayload = useMemo(() => {
++		return seriesKeys.map((key) => ({
++			value: key,
++			color: colorMap.get(key) ?? COLORS[0],
++			type: "square" as const,
++		}));
++	}, [seriesKeys, colorMap]);
++
+ 	const getDisplayName = (key: string): string => {
+ 		if (key === "Other") return "Other";
+ 		if (splitBy === "user_id" && userMap) {
+@@ -234,42 +267,36 @@ export function ErrorTrendChart({
+ 						/>
+ 						<YAxis tick={{ fontSize: 12 }} />
+ 						<Tooltip
+-							contentStyle={{
+-								backgroundColor: tooltipBg,
+-								border: `1px solid ${tooltipBorder}`,
+-								borderRadius: "8px",
+-								padding: "12px",
+-							}}
+-							formatter={(value, name) => {
+-								const displayName = name ? getDisplayName(String(name)) : "";
+-								return [((value as number) ?? 0).toLocaleString(), displayName];
+-							}}
+-							labelFormatter={(label) => `Date: ${label}`}
++							content={(props) => (
++								<ChartTooltip
++									{...props}
++									nameFormatter={getDisplayName}
++									valueFormatter={(v) => v.toLocaleString()}
++								/>
++							)}
+ 						/>
+ 						<Legend
+ 							layout="vertical"
+ 							align="right"
+ 							verticalAlign="top"
+ 							width={160}
+-							content={({ payload }) => (
++							content={() => (
+ 								<ChartLegend
+-									payload={payload}
++									payload={sortedLegendPayload}
+ 									formatter={getDisplayName}
+ 									hiddenSeries={hiddenSeries}
+ 									onToggle={toggleSeries}
+ 								/>
+ 							)}
+ 						/>
+-						{seriesKeys.map((key, index) => (
++						{seriesKeys.map((key) => (
+ 							<Bar
+ 								key={key}
+ 								dataKey={key}
+ 								name={key}
+ 								stackId="1"
+ 								hide={hiddenSeries.has(key)}
+-								fill={
+-									key === "Other" ? OTHER_COLOR : COLORS[index % COLORS.length]
+-								}
++								fill={colorMap.get(key) ?? COLORS[0]}
+ 							/>
+ 						))}
+ 					</BarChart>
+@@ -289,39 +316,36 @@ export function ErrorTrendChart({
+ 						/>
+ 						<YAxis tick={{ fontSize: 12 }} />
+ 						<Tooltip
+-							contentStyle={{
+-								backgroundColor: tooltipBg,
+-								border: `1px solid ${tooltipBorder}`,
+-								borderRadius: "8px",
+-								padding: "12px",
+-							}}
+-							formatter={(value, name) => {
+-								const displayName = name ? getDisplayName(String(name)) : "";
+-								return [((value as number) ?? 0).toFixed(2), displayName];
+-							}}
+-							labelFormatter={(label) => `Date: ${label}`}
++							content={(props) => (
++								<ChartTooltip
++									{...props}
++									nameFormatter={getDisplayName}
++									valueFormatter={(v) => v.toFixed(2)}
++									showTotal={false}
++								/>
++							)}
+ 						/>
+ 						<Legend
+ 							layout="vertical"
+ 							align="right"
+ 							verticalAlign="top"
+ 							width={160}
+-							content={({ payload }) => (
++							content={() => (
+ 								<ChartLegend
+-									payload={payload}
++									payload={sortedLegendPayload}
+ 									formatter={getDisplayName}
+ 									hiddenSeries={hiddenSeries}
+ 									onToggle={toggleSeries}
+ 								/>
+ 							)}
+ 						/>
+-						{seriesKeys.map((key, index) => (
++						{seriesKeys.map((key) => (
+ 							<Line
+ 								key={key}
+ 								type="monotone"
+ 								dataKey={key}
+ 								name={key}
+-								stroke={COLORS[index % COLORS.length]}
++								stroke={colorMap.get(key) ?? COLORS[0]}
+ 								strokeWidth={2}
+ 								dot={{ r: 4 }}
+ 								activeDot={{ r: 6 }}
+diff --git a/apps/web/src/components/charts/LearningsTrendChart.tsx b/apps/web/src/components/charts/LearningsTrendChart.tsx
+index 2ccf38b0..aa56f7a6 100644
+--- a/apps/web/src/components/charts/LearningsTrendChart.tsx
++++ b/apps/web/src/components/charts/LearningsTrendChart.tsx
+@@ -19,6 +19,7 @@ import {
+ import { Switch } from "@/components/ui/switch";
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ const MAX_SERIES = 14;
+ const OTHER_COLOR = "#9ca3af";
+@@ -53,7 +54,7 @@ export function LearningsTrendChart({
+ 	onSplitByChange,
+ 	userMap,
+ }: LearningsTrendChartProps) {
+-	const { tooltipBg, tooltipBorder, gridStroke } = useChartTheme();
++	const { gridStroke } = useChartTheme();
+ 	const [isCumulative, setIsCumulative] = useState(true);
+ 	const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+ 	const toggleSeries = (key: string) =>
+@@ -223,17 +224,13 @@ export function LearningsTrendChart({
+ 					/>
+ 					<YAxis tick={{ fontSize: 12 }} />
+ 					<Tooltip
+-						contentStyle={{
+-							backgroundColor: tooltipBg,
+-							border: `1px solid ${tooltipBorder}`,
+-							borderRadius: "8px",
+-							padding: "12px",
+-						}}
+-						formatter={(value, name) => {
+-							const displayName = name ? getDisplayName(String(name)) : "";
+-							return [((value as number) ?? 0).toLocaleString(), displayName];
+-						}}
+-						labelFormatter={(label) => `Date: ${label}`}
++						content={(props) => (
++							<ChartTooltip
++								{...props}
++								nameFormatter={getDisplayName}
++								valueFormatter={(v) => v.toLocaleString()}
++							/>
++						)}
+ 					/>
+ 					<Legend
+ 						layout="vertical"
+diff --git a/apps/web/src/components/charts/ModelTokensChart.tsx b/apps/web/src/components/charts/ModelTokensChart.tsx
+index c4b788db..68ffbb65 100644
+--- a/apps/web/src/components/charts/ModelTokensChart.tsx
++++ b/apps/web/src/components/charts/ModelTokensChart.tsx
+@@ -12,6 +12,7 @@ import {
+ } from "recharts";
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ const MAX_SERIES = 14;
+ const OTHER_COLOR = "#9ca3af";
+@@ -50,7 +51,7 @@ interface ModelTokensChartProps {
+ }
+ 
+ export function ModelTokensChart({ data }: ModelTokensChartProps) {
+-	const { tooltipBg, tooltipBorder, gridStroke } = useChartTheme();
++	const { gridStroke } = useChartTheme();
+ 	const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+ 	const toggleSeries = (key: string) =>
+ 		setHiddenSeries((prev) => {
+@@ -134,17 +135,13 @@ export function ModelTokensChart({ data }: ModelTokensChartProps) {
+ 				/>
+ 				<YAxis tick={{ fontSize: 12 }} tickFormatter={formatCompactNumber} />
+ 				<Tooltip
+-					contentStyle={{
+-						backgroundColor: tooltipBg,
+-						border: `1px solid ${tooltipBorder}`,
+-						borderRadius: "2px",
+-						padding: "12px",
+-					}}
+-					formatter={(value, name) => [
+-						formatCompactNumber((value as number) ?? 0),
+-						shortenModelName(String(name ?? "")),
+-					]}
+-					labelFormatter={(label) => label}
++					content={(props) => (
++						<ChartTooltip
++							{...props}
++							nameFormatter={shortenModelName}
++							valueFormatter={(v) => formatCompactNumber(v)}
++						/>
++					)}
+ 				/>
+ 				<Legend
+ 					layout="vertical"
+diff --git a/apps/web/src/components/charts/ProjectTrendChart.tsx b/apps/web/src/components/charts/ProjectTrendChart.tsx
+index 42034ab8..4cda6416 100644
+--- a/apps/web/src/components/charts/ProjectTrendChart.tsx
++++ b/apps/web/src/components/charts/ProjectTrendChart.tsx
+@@ -16,6 +16,7 @@ import {
+ import { InfoTooltip } from "@/components/ui/InfoTooltip";
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ const MAX_SERIES = 14;
+ const OTHER_COLOR = "#9ca3af";
+@@ -77,7 +78,7 @@ const PROJECT_COLORS = [
+ ];
+ 
+ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
+-	const { tooltipBg, tooltipBorder, gridStroke, axisStroke } = useChartTheme();
++	const { gridStroke, axisStroke } = useChartTheme();
+ 	const [selectedMetric, setSelectedMetric] = useState<MetricType>("sessions");
+ 	const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+ 	const toggleSeries = (key: string) =>
+@@ -109,6 +110,15 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
+ 		};
+ 	}, [data]);
+ 
++	const colorMap = useMemo(() => {
++		const map = new Map<string, string>();
++		for (let i = 0; i < topProjects.length; i++) {
++			map.set(topProjects[i], PROJECT_COLORS[i % PROJECT_COLORS.length]);
++		}
++		map.set("Other", OTHER_COLOR);
++		return map;
++	}, [topProjects]);
++
+ 	const { chartData, seriesList } = useMemo(() => {
+ 		// Build full date range from all data
+ 		const existingDates = Array.from(new Set(data.map((d) => d.date))).sort();
+@@ -173,6 +183,22 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
+ 		currentMetric,
+ 	]);
+ 
++	const sortedLegendPayload = useMemo(() => {
++		const totals = new Map<string, number>();
++		for (const row of chartData) {
++			for (const key of seriesList) {
++				totals.set(key, (totals.get(key) ?? 0) + ((row[key] as number) ?? 0));
++			}
++		}
++		return [...seriesList]
++			.sort((a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0))
++			.map((key) => ({
++				value: key,
++				color: colorMap.get(key) ?? OTHER_COLOR,
++				type: "square" as const,
++			}));
++	}, [chartData, seriesList, colorMap]);
++
+ 	const formatProjectName = (projectPath: string) => {
+ 		if (projectPath === "Other") return "Other";
+ 		const parts = projectPath.split("/");
+@@ -237,42 +263,35 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
+ 							domain={[0, 100]}
+ 						/>
+ 						<Tooltip
+-							contentStyle={{
+-								backgroundColor: tooltipBg,
+-								border: `1px solid ${tooltipBorder}`,
+-								borderRadius: "8px",
+-								padding: "12px",
+-							}}
+-							formatter={(value, name) => {
+-								if (!name || name === "date" || name === "displayDate")
+-									return null;
+-								return [
+-									currentMetric.formatter((value as number) ?? 0),
+-									formatProjectName(String(name)),
+-								];
+-							}}
+-							labelFormatter={(label) => label}
++							content={(props) => (
++								<ChartTooltip
++									{...props}
++									nameFormatter={formatProjectName}
++									valueFormatter={(v) => currentMetric.formatter(v)}
++									showTotal={false}
++								/>
++							)}
+ 						/>
+ 						<Legend
+ 							layout="vertical"
+ 							align="right"
+ 							verticalAlign="top"
+ 							width={160}
+-							content={({ payload }) => (
++							content={() => (
+ 								<ChartLegend
+-									payload={payload}
++									payload={sortedLegendPayload}
+ 									formatter={formatProjectName}
+ 									hiddenSeries={hiddenSeries}
+ 									onToggle={toggleSeries}
+ 								/>
+ 							)}
+ 						/>
+-						{topProjects.map((projectPath, index) => (
++						{topProjects.map((projectPath) => (
+ 							<Line
+ 								key={projectPath}
+ 								type="monotone"
+ 								dataKey={projectPath}
+-								stroke={PROJECT_COLORS[index % PROJECT_COLORS.length]}
++								stroke={colorMap.get(projectPath) ?? OTHER_COLOR}
+ 								strokeWidth={2}
+ 								dot={{ r: 3 }}
+ 								activeDot={{ r: 5 }}
+@@ -302,47 +321,36 @@ export function ProjectTrendChart({ data }: ProjectTrendChartProps) {
+ 							tickFormatter={currentMetric.formatter}
+ 						/>
+ 						<Tooltip
+-							contentStyle={{
+-								backgroundColor: tooltipBg,
+-								border: `1px solid ${tooltipBorder}`,
+-								borderRadius: "8px",
+-								padding: "12px",
+-							}}
+-							formatter={(value, name) => {
+-								if (!name || name === "date" || name === "displayDate")
+-									return null;
+-								return [
+-									currentMetric.formatter((value as number) ?? 0),
+-									formatProjectName(String(name)),
+-								];
+-							}}
+-							labelFormatter={(label) => label}
++							content={(props) => (
++								<ChartTooltip
++									{...props}
++									nameFormatter={formatProjectName}
++									valueFormatter={(v) => currentMetric.formatter(v)}
++									showTotal
++								/>
++							)}
+ 						/>
+ 						<Legend
+ 							layout="vertical"
+ 							align="right"
+ 							verticalAlign="top"
+ 							width={160}
+-							content={({ payload }) => (
++							content={() => (
+ 								<ChartLegend
+-									payload={payload}
++									payload={sortedLegendPayload}
+ 									formatter={formatProjectName}
+ 									hiddenSeries={hiddenSeries}
+ 									onToggle={toggleSeries}
+ 								/>
+ 							)}
+ 						/>
+-						{seriesList.map((projectPath, index) => (
++						{seriesList.map((projectPath) => (
+ 							<Bar
+ 								key={projectPath}
+ 								dataKey={projectPath}
+ 								stackId="1"
+ 								hide={hiddenSeries.has(projectPath)}
+-								fill={
+-									projectPath === "Other"
+-										? OTHER_COLOR
+-										: PROJECT_COLORS[index % PROJECT_COLORS.length]
+-								}
++								fill={colorMap.get(projectPath) ?? OTHER_COLOR}
+ 							/>
+ 						))}
+ 					</BarChart>
+diff --git a/apps/web/src/components/charts/UsageTrendChart.tsx b/apps/web/src/components/charts/UsageTrendChart.tsx
+index b83a52b0..f5d547a7 100644
+--- a/apps/web/src/components/charts/UsageTrendChart.tsx
++++ b/apps/web/src/components/charts/UsageTrendChart.tsx
+@@ -12,6 +12,7 @@ import {
+ } from "recharts";
+ import { useChartTheme } from "@/hooks/useChartTheme";
+ import { ChartLegend } from "./ChartLegend";
++import { ChartTooltip } from "./ChartTooltip";
+ 
+ interface UsageTrendChartProps {
+ 	data: UsageTrendData[];
+@@ -59,7 +60,7 @@ export function UsageTrendChart({
+ 	data,
+ 	showRollingAverage: _showRollingAverage = false,
+ }: UsageTrendChartProps) {
+-	const { tooltipBg, tooltipBorder, gridStroke } = useChartTheme();
++	const { gridStroke } = useChartTheme();
+ 	const [selectedPair, setSelectedPair] =
+ 		useState<MetricPair>("sessions-tokens");
+ 	const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+@@ -80,6 +81,12 @@ export function UsageTrendChart({
+ 		}),
+ 	}));
+ 
++	const formatValue = (v: number, name: string): string => {
++		if (name === "Hours Spent") return `${v.toFixed(1)}h`;
++		if (name === "Total Tokens") return formatCompactNumber(v);
++		return v.toLocaleString();
++	};
++
+ 	return (
+ 		<div className="space-y-4">
+ 			{/* Metric Pair Toggle Buttons */}
+@@ -155,19 +162,13 @@ export function UsageTrendChart({
+ 						tickFormatter={formatCompactNumber}
+ 					/>
+ 					<Tooltip
+-						contentStyle={{
+-							backgroundColor: tooltipBg,
+-							border: `1px solid ${tooltipBorder}`,
+-							borderRadius: "8px",
+-							padding: "12px",
+-						}}
+-						formatter={(value, name) => {
+-							const v = (value as number) ?? 0;
+-							if (name === "Hours Spent") return [`${v.toFixed(1)}`, "Hours"];
+-							if (name === "Total Tokens")
+-								return [`${formatCompactNumber(v)}`, "Tokens"];
+-							return [v.toLocaleString(), name || ""];
+-						}}
++						content={(props) => (
++							<ChartTooltip
++								{...props}
++								valueFormatter={formatValue}
++								showTotal={false}
++							/>
++						)}
+ 					/>
+ 					<Legend
+ 						layout="vertical"

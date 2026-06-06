@@ -1,0 +1,53 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "Dockerfile.worker: Three separate RUN blocks (apt-get install for tools, NodeSource setup, GitHub CLI) consolidated into a single chained RUN block. Test confirms 1 apt-get install block. Lines 23-57 in patched file."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "Dockerfile.worker: All npm packages pinned — pm2@6.0.14, @sentry/cli@3.3.0, @desplega.ai/wts@0.2.2, @desplega.ai/localtunnel@2.2.0, @desplega.ai/qa-use@2.8.7. No @latest remains. Test confirms 5 pinned entries and no @latest."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "docker-entrypoint.sh: Heredoc cat > .mcp.json << EOF blocks replaced with jq -n --arg for base config, conditional jq pipe for AGENT_ID header. Lines 139-184 in patched file. Test confirms jq usage and no heredoc."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "Dockerfile.worker: 'claude plugin marketplace add' and 'claude plugin install' commands added at build time (lines ~70-74). docker-entrypoint.sh: Marketplace installation block (lines 196-221) removed. Both F2P and P2P tests pass."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "new-ui/src/api/hooks/use-agents.ts: useAgent hook changed from fetchAgent(id) to fetchAgent(id, false). Test confirms fetchAgent(id, false) present."
+    },
+    {
+      "id": "goal_6",
+      "met": true,
+      "evidence": "docker-entrypoint.sh: Conditional block added — if AGENTMAIL_API_KEY is set, jq injects agentmail server with command 'npx', args ['-y', 'agentmail-mcp'], and env AGENTMAIL_API_KEY. Lines 179-182 in patched file."
+    },
+    {
+      "id": "goal_7",
+      "met": true,
+      "evidence": "Dockerfile.worker: wts config created at build time (mkdir -p /home/worker/.wts + echo config.json, lines ~76-78). Static dirs (personal, shared/thoughts/shared/plans, shared/thoughts/shared/research, personal/memory, shared/memory) created at build time (lines ~122-125). Corresponding blocks removed from docker-entrypoint.sh. P2P tests p2p_entrypoint_no_wts_config, p2p_dockerfile_wts_build_time, p2p_entrypoint_no_static_dirs all pass."
+    }
+  ],
+  "judge_notes": "All 7 goals met. test.sh returns 1.0 (5/5 F2P gates pass, 5/5 P2P gates pass). The agent's patch closely matches the oracle approach: apt consolidation into single RUN, npm version pinning with specific semver, jq-based MCP config, marketplace moved to build time, lazy task loading, agentmail-mcp support, and wts/static dirs moved to build time. Score = 3×0.25 + 4×0.0625 = 1.0 → 'equivalent'.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "agent-swarm-task-ea4bd8",
+  "trial_id": "agent-swarm-task-ea4bd8__oracle",
+  "judge_elapsed_sec": 75.5,
+  "sandbox_id": "i6ecrw0si71rwtjv8e8ln",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 7
+}

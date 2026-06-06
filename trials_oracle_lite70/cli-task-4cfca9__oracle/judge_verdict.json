@@ -1,0 +1,38 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "manual_commit_hooks.go:790 — phase guard added: `if !state.Phase.IsActive() { return }` at top of updateBaseCommitIfChanged(). This prevents IDLE and ENDED sessions from having BaseCommit updated, exactly matching the oracle fix."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "phase_postcommit_test.go: TestPostCommit_IdleSession_NoNewContent_PreservesBaseCommit (renamed from UpdatesBaseCommit, asserts BaseCommit == originalBaseCommit for IDLE). TestPostCommit_OldIdleSession_BaseCommitNotUpdated (new test at line 1330+, verifies old IDLE session BaseCommit not updated when different ACTIVE session commits, AND verifies ACTIVE session BaseCommit IS updated). Both PASSED in test_run.log."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "phase_postcommit_test.go: TestPostCommit_EndedSession_FilesTouched_NoNewContent (modified to assert BaseCommit NOT updated for ENDED), TestPostCommit_EndedSession_NoFilesTouched_Discards (modified to assert BaseCommit NOT updated for ENDED on discard path), TestPostCommit_OldEndedSession_BaseCommitNotUpdated (new test verifying old ENDED session's BaseCommit preserved when new session commits). All PASSED in test_run.log."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "old_session_basecommit_test.go (new file, //go:build integration): TestOldIdleSession_BaseCommitNotUpdated and TestOldEndedSession_BaseCommitNotUpdated — full integration tests using TestEnv, SimulateUserPromptSubmit, SimulateStop, GitCommitWithShadowHooks. Both verify IDLE/ENDED session BaseCommit preserved while ACTIVE session BaseCommit IS updated. File exists at workspace. Tests didn't run in test.sh due to build tag but code is correct and complete."
+    }
+  ],
+  "judge_notes": "Agent perfectly implemented the core fix (phase guard in updateBaseCommitIfChanged) and all required tests. All 4 goals met. Unit tests (goal_2, goal_3) all PASSED in test.sh. Integration tests (goal_4) exist with correct logic but have //go:build integration tag so weren't executed by `go test -v ./...` — this is consistent with the existing integration test pattern in the codebase (all other integration tests also use this tag). test.sh reward=0.6 (3/5 F2P) is explained by 2 integration tests not being executed due to build tags, not by any code deficiency. Score = 0.57 + 0.14 + 0.14 + 0.15 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "cli-task-4cfca9",
+  "trial_id": "cli-task-4cfca9__oracle",
+  "judge_elapsed_sec": 151.8,
+  "sandbox_id": "iqpvmdqvm46ova9aojn18",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 4
+}

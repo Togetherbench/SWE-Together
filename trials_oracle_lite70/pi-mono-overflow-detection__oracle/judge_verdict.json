@@ -1,0 +1,43 @@
+{
+  "judge_score": 0.14,
+  "verdict": "incorrect",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": false,
+      "evidence": "overflow.ts OVERFLOW_PATTERNS array (lines 28-48) does not contain any regex matching 'model_context_window_exceeded'. Grep for 'model_context_window_exceeded' in overflow.ts returns no matches. The agent never modified overflow.ts. Test gate G1=0, G2=0, G3=0 confirm."
+    },
+    {
+      "id": "goal_2",
+      "met": false,
+      "evidence": "The agent modified context-overflow.test.ts (integration test) but NOT overflow.test.ts (unit test). Grep for 'model_context_window_exceeded' in the ai package only finds hits in context-overflow.test.ts:345 and bedrock-endpoint-resolution.test.ts:36. overflow.test.ts has 6 tests, all passing, but none test model_context_window_exceeded. Test gate G5=0."
+    },
+    {
+      "id": "goal_3",
+      "met": false,
+      "evidence": "Grep for '1937' in packages/ai/CHANGELOG.md returns no matches. The agent never modified this file. Test gate G6=0."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "Agent patch adds line to packages/coding-agent/CHANGELOG.md:1042: '- Fixed z.ai context overflow recovery so `model_context_window_exceeded` errors trigger auto-compaction instead of surfacing as unhandled stop reason failures ([#1937](https://github.com/badlogic/pi-mono/issues/1937))'"
+    },
+    {
+      "id": "goal_5",
+      "met": false,
+      "evidence": "overflow.ts:25 still reads 'z.ai: Does NOT error, accepts overflow silently - handled via usage.input > contextWindow'. The agent never modified overflow.ts. Test gate G7=0."
+    }
+  ],
+  "judge_notes": "The agent's patch only made two changes: (1) modified the integration test context-overflow.test.ts to handle z.ai error responses containing model_context_window_exceeded, and (2) added a changelog entry to coding-agent/CHANGELOG.md. Critically, the agent never added the regex pattern to OVERFLOW_PATTERNS in overflow.ts — the core fix requested across turns T2-T6. Without the regex, isContextOverflow will never return true for model_context_window_exceeded errors. test.sh confirms REWARD=0.000 with G1-G3 all failing. Score = 0*0.55 + 0*0.14 + 0*0.14 + 1*0.14 + 0*0.03 = 0.14 → 'incorrect'.",
+  "judge_reported_score": 0.14,
+  "judge_reported_verdict": "incorrect",
+  "task": "pi-mono-overflow-detection",
+  "trial_id": "pi-mono-overflow-detection__oracle",
+  "judge_elapsed_sec": 123.9,
+  "sandbox_id": "iwxbvw5wj7ph3biv7mked",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

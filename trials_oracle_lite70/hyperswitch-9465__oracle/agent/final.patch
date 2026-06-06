@@ -1,0 +1,397 @@
+diff --git a/crates/common_enums/src/enums.rs b/crates/common_enums/src/enums.rs
+index 581858a85de..cc384ab9ecc 100644
+--- a/crates/common_enums/src/enums.rs
++++ b/crates/common_enums/src/enums.rs
+@@ -2904,6 +2904,29 @@ pub enum SplitTxnsEnabled {
+     Skip,
+ }
+ 
++#[derive(
++    Clone,
++    Debug,
++    Copy,
++    Default,
++    Eq,
++    Hash,
++    PartialEq,
++    serde::Deserialize,
++    serde::Serialize,
++    strum::Display,
++    strum::EnumString,
++    ToSchema,
++)]
++#[router_derive::diesel_enum(storage_type = "text")]
++#[serde(rename_all = "snake_case")]
++#[strum(serialize_all = "snake_case")]
++pub enum ActiveAttemptIDType {
++    AttemptsGroupID,
++    #[default]
++    AttemptID,
++}
++
+ #[derive(Clone, Copy, Eq, Hash, PartialEq, Debug, Serialize, Deserialize, strum::Display, ToSchema,)]
+ #[rustfmt::skip]
+ pub enum CountryAlpha3 {
+diff --git a/crates/diesel_models/src/payment_attempt.rs b/crates/diesel_models/src/payment_attempt.rs
+index d42b9d8d108..af797360ff8 100644
+--- a/crates/diesel_models/src/payment_attempt.rs
++++ b/crates/diesel_models/src/payment_attempt.rs
+@@ -129,6 +129,8 @@ pub struct PaymentAttempt {
+     pub network_decline_code: Option<String>,
+     /// A string indicating how to proceed with an network error if payment gateway provide one. This is used to understand the network error code better.
+     pub network_error_message: Option<String>,
++    /// A string indicating the group of the payment attempt. Used in split payments flow
++    pub attempts_group_id: Option<String>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -300,6 +302,7 @@ pub struct PaymentListFilters {
+ pub struct PaymentAttemptNew {
+     pub payment_id: id_type::GlobalPaymentId,
+     pub merchant_id: id_type::MerchantId,
++    pub attempts_group_id: Option<String>,
+     pub status: storage_enums::AttemptStatus,
+     pub error_message: Option<String>,
+     pub surcharge_amount: Option<MinorUnit>,
+@@ -1011,6 +1014,7 @@ impl PaymentAttemptUpdateInternal {
+                 .or(source.connector_request_reference_id),
+             is_overcapture_enabled: source.is_overcapture_enabled,
+             network_details: source.network_details,
++            attempts_group_id: source.attempts_group_id,
+         }
+     }
+ }
+diff --git a/crates/diesel_models/src/payment_intent.rs b/crates/diesel_models/src/payment_intent.rs
+index 38123c0a3f0..0e578012a3b 100644
+--- a/crates/diesel_models/src/payment_intent.rs
++++ b/crates/diesel_models/src/payment_intent.rs
+@@ -97,6 +97,8 @@ pub struct PaymentIntent {
+     pub payment_link_config: Option<PaymentLinkConfigRequestForPayments>,
+     pub id: common_utils::id_type::GlobalPaymentId,
+     pub split_txns_enabled: Option<common_enums::SplitTxnsEnabled>,
++    pub active_attempts_group_id: Option<String>,
++    pub active_attempt_id_type: Option<common_enums::ActiveAttemptIDType>,
+ }
+ 
+ #[cfg(feature = "v1")]
+@@ -808,6 +810,8 @@ impl PaymentIntentUpdateInternal {
+             enable_partial_authorization: None,
+             split_txns_enabled: source.split_txns_enabled,
+             enable_overcapture: None,
++            active_attempt_id_type: source.active_attempt_id_type,
++            active_attempts_group_id: source.active_attempts_group_id,
+         }
+     }
+ }
+diff --git a/crates/diesel_models/src/schema_v2.rs b/crates/diesel_models/src/schema_v2.rs
+index f05b4e460c3..185ca6098b3 100644
+--- a/crates/diesel_models/src/schema_v2.rs
++++ b/crates/diesel_models/src/schema_v2.rs
+@@ -1011,6 +1011,8 @@ diesel::table! {
+         #[max_length = 32]
+         network_decline_code -> Nullable<Varchar>,
+         network_error_message -> Nullable<Text>,
++        #[max_length = 64]
++        attempts_group_id -> Nullable<Varchar>,
+     }
+ }
+ 
+@@ -1106,6 +1108,10 @@ diesel::table! {
+         id -> Varchar,
+         #[max_length = 16]
+         split_txns_enabled -> Nullable<Varchar>,
++        #[max_length = 64]
++        active_attempts_group_id -> Nullable<Varchar>,
++        #[max_length = 16]
++        active_attempt_id_type -> Nullable<Varchar>,
+     }
+ }
+ 
+diff --git a/crates/hyperswitch_domain_models/src/payments.rs b/crates/hyperswitch_domain_models/src/payments.rs
+index 370bafd2a90..fa6dd17bc91 100644
+--- a/crates/hyperswitch_domain_models/src/payments.rs
++++ b/crates/hyperswitch_domain_models/src/payments.rs
+@@ -461,6 +461,10 @@ pub struct PaymentIntent {
+     pub setup_future_usage: storage_enums::FutureUsage,
+     /// The active attempt for the payment intent. This is the payment attempt that is currently active for the payment intent.
+     pub active_attempt_id: Option<id_type::GlobalAttemptId>,
++    /// This field represents whether there are attempt groups for this payment intent. Used in split payments workflow
++    pub active_attempt_id_type: common_enums::ActiveAttemptIDType,
++    /// The ID of the active attempt group for the payment intent
++    pub active_attempts_group_id: Option<String>,
+     /// The order details for the payment.
+     pub order_details: Option<Vec<Secret<OrderDetailsWithAmount>>>,
+     /// This is the list of payment method types that are allowed for the payment intent.
+@@ -661,6 +665,8 @@ impl PaymentIntent {
+             last_synced: None,
+             setup_future_usage: request.setup_future_usage.unwrap_or_default(),
+             active_attempt_id: None,
++            active_attempt_id_type: common_enums::ActiveAttemptIDType::AttemptID,
++            active_attempts_group_id: None,
+             order_details,
+             allowed_payment_method_types,
+             connector_metadata,
+diff --git a/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs b/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs
+index 7f8b9020618..bbc2da59d78 100644
+--- a/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs
++++ b/crates/hyperswitch_domain_models/src/payments/payment_attempt.rs
+@@ -398,6 +398,8 @@ pub struct PaymentAttempt {
+     pub payment_id: id_type::GlobalPaymentId,
+     /// Merchant id for the payment attempt
+     pub merchant_id: id_type::MerchantId,
++    /// Group id for the payment attempt
++    pub attempts_group_id: Option<String>,
+     /// Amount details for the payment attempt
+     pub amount_details: AttemptAmountDetails,
+     /// Status of the payment attempt. This is the status that is updated by the connector.
+@@ -575,6 +577,7 @@ impl PaymentAttempt {
+         Ok(Self {
+             payment_id: payment_intent.id.clone(),
+             merchant_id: payment_intent.merchant_id.clone(),
++            attempts_group_id: None,
+             amount_details: attempt_amount_details,
+             status: common_enums::AttemptStatus::Started,
+             // This will be decided by the routing algorithm and updated in update trackers
+@@ -665,6 +668,7 @@ impl PaymentAttempt {
+         Ok(Self {
+             payment_id: payment_intent.id.clone(),
+             merchant_id: payment_intent.merchant_id.clone(),
++            attempts_group_id: None,
+             amount_details: attempt_amount_details,
+             status: common_enums::AttemptStatus::Started,
+             connector: Some(request.connector.clone()),
+@@ -761,6 +765,7 @@ impl PaymentAttempt {
+         Ok(Self {
+             payment_id: payment_intent.id.clone(),
+             merchant_id: payment_intent.merchant_id.clone(),
++            attempts_group_id: None,
+             amount_details: attempt_amount_details,
+             status: common_enums::AttemptStatus::Started,
+             connector: None,
+@@ -879,6 +884,7 @@ impl PaymentAttempt {
+         Ok(Self {
+             payment_id: payment_intent.id.clone(),
+             merchant_id: payment_intent.merchant_id.clone(),
++            attempts_group_id: None,
+             amount_details: AttemptAmountDetails::from(amount_details),
+             status: request.status,
+             connector,
+@@ -2383,6 +2389,7 @@ impl behaviour::Conversion for PaymentAttempt {
+         let Self {
+             payment_id,
+             merchant_id,
++            attempts_group_id,
+             status,
+             error,
+             amount_details,
+@@ -2528,6 +2535,7 @@ impl behaviour::Conversion for PaymentAttempt {
+             network_transaction_id,
+             is_overcapture_enabled: None,
+             network_details: None,
++            attempts_group_id,
+         })
+     }
+ 
+@@ -2600,6 +2608,7 @@ impl behaviour::Conversion for PaymentAttempt {
+             Ok::<Self, error_stack::Report<common_utils::errors::CryptoError>>(Self {
+                 payment_id: storage_model.payment_id,
+                 merchant_id: storage_model.merchant_id.clone(),
++                attempts_group_id: storage_model.attempts_group_id,
+                 id: storage_model.id,
+                 status: storage_model.status,
+                 amount_details,
+@@ -2665,6 +2674,7 @@ impl behaviour::Conversion for PaymentAttempt {
+         let Self {
+             payment_id,
+             merchant_id,
++            attempts_group_id,
+             status,
+             error,
+             amount_details,
+@@ -2806,6 +2816,7 @@ impl behaviour::Conversion for PaymentAttempt {
+             created_by: created_by.map(|cb| cb.to_string()),
+             connector_request_reference_id,
+             network_details: None,
++            attempts_group_id,
+         })
+     }
+ }
+diff --git a/crates/hyperswitch_domain_models/src/payments/payment_intent.rs b/crates/hyperswitch_domain_models/src/payments/payment_intent.rs
+index 8cd3be165e0..809abb00674 100644
+--- a/crates/hyperswitch_domain_models/src/payments/payment_intent.rs
++++ b/crates/hyperswitch_domain_models/src/payments/payment_intent.rs
+@@ -1659,6 +1659,8 @@ impl behaviour::Conversion for PaymentIntent {
+             last_synced,
+             setup_future_usage,
+             active_attempt_id,
++            active_attempt_id_type,
++            active_attempts_group_id,
+             order_details,
+             allowed_payment_method_types,
+             connector_metadata,
+@@ -1714,6 +1716,8 @@ impl behaviour::Conversion for PaymentIntent {
+             last_synced,
+             setup_future_usage: Some(setup_future_usage),
+             active_attempt_id,
++            active_attempt_id_type: Some(active_attempt_id_type),
++            active_attempts_group_id,
+             order_details: order_details.map(|order_details| {
+                 order_details
+                     .into_iter()
+@@ -1877,6 +1881,8 @@ impl behaviour::Conversion for PaymentIntent {
+                 last_synced: storage_model.last_synced,
+                 setup_future_usage: storage_model.setup_future_usage.unwrap_or_default(),
+                 active_attempt_id: storage_model.active_attempt_id,
++                active_attempt_id_type: storage_model.active_attempt_id_type.unwrap_or_default(),
++                active_attempts_group_id: storage_model.active_attempts_group_id,
+                 order_details: storage_model.order_details.map(|order_details| {
+                     order_details
+                         .into_iter()
+diff --git a/crates/router/src/services/kafka/payment_attempt.rs b/crates/router/src/services/kafka/payment_attempt.rs
+index 9afb697e14e..68659698c58 100644
+--- a/crates/router/src/services/kafka/payment_attempt.rs
++++ b/crates/router/src/services/kafka/payment_attempt.rs
+@@ -153,6 +153,7 @@ pub struct KafkaPaymentAttempt<'a> {
+     pub payment_id: &'a id_type::GlobalPaymentId,
+     pub merchant_id: &'a id_type::MerchantId,
+     pub attempt_id: &'a id_type::GlobalAttemptId,
++    pub attempts_group_id: Option<&'a String>,
+     pub status: storage_enums::AttemptStatus,
+     pub amount: MinorUnit,
+     pub connector: Option<&'a String>,
+@@ -232,6 +233,7 @@ impl<'a> KafkaPaymentAttempt<'a> {
+         let PaymentAttempt {
+             payment_id,
+             merchant_id,
++            attempts_group_id,
+             amount_details,
+             status,
+             connector,
+@@ -291,6 +293,7 @@ impl<'a> KafkaPaymentAttempt<'a> {
+             payment_id,
+             merchant_id,
+             attempt_id: id,
++            attempts_group_id: attempts_group_id.as_ref(),
+             status: *status,
+             amount: amount_details.get_net_amount(),
+             connector: connector.as_ref(),
+diff --git a/crates/router/src/services/kafka/payment_attempt_event.rs b/crates/router/src/services/kafka/payment_attempt_event.rs
+index 46a05d6fcf1..5e18c5909ef 100644
+--- a/crates/router/src/services/kafka/payment_attempt_event.rs
++++ b/crates/router/src/services/kafka/payment_attempt_event.rs
+@@ -155,6 +155,7 @@ pub struct KafkaPaymentAttemptEvent<'a> {
+     pub payment_id: &'a id_type::GlobalPaymentId,
+     pub merchant_id: &'a id_type::MerchantId,
+     pub attempt_id: &'a id_type::GlobalAttemptId,
++    pub attempts_group_id: Option<&'a String>,
+     pub status: storage_enums::AttemptStatus,
+     pub amount: MinorUnit,
+     pub connector: Option<&'a String>,
+@@ -234,6 +235,7 @@ impl<'a> KafkaPaymentAttemptEvent<'a> {
+         let PaymentAttempt {
+             payment_id,
+             merchant_id,
++            attempts_group_id,
+             amount_details,
+             status,
+             connector,
+@@ -293,6 +295,7 @@ impl<'a> KafkaPaymentAttemptEvent<'a> {
+             payment_id,
+             merchant_id,
+             attempt_id: id,
++            attempts_group_id: attempts_group_id.as_ref(),
+             status: *status,
+             amount: amount_details.get_net_amount(),
+             connector: connector.as_ref(),
+diff --git a/crates/router/src/services/kafka/payment_intent.rs b/crates/router/src/services/kafka/payment_intent.rs
+index 85cf80cd8a7..cd31a221044 100644
+--- a/crates/router/src/services/kafka/payment_intent.rs
++++ b/crates/router/src/services/kafka/payment_intent.rs
+@@ -130,6 +130,8 @@ pub struct KafkaPaymentIntent<'a> {
+     pub setup_future_usage: storage_enums::FutureUsage,
+     pub off_session: bool,
+     pub active_attempt_id: Option<&'a id_type::GlobalAttemptId>,
++    pub active_attempt_id_type: common_enums::ActiveAttemptIDType,
++    pub active_attempts_group_id: Option<&'a String>,
+     pub attempt_count: i16,
+     pub profile_id: &'a id_type::ProfileId,
+     pub customer_email: Option<HashedString<pii::EmailStrategy>>,
+@@ -200,6 +202,8 @@ impl<'a> KafkaPaymentIntent<'a> {
+             last_synced,
+             setup_future_usage,
+             active_attempt_id,
++            active_attempt_id_type,
++            active_attempts_group_id,
+             order_details,
+             allowed_payment_method_types,
+             connector_metadata,
+@@ -255,6 +259,8 @@ impl<'a> KafkaPaymentIntent<'a> {
+             setup_future_usage: *setup_future_usage,
+             off_session: setup_future_usage.is_off_session(),
+             active_attempt_id: active_attempt_id.as_ref(),
++            active_attempt_id_type: *active_attempt_id_type,
++            active_attempts_group_id: active_attempts_group_id.as_ref(),
+             attempt_count: *attempt_count,
+             profile_id,
+             customer_email: None,
+diff --git a/crates/router/src/services/kafka/payment_intent_event.rs b/crates/router/src/services/kafka/payment_intent_event.rs
+index edfb570901a..37e2eb6146e 100644
+--- a/crates/router/src/services/kafka/payment_intent_event.rs
++++ b/crates/router/src/services/kafka/payment_intent_event.rs
+@@ -83,6 +83,8 @@ pub struct KafkaPaymentIntentEvent<'a> {
+     pub setup_future_usage: storage_enums::FutureUsage,
+     pub off_session: bool,
+     pub active_attempt_id: Option<&'a id_type::GlobalAttemptId>,
++    pub active_attempt_id_type: common_enums::ActiveAttemptIDType,
++    pub active_attempts_group_id: Option<&'a String>,
+     pub attempt_count: i16,
+     pub profile_id: &'a id_type::ProfileId,
+     pub customer_email: Option<HashedString<pii::EmailStrategy>>,
+@@ -212,6 +214,8 @@ impl<'a> KafkaPaymentIntentEvent<'a> {
+             last_synced,
+             setup_future_usage,
+             active_attempt_id,
++            active_attempt_id_type,
++            active_attempts_group_id,
+             order_details,
+             allowed_payment_method_types,
+             connector_metadata,
+@@ -267,6 +271,8 @@ impl<'a> KafkaPaymentIntentEvent<'a> {
+             setup_future_usage: *setup_future_usage,
+             off_session: setup_future_usage.is_off_session(),
+             active_attempt_id: active_attempt_id.as_ref(),
++            active_attempt_id_type: *active_attempt_id_type,
++            active_attempts_group_id: active_attempts_group_id.as_ref(),
+             attempt_count: *attempt_count,
+             profile_id,
+             customer_email: None,
+diff --git a/v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/down.sql b/v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/down.sql
+new file mode 100644
+index 00000000000..c8d1b06586c
+--- /dev/null
++++ b/v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/down.sql
+@@ -0,0 +1,8 @@
++ALTER TABLE payment_attempt
++    DROP COLUMN IF EXISTS attempts_group_id;
++
++ALTER TABLE payment_intent
++    DROP COLUMN IF EXISTS active_attempts_group_id;
++
++ALTER TABLE payment_intent
++    DROP COLUMN IF EXISTS active_attempt_id_type;
+\ No newline at end of file
+diff --git a/v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/up.sql b/v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/up.sql
+new file mode 100644
+index 00000000000..b14308c8910
+--- /dev/null
++++ b/v2_compatible_migrations/2025-09-19-061700-0000_add-group-id-in-payment-intent-and-attempt/up.sql
+@@ -0,0 +1,8 @@
++ALTER TABLE payment_attempt
++    ADD COLUMN IF NOT EXISTS attempts_group_id VARCHAR(64);
++
++ALTER TABLE payment_intent
++    ADD COLUMN IF NOT EXISTS active_attempts_group_id VARCHAR(64);
++
++ALTER TABLE payment_intent
++    ADD COLUMN IF NOT EXISTS active_attempt_id_type VARCHAR(16);
+\ No newline at end of file

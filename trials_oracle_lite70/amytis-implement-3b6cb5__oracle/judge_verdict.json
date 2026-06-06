@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "site.config.ts diff adds `enabled: true` inside the i18n block. Verified by F2P_I18N_ENABLED gate passing in test.sh (reward=1.0)."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "LanguageProvider.tsx: adds `const isI18nEnabled = siteConfig.i18n.enabled !== false && siteConfig.i18n.locales.length >= 2;`, guards useEffect with `if (!isI18nEnabled) return;` (skipping localStorage/rAF), initializes isHydrated to `!isI18nEnabled` (skipping hydration), and guards setLanguage with `if (!isI18nEnabled) return;` (no-op). F2P_PROVIDER_GUARD gate passes."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "LanguageSwitch.tsx: changes early-return from `if (locales.length < 2) return null;` to `if (siteConfig.i18n.enabled === false || locales.length < 2) return null;`. F2P_LANGSWITCH_CHECK gate passes."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "site.config.ts diff adds 4-line comment block above `enabled: true`: '// Set enabled: false to disable multi-language support entirely. // The language switcher will be hidden and the defaultLocale is always used. // When disabled, all locale-aware fields ... accept plain strings instead of { en: ..., zh: ... } objects.' F2P_CONFIG_DOC gate passes."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "site.config.example.ts created (254 lines) with `enabled: false` in i18n block, plain-string config values throughout, and header comment: 'This template has i18n disabled. All locale-aware fields use plain strings. To add multi-language support later, switch to { en: ..., zh: ... } objects and set i18n.enabled: true with your locales.' F2P_EXAMPLE_FILE gate passes."
+    }
+  ],
+  "judge_notes": "All 5 goals met. Agent's patch modifies site.config.ts (adds enabled field + docs), LanguageProvider.tsx (isI18nEnabled guard on useEffect/setLanguage), LanguageSwitch.tsx (enabled === false early-return), and creates site.config.example.ts (single-language template). test.sh confirms all 5 F2P gates pass with reward=1.0. Score = 0.286*3 + 0.071*2 = 1.0 → equivalent.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "amytis-implement-3b6cb5",
+  "trial_id": "amytis-implement-3b6cb5__oracle",
+  "judge_elapsed_sec": 77.6,
+  "sandbox_id": "iq8qf12pnwr3qlwswi9mq",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

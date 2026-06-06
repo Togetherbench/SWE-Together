@@ -1,0 +1,20 @@
+diff --git a/ultravico/sageattn/attn_qk_int8_per_block.py b/ultravico/sageattn/attn_qk_int8_per_block.py
+--- a/ultravico/sageattn/attn_qk_int8_per_block.py
++++ b/ultravico/sageattn/attn_qk_int8_per_block.py
+@@ -30,7 +30,7 @@
+         start_n = tl.multiple_of(start_n, BLOCK_N)
+         k_mask = offs_n[None, :] < (kv_len - start_n)
+         k = tl.load(K_ptrs, mask = k_mask)
+-        k_scale = tl.load(K_scale_ptr)
++        k_scale = tl.load(K_scale_ptr + (start_n // BLOCK_N))
+ 
+ 
+         m = offs_m[:, None]
+@@ -66,7 +66,6 @@
+         acc += tl.dot(p, v, out_dtype=tl.float16)
+         m_i = m_ij
+         K_ptrs += BLOCK_N * stride_kn
+-        K_scale_ptr += 1
+         V_ptrs += BLOCK_N * stride_vn
+     return acc, l_i
+ 

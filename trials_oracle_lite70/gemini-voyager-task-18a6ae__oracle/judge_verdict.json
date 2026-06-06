@@ -1,0 +1,43 @@
+{
+  "judge_score": 1.0,
+  "verdict": "equivalent",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": true,
+      "evidence": "test.sh locales_no_description: PASS — all 10 locale files in dist_chrome/_locales/ have no description fields. The stripDescriptions helper (custom-vite-plugins.ts:60-62) strips descriptions via Object.fromEntries, used in both the transform plugin (line 74) for JS-bundled imports and crxI18n (lines 96-98) for static _locales/ assets."
+    },
+    {
+      "id": "goal_2",
+      "met": true,
+      "evidence": "test.sh build_succeeds: PASS — 'bun run build:chrome' exits with rc=0, dist_chrome/manifest.json exists. Confirmed by test output: 'build rc: 0, dist_chrome/manifest.json exists: True'."
+    },
+    {
+      "id": "goal_3",
+      "met": true,
+      "evidence": "test.sh crxI18n_has_option: PASS — custom-vite-plugins.ts:81-85 shows crxI18n accepts { localize: boolean; src: string; stripDescriptions?: boolean } and uses it at lines 96-98 to conditionally strip descriptions from emitted locale files."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "test.sh plugin_exported: PASS and plugin_wired: PASS — custom-vite-plugins.ts:66-78 exports stripI18nDescriptions with enforce:'pre' and a transform hook that strips descriptions from locale JSON files matching '/locales/*.messages.json'. vite.config.base.ts:8 imports it and line 45 wires it into the plugins array."
+    },
+    {
+      "id": "goal_5",
+      "met": true,
+      "evidence": "test.sh typecheck_passes: PASS — 'bun run typecheck' exits with rc=0. The LocaleMessages type (line 58) and stripDescriptions?: boolean option type are correctly defined and compatible with the existing codebase."
+    }
+  ],
+  "judge_notes": "All 5 goals met. The agent's patch exactly matches the oracle approach: stripDescriptions helper function, stripI18nDescriptions transform plugin with enforce:'pre', crxI18n updated with stripDescriptions option, both wired in vite.config.base.ts. test.sh confirms 7/7 F2P tests pass with reward=1.0. Score = 0.36+0.36+0.09+0.09+0.10 = 1.00.",
+  "judge_reported_score": 1.0,
+  "judge_reported_verdict": "equivalent",
+  "task": "gemini-voyager-task-18a6ae",
+  "trial_id": "gemini-voyager-task-18a6ae__oracle",
+  "judge_elapsed_sec": 78.6,
+  "sandbox_id": "isvc3lzpii79wekl91w1k",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 5
+}

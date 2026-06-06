@@ -1,0 +1,129 @@
+diff --git a/cmd/entire/cli/rewind.go b/cmd/entire/cli/rewind.go
+index 60d546e1f3..46a33ddb49 100644
+--- a/cmd/entire/cli/rewind.go
++++ b/cmd/entire/cli/rewind.go
+@@ -288,7 +288,12 @@ func runRewindInteractive() error { //nolint:maintidx // already present in code
+ 		}
+ 	} else {
+ 		// For session checkpoint: restore full transcript
+-		sessionID = extractSessionIDFromMetadata(selectedPoint.MetadataDir)
++		// Prefer SessionID from trailer (set by GetRewindPoints from Entire-Session trailer)
++		// over path-based extraction which is less reliable.
++		sessionID = selectedPoint.SessionID
++		if sessionID == "" {
++			sessionID = extractSessionIDFromMetadata(selectedPoint.MetadataDir)
++		}
+ 		transcriptFile = filepath.Join(selectedPoint.MetadataDir, paths.TranscriptFileNameLegacy)
+ 	}
+ 
+@@ -485,7 +490,11 @@ func runRewindToInternal(commitID string, logsOnly bool, reset bool) error {
+ 			return nil
+ 		}
+ 	} else {
+-		sessionID = extractSessionIDFromMetadata(selectedPoint.MetadataDir)
++		// Prefer SessionID from trailer over path-based extraction
++		sessionID = selectedPoint.SessionID
++		if sessionID == "" {
++			sessionID = extractSessionIDFromMetadata(selectedPoint.MetadataDir)
++		}
+ 		transcriptFile = filepath.Join(selectedPoint.MetadataDir, paths.TranscriptFileNameLegacy)
+ 	}
+ 
+@@ -637,16 +646,12 @@ func handleLogsOnlyResetNonInteractive(start strategy.Strategy, point strategy.R
+ }
+ 
+ func extractSessionIDFromMetadata(metadataDir string) string {
+-	// Metadata dir format varies by strategy:
+-	// - manual-commit/commit: .entire/metadata/2025-01-25-<session-id>
+-	// - auto-commit: ab/cdef1234.../2025-11-28-<session-id>
+-	base := filepath.Base(metadataDir)
+-	// Try to extract UUID from the end (format: YYYY-MM-DD-uuid)
+-	parts := strings.SplitN(base, "-", 4)
+-	if len(parts) >= 4 {
+-		return parts[3]
+-	}
+-	return base
++	// The metadata directory name IS the Entire session ID.
++	// For new format: .entire/metadata/<agent-session-id> (e.g., UUID)
++	// For legacy format: .entire/metadata/<date-prefixed-id>
++	// Date-prefix stripping (for legacy IDs) is handled downstream by
++	// ExtractAgentSessionID/ModelSessionID, so we return the full name here.
++	return filepath.Base(metadataDir)
+ }
+ 
+ func restoreSessionTranscript(transcriptFile, sessionID string, agent agentpkg.Agent) error {
+diff --git a/cmd/entire/cli/rewind_test.go b/cmd/entire/cli/rewind_test.go
+new file mode 100644
+index 0000000000..00ffe651fe
+--- /dev/null
++++ b/cmd/entire/cli/rewind_test.go
+@@ -0,0 +1,69 @@
++package cli
++
++import "testing"
++
++func TestExtractSessionIDFromMetadata(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name        string
++		metadataDir string
++		expected    string
++	}{
++		// New format: UUID session IDs (no date prefix)
++		{
++			name:        "UUID session ID",
++			metadataDir: ".entire/metadata/0544a0f5-46a6-41b3-a89c-e7804df731b8",
++			expected:    "0544a0f5-46a6-41b3-a89c-e7804df731b8",
++		},
++		{
++			name:        "another UUID session ID",
++			metadataDir: ".entire/metadata/f736da47-b2ca-4f86-bb32-a1bbe582e464",
++			expected:    "f736da47-b2ca-4f86-bb32-a1bbe582e464",
++		},
++		// Legacy format: date-prefixed session IDs
++		{
++			name:        "legacy date-prefixed session ID",
++			metadataDir: ".entire/metadata/2026-01-25-f736da47-b2ca-4f86-bb32-a1bbe582e464",
++			expected:    "2026-01-25-f736da47-b2ca-4f86-bb32-a1bbe582e464",
++		},
++		{
++			name:        "legacy with short uuid",
++			metadataDir: ".entire/metadata/2026-02-10-abc123",
++			expected:    "2026-02-10-abc123",
++		},
++		// Auto-commit format: sharded path
++		{
++			name:        "auto-commit sharded path with UUID",
++			metadataDir: "ab/cdef1234/0544a0f5-46a6-41b3-a89c-e7804df731b8",
++			expected:    "0544a0f5-46a6-41b3-a89c-e7804df731b8",
++		},
++		{
++			name:        "auto-commit sharded path with legacy date",
++			metadataDir: "ab/cdef1234/2025-11-28-session-uuid",
++			expected:    "2025-11-28-session-uuid",
++		},
++		// Simple session IDs
++		{
++			name:        "simple session ID",
++			metadataDir: ".entire/metadata/simple-session",
++			expected:    "simple-session",
++		},
++		{
++			name:        "short ID",
++			metadataDir: ".entire/metadata/abc123",
++			expected:    "abc123",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++
++			result := extractSessionIDFromMetadata(tt.metadataDir)
++			if result != tt.expected {
++				t.Errorf("extractSessionIDFromMetadata(%q) = %q, want %q", tt.metadataDir, result, tt.expected)
++			}
++		})
++	}
++}

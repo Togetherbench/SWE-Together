@@ -1,0 +1,38 @@
+{
+  "judge_score": 0.15,
+  "verdict": "incorrect",
+  "rubric_source": "canonical_goals.json",
+  "goal_results": [
+    {
+      "id": "goal_1",
+      "met": false,
+      "evidence": "content_overlap.go does not exist (Glob found no files matching **/content_overlap.go). All three functions (filesOverlapWithContent, stagedFilesOverlapWithContent, hasOverlappingFiles) are still defined in manual_commit_hooks.go at lines 1693, 1818, and 1926 respectively. The patch included the new file and extraction but the hunks were not successfully applied to the workspace."
+    },
+    {
+      "id": "goal_2",
+      "met": false,
+      "evidence": "Grep for 'active_committed' in /workspace/cli/cmd/entire/cli/session/state.go returned no matches. NormalizeAfterLoad (line 161) goes straight into transcript field migration with no legacy phase handling. The patch hunk for state.go was not applied."
+    },
+    {
+      "id": "goal_3",
+      "met": false,
+      "evidence": "manual_commit_hooks.go:1583 shows 'func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(state *SessionState)' — still returns void (no int return type). HandleTurnEnd at line 1570 calls s.finalizeAllTurnCheckpoints(state) without capturing a return value and has no error-count warning logging. The patch hunks for these changes were not applied."
+    },
+    {
+      "id": "goal_4",
+      "met": true,
+      "evidence": "Running 'go build -buildvcs=false ./cmd/entire/...' in /workspace/cli produced no errors (exit code 0). The project compiles successfully."
+    }
+  ],
+  "judge_notes": "The agent's patch file contains all the required changes (content_overlap.go creation, NormalizeAfterLoad active_committed migration, finalizeAllTurnCheckpoints returning int), but most hunks failed to apply to the workspace. Only minor changes applied: comment reformatting in deferred_finalization_test.go, added carry-forward prep logging and redact import in manual_commit_hooks.go. The only goal met is goal_4 (build succeeds) since the partially-applied changes don't break compilation. Score = 0 + 0 + 0 + 0.15 = 0.15 → 'incorrect'.",
+  "judge_reported_score": 0.15,
+  "judge_reported_verdict": "incorrect",
+  "task": "cli-task-4ddad8",
+  "trial_id": "cli-task-4ddad8__oracle",
+  "judge_elapsed_sec": 225.8,
+  "sandbox_id": "ix98vm7m46wxbyhol04sn",
+  "judge_exit_code": 0,
+  "judge_model": "claude-opus-4-6",
+  "judge_phase": 2,
+  "rubric_n_goals": 4
+}

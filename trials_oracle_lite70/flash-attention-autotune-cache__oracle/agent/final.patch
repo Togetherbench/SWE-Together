@@ -1,0 +1,52 @@
+diff --git a/flash_attn/flash_attn_triton.py b/flash_attn/flash_attn_triton.py
+index 30420c0..923381f 100644
+--- a/flash_attn/flash_attn_triton.py
++++ b/flash_attn/flash_attn_triton.py
+@@ -656,6 +656,7 @@ def init_to_zero(name):
+         # triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "SEQUENCE_PARALLEL": True}, num_warps=4, num_stages=1, pre_hook=init_to_zero('DQ')),
+     ],
+     key=["CACHE_KEY_SEQLEN_Q", "CACHE_KEY_SEQLEN_K", "BIAS_TYPE", "IS_CAUSAL", "BLOCK_HEADDIM"],
++    cache_results=True,
+ )
+ @triton.heuristics(
+     {
+diff --git a/flash_attn/ops/triton/layer_norm.py b/flash_attn/ops/triton/layer_norm.py
+index 192cee4..b9f4339 100644
+--- a/flash_attn/ops/triton/layer_norm.py
++++ b/flash_attn/ops/triton/layer_norm.py
+@@ -163,6 +163,7 @@ def rms_norm_ref(
+ @triton.autotune(
+     configs=triton_autotune_configs(),
+     key=["N", "HAS_RESIDUAL", "STORE_RESIDUAL_OUT", "IS_RMS_NORM", "HAS_BIAS", "HAS_X1", "HAS_W1", "HAS_B1"],
++    cache_results=True,
+ )
+ # torch compile doesn't like triton.heuristics, so we set these manually when calling the kernel
+ # @triton.heuristics({"HAS_BIAS": lambda args: args["B"] is not None})
+@@ -471,6 +472,7 @@ def _layer_norm_fwd_impl(
+ @triton.autotune(
+     configs=triton_autotune_configs(),
+     key=["N", "HAS_DRESIDUAL", "STORE_DRESIDUAL", "IS_RMS_NORM", "HAS_BIAS", "HAS_DROPOUT"],
++    cache_results=True,
+ )
+ # torch compile doesn't like triton.heuristics, so we set these manually when calling the kernel
+ # @triton.heuristics({"HAS_BIAS": lambda args: args["B"] is not None})
+diff --git a/flash_attn/ops/triton/linear.py b/flash_attn/ops/triton/linear.py
+index a8966db..13c905d 100644
+--- a/flash_attn/ops/triton/linear.py
++++ b/flash_attn/ops/triton/linear.py
+@@ -121,6 +121,7 @@ def get_configs_io_bound():
+         "perf_model": estimate_matmul_time,
+         "top_k": 10,
+     },
++    cache_results=True,
+ )
+ @triton.heuristics(
+     {
+@@ -418,6 +419,7 @@ def triton_linear_act(
+         "perf_model": estimate_matmul_time,
+         "top_k": 10,
+     },
++    cache_results=True,
+ )
+ @triton.heuristics(
+     {

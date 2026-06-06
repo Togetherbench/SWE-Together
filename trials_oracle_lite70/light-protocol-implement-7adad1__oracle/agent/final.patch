@@ -1,0 +1,577 @@
+diff --git a/sdk-libs/macros/src/light_pdas/accounts/light_account.rs b/sdk-libs/macros/src/light_pdas/accounts/light_account.rs
+index bb6b13a..28fd44b 100644
+--- a/sdk-libs/macros/src/light_pdas/accounts/light_account.rs
++++ b/sdk-libs/macros/src/light_pdas/accounts/light_account.rs
+@@ -47,8 +47,8 @@ use syn::{
+ 
+ use super::mint::LightMintField;
+ use crate::light_pdas::light_account_keywords::{
+-    is_shorthand_key, is_standalone_keyword, missing_namespace_error, valid_keys_for_namespace,
+-    validate_namespaced_key,
++    is_boolean_flag_key, is_shorthand_key, is_standalone_keyword, missing_namespace_error,
++    valid_keys_for_namespace, validate_namespaced_key,
+ };
+ pub(super) use crate::light_pdas::seeds::extract_account_inner_type;
+ 
+@@ -132,6 +132,9 @@ pub struct AtaField {
+     pub owner: Expr,
+     /// Mint for the ATA (from associated_token::mint = ... parameter)
+     pub mint: Expr,
++    /// Whether to use idempotent ATA creation.
++    /// Set via `associated_token::idempotent` flag (presence = true, absence = false).
++    pub idempotent: bool,
+ }
+ 
+ // ============================================================================
+@@ -153,7 +156,19 @@ impl Parse for NamespacedKeyValue {
+         let key: Ident = input.parse()?;
+ 
+         // Check for shorthand syntax (key alone without = value)
++        let namespace_str = namespace.to_string();
++        let key_str = key.to_string();
+         let value: Expr = if input.peek(Token![=]) {
++            // Reject explicit `= value` for boolean flag keys
++            if is_boolean_flag_key(&namespace_str, &key_str) {
++                return Err(Error::new_spanned(
++                    &key,
++                    format!(
++                        "`{}::{}` is a boolean flag — write it without a value (e.g., `{}::{}`)",
++                        namespace_str, key_str, namespace_str, key_str
++                    ),
++                ));
++            }
+             input.parse::<Token![=]>()?;
+ 
+             // Handle bracketed content for authority and seeds arrays
+@@ -174,10 +189,11 @@ impl Parse for NamespacedKeyValue {
+             }
+         } else {
+             // Shorthand: key alone means key = key
+-            let namespace_str = namespace.to_string();
+-            let key_str = key.to_string();
+             if is_shorthand_key(&namespace_str, &key_str) {
+                 syn::parse_quote!(#key)
++            } else if is_boolean_flag_key(&namespace_str, &key_str) {
++                // Boolean flag: presence means true
++                syn::parse_quote!(true)
+             } else {
+                 return Err(Error::new_spanned(
+                     &key,
+@@ -301,6 +317,16 @@ impl Parse for LightAccountArgs {
+ 
+             // Parse value (handle shorthand and array syntax)
+             let value: Expr = if input.peek(Token![=]) {
++                // Reject explicit `= value` for boolean flag keys
++                if is_boolean_flag_key(&namespace_str, &key_str) {
++                    return Err(Error::new_spanned(
++                        &key,
++                        format!(
++                            "`{}::{}` is a boolean flag — write it without a value (e.g., `{}::{}`)",
++                            namespace_str, key_str, namespace_str, key_str
++                        ),
++                    ));
++                }
+                 input.parse::<Token![=]>()?;
+ 
+                 // Handle bracketed content for authority and seeds arrays
+@@ -324,6 +350,9 @@ impl Parse for LightAccountArgs {
+                 // Shorthand: key alone means key = key
+                 if is_shorthand_key(&namespace_str, &key_str) {
+                     syn::parse_quote!(#key)
++                } else if is_boolean_flag_key(&namespace_str, &key_str) {
++                    // Boolean flag: presence means true
++                    syn::parse_quote!(true)
+                 } else {
+                     return Err(Error::new_spanned(
+                         &key,
+@@ -1014,11 +1043,16 @@ fn build_ata_field(
+ ) -> Result<AtaField, syn::Error> {
+     let mut owner: Option<Expr> = None; // from associated_token::authority
+     let mut mint: Option<Expr> = None;
++    let mut idempotent: bool = false;
+ 
+     for kv in key_values {
+         match kv.key.to_string().as_str() {
+             "authority" => owner = Some(kv.value.clone()), // authority -> owner
+             "mint" => mint = Some(kv.value.clone()),
++            "idempotent" => {
++                // Value is always synthesized `true` by the parser (flag semantics).
++                idempotent = true;
++            }
+             "bump" => {
+                 return Err(Error::new_spanned(
+                     &kv.key,
+@@ -1029,7 +1063,7 @@ fn build_ata_field(
+                 return Err(Error::new_spanned(
+                     &kv.key,
+                     format!(
+-                        "Unknown key `associated_token::{}`. Allowed: authority, mint",
++                        "Unknown key `associated_token::{}`. Allowed: authority, mint, idempotent",
+                         other
+                     ),
+                 ));
+@@ -1056,6 +1090,7 @@ fn build_ata_field(
+         has_init,
+         owner,
+         mint,
++        idempotent,
+     })
+ }
+ 
+@@ -1515,6 +1550,7 @@ mod tests {
+             LightAccountField::AssociatedToken(ata) => {
+                 assert_eq!(ata.field_ident.to_string(), "user_ata");
+                 assert!(!ata.has_init, "Mark-only should have has_init = false");
++                assert_eq!(ata.idempotent, false, "idempotent should default to false");
+             }
+             _ => panic!("Expected AssociatedToken field"),
+         }
+@@ -1537,11 +1573,79 @@ mod tests {
+             LightAccountField::AssociatedToken(ata) => {
+                 assert_eq!(ata.field_ident.to_string(), "user_ata");
+                 assert!(ata.has_init);
++                assert_eq!(ata.idempotent, false, "idempotent should default to false");
++            }
++            _ => panic!("Expected AssociatedToken field"),
++        }
++    }
++
++    #[test]
++    fn test_parse_associated_token_idempotent_absent_is_false() {
++        let field: syn::Field = parse_quote! {
++            #[light_account(init, associated_token::authority = owner, associated_token::mint = mint)]
++            pub user_ata: Account<'info, CToken>
++        };
++        let ident = field.ident.clone().unwrap();
++
++        let result = parse_light_account_attr(&field, &ident, &None);
++        assert!(result.is_ok());
++        match result.unwrap().unwrap() {
++            LightAccountField::AssociatedToken(ata) => {
++                assert_eq!(ata.idempotent, false, "absent idempotent flag should be false");
++            }
++            _ => panic!("Expected AssociatedToken field"),
++        }
++    }
++
++    #[test]
++    fn test_parse_associated_token_idempotent_flag_is_true() {
++        let field: syn::Field = parse_quote! {
++            #[light_account(init,
++                associated_token::authority = owner,
++                associated_token::mint = mint,
++                associated_token::idempotent)]
++            pub user_ata: Account<'info, CToken>
++        };
++        let ident = field.ident.clone().unwrap();
++
++        let result = parse_light_account_attr(&field, &ident, &None);
++        assert!(
++            result.is_ok(),
++            "idempotent flag should parse successfully: {:?}",
++            result.err()
++        );
++        match result.unwrap().unwrap() {
++            LightAccountField::AssociatedToken(ata) => {
++                assert_eq!(ata.idempotent, true, "present idempotent flag should be true");
+             }
+             _ => panic!("Expected AssociatedToken field"),
+         }
+     }
+ 
++    #[test]
++    fn test_parse_associated_token_idempotent_with_value_fails() {
++        let field: syn::Field = parse_quote! {
++            #[light_account(init,
++                associated_token::authority = owner,
++                associated_token::mint = mint,
++                associated_token::idempotent = true)]
++            pub user_ata: Account<'info, CToken>
++        };
++        let ident = field.ident.clone().unwrap();
++
++        let result = parse_light_account_attr(&field, &ident, &None);
++        assert!(
++            result.is_err(),
++            "idempotent with explicit value should be rejected"
++        );
++        let err = result.err().unwrap().to_string();
++        assert!(
++            err.contains("boolean flag"),
++            "Expected boolean flag error, got: {}",
++            err
++        );
++    }
++
+     #[test]
+     fn test_parse_associated_token_init_missing_authority_fails() {
+         let field: syn::Field = parse_quote! {
+diff --git a/sdk-libs/macros/src/light_pdas/light_account_keywords.rs b/sdk-libs/macros/src/light_pdas/light_account_keywords.rs
+index dfe049e..315c4ec 100644
+--- a/sdk-libs/macros/src/light_pdas/light_account_keywords.rs
++++ b/sdk-libs/macros/src/light_pdas/light_account_keywords.rs
+@@ -36,7 +36,7 @@ pub const TOKEN_NAMESPACE_KEYS: &[&str] = &["seeds", "mint", "owner", "bump", "o
+ 
+ /// Valid keys for `associated_token::` namespace in `#[light_account(associated_token, ...)]`.
+ /// Note: `authority` is the user-facing name (maps internally to `owner` in AtaField).
+-pub const ASSOCIATED_TOKEN_NAMESPACE_KEYS: &[&str] = &["authority", "mint"];
++pub const ASSOCIATED_TOKEN_NAMESPACE_KEYS: &[&str] = &["authority", "mint", "idempotent"];
+ 
+ /// Valid keys for `mint::` namespace in `#[light_account(init, mint, ...)]` attributes.
+ pub const MINT_NAMESPACE_KEYS: &[&str] = &[
+@@ -70,6 +70,23 @@ pub const SHORTHAND_KEYS_BY_NAMESPACE: &[(&str, &[&str])] = &[
+     // mint namespace does not support shorthand - values are typically expressions
+ ];
+ 
++/// Keys that act as boolean flags: presence means `true`, absence means `false`.
++/// Unlike shorthand keys, these do NOT use `key = key` syntax.
++pub const BOOLEAN_FLAG_KEYS_BY_NAMESPACE: &[(&str, &[&str])] =
++    &[("associated_token", &["idempotent"])];
++
++/// Check if a key is a boolean flag within a given namespace.
++/// Boolean flags use presence/absence semantics (no `= value` allowed).
++#[inline]
++pub fn is_boolean_flag_key(namespace: &str, key: &str) -> bool {
++    for (ns, keys) in BOOLEAN_FLAG_KEYS_BY_NAMESPACE {
++        if *ns == namespace {
++            return keys.contains(&key);
++        }
++    }
++    false
++}
++
+ /// Check if a keyword is a standalone flag (doesn't require a value).
+ #[inline]
+ pub fn is_standalone_keyword(keyword: &str) -> bool {
+@@ -201,11 +218,21 @@ mod tests {
+     fn test_associated_token_namespace_keys() {
+         assert!(ASSOCIATED_TOKEN_NAMESPACE_KEYS.contains(&"authority"));
+         assert!(ASSOCIATED_TOKEN_NAMESPACE_KEYS.contains(&"mint"));
++        assert!(ASSOCIATED_TOKEN_NAMESPACE_KEYS.contains(&"idempotent"));
+         assert!(!ASSOCIATED_TOKEN_NAMESPACE_KEYS.contains(&"bump")); // bump derived on-chain
+         assert!(!ASSOCIATED_TOKEN_NAMESPACE_KEYS.contains(&"owner")); // renamed to authority
+         assert!(!ASSOCIATED_TOKEN_NAMESPACE_KEYS.contains(&"unknown"));
+     }
+ 
++    #[test]
++    fn test_boolean_flag_keys() {
++        assert!(is_boolean_flag_key("associated_token", "idempotent"));
++        assert!(!is_boolean_flag_key("associated_token", "authority"));
++        assert!(!is_boolean_flag_key("associated_token", "mint"));
++        assert!(!is_boolean_flag_key("token", "idempotent"));
++        assert!(!is_boolean_flag_key("mint", "idempotent"));
++    }
++
+     #[test]
+     fn test_mint_namespace_keys() {
+         assert!(MINT_NAMESPACE_KEYS.contains(&"signer")); // renamed from mint_signer
+diff --git a/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/mod.rs b/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/mod.rs
+index d4ab591..f9360a4 100644
+--- a/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/mod.rs
++++ b/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/mod.rs
+@@ -13,8 +13,10 @@
+ 
+ pub mod single_ata;
+ pub mod single_ata_markonly;
++pub mod single_ata_non_idempotent;
+ pub mod single_vault;
+ 
+ pub use single_ata::*;
+ pub use single_ata_markonly::*;
++pub use single_ata_non_idempotent::*;
+ pub use single_vault::*;
+diff --git a/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata.rs b/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata.rs
+index a62f978..5676abe 100644
+--- a/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata.rs
++++ b/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata.rs
+@@ -33,7 +33,7 @@ pub struct D10SingleAta<'info> {
+ 
+     /// ATA account - macro should generate creation code.
+     #[account(mut)]
+-    #[light_account(init, associated_token::authority = d10_ata_owner, associated_token::mint = d10_ata_mint)]
++    #[light_account(init, associated_token::authority = d10_ata_owner, associated_token::mint = d10_ata_mint, associated_token::idempotent)]
+     pub d10_single_ata: UncheckedAccount<'info>,
+ 
+     #[account(address = LIGHT_TOKEN_CONFIG)]
+diff --git a/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata_non_idempotent.rs b/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata_non_idempotent.rs
+new file mode 100644
+index 0000000..a2c71b1
+--- /dev/null
++++ b/sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata_non_idempotent.rs
+@@ -0,0 +1,53 @@
++//! D10 Test: Single ATA creation without idempotent flag
++//!
++//! Tests #[light_account(init, associated_token, ...)] without the idempotent flag.
++//! Strict creation: fails if the ATA already exists.
++//!
++//! This differs from single_ata.rs which (absent the idempotent flag) uses
++//! the default idempotent=false behavior. This file makes the strict semantics explicit
++//! by omitting the flag, verifying that a second call fails with "account already exists".
++
++use anchor_lang::prelude::*;
++use light_account::{
++    CreateAccountsProof, LightAccounts, LIGHT_TOKEN_CONFIG, LIGHT_TOKEN_PROGRAM_ID,
++    LIGHT_TOKEN_RENT_SPONSOR,
++};
++
++#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
++pub struct D10SingleAtaNonIdempotentParams {
++    pub create_accounts_proof: CreateAccountsProof,
++}
++
++/// Tests strict (non-idempotent) ATA creation.
++/// No `associated_token::idempotent` flag → idempotent=false → second call fails.
++#[derive(Accounts, LightAccounts)]
++#[instruction(params: D10SingleAtaNonIdempotentParams)]
++pub struct D10SingleAtaNonIdempotent<'info> {
++    #[account(mut)]
++    pub fee_payer: Signer<'info>,
++
++    /// CHECK: Token mint for the ATA
++    pub d10_non_idem_ata_mint: AccountInfo<'info>,
++
++    /// CHECK: Owner of the ATA
++    pub d10_non_idem_ata_owner: AccountInfo<'info>,
++
++    /// ATA account - strict creation, fails if ATA already exists.
++    #[account(mut)]
++    #[light_account(init,
++        associated_token::authority = d10_non_idem_ata_owner,
++        associated_token::mint = d10_non_idem_ata_mint)]
++    pub d10_non_idem_ata: UncheckedAccount<'info>,
++
++    #[account(address = LIGHT_TOKEN_CONFIG)]
++    pub light_token_config: AccountInfo<'info>,
++
++    #[account(mut, address = LIGHT_TOKEN_RENT_SPONSOR)]
++    pub light_token_rent_sponsor: AccountInfo<'info>,
++
++    /// CHECK: Light Token Program for CPI
++    #[account(address = LIGHT_TOKEN_PROGRAM_ID)]
++    pub light_token_program: AccountInfo<'info>,
++
++    pub system_program: Program<'info, System>,
++}
+diff --git a/sdk-tests/csdk-anchor-full-derived-test/src/lib.rs b/sdk-tests/csdk-anchor-full-derived-test/src/lib.rs
+index dc7b435..55e461d 100644
+--- a/sdk-tests/csdk-anchor-full-derived-test/src/lib.rs
++++ b/sdk-tests/csdk-anchor-full-derived-test/src/lib.rs
+@@ -282,6 +282,7 @@ pub mod csdk_anchor_full_derived_test {
+         },
+         instructions::d10_token_accounts::{
+             D10SingleAta, D10SingleAtaMarkonly, D10SingleAtaMarkonlyParams, D10SingleAtaParams,
++            D10SingleAtaNonIdempotent, D10SingleAtaNonIdempotentParams,
+             D10SingleVault, D10SingleVaultParams,
+         },
+         instructions::d11_zero_copy::{
+@@ -1471,6 +1472,15 @@ pub mod csdk_anchor_full_derived_test {
+         Ok(())
+     }
+ 
++    /// D10: Non-idempotent ATA — strict creation, fails if ATA already exists.
++    #[allow(unused_variables)]
++    pub fn d10_single_ata_non_idempotent<'info>(
++        ctx: Context<'_, '_, '_, 'info, D10SingleAtaNonIdempotent<'info>>,
++        params: D10SingleAtaNonIdempotentParams,
++    ) -> Result<()> {
++        Ok(())
++    }
++
+     // =========================================================================
+     // D11 Zero-copy (AccountLoader) Tests
+     // =========================================================================
+diff --git a/sdk-tests/csdk-anchor-full-derived-test/tests/d10_ata_idempotent_test.rs b/sdk-tests/csdk-anchor-full-derived-test/tests/d10_ata_idempotent_test.rs
+new file mode 100644
+index 0000000..7a1f095
+--- /dev/null
++++ b/sdk-tests/csdk-anchor-full-derived-test/tests/d10_ata_idempotent_test.rs
+@@ -0,0 +1,189 @@
++//! Integration tests for non-idempotent ATA creation.
++//!
++//! Verifies that without the `associated_token::idempotent` flag:
++//! - First ATA creation succeeds.
++//! - Second ATA creation for the same (owner, mint) pair fails.
++
++mod shared;
++
++use anchor_lang::{InstructionData, ToAccountMetas};
++use csdk_anchor_full_derived_test::d10_token_accounts::D10SingleAtaNonIdempotentParams;
++use light_client::interface::{get_create_accounts_proof, InitializeRentFreeConfig};
++use light_program_test::{
++    program_test::{setup_mock_program_data, LightProgramTest},
++    ProgramTestConfig, Rpc,
++};
++use light_sdk_types::LIGHT_TOKEN_PROGRAM_ID;
++use light_token::instruction::LIGHT_TOKEN_CONFIG;
++use light_token::instruction::LIGHT_TOKEN_RENT_SPONSOR;
++use solana_instruction::Instruction;
++use solana_keypair::Keypair;
++use solana_pubkey::Pubkey;
++use solana_signer::Signer;
++
++struct D10TestContext {
++    rpc: LightProgramTest,
++    payer: Keypair,
++    #[allow(dead_code)]
++    config_pda: Pubkey,
++    program_id: Pubkey,
++}
++
++impl D10TestContext {
++    async fn new() -> Self {
++        let program_id = csdk_anchor_full_derived_test::ID;
++        let mut config = ProgramTestConfig::new_v2(
++            true,
++            Some(vec![("csdk_anchor_full_derived_test", program_id)]),
++        );
++        config = config.with_light_protocol_events();
++
++        let mut rpc = LightProgramTest::new(config).await.unwrap();
++        let payer = rpc.get_payer().insecure_clone();
++
++        let program_data_pda = setup_mock_program_data(&mut rpc, &payer, &program_id);
++
++        let (init_config_ix, config_pda) = InitializeRentFreeConfig::new(
++            &program_id,
++            &payer.pubkey(),
++            &program_data_pda,
++            csdk_anchor_full_derived_test::program_rent_sponsor(),
++            payer.pubkey(),
++        )
++        .build();
++
++        rpc.create_and_send_transaction(&[init_config_ix], &payer.pubkey(), &[&payer])
++            .await
++            .expect("Initialize config should succeed");
++
++        Self {
++            rpc,
++            payer,
++            config_pda,
++            program_id,
++        }
++    }
++
++    async fn setup_mint(&mut self) -> (Pubkey, [u8; 32], Vec<Pubkey>, Keypair) {
++        shared::setup_create_mint(
++            &mut self.rpc,
++            &self.payer,
++            self.payer.pubkey(),
++            9,
++            vec![],
++        )
++        .await
++    }
++}
++
++/// First non-idempotent ATA creation should succeed.
++#[tokio::test]
++async fn test_d10_ata_non_idempotent_first_creation_succeeds() {
++    let mut ctx = D10TestContext::new().await;
++
++    let (mint, _compression_addr, _atas, _mint_seed) = ctx.setup_mint().await;
++    let ata_owner = ctx.payer.pubkey();
++    let d10_non_idem_ata = light_token::instruction::derive_token_ata(&ata_owner, &mint);
++
++    let proof_result = get_create_accounts_proof(&ctx.rpc, &ctx.program_id, vec![])
++        .await
++        .unwrap();
++
++    let accounts = csdk_anchor_full_derived_test::accounts::D10SingleAtaNonIdempotent {
++        fee_payer: ctx.payer.pubkey(),
++        d10_non_idem_ata_mint: mint,
++        d10_non_idem_ata_owner: ata_owner,
++        d10_non_idem_ata,
++        light_token_config: LIGHT_TOKEN_CONFIG,
++        light_token_rent_sponsor: LIGHT_TOKEN_RENT_SPONSOR,
++        light_token_program: LIGHT_TOKEN_PROGRAM_ID.into(),
++        system_program: solana_sdk::system_program::ID,
++    };
++
++    let instruction_data =
++        csdk_anchor_full_derived_test::instruction::D10SingleAtaNonIdempotent {
++            params: D10SingleAtaNonIdempotentParams {
++                create_accounts_proof: proof_result.create_accounts_proof,
++            },
++        };
++
++    let instruction = Instruction {
++        program_id: ctx.program_id,
++        accounts: [
++            accounts.to_account_metas(None),
++            proof_result.remaining_accounts,
++        ]
++        .concat(),
++        data: instruction_data.data(),
++    };
++
++    ctx.rpc
++        .create_and_send_transaction(&[instruction], &ctx.payer.pubkey(), &[&ctx.payer])
++        .await
++        .expect("First non-idempotent ATA creation should succeed");
++
++    shared::assert_onchain_exists(&mut ctx.rpc, &d10_non_idem_ata, "d10_non_idem_ata").await;
++}
++
++/// Second non-idempotent ATA creation should fail because the account already exists.
++#[tokio::test]
++async fn test_d10_ata_non_idempotent_second_creation_fails() {
++    let mut ctx = D10TestContext::new().await;
++
++    let (mint, _compression_addr, _atas, _mint_seed) = ctx.setup_mint().await;
++    let ata_owner = ctx.payer.pubkey();
++    let d10_non_idem_ata = light_token::instruction::derive_token_ata(&ata_owner, &mint);
++
++    let build_ix = |proof_result: light_client::interface::CreateAccountsProofResult| {
++        let accounts = csdk_anchor_full_derived_test::accounts::D10SingleAtaNonIdempotent {
++            fee_payer: ctx.payer.pubkey(),
++            d10_non_idem_ata_mint: mint,
++            d10_non_idem_ata_owner: ata_owner,
++            d10_non_idem_ata,
++            light_token_config: LIGHT_TOKEN_CONFIG,
++            light_token_rent_sponsor: LIGHT_TOKEN_RENT_SPONSOR,
++            light_token_program: LIGHT_TOKEN_PROGRAM_ID.into(),
++            system_program: solana_sdk::system_program::ID,
++        };
++        let instruction_data =
++            csdk_anchor_full_derived_test::instruction::D10SingleAtaNonIdempotent {
++                params: D10SingleAtaNonIdempotentParams {
++                    create_accounts_proof: proof_result.create_accounts_proof,
++                },
++            };
++        Instruction {
++            program_id: ctx.program_id,
++            accounts: [
++                accounts.to_account_metas(None),
++                proof_result.remaining_accounts,
++            ]
++            .concat(),
++            data: instruction_data.data(),
++        }
++    };
++
++    // First creation succeeds
++    let proof_result_1 = get_create_accounts_proof(&ctx.rpc, &ctx.program_id, vec![])
++        .await
++        .unwrap();
++    ctx.rpc
++        .create_and_send_transaction(&[build_ix(proof_result_1)], &ctx.payer.pubkey(), &[&ctx.payer])
++        .await
++        .expect("First non-idempotent ATA creation should succeed");
++
++    shared::assert_onchain_exists(&mut ctx.rpc, &d10_non_idem_ata, "d10_non_idem_ata").await;
++
++    // Second creation must fail (ATA already exists, strict mode)
++    let proof_result_2 = get_create_accounts_proof(&ctx.rpc, &ctx.program_id, vec![])
++        .await
++        .unwrap();
++    let result = ctx
++        .rpc
++        .create_and_send_transaction(&[build_ix(proof_result_2)], &ctx.payer.pubkey(), &[&ctx.payer])
++        .await;
++
++    assert!(
++        result.is_err(),
++        "Second non-idempotent ATA creation should fail because ATA already exists"
++    );
++}

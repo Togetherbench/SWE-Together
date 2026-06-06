@@ -1,0 +1,386 @@
+diff --git a/library/fp8_optimization_utils.py b/library/fp8_optimization_utils.py
+index 02f99ab..cadfefc 100644
+--- a/library/fp8_optimization_utils.py
++++ b/library/fp8_optimization_utils.py
+@@ -392,15 +392,17 @@ def fp8_linear_forward_patch(self: nn.Linear, x, use_scaled_mm=False, max_value=
+ 
+     else:
+         # Dequantize the weight
+-        original_dtype = self.scale_weight.dtype
++        original_dtype = x.dtype
++        scale = self.scale_weight.to(original_dtype)
++
+         if self.scale_weight.ndim < 3:
+             # per-tensor or per-channel quantization, we can broadcast
+-            dequantized_weight = self.weight.to(original_dtype) * self.scale_weight
++            dequantized_weight = self.weight.to(original_dtype) * scale
+         else:
+             # block-wise quantization, need to reshape weight to match scale shape for broadcasting
+             out_features, num_blocks, _ = self.scale_weight.shape
+             dequantized_weight = self.weight.to(original_dtype).contiguous().view(out_features, num_blocks, -1)
+-            dequantized_weight = dequantized_weight * self.scale_weight
++            dequantized_weight = dequantized_weight * scale
+             dequantized_weight = dequantized_weight.view(self.weight.shape)
+ 
+         # Perform linear transformation
+diff --git a/library/lumina_train_util.py b/library/lumina_train_util.py
+index d5d5db0..ce6237e 100644
+--- a/library/lumina_train_util.py
++++ b/library/lumina_train_util.py
+@@ -1028,6 +1028,57 @@ def save_lumina_model_on_epoch_end_or_stepwise(
+ # endregion
+ 
+ 
++# region compile
++
++def disable_linear_from_compile(module: torch.nn.Module):
++    """Monkey-patch to disable torch.compile for all Linear layers (if the class name ends with 'Linear') in the given module."""
++    for sub_module in module.modules():
++        # if isinstance(sub_module, torch.nn.Linear):
++        if sub_module.__class__.__name__.endswith("Linear"):
++            if not hasattr(sub_module, "_forward_before_disable_compile"):
++                sub_module._forward_before_disable_compile = sub_module.forward
++                sub_module._eager_forward = torch._dynamo.disable()(sub_module.forward)
++            sub_module.forward = sub_module._eager_forward  # override forward to disable compile
++
++
++def compile_transformer(
++    args: argparse.Namespace,
++    transformer: torch.nn.Module,
++    target_blocks: List[Union[torch.nn.ModuleList, List[torch.nn.Module]]],
++    disable_linear: bool,
++) -> torch.nn.Module:
++    if disable_linear:
++        logger.info("Disable linear from torch.compile for swap blocks...")
++        for blocks in target_blocks:
++            for block in blocks:
++                disable_linear_from_compile(block)
++
++    compile_dynamic = None
++    if args.compile_dynamic is not None:
++        compile_dynamic = {"true": True, "false": False, "auto": None}[args.compile_dynamic.lower()]
++
++    logger.info(
++        f"Compiling DiT model with torch.compile: backend={args.compile_backend}, mode={args.compile_mode}, dynamic={compile_dynamic}, fullgraph={args.compile_fullgraph}"
++    )
++
++    if args.compile_cache_size_limit is not None:
++        torch._dynamo.config.cache_size_limit = args.compile_cache_size_limit
++
++    for blocks in target_blocks:
++        for i, block in enumerate(blocks):
++            block = torch.compile(
++                block,
++                backend=args.compile_backend,
++                mode=args.compile_mode,
++                dynamic=compile_dynamic,
++                fullgraph=args.compile_fullgraph,
++            )
++            blocks[i] = block
++    return transformer
++
++# endregion
++
++
+ def add_lumina_train_arguments(parser: argparse.ArgumentParser):
+     parser.add_argument(
+         "--gemma2",
+@@ -1075,6 +1126,11 @@ def add_lumina_train_arguments(parser: argparse.ArgumentParser):
+         default=6.0,
+         help="Discrete flow shift for the Euler Discrete Scheduler, default is 6.0 / Euler Discrete Schedulerの離散フローシフト、デフォルトは6.0",
+     )
++    parser.add_argument(
++        "--fp8_scaled",
++        action="store_true",
++        help="Use scaled fp8 for NextDiT / NextDiTにスケーリングされたfp8を使う",
++    )
+     parser.add_argument(
+         "--use_flash_attn",
+         action="store_true",
+@@ -1097,3 +1153,41 @@ def add_lumina_train_arguments(parser: argparse.ArgumentParser):
+         default=None,
+         help="Batch size to use for sampling, defaults to --training_batch_size value. Sample batches are bucketed by width, height, guidance scale, and seed / サンプリングに使用するバッチサイズ。デフォルトは --training_batch_size の値です。サンプルバッチは、幅、高さ、ガイダンススケール、シードによってバケット化されます",
+     )
++
++    parser.add_argument(
++        "--compile",
++        action="store_true",
++        help="Enable torch.compile (requires Triton) / torch.compileを有効にする（Tritonが必要）",
++    )
++    parser.add_argument(
++        "--compile_backend",
++        type=str,
++        default="inductor",
++        help="torch.compile backend (default: inductor) / torch.compileのバックエンド（デフォルト: inductor）",
++    )
++    parser.add_argument(
++        "--compile_mode",
++        type=str,
++        default="default",
++        choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
++        help="torch.compile mode (default: default) / torch.compileのモード（デフォルト: default）",
++    )
++    parser.add_argument(
++        "--compile_dynamic",
++        type=str,
++        default=None,
++        choices=["true", "false", "auto"],
++        help="Dynamic shapes mode for torch.compile (default: None, same as auto)"
++        " / torch.compileの動的形状モード（デフォルト: None、autoと同じ動作）",
++    )
++    parser.add_argument(
++        "--compile_fullgraph",
++        action="store_true",
++        help="Enable fullgraph mode in torch.compile / torch.compileでフルグラフモードを有効にする",
++    )
++    parser.add_argument(
++        "--compile_cache_size_limit",
++        type=int,
++        default=None,
++        help="Set torch._dynamo.config.cache_size_limit (default: PyTorch default, typically 8-32) / torch._dynamo.config.cache_size_limitを設定（デフォルト: PyTorchのデフォルト、通常8-32）",
++    )
+diff --git a/library/lumina_util.py b/library/lumina_util.py
+index f7f3c82..79107a8 100644
+--- a/library/lumina_util.py
++++ b/library/lumina_util.py
+@@ -13,6 +13,8 @@ from transformers import Gemma2Config, Gemma2Model
+ from library.utils import setup_logging
+ from library import lumina_models, flux_models
+ from library.safetensors_utils import load_safetensors
++from library.lora_utils import load_safetensors_with_lora_and_fp8
++from library.fp8_optimization_utils import apply_fp8_monkey_patch
+ import logging
+ 
+ setup_logging()
+@@ -20,6 +22,9 @@ logger = logging.getLogger(__name__)
+ 
+ MODEL_VERSION_LUMINA_V2 = "lumina2"
+ 
++FP8_OPTIMIZATION_TARGET_KEYS = ["layers", "context_refiner", "noise_refiner"]
++FP8_OPTIMIZATION_EXCLUDE_KEYS = ["norm", "_emb", "modulation"]
++
+ 
+ def load_lumina_model(
+     ckpt_path: str,
+@@ -28,6 +33,9 @@ def load_lumina_model(
+     disable_mmap: bool = False,
+     use_flash_attn: bool = False,
+     use_sage_attn: bool = False,
++    fp8_scaled: bool = False,
++    lora_weights_list: Optional[Dict[str, torch.Tensor]] = None,
++    lora_multipliers: Optional[list[float]] = None,
+ ):
+     """
+     Load the Lumina model from the checkpoint path.
+@@ -42,6 +50,9 @@ def load_lumina_model(
+     Returns:
+         model (lumina_models.NextDiT): The loaded model.
+     """
++    # dtype is None for fp8_scaled
++    assert (not fp8_scaled and dtype is not None) or (fp8_scaled and dtype is None)
++
+     logger.info("Building Lumina")
+     with torch.device("meta"):
+         model = lumina_models.NextDiT_2B_GQA_patch2_Adaln_Refiner(use_flash_attn=use_flash_attn, use_sage_attn=use_sage_attn).to(
+@@ -49,7 +60,18 @@ def load_lumina_model(
+         )
+ 
+     logger.info(f"Loading state dict from {ckpt_path}")
+-    state_dict = load_safetensors(ckpt_path, device=device, disable_mmap=disable_mmap, dtype=dtype)
++    # state_dict = load_safetensors(ckpt_path, device=device, disable_mmap=disable_mmap, dtype=dtype)
++    state_dict = load_safetensors_with_lora_and_fp8(
++        model_files=ckpt_path,
++        lora_weights_list=lora_weights_list,
++        lora_multipliers=lora_multipliers,
++        fp8_optimization=fp8_scaled,
++        calc_device=device,
++        move_to_device=True,
++        dit_weight_dtype=dtype,
++        target_keys=FP8_OPTIMIZATION_TARGET_KEYS,
++        exclude_keys=FP8_OPTIMIZATION_EXCLUDE_KEYS,
++    )
+ 
+     # Neta-Lumina support
+     if "model.diffusion_model.cap_embedder.0.weight" in state_dict:
+@@ -59,8 +81,19 @@ def load_lumina_model(
+         }
+         state_dict = filtered_state_dict
+ 
++    if fp8_scaled:
++        apply_fp8_monkey_patch(model, state_dict, use_scaled_mm=False)
++
+     info = model.load_state_dict(state_dict, strict=False, assign=True)
+     logger.info(f"Loaded Lumina: {info}")
++
++    if fp8_scaled:
++        missing_scale_keys = [k for k in info.missing_keys if k.endswith(".scale_weight")]
++        if len(missing_scale_keys) > 0:
++            raise RuntimeError(
++                f"Missing scale_weight keys for fp8_scaled: {missing_scale_keys}. This means the scale weights were not loaded correctly, which will cause training/inference failure."
++            )
++
+     return model
+ 
+ 
+diff --git a/lumina_minimal_inference.py b/lumina_minimal_inference.py
+index 47d6d30..e08baea 100644
+--- a/lumina_minimal_inference.py
++++ b/lumina_minimal_inference.py
+@@ -252,6 +252,11 @@ def setup_parser() -> argparse.ArgumentParser:
+         action="store_true",
+         help="Use sage attention for Lumina model",
+     )
++    parser.add_argument(
++        "--fp8_scaled",
++        action="store_true",
++        help="Use scaled fp8 for NextDiT",
++    )
+     parser.add_argument(
+         "--lora_weights",
+         type=str,
+@@ -277,13 +282,32 @@ if __name__ == "__main__":
+     if args.device:
+         device = torch.device(args.device)
+ 
++    # Load LoRA weights if fp8_scaled is used or if we want to merge them
++    lora_weights_list = []
++    lora_multipliers = []
++    if args.fp8_scaled and args.lora_weights:
++        logger.info("fp8_scaled is enabled, so LoRA weights will be merged into the model.")
++        for weights_file in args.lora_weights:
++            if ";" in weights_file:
++                weights_file, multiplier = weights_file.split(";")
++                multiplier = float(multiplier)
++            else:
++                multiplier = 1.0
++            
++            weights_sd = load_file(weights_file)
++            lora_weights_list.append(weights_sd)
++            lora_multipliers.append(multiplier)
++
+     # Load Lumina DiT model
+     model = lumina_util.load_lumina_model(
+         args.pretrained_model_name_or_path,
+-        dtype=None,  # Load in fp32 and then convert
++        dtype=None if args.fp8_scaled else None,  # Load in fp32 and then convert if not fp8_scaled
+         device="cpu",
+         use_flash_attn=args.use_flash_attn,
+         use_sage_attn=args.use_sage_attn,
++        fp8_scaled=args.fp8_scaled,
++        lora_weights_list=lora_weights_list if args.fp8_scaled else None,
++        lora_multipliers=lora_multipliers if args.fp8_scaled else None,
+     )
+ 
+     # Load Gemma2
+@@ -292,29 +316,30 @@ if __name__ == "__main__":
+     # Load Autoencoder
+     ae = lumina_util.load_ae(args.ae_path, dtype=None, device="cpu")
+ 
+-    # LoRA
++    # LoRA for non-fp8_scaled
+     lora_models = []
+-    for weights_file in args.lora_weights:
+-        if ";" in weights_file:
+-            weights_file, multiplier = weights_file.split(";")
+-            multiplier = float(multiplier)
+-        else:
+-            multiplier = 1.0
+-
+-        weights_sd = load_file(weights_file)
+-        lora_model, _ = lora_lumina.create_network_from_weights(multiplier, None, ae, [gemma2], model, weights_sd, True)
+-
+-        if args.merge_lora_weights:
+-            lora_model.merge_to([gemma2], model, weights_sd)
+-        else:
+-            lora_model.apply_to([gemma2], model)
+-            info = lora_model.load_state_dict(weights_sd, strict=True)
+-            logger.info(f"Loaded LoRA weights from {weights_file}: {info}")
+-            lora_model.to(device)
+-            lora_model.set_multiplier(multiplier)
+-            lora_model.eval()
+-
+-        lora_models.append(lora_model)
++    if not args.fp8_scaled:
++        for weights_file in args.lora_weights:
++            if ";" in weights_file:
++                weights_file, multiplier = weights_file.split(";")
++                multiplier = float(multiplier)
++            else:
++                multiplier = 1.0
++
++            weights_sd = load_file(weights_file)
++            lora_model, _ = lora_lumina.create_network_from_weights(multiplier, None, ae, [gemma2], model, weights_sd, True)
++
++            if args.merge_lora_weights:
++                lora_model.merge_to([gemma2], model, weights_sd)
++            else:
++                lora_model.apply_to([gemma2], model)
++                info = lora_model.load_state_dict(weights_sd, strict=True)
++                logger.info(f"Loaded LoRA weights from {weights_file}: {info}")
++                lora_model.to(device)
++                lora_model.set_multiplier(multiplier)
++                lora_model.eval()
++
++            lora_models.append(lora_model)
+ 
+     if not args.interactive:
+         generate_image(
+diff --git a/lumina_train_network.py b/lumina_train_network.py
+index b08e314..31d180e 100644
+--- a/lumina_train_network.py
++++ b/lumina_train_network.py
+@@ -50,7 +50,17 @@ class LuminaNetworkTrainer(train_network.NetworkTrainer):
+         self.train_gemma2 = not args.network_train_unet_only
+ 
+     def load_target_model(self, args, weight_dtype, accelerator):
+-        loading_dtype = None if args.fp8_base else weight_dtype
++        if args.fp8_base and not args.fp8_scaled:
++            logger.warning(
++                "fp8_base is not supported. Use fp8_scaled instead / fp8_baseはサポートされていません。代わりにfp8_scaledを使用してください"
++            )
++        
++        if args.fp8_scaled and args.fp8_base:
++            logger.warning(
++                "fp8_scaled is used, so fp8_base is ignored / fp8_scaledが使われているので、fp8_baseは無視されます"
++            )
++
++        loading_dtype = None if args.fp8_scaled else weight_dtype
+ 
+         model = lumina_util.load_lumina_model(
+             args.pretrained_model_name_or_path,
+@@ -59,9 +69,10 @@ class LuminaNetworkTrainer(train_network.NetworkTrainer):
+             disable_mmap=args.disable_mmap_load_safetensors,
+             use_flash_attn=args.use_flash_attn,
+             use_sage_attn=args.use_sage_attn,
++            fp8_scaled=args.fp8_scaled,
+         )
+ 
+-        if args.fp8_base:
++        if args.fp8_base and not args.fp8_scaled:
+             # check dtype of model
+             if model.dtype == torch.float8_e4m3fnuz or model.dtype == torch.float8_e5m2 or model.dtype == torch.float8_e5m2fnuz:
+                 raise ValueError(f"Unsupported fp8 model dtype: {model.dtype}")
+@@ -348,12 +359,22 @@ class LuminaNetworkTrainer(train_network.NetworkTrainer):
+     def prepare_unet_with_accelerator(
+         self, args: argparse.Namespace, accelerator: Accelerator, unet: torch.nn.Module
+     ) -> torch.nn.Module:
++        if args.compile:
++            unet = lumina_train_util.compile_transformer(
++                args,
++                unet,
++                [unet.layers, unet.context_refiner, unet.noise_refiner],
++                disable_linear=self.is_swapping_blocks,
++            )
++            # accelerator check workaround
++            unet._orig_mod = unet
++
+         if not self.is_swapping_blocks:
+             return super().prepare_unet_with_accelerator(args, accelerator, unet)
+ 
+         # if we doesn't swap blocks, we can move the model to device
+         nextdit = unet
+-        assert isinstance(nextdit, lumina_models.NextDiT)
++        # assert isinstance(nextdit, lumina_models.NextDiT) # compiled model is not instance of NextDiT
+         nextdit = accelerator.prepare(nextdit, device_placement=[not self.is_swapping_blocks])
+         accelerator.unwrap_model(nextdit).move_to_device_except_swap_blocks(accelerator.device)  # reduce peak memory usage
+         accelerator.unwrap_model(nextdit).prepare_block_swap_before_forward()
