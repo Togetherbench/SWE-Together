@@ -234,19 +234,26 @@ class UserEnabledOpenCode(BaseAgent):
         # proven recipe. Each branch's failure feeds the next; the final
         # `import aiohttp` is the authoritative gate.
         start_cmd = (
-            # 1. apt path — fastest if running as root (template-time setups)
-            # or where agent has passwordless sudo. python3-aiohttp gives us
-            # the lib in one shot without ever touching pip.
-            "(apt-get install -y -qq python3-aiohttp 2>/dev/null "
-            "  || sudo -n apt-get install -y -qq python3-aiohttp 2>/dev/null "
-            # 2. Bootstrap pip via ensurepip (stdlib), then pip install aiohttp
-            # to user site-packages.
-            "  || (python3 -m ensurepip --user 2>/dev/null; "
-            "      python3 -m pip install --user --quiet --break-system-packages aiohttp 2>/dev/null) "
-            # 3. Bring pip in via apt, then pip install.
+            # Install aiohttp into the SAME python3 that runs the proxy and the
+            # import gate below. `python3 -m pip` binds to *that* interpreter,
+            # so aiohttp lands where `python3 -c "import aiohttp"` can see it —
+            # on python:slim images (python at /usr/local, not Debian's
+            # /usr/bin) and on task venvs that shadow the system python.
+            # The old apt-first order installed python3-aiohttp for Debian's
+            # /usr/bin/python3, which the slim/venv `python3` could not import →
+            # proxy never started → opencode hung 1800s (the empty-transcript
+            # bug). apt python3-aiohttp is now only a last-resort fallback for
+            # plain-Debian images where pip is unavailable.
+            "(python3 -m pip install --quiet --break-system-packages aiohttp 2>/dev/null "
+            "  || python3 -m pip install --quiet --user --break-system-packages aiohttp 2>/dev/null "
+            "  || (python3 -m ensurepip 2>/dev/null || python3 -m ensurepip --user 2>/dev/null; "
+            "      python3 -m pip install --quiet --break-system-packages aiohttp 2>/dev/null "
+            "      || python3 -m pip install --quiet --user --break-system-packages aiohttp 2>/dev/null) "
             "  || (apt-get install -y -qq python3-pip 2>/dev/null "
             "      || sudo -n apt-get install -y -qq python3-pip 2>/dev/null; "
-            "      python3 -m pip install --user --quiet --break-system-packages aiohttp 2>/dev/null) "
+            "      python3 -m pip install --quiet --break-system-packages aiohttp 2>/dev/null) "
+            "  || apt-get install -y -qq python3-aiohttp 2>/dev/null "
+            "  || sudo -n apt-get install -y -qq python3-aiohttp 2>/dev/null "
             ") >/tmp/oauth_proxy_install.log 2>&1; "
             # 4. Gate — verify importability. Surface the install log on failure
             # so we can see which strategy ran and why it didn't land aiohttp.
@@ -270,12 +277,20 @@ class UserEnabledOpenCode(BaseAgent):
             "tail -30 /tmp/oauth_proxy.log >&2; exit 1"
         )
         result = await environment.exec(command=start_cmd, timeout_sec=120)
-        if result.return_code != 0:
-            log.warning("oauth_proxy start failed: rc=%s\n%s",
-                        result.return_code, (result.stderr or result.stdout)[-2000:])
-        else:
-            log.info("oauth_proxy launched in sandbox on 127.0.0.1:4220")
         self._oauth_proxy_env = environment
+        if result.return_code != 0:
+            # Fail loudly. A dead proxy makes opencode hang on its first request
+            # for the full 1800s per-exec cap, producing a 0-byte transcript
+            # (the empty-transcript bug). Raising here aborts the trial
+            # immediately so it's correctly attributed as a setup failure and
+            # --skip-existing reruns it, instead of silently burning 30 minutes.
+            detail = (result.stderr or result.stdout or "")[-2000:]
+            log.error("oauth_proxy start failed: rc=%s\n%s", result.return_code, detail)
+            raise RuntimeError(
+                f"oauth_proxy failed to start (rc={result.return_code}); aborting "
+                f"trial to avoid a silent opencode hang. Tail:\n{detail}"
+            )
+        log.info("oauth_proxy launched in sandbox on 127.0.0.1:4220")
 
     async def _flush_proxy_log(self) -> None:
         """Pull /tmp/oauth_proxy.log back to host for offline debug."""
