@@ -3,9 +3,57 @@
 Each version is tagged in the code via `UserAgent.VERSION`. Trial logs record
 which version produced them so results are always traceable.
 
+## Current configuration
+
+Live defaults, accumulated across the versions below (read the version
+entries for the rationale). **local** = applied as a working-tree patch, not
+yet a merged PR.
+
+**Active harnesses** (`runner.py` / `run_eval.py` registry): `claude_code`
+(native `--resume`), `opencode` (native `--session`), `codex` (re-issue),
+`mini-swe-agent` (LiteLLM re-issue), `terminus` (in-process). *(gemini-cli
+removed in #214.)* User simulator: Gemini 3.1 Pro.
+
+**Timeouts** (`exec_helpers.py`, every wrapper, after #214):
+
+| knob | value | meaning |
+|---|---|---|
+| `PER_EXEC_CAP_SEC` | 1800s | per-turn single-exec ceiling |
+| `TRIAL_BUDGET_SEC` | 5400s | per-trial budget = E2B sandbox lifetime |
+| cap-rescue | on | a timed-out turn injects a synthetic "continue" and resumes next turn (non-fatal) |
+
+**Pinned versions:**
+
+| tool | pin | where |
+|---|---|---|
+| Claude Code | 2.1.108 | baked into task images |
+| opencode | 1.15.13 | `UserEnabledOpenCode.opencode_version` |
+| mini-swe-agent | 2.3.0 | `mswea_version` |
+| codex | 0.117.0 (OR) / 0.133.0 (OAuth) | install pin + `CODEX_VERSION` |
+
+**Reasoning effort:** default `high`, threaded as `reasoning_effort` and
+translated per-provider (mini-swe → `reasoning.max_tokens`; opencode →
+`--variant` + `opencode.json`; Anthropic → thinking budget; DeepSeek floors
+at `high`). Full mapping in the v1.0 *Reasoning depth* table.
+
 ## Unreleased
 
-- **masked-proxy providers now actually reach localhost:4210** (mini-swe +
+- `2026-06-07` · **per-turn cap-rescue across all wrappers + trial budget = sandbox lifetime**
+  (#214): `exec_helpers.TRIAL_BUDGET_SEC` 7200 → **5400**, set equal to the E2B
+  sandbox lifetime so the wrapper's own budget is the real ceiling and a trial
+  stops cleanly instead of the sandbox dying mid-run; `PER_EXEC_CAP_SEC` stays
+  1800. `user_enabled_claude_code` adopts opencode's cap-rescue: when a single
+  turn's `exec` times out (non-fatal), the wrapper injects a synthetic
+  "continue" message (bypassing the user sim) and resumes on the next turn
+  rather than hard-killing the trial with `AgentTimeoutError` — dropping the CC
+  per-turn cap 3600 → 1800 to match opencode. Net: every harness now caps
+  per-turn at 1800s and per-trial at 5400s, with timed-out turns rescued, not
+  fatal.
+- `2026-06-07` · **gemini-cli action harness removed** (#214): deletes
+  `user_enabled_gemini_cli.py` (`UserEnabledGeminiCli`) and its `gemini-cli`
+  entry in `runner.py`'s agent-type registry. The gemini **user-sim**
+  (`gemini/gemini-3.1-pro-preview`) is unaffected.
+- `2026-06-03` · **masked-proxy providers now actually reach localhost:4210** (mini-swe +
   opencode): the `minimaxd/`/`glmd/`/`ark/` masking path launched the
   in-sandbox proxy but never pointed the inner agent at it, so every call
   401'd at real api.anthropic.com with the placeholder key (mm27 smoke,
@@ -18,7 +66,7 @@ which version produced them so results are always traceable.
     `provider.anthropic.options.baseURL = 'http://localhost:4210/v1'` into
     opencode.json (@ai-sdk/anthropic has no env-var base-URL override; config
     persists in the sandbox so `--session` resume turns inherit it).
-- **opencode CLI pinned to 1.15.13**: `UserEnabledOpenCode`'s
+- `2026-06-03` · **opencode CLI pinned to 1.15.13**: `UserEnabledOpenCode`'s
   `opencode_version` default changes `None` → `"1.15.13"`. Previously the
   unset version fell through to `npm i -g opencode-ai@latest` in Harbor's
   `install-opencode.sh.j2` — and since opencode installs at agent-setup time
@@ -29,21 +77,6 @@ which version produced them so results are always traceable.
   `mswea_version="2.3.0"` pin. Verified end-to-end: factory construction with
   run_eval's exact kwargs → `npm i -g opencode-ai@1.15.13` in the rendered
   install script → live install reports 1.15.13.
-- **per-turn cap-rescue across all wrappers + trial budget = sandbox lifetime**
-  (#214): `exec_helpers.TRIAL_BUDGET_SEC` 7200 → **5400**, set equal to the E2B
-  sandbox lifetime so the wrapper's own budget is the real ceiling and a trial
-  stops cleanly instead of the sandbox dying mid-run; `PER_EXEC_CAP_SEC` stays
-  1800. `user_enabled_claude_code` adopts opencode's cap-rescue: when a single
-  turn's `exec` times out (non-fatal), the wrapper injects a synthetic
-  "continue" message (bypassing the user sim) and resumes on the next turn
-  rather than hard-killing the trial with `AgentTimeoutError` — dropping the CC
-  per-turn cap 3600 → 1800 to match opencode. Net: every harness now caps
-  per-turn at 1800s and per-trial at 5400s, with timed-out turns rescued, not
-  fatal.
-- **gemini-cli action harness removed** (#214): deletes
-  `user_enabled_gemini_cli.py` (`UserEnabledGeminiCli`) and its `gemini-cli`
-  entry in `runner.py`'s agent-type registry. The gemini **user-sim**
-  (`gemini/gemini-3.1-pro-preview`) is unaffected.
 
 ## v1.0 — 2026-05-31
 
@@ -263,7 +296,6 @@ and let upstream 413 than ship an empty conversation).
 | baseline cohort | symptom | post-fix |
 |---|---|---|
 | `pilot10 × opencode × *` | 49/49 cap events → 0 rescues (#191 → #200) | cap-rescue restores sessionID, multi-turn resumes |
-| `pilot10 × opencode × Opus` | 0 reasoning blocks in 9 trials (#191) | 117+ reasoning tokens per turn (#196 + #197 + Harbor max_tokens) |
 | `pilot10 × opencode × gpt-5.5` | trials never produced dirs (#191) | aiohttp install cascade → runs complete (#194) |
 | `new29 × opencode × MiniMax/GLM` | 10/10 "Unknown provider" exceptions (pre-#195) | masked, routed via litellm_proxy (#195) |
 | `new29 × * × DeepSeek` | 100% 401 invalid x-api-key (pre-local DS fix) | DEEPSEEK_API_KEY native route + no mask (**local**) |
@@ -598,7 +630,7 @@ CLI) and gemini-cli (Google Gemini CLI). Both follow the
     (`CODEX_USE_RESUME=1`) — captured but off by default until the
     verifier-flake regression is root-caused.
 
-- **`UserEnabledGeminiCli`** ([src/user_agent/user_enabled_gemini_cli.py](user_enabled_gemini_cli.py))
+- **`UserEnabledGeminiCli`** (`src/user_agent/user_enabled_gemini_cli.py`, removed in #214)
   - Wraps `gemini --yolo --model=<model> --prompt=<msg>` with the same
     multi-turn / user-sim / per-turn-diff pipeline.
   - Setup auto-strips repo-level `.gemini/settings.json` (often ships
