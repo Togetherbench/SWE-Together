@@ -19,9 +19,14 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/mlx-lm-mambacache:c118b3e8281f"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/mlx-lm-mambacache:9301887b7509"
 build_timeout_sec = 600.0
 cpus = 4
 memory = "4G"
 storage = "10G"
 allow_internet = true
+# PR #212: gate WebFetch/WebSearch to prevent agent contamination via
+# the leaky URL in user_simulation_prompt.md. Harbor's claude-code adapter
+# translates this kwarg to `claude --disallowedTools WebFetch,WebSearch`.
+[agent.kwargs]
+disallowed_tools = "WebFetch,WebSearch"

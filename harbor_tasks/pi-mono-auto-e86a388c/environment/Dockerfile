@@ -47,6 +47,14 @@ RUN set -e && \
     git clone https://github.com/badlogic/pi-mono.git pi-mono && \
     cd pi-mono && \
     git checkout ${BASE_COMMIT} && \
+    git remote remove origin 2>/dev/null || true && \
+    git for-each-ref --format='delete %(refname)' refs/heads refs/remotes refs/tags | git update-ref --stdin && \
+    rm -f .git/FETCH_HEAD .git/ORIG_HEAD .git/packed-refs && \
+    git reflog expire --expire=now --all && \
+    git gc --prune=now --aggressive && \
+    BASE_TS=$(git show -s --format=%ci HEAD) && \
+    AFTER_TS=$(date -d "$BASE_TS + 1 second" '+%Y-%m-%d %H:%M:%S') && \
+    [ "$(git log --oneline --all --since="$AFTER_TS" | wc -l)" -eq 0 ] || { echo "LEAK: future commits reachable" >&2; exit 1; } && \
     npm ci --ignore-scripts 2>/dev/null || true && \
     chown -R agent:agent /workspace/pi-mono
 

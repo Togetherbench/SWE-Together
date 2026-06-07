@@ -9,4 +9,19 @@ RUN cd /workspace/ComfyUI && \
     git fetch --depth=1 origin ${BASE_COMMIT} && \
     git checkout -f FETCH_HEAD
 
+# === BEGIN corpus-wide git-seal (PR #212) ===
+# Prevent agent contamination via `git checkout main` / `git log origin/main` /
+# `git cherry-pick <sha>`. Recipe: union of SWE-bench PR #471 +
+# SWE-bench Pro strip_future_history.py. See bayes.net/swebench-hack/ for
+# the exploit pattern; PR #212 for verification on pi-mono.
+RUN cd /workspace/ComfyUI && \
+    git remote remove origin 2>/dev/null || true && \
+    git for-each-ref --format='delete %(refname)' refs/heads refs/remotes refs/tags | git update-ref --stdin && \
+    rm -f .git/FETCH_HEAD .git/ORIG_HEAD .git/packed-refs && \
+    git reflog expire --expire=now --all && \
+    git gc --prune=now --aggressive && \
+    BASE_TS=$(git show -s --format=%ci HEAD) && \
+    AFTER_TS=$(date -d "$BASE_TS + 1 second" '+%Y-%m-%d %H:%M:%S') && \
+    [ "$(git log --oneline --all --since="$AFTER_TS" | wc -l)" -eq 0 ] || { echo "LEAK: future commits reachable" >&2; exit 1; }
+# === END corpus-wide git-seal ===
 WORKDIR /workspace/ComfyUI

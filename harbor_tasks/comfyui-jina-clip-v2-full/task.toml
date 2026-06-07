@@ -19,7 +19,7 @@ timeout_sec = 180.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/comfyui-jina-clip-v2-full:d1358955b092"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/comfyui-jina-clip-v2-full:7a7243f22b21"
 build_timeout_sec = 600.0
 cpus = 4
 memory = "4G"

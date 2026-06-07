@@ -115,6 +115,13 @@ class UserEnabledOpenCode(BaseAgent):
         # and a multi-day cohort can silently mix CLI versions mid-run.
         # 1.15.13 is what the mm27 lite cohort (2026-06-03) actually installed.
         opencode_version: str | None = "1.15.13",
+        # Per-task contamination defense (PR #212 / #213): comma-separated tool
+        # names to disable. Matches claude-code's `--disallowedTools` semantics.
+        # OpenCode's CLI takes `--tools '-webfetch,-websearch,*'` (negative
+        # entries with a `*` rest-enable). Conversion happens in
+        # _post_process_commands; passed through task.toml `[agent.kwargs]
+        # disallowed_tools = "WebFetch,WebSearch"`.
+        disallowed_tools: str | None = None,
         **kwargs,
     ):
         # `minimaxd/`, `glmd/`, `ark/`, etc. are our naming convention for
@@ -150,6 +157,7 @@ class UserEnabledOpenCode(BaseAgent):
         # rely on Harbor's existing invocation, since the inner agent
         # doesn't yet accept a reasoning kwarg.
         self._reasoning_effort = reasoning_effort
+        self._disallowed_tools = disallowed_tools
 
         self._sim_user = UserAgent(
             llm=LiteLLM(
@@ -355,6 +363,14 @@ class UserEnabledOpenCode(BaseAgent):
                 extra = "--thinking "
                 if self._reasoning_effort:
                     extra += f"--variant={shlex.quote(self._reasoning_effort)} "
+                # PR #212 / #213 parity with claude-code's --disallowedTools.
+                # Convert "WebFetch,WebSearch" → opencode's "-webfetch,-websearch,*"
+                # (negative entries with `*` rest-enable per opencode CLI docs).
+                if self._disallowed_tools:
+                    items = [t.strip() for t in self._disallowed_tools.split(",") if t.strip()]
+                    if items:
+                        spec = ",".join(f"-{t.lower()}" for t in items) + ",*"
+                        extra += f"--tools={shlex.quote(spec)} "
                 # Patch opencode.json to enable per-provider thinking config so
                 # OpenRouter/Anthropic actually consumes a thinking budget
                 # (without this, --variant maps to nothing for OR providers

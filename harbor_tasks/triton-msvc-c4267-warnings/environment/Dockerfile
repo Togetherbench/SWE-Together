@@ -15,6 +15,20 @@ RUN git clone --filter=blob:none --no-checkout https://github.com/triton-lang/tr
     cd /workspace/triton && \
     git checkout 9a6af86c948375496f2d79d8a58e9f54ab65a955
 
+# === BEGIN corpus-wide git-seal (PR #212) ===
+# Inserted AFTER last `git checkout <BASE>` (HEAD must be detached before refs deleted).
+RUN cd /workspace/triton && \
+    git remote remove origin 2>/dev/null || true && \
+    git for-each-ref --format='delete %(refname)' refs/heads refs/remotes refs/tags | git update-ref --stdin && \
+    rm -f .git/FETCH_HEAD .git/ORIG_HEAD .git/packed-refs && \
+    git reflog expire --expire=now --all && \
+    git gc --prune=now --aggressive && \
+    BASE_TS=$(git show -s --format=%ci HEAD) && \
+    AFTER_TS=$(date -d "$BASE_TS + 1 second" '+%Y-%m-%d %H:%M:%S') && \
+    [ "$(git log --oneline --all --since="$AFTER_TS" | wc -l)" -eq 0 ] || { echo "LEAK: future commits reachable" >&2; exit 1; }
+# === END corpus-wide git-seal ===
+
+
 RUN git config --global user.email "agent@test.com" && \
     git config --global user.name "Test Agent"
 

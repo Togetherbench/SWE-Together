@@ -535,6 +535,18 @@ def build_trial_config(
         import_path = AGENT_IMPORT_PATH
         agent_env_final = agent_env
 
+    # Per-task agent kwargs override from task.toml `[agent.kwargs]`.
+    # Lets a task declare `disallowed_tools = "WebFetch,WebSearch"` etc. which
+    # Harbor's claude-code adapter translates to `--disallowedTools` (CliFlag).
+    # Used by PR #212 to gate WebFetch on the 4 lite70 tasks whose user-sim
+    # points at a leaky GitHub PR/issue page.
+    import tomllib
+    task_toml_path = task_dir / "task.toml"
+    if task_toml_path.exists():
+        with open(task_toml_path, "rb") as _f:
+            _per_task = (tomllib.load(_f).get("agent") or {}).get("kwargs") or {}
+        user_sim_kwargs.update(_per_task)
+
     agent_config = AgentConfig(
         import_path=import_path,
         model_name=harbor_model,

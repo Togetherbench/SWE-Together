@@ -12,8 +12,23 @@ ENV PATH="/root/.bun/bin:${PATH}"
 
 # Clone the repo at the base commit
 RUN git clone https://github.com/Nagi-ovo/gemini-voyager.git /workspace/repo
+
 WORKDIR /workspace/repo
 RUN git checkout 4e9d91695130a0dcde1c1f93cf41151c42e6ea52
+
+# === BEGIN corpus-wide git-seal (PR #212) ===
+# Inserted AFTER last `git checkout <BASE>` (HEAD must be detached before refs deleted).
+RUN cd /workspace/repo && \
+    git remote remove origin 2>/dev/null || true && \
+    git for-each-ref --format='delete %(refname)' refs/heads refs/remotes refs/tags | git update-ref --stdin && \
+    rm -f .git/FETCH_HEAD .git/ORIG_HEAD .git/packed-refs && \
+    git reflog expire --expire=now --all && \
+    git gc --prune=now --aggressive && \
+    BASE_TS=$(git show -s --format=%ci HEAD) && \
+    AFTER_TS=$(date -d "$BASE_TS + 1 second" '+%Y-%m-%d %H:%M:%S') && \
+    [ "$(git log --oneline --all --since="$AFTER_TS" | wc -l)" -eq 0 ] || { echo "LEAK: future commits reachable" >&2; exit 1; }
+# === END corpus-wide git-seal ===
+
 
 # Install project dependencies
 RUN bun install

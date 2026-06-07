@@ -16,6 +16,20 @@ RUN git init /workspace/repo && \
     git fetch --depth=1 origin 3c0991467af69675afa948c3ada45475a772fbeb && \
     git checkout FETCH_HEAD
 
+# === BEGIN corpus-wide git-seal (PR #212) ===
+# Inserted AFTER last `git checkout <BASE>` (HEAD must be detached before refs deleted).
+RUN cd /workspace/repo && \
+    git remote remove origin 2>/dev/null || true && \
+    git for-each-ref --format='delete %(refname)' refs/heads refs/remotes refs/tags | git update-ref --stdin && \
+    rm -f .git/FETCH_HEAD .git/ORIG_HEAD .git/packed-refs && \
+    git reflog expire --expire=now --all && \
+    git gc --prune=now --aggressive && \
+    BASE_TS=$(git show -s --format=%ci HEAD) && \
+    AFTER_TS=$(date -d "$BASE_TS + 1 second" '+%Y-%m-%d %H:%M:%S') && \
+    [ "$(git log --oneline --all --since="$AFTER_TS" | wc -l)" -eq 0 ] || { echo "LEAK: future commits reachable" >&2; exit 1; }
+# === END corpus-wide git-seal ===
+
+
 RUN cd /workspace/repo && \
     pip install --no-cache-dir -e . 2>/dev/null || \
     pip install --no-cache-dir -r requirements.txt 2>/dev/null || true && \
@@ -57,4 +71,5 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/root/.local/bin:$PATH"
 
 # Run as root so harbor volume mounts for /logs are writable
+
 WORKDIR /workspace/repo

@@ -12,7 +12,7 @@ timeout_sec = 120.0
 [agent]
 timeout_sec = 3600.0
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/gemini-voyager-task-64c72f:454b4a92b7d0"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/gemini-voyager-task-64c72f:4e9b2d27eb37"
 build_timeout_sec = 600.0
 allow_internet = true
 cpus = 4
