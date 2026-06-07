@@ -13,7 +13,7 @@ yet a merged PR.
 (native `--resume`), `opencode` (native `--session`), `codex` (re-issue),
 `mini-swe-agent` (LiteLLM re-issue).
 
-**Timeouts** (`exec_helpers.py`, every wrapper, after #214):
+**Timeouts** (`exec_helpers.py`):
 
 | knob | value | meaning |
 |---|---|---|
@@ -28,18 +28,11 @@ yet a merged PR.
 | Claude Code | 2.1.108 | baked into task images |
 | opencode | 1.15.13 | `UserEnabledOpenCode.opencode_version` |
 | mini-swe-agent | 2.3.0 | `mswea_version` |
-| codex | 0.117.0 (OR) / 0.133.0 (OAuth) | install pin + `CODEX_VERSION` |
 
 **Reasoning effort:** default `high`, threaded as `reasoning_effort` and
 translated per-provider (mini-swe → `reasoning.max_tokens`; opencode →
 `--variant` + `opencode.json`; Anthropic → thinking budget; DeepSeek floors
 at `high`). Full mapping in the v1.0 *Reasoning depth* table.
-
-## Unreleased
-
-_Nothing pending — the 2026-06 follow-ups are folded into v1.0 below
-(cap-rescue/budget → Cap-rescue and timeout tuning; masked-proxy routing →
-its own subsection; opencode pin + gemini-cli removal → Wrappers)._
 
 ## v1.0 — 2026-05-31
 
