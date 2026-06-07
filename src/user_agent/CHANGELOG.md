@@ -38,45 +38,9 @@ at `high`). Full mapping in the v1.0 *Reasoning depth* table.
 
 ## Unreleased
 
-- `2026-06-07` · **per-turn cap-rescue across all wrappers + trial budget = sandbox lifetime**
-  (#214): `exec_helpers.TRIAL_BUDGET_SEC` 7200 → **5400**, set equal to the E2B
-  sandbox lifetime so the wrapper's own budget is the real ceiling and a trial
-  stops cleanly instead of the sandbox dying mid-run; `PER_EXEC_CAP_SEC` stays
-  1800. `user_enabled_claude_code` adopts opencode's cap-rescue: when a single
-  turn's `exec` times out (non-fatal), the wrapper injects a synthetic
-  "continue" message (bypassing the user sim) and resumes on the next turn
-  rather than hard-killing the trial with `AgentTimeoutError` — dropping the CC
-  per-turn cap 3600 → 1800 to match opencode. Net: every harness now caps
-  per-turn at 1800s and per-trial at 5400s, with timed-out turns rescued, not
-  fatal.
-- `2026-06-07` · **gemini-cli action harness removed** (#214): deletes
-  `user_enabled_gemini_cli.py` (`UserEnabledGeminiCli`) and its `gemini-cli`
-  entry in `runner.py`'s agent-type registry. The gemini **user-sim**
-  (`gemini/gemini-3.1-pro-preview`) is unaffected.
-- `2026-06-03` · **masked-proxy providers now actually reach localhost:4210** (mini-swe +
-  opencode): the `minimaxd/`/`glmd/`/`ark/` masking path launched the
-  in-sandbox proxy but never pointed the inner agent at it, so every call
-  401'd at real api.anthropic.com with the placeholder key (mm27 smoke,
-  2026-06-03; same class as the deepseek 401s of 2026-05-29). Fixes:
-  - `user_enabled_mini_swe_agent._build_run_commands` injects
-    `ANTHROPIC_API_BASE` + `ANTHROPIC_BASE_URL` = `http://localhost:4210`
-    when `_using_proxied_provider` (we exec inner commands ourselves via
-    `exec_with_budget`, bypassing Harbor's `extra_env` merge).
-  - `user_enabled_opencode._opencode_thinking_patch_command` writes
-    `provider.anthropic.options.baseURL = 'http://localhost:4210/v1'` into
-    opencode.json (@ai-sdk/anthropic has no env-var base-URL override; config
-    persists in the sandbox so `--session` resume turns inherit it).
-- `2026-06-03` · **opencode CLI pinned to 1.15.13**: `UserEnabledOpenCode`'s
-  `opencode_version` default changes `None` → `"1.15.13"`. Previously the
-  unset version fell through to `npm i -g opencode-ai@latest` in Harbor's
-  `install-opencode.sh.j2` — and since opencode installs at agent-setup time
-  per trial (unlike CC, which is baked into images at 2.1.108), a multi-day
-  cohort could silently mix CLI versions. 1.15.13 is what all completed
-  `mm27_lite_oc_r1` trials (2026-06-03) actually installed, so the pin is
-  drift-free for the in-flight cohort. Mirrors the mini-swe-agent
-  `mswea_version="2.3.0"` pin. Verified end-to-end: factory construction with
-  run_eval's exact kwargs → `npm i -g opencode-ai@1.15.13` in the rendered
-  install script → live install reports 1.15.13.
+_Nothing pending — the 2026-06 follow-ups are folded into v1.0 below
+(cap-rescue/budget → Cap-rescue and timeout tuning; masked-proxy routing →
+its own subsection; opencode pin + gemini-cli removal → Wrappers)._
 
 ## v1.0 — 2026-05-31
 
@@ -107,7 +71,11 @@ unless flagged "**local**".
   features: repo config injection, structured trajectory snapshot,
   wall-clock timing, `_INCREMENTAL_NOTICE`, per-turn diff to user-sim.
   `_inject_opencode_flags` post-processes Harbor's command list to add
-  `--variant=<reasoning_effort>` and OAuth env vars.
+  `--variant=<reasoning_effort>` and OAuth env vars. Pinned (2026-06-03) to
+  `opencode_version="1.15.13"` — previously unset → `npm i -g
+  opencode-ai@latest`; since opencode installs per-trial at agent-setup (unlike
+  CC's baked-in 2.1.108), an unpinned version could drift across a multi-day
+  cohort. 1.15.13 = what the mm27 lite cohort actually installed.
 - **oauth_proxy.py** (#191, #192, #194, #196, **local**): in-sandbox proxy
   translating OpenAI Chat Completions ↔ ChatGPT private Responses API
   (`chatgpt.com/backend-api/codex/responses`). Lets LiteLLM-based runs route
@@ -126,6 +94,10 @@ unless flagged "**local**".
   proxy. Includes `mask_proxied_model_name()` to rewrite e.g.
   `minimaxd/MiniMax-M2.7` → `anthropic/claude-sonnet-4-6` for Harbor's and
   opencode's hardcoded provider lists.
+- **gemini-cli action harness removed** (#214, 2026-06-07): deletes
+  `user_enabled_gemini_cli.py` (`UserEnabledGeminiCli`) and its `gemini-cli`
+  entry in `runner.py`'s agent-type registry. The gemini **user-sim**
+  (`gemini/gemini-3.1-pro-preview`) is unaffected.
 
 ### Reasoning depth — what level, where it gets set
 
@@ -215,6 +187,17 @@ incrementally:
   legitimately progressing on a Go-project exploration. 1800s gives
   breathing room without compromising `TRIAL_BUDGET_SEC=7200` (still
   4 execs/trial).
+- **#214, all wrappers** (2026-06-07): per-turn cap-rescue extended to
+  `claude_code`, and the trial budget realigned to the sandbox lifetime.
+  `TRIAL_BUDGET_SEC` 7200 → **5400** (= the E2B sandbox lifetime, so the
+  wrapper's own budget is the real ceiling and a trial stops cleanly instead
+  of the sandbox dying mid-run); `PER_EXEC_CAP_SEC` stays 1800.
+  `user_enabled_claude_code` adopts opencode's cap-rescue: a timed-out turn
+  (non-fatal) injects a synthetic "continue" message (bypassing the user sim)
+  and resumes on the next turn rather than hard-killing the trial with
+  `AgentTimeoutError` — dropping the CC per-turn cap 3600 → 1800 to match
+  opencode. Net: every harness now caps per-turn at 1800s and per-trial at
+  5400s, with timed-out turns rescued, not fatal.
 
 ### repo_diff.py — harbor-base fallback (#200, repo_diff.py)
 
@@ -249,6 +232,22 @@ Fix is two-sided:
   populate both the proxy env (so Claude Code still works via
   `ANTHROPIC_BASE_URL`) AND `DEEPSEEK_API_KEY` (so mini-swe-agent and
   opencode use the native deepseek provider directly).
+
+### Masked-proxy routing — inner agent now points at localhost:4210 (**local**, 2026-06-03)
+
+The `minimaxd/`/`glmd/`/`ark/` masking path launched the in-sandbox proxy
+but never pointed the inner agent at it, so every call 401'd at real
+api.anthropic.com with the placeholder key (mm27 smoke, 2026-06-03; same
+class as the deepseek 401s of 2026-05-29). Fixes:
+
+- `user_enabled_mini_swe_agent._build_run_commands` injects
+  `ANTHROPIC_API_BASE` + `ANTHROPIC_BASE_URL` = `http://localhost:4210`
+  when `_using_proxied_provider` (we exec inner commands ourselves via
+  `exec_with_budget`, bypassing Harbor's `extra_env` merge).
+- `user_enabled_opencode._opencode_thinking_patch_command` writes
+  `provider.anthropic.options.baseURL = 'http://localhost:4210/v1'` into
+  opencode.json (@ai-sdk/anthropic has no env-var base-URL override; config
+  persists in the sandbox so `--session` resume turns inherit it).
 
 ### oauth_proxy — Responses-API body trimming (**local**)
 
