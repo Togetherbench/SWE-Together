@@ -29,6 +29,21 @@ which version produced them so results are always traceable.
   `mswea_version="2.3.0"` pin. Verified end-to-end: factory construction with
   run_eval's exact kwargs → `npm i -g opencode-ai@1.15.13` in the rendered
   install script → live install reports 1.15.13.
+- **per-turn cap-rescue across all wrappers + trial budget = sandbox lifetime**
+  (#214): `exec_helpers.TRIAL_BUDGET_SEC` 7200 → **5400**, set equal to the E2B
+  sandbox lifetime so the wrapper's own budget is the real ceiling and a trial
+  stops cleanly instead of the sandbox dying mid-run; `PER_EXEC_CAP_SEC` stays
+  1800. `user_enabled_claude_code` adopts opencode's cap-rescue: when a single
+  turn's `exec` times out (non-fatal), the wrapper injects a synthetic
+  "continue" message (bypassing the user sim) and resumes on the next turn
+  rather than hard-killing the trial with `AgentTimeoutError` — dropping the CC
+  per-turn cap 3600 → 1800 to match opencode. Net: every harness now caps
+  per-turn at 1800s and per-trial at 5400s, with timed-out turns rescued, not
+  fatal.
+- **gemini-cli action harness removed** (#214): deletes
+  `user_enabled_gemini_cli.py` (`UserEnabledGeminiCli`) and its `gemini-cli`
+  entry in `runner.py`'s agent-type registry. The gemini **user-sim**
+  (`gemini/gemini-3.1-pro-preview`) is unaffected.
 
 ## v1.0 — 2026-05-31
 
