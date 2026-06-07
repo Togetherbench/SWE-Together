@@ -50,4 +50,11 @@ RUN set -e && \
     npm ci --ignore-scripts 2>/dev/null || true && \
     chown -R agent:agent /workspace/pi-mono
 
+# Offline snapshot of GitHub issue #1280 — replaces the live issue URL in
+# instruction.md to remove the internet answer-leak path and make the task
+# reproducible offline (see analysis/INTERNET_LEAKAGE.md). Placed outside
+# /workspace/pi-mono so it never appears in repo_diff patches.
+COPY issue_1280.md /workspace/issue_1280.md
+RUN chown agent:agent /workspace/issue_1280.md
+
 WORKDIR /workspace/pi-mono

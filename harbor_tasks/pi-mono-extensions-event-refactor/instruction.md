@@ -1,4 +1,4 @@
-Analyze GitHub issue(s): https://github.com/badlogic/pi-mono/issues/1280
+Analyze GitHub issue(s): /workspace/issue_1280.md
 
 For each issue:
 

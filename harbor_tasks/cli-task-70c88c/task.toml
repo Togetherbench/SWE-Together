@@ -12,7 +12,7 @@ timeout_sec = 120.0
 [agent]
 timeout_sec = 3600.0
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/cli-task-70c88c:4a7b86f5f8bb"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/cli-task-70c88c:47a795894c76"
 build_timeout_sec = 600.0
 allow_internet = true
 cpus = 4

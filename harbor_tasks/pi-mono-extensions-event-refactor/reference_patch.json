@@ -56,5 +56,6 @@
   "_instruction_pii_redacted": false,
   "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4)",
   "_canonical_anchor_commit": "961d3aacbc9ac5145ac40448960582e3f44d7c4a",
-  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)"
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_instruction_offline_snapshot": true
 }

@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Enforce: instruction.md == sanitize_pii(first non-trivial user turn).
+"""Enforce: instruction.md == redact_leakage_urls(sanitize_pii(first turn)).
 
 Policy (documented in CLAUDE.md, enforced by tests/test_instruction_verbatim.py):
 
   1. instruction.md MUST equal
-     sanitize_pii(extract_first_non_trivial_user_text(messages))
+     redact_leakage_urls(sanitize_pii(extract_first_non_trivial_user_text(messages)))
      byte-for-byte (after rstrip of trailing whitespace).
+
+     Two allowed transforms, both symmetric (applied by the enforcer AND the CI
+     guard, so instruction.md == transform(source)):
+       a. sanitize_pii      — host-path / email redaction (always on).
+       b. redact_leakage_urls — rewrite a known answer-leaking turn-0 URL to a
+          local offline snapshot path, but ONLY for tasks that actually ship the
+          snapshot (self-gating; see analysis/INTERNET_LEAKAGE.md). This is a
+          deliberate, narrow carve-out from "no semantic edits".
 
   2. extract_first_non_trivial_user_text(messages):
        - walk user messages in order (messages[0], messages[1], ...)
@@ -181,6 +189,51 @@ def sanitize_pii(text: str) -> tuple[str, bool]:
     return out, (out != text)
 
 
+# Answer-leakage URL rewrites. A verbatim turn-0 occasionally points the agent
+# at an external page that contains (or is one hop from) the solution. Unlike
+# PII redaction, rewriting these changes task semantics, so this is a
+# deliberate, narrow, per-URL carve-out: each entry maps one specific leaking
+# URL to the local offline snapshot baked into that task's image (the snapshot
+# strips the merged fix; see analysis/INTERNET_LEAKAGE.md). Scope is kept tight
+# (exact repo + issues path) — the verified blast radius is exactly the two
+# pi-mono issue-analysis tasks. The container provides the snapshot at the
+# rewritten path via a Dockerfile `COPY ... /workspace/issue_<N>.md`.
+_LEAKAGE_URL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"https://github\.com/badlogic/pi-mono/issues/(\d+)"),
+        r"/workspace/issue_\1.md",
+    ),
+]
+
+
+def redact_leakage_urls(text: str, task_dir: Path) -> tuple[str, bool]:
+    """Rewrite known answer-leaking URLs to their local offline-snapshot path.
+
+    Returns (new_text, changed_bool). Symmetric with sanitize_pii: the enforcer
+    and the CI guard both apply it, so instruction.md == the transformed source.
+
+    SELF-GATING: a URL is only rewritten when the task actually ships the
+    corresponding snapshot (``environment/<basename>``, COPYd into the image).
+    Tasks that match the URL pattern but have not been offline-snapshotted keep
+    their verbatim URL untouched, so this transform can be rolled out one task
+    at a time without breaking the others.
+    """
+    changed = False
+    out = text
+    for pat, repl in _LEAKAGE_URL_PATTERNS:
+        def _sub(m: re.Match[str]) -> str:
+            nonlocal changed
+            target = m.expand(repl)  # e.g. /workspace/issue_1937.md
+            snapshot = task_dir / "environment" / Path(target).name
+            if snapshot.exists():
+                changed = True
+                return target
+            return m.group(0)
+
+        out = pat.sub(_sub, out)
+    return out, changed
+
+
 def _content_text_parts(content) -> list[str]:
     """Return list of text strings extracted from a content field."""
     if isinstance(content, str):
@@ -292,8 +345,11 @@ def policy_text_for_task(task_dir: Path) -> tuple[str, dict]:
 
     raw, idx, skipped, args_extracted = extract_first_non_trivial_user_text(messages)
     sanitized, redacted = sanitize_pii(raw)
+    sanitized, snapshotted = redact_leakage_urls(sanitized, task_dir)
 
     meta: dict = {"_instruction_pii_redacted": redacted}
+    if snapshotted:
+        meta["_instruction_offline_snapshot"] = True
     if idx != 0:
         meta["_instruction_fallback_msg_index"] = idx
     if skipped:
@@ -401,6 +457,10 @@ def main(argv: list[str] | None = None) -> int:
                 rp = json.load(f)
             rp["_instruction_verbatim_enforced"] = True
             rp["_instruction_pii_redacted"] = bool(meta.get("_instruction_pii_redacted"))
+            if meta.get("_instruction_offline_snapshot"):
+                rp["_instruction_offline_snapshot"] = True
+            elif "_instruction_offline_snapshot" in rp:
+                del rp["_instruction_offline_snapshot"]
             if "_instruction_fallback_msg_index" in meta:
                 rp["_instruction_fallback_msg_index"] = meta["_instruction_fallback_msg_index"]
             elif "_instruction_fallback_msg_index" in rp:
