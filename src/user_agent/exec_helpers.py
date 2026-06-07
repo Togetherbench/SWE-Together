@@ -1,32 +1,24 @@
-"""Bounded exec helper for sequential-rerun wrappers (codex, gemini_cli).
+"""Bounded exec helper for the multi-turn wrappers.
 
-Why this exists: codex and gemini_cli have no `--resume` mechanism, so each
-turn re-issues a fresh `codex exec` / `gemini` with the full conversation
-history. Two failure modes have been observed where a single
-`environment.exec()` blocks indefinitely:
-
-  1. gpt-5.5 (reasoning model) via OpenRouter occasionally enters a "I'm
-     still thinking…" stream that never emits a final answer — codex CLI
-     waits for next token forever. Observed in gpt55_codex_scout_v3 r2/r3,
-     both burned 3h25m wall-clock on a single stuck exec before being
-     killed manually.
-  2. Gemini 3.1 Pro CLI similarly hangs on complex multi-fix tasks
-     (gemini31_scout_v3 turn-3 was stuck >50min before kill).
+Why this exists: a single `environment.exec()` can block indefinitely —
+e.g. gpt-5.5 (reasoning) via OpenRouter occasionally enters an "I'm still
+thinking…" stream that never emits a final answer, so the codex CLI waits
+for the next token forever (observed in gpt55_codex_scout_v3 r2/r3, each
+burned 3h25m wall-clock on one stuck exec before being killed manually).
 
 The wrappers' multi-turn loop has a `_TRIAL_BUDGET_SEC` guard, but that
 fires *between* turns — if a single exec never returns, the guard never
 gets a chance to run.
 
-claude_code wrapper doesn't need this: `claude --resume` keeps each call
-short (Anthropic only processes the new user message, not the full
-re-prompt), and Anthropic API direct connection has no proxy hop.
+All wrappers — including claude_code — now run turns through this, so a
+slow/stuck turn is capped per-exec and cap-rescued (resume on next turn)
+rather than killing the trial.
 
-Default caps:
-  - TRIAL_BUDGET_SEC (3600) matches the `--agent-timeout 3600` runner.py
-    arg that's standard across all our cohort scripts.
-  - PER_EXEC_CAP_SEC (600) is a single-call ceiling: 10 minutes is well
-    above the p99 turn duration observed for both codex and gemini, but
-    bounded enough that a stuck call dies fast.
+Default caps (shared by every harness):
+  - PER_EXEC_CAP_SEC (1800) — per-turn single-call ceiling (30m).
+  - TRIAL_BUDGET_SEC (5400) — total per-trial budget (90m), set equal to
+    the E2B sandbox lifetime so the wrapper's own budget is the real
+    ceiling and stops cleanly, instead of the sandbox dying mid-trial.
 """
 
 from __future__ import annotations
@@ -38,22 +30,8 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-TRIAL_BUDGET_SEC = 7200       # 2h. codex+gpt-5.5 is ~3× slower than claude_code+Opus.
-                              # Opus p95 on Person A is 64 min, max 82 min; × 3 → 3-4h.
-                              # 2h caps the long-tail without leaving the cohort exposed
-                              # to a single 4h task; faster tasks (Opus median 6.5 min, codex
-                              # ~20min) are unaffected.
-PER_EXEC_CAP_SEC = 1800       # 30m. Bumped from 1200s (20m) after pilot10 audit found
-                              # 4 trials wrapper-killed at 1200s (mini-Opus cli-task-2f5833
-                              # × 3 reps + mini-GPT cli-task-7e3475 × 1 rep) — Opus medium
-                              # reasoning + Go project exploration genuinely needs >20m
-                              # for turn-0 to write the patch. 30m gives breathing room
-                              # without compromising TRIAL_BUDGET (7200s/1800 = 4 execs
-                              # per trial, still enough for 1 turn-0 + 3 multi-turn).
-                              # The 30m-doesn't-fix-root-cause concern from v0.5.2 was
-                              # about a different failure mode (model genuinely stuck in
-                              # loops); the current cases are simple "slow but progressing"
-                              # which 30m does resolve.
+TRIAL_BUDGET_SEC = 5400
+PER_EXEC_CAP_SEC = 1800
 
 
 @dataclass

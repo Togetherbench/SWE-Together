@@ -59,7 +59,6 @@ _USER_SIM_AGENT_TYPES = {
     "terminus":    "user_agent.user_enabled_agent:UserEnabledTerminus2",
     "claude-code": "user_agent.user_enabled_claude_code:UserEnabledClaudeCode",
     "codex":       "user_agent.user_enabled_codex:UserEnabledCodex",
-    "gemini-cli":  "user_agent.user_enabled_gemini_cli:UserEnabledGeminiCli",
 }
 
 # Agent types without user simulation (Harbor's installed CLI agents, single-shot)

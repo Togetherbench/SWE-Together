@@ -726,8 +726,8 @@ class UserEnabledOpenCode(BaseAgent):
         # rather than seeing one finished result and choosing no-op.
         #
         # We add this for native-resume harnesses (claude_code, opencode)
-        # but NOT for history-replay ones (codex, gemini_cli,
-        # mini-swe-agent) — per a prior validation: on history-replay
+        # but NOT for history-replay ones (codex, mini-swe-agent) —
+        # per a prior validation: on history-replay
         # paths the per-turn cost compounds because each turn re-sends the
         # full history, so the extra checkpoints are net-negative.
         _INCREMENTAL_NOTICE = (

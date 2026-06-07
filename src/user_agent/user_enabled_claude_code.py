@@ -25,6 +25,7 @@ from harbor.llms.lite_llm import LiteLLM
 
 from .repo_config import discover_repo_config_files
 from .user_agent import UserAgent, UserDecision
+from .exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 
 log = logging.getLogger(__name__)
 
@@ -866,16 +867,17 @@ server.serve_forever()
         self._start_time = time.monotonic()
         self._turn_start_time = self._start_time
 
-        # Turn 0: initial run via inner agent's commands
+        # Turn 0: initial run via inner agent's commands. Run through
+        # exec_with_budget so a slow agent that overshoots the per-exec cap is
+        # NOT fatal — the claude session persists and we resume it on the next
+        # turn (cap-rescue), matching the opencode wrapper. Previously a timeout
+        # here propagated and killed the whole trial (AgentTimeoutError).
         commands = self._inner.create_run_agent_commands(instruction)
+        turn0_timed_out = False
         try:
             for i, exec_input in enumerate(commands):
-                env = exec_input.env
-                result = await environment.exec(
-                    command=f"set -o pipefail; {exec_input.command}",
-                    cwd=exec_input.cwd,
-                    env=env,
-                    timeout_sec=exec_input.timeout_sec,
+                result, timed_out = await exec_with_budget(
+                    environment, exec_input, start_time=self._start_time,
                 )
                 if result.stdout:
                     self._cumulative_output.append(result.stdout)
@@ -888,6 +890,9 @@ server.serve_forever()
                     (command_dir / "stdout.txt").write_text(result.stdout)
                 if result.stderr:
                     (command_dir / "stderr.txt").write_text(result.stderr)
+                if timed_out:
+                    turn0_timed_out = True
+                    break
         finally:
             # Always capture turn-0 patch — even if the agent's exec crashed
             # mid-stream, the partial workspace state matters.
@@ -903,41 +908,61 @@ server.serve_forever()
         log.info("Claude Code session ID: %s", session_id)
 
         consecutive_noops = 0
+        cap_rescue_pending = turn0_timed_out
         for turn in range(1, _MAX_RESUME_TURNS + 1):
-            trajectory, observation = self._snapshot_latest_turn()
+            elapsed = time.monotonic() - self._start_time
+            if elapsed > TRIAL_BUDGET_SEC:
+                log.warning(
+                    "Trial budget exceeded (%.0fs > %ds) — stopping at turn %d",
+                    elapsed, TRIAL_BUDGET_SEC, turn,
+                )
+                break
 
-            # Consult user sim (treat every completed claude run as a "completion")
-            decision = await self._consult_user(
-                trajectory, observation, turn, completing=True,
-                logging_dir=self.logs_dir,
-            )
-
-            if not decision.has_message:
-                consecutive_noops += 1
-                if consecutive_noops >= _MAX_CONSECUTIVE_NOOPS:
-                    log.info("User sim silent %d consecutive times at turn %d — ending",
-                             consecutive_noops, turn)
-                    break
-                # No-op means "let the agent keep working" — resume without
-                # user input so the agent can continue where it left off.
-                log.info("User sim no-op at turn %d (streak %d/%d) — resuming agent",
-                         turn, consecutive_noops, _MAX_CONSECUTIVE_NOOPS)
-                user_msg = "continue"
+            if cap_rescue_pending:
+                # Prior run was cut by the per-exec cap (NOT fatal): the claude
+                # session persisted, so resume it with a synthetic "continue"
+                # rather than consulting the sim (there's no completed agent turn
+                # to judge yet). Mirrors the opencode cap-rescue path. This does
+                # NOT advance the sim's ground-truth cursor or count as effort.
+                log.info(
+                    "Cap-rescue at turn %d: prior run cut by per-exec cap — "
+                    "resuming session with synthetic 'continue'", turn,
+                )
+                user_msg = "Your previous run was interrupted. Please continue with the task from where you left off."
+                cap_rescue_pending = False
             else:
-                consecutive_noops = 0
-                user_msg = decision.format_for_injection()
+                trajectory, observation = self._snapshot_latest_turn()
+
+                # Consult user sim (treat every completed claude run as a "completion")
+                decision = await self._consult_user(
+                    trajectory, observation, turn, completing=True,
+                    logging_dir=self.logs_dir,
+                )
+
+                if not decision.has_message:
+                    consecutive_noops += 1
+                    if consecutive_noops >= _MAX_CONSECUTIVE_NOOPS:
+                        log.info("User sim silent %d consecutive times at turn %d — ending",
+                                 consecutive_noops, turn)
+                        break
+                    # No-op means "let the agent keep working" — resume without
+                    # user input so the agent can continue where it left off.
+                    log.info("User sim no-op at turn %d (streak %d/%d) — resuming agent",
+                             turn, consecutive_noops, _MAX_CONSECUTIVE_NOOPS)
+                    user_msg = "continue"
+                else:
+                    consecutive_noops = 0
+                    user_msg = decision.format_for_injection()
 
             log.info("Resuming claude-code session with user message (turn %d)", turn)
             self._turn_start_time = time.monotonic()
 
             resume_commands = self._build_resume_command(session_id, user_msg)
+            turn_timed_out = False
             try:
                 for j, exec_input in enumerate(resume_commands):
-                    result = await environment.exec(
-                        command=f"set -o pipefail; {exec_input.command}",
-                        cwd=exec_input.cwd,
-                        env=exec_input.env,
-                        timeout_sec=exec_input.timeout_sec,
+                    result, timed_out = await exec_with_budget(
+                        environment, exec_input, start_time=self._start_time,
                     )
                     if result.stdout:
                         self._cumulative_output.append(result.stdout)
@@ -950,9 +975,21 @@ server.serve_forever()
                         (command_dir / "stdout.txt").write_text(result.stdout)
                     if result.stderr:
                         (command_dir / "stderr.txt").write_text(result.stderr)
+                    if timed_out:
+                        turn_timed_out = True
+                        break
             finally:
                 # Always capture this turn's patch — survives mid-turn exec failures.
                 await self._capture_git_diff(environment, turn=turn)
+
+            if turn_timed_out:
+                # Non-fatal: claude session persisted; resume on the next turn
+                # with a synthetic "continue" (cap-rescue) instead of dying.
+                log.warning(
+                    "turn %d hit per-exec cap — resuming session on next turn", turn,
+                )
+                cap_rescue_pending = True
+                continue
 
         # Final safety net — re-snapshot at run-end so even if all per-turn
         # captures somehow fail, final.patch reflects the very last state.
