@@ -363,14 +363,16 @@ class UserEnabledOpenCode(BaseAgent):
                 extra = "--thinking "
                 if self._reasoning_effort:
                     extra += f"--variant={shlex.quote(self._reasoning_effort)} "
-                # PR #212 / #213 parity with claude-code's --disallowedTools.
-                # Convert "WebFetch,WebSearch" → opencode's "-webfetch,-websearch,*"
-                # (negative entries with `*` rest-enable per opencode CLI docs).
-                if self._disallowed_tools:
-                    items = [t.strip() for t in self._disallowed_tools.split(",") if t.strip()]
-                    if items:
-                        spec = ",".join(f"-{t.lower()}" for t in items) + ",*"
-                        extra += f"--tools={shlex.quote(spec)} "
+                # PR #212 / #221 parity with claude-code's --disallowedTools.
+                # Previously inserted `--tools '-webfetch,-websearch,*'` here —
+                # confirmed silently broken in opencode-ai@1.15.13 (`run --tools`
+                # is not a recognized flag; the CLI printed help + exit 1 →
+                # empty transcript counted as 0.0 reward on the 4 gated tasks
+                # × 4 opencode cohorts = 16 phantom failures observed in
+                # canonical_lite70 r1, see analysis/V11_RELEASE_NOTES.md). The
+                # right plumbing is the opencode.json `permission.tools` block,
+                # which IS honored at runtime. That's added inside
+                # `_opencode_thinking_patch_command` (search for "disallowed_tools").
                 # Patch opencode.json to enable per-provider thinking config so
                 # OpenRouter/Anthropic actually consumes a thinking budget
                 # (without this, --variant maps to nothing for OR providers
@@ -517,6 +519,21 @@ class UserEnabledOpenCode(BaseAgent):
             "            ext.setdefault(pattern, 'allow')\n"
             "        perm['external_directory'] = ext\n"
             "    cfg['permission'] = perm\n"
+            # PR #221: per-task disallowed_tools — disable webfetch/websearch
+            # at the opencode.json `permission.tools` registry. opencode's
+            # core picks this up at session start (run.ts → permission resolver)
+            # and refuses the tool with "tool unavailable" without ever calling
+            # the model with it. Confirmed-working with v1.15.13.
+            f"_disallow = {json.dumps([t.strip().lower() for t in (self._disallowed_tools or '').split(',') if t.strip()])}\n"
+            "if _disallow:\n"
+            "    _perm = cfg.setdefault('permission', {})\n"
+            "    if not isinstance(_perm, dict): _perm = {}\n"
+            "    _tools = _perm.setdefault('tools', {})\n"
+            "    if not isinstance(_tools, dict): _tools = {}\n"
+            "    for _t in _disallow:\n"
+            "        _tools[_t] = 'deny'\n"
+            "    _perm['tools'] = _tools\n"
+            "    cfg['permission'] = _perm\n"
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text(json.dumps(cfg, indent=2))\n"
         )

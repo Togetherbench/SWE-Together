@@ -58,4 +58,10 @@ RUN set -e && \
     npm ci --ignore-scripts 2>/dev/null || true && \
     chown -R agent:agent /workspace/pi-mono
 
+# === BEGIN DNS sinkhole (PR #221) ===
+COPY seal-dns.sh /usr/local/bin/seal-dns.sh
+RUN chmod +x /usr/local/bin/seal-dns.sh &&     if id agent >/dev/null 2>&1; then         (command -v sudo >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo > /dev/null)) &&         (grep -q "^agent ALL=" /etc/sudoers 2>/dev/null || echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers);     fi
+ENV BASH_ENV=/usr/local/bin/seal-dns.sh
+ENV ENV=/usr/local/bin/seal-dns.sh
+# === END DNS sinkhole ===
 WORKDIR /workspace/pi-mono

@@ -19,7 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/desloppify-zone-classification:41b40d7fd93e"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/desloppify-zone-classification:d9e3ae10a8f3"
 build_timeout_sec = 600.0
 cpus = 4
 memory = "4G"

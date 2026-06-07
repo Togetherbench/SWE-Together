@@ -19,7 +19,7 @@ timeout_sec = 120.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/reigh-timeline-mode-cleanup:3ac318336dcf"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/reigh-timeline-mode-cleanup:f5770f4bb70e"
 build_timeout_sec = 600.0
 cpus = 4
 memory = "4G"

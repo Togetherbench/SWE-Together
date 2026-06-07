@@ -32,6 +32,7 @@ RUN git init /workspace/VibeComfy && \
 # === BEGIN corpus-wide git-seal (PR #212) ===
 # Inserted AFTER last `git checkout <BASE>` (HEAD must be detached before refs deleted).
 RUN cd /workspace/VibeComfy && \
+    git checkout --detach HEAD && \
     git remote remove origin 2>/dev/null || true && \
     git for-each-ref --format='delete %(refname)' refs/heads refs/remotes refs/tags | git update-ref --stdin && \
     rm -f .git/FETCH_HEAD .git/ORIG_HEAD .git/packed-refs && \
@@ -77,4 +78,16 @@ ENV PATH="/home/agent/.local/bin:$PATH"
 RUN git config --global user.email "agent@harbor.test" && \
     git config --global user.name "Harbor Agent"
 
+# === BEGIN DNS sinkhole (PR #221) ===
+USER root
+COPY seal-dns.sh /usr/local/bin/seal-dns.sh
+RUN chmod +x /usr/local/bin/seal-dns.sh && \
+    if id agent >/dev/null 2>&1; then \
+        (command -v sudo >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo > /dev/null)) && \
+        (grep -q "^agent ALL=" /etc/sudoers 2>/dev/null || echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers); \
+    fi
+ENV BASH_ENV=/usr/local/bin/seal-dns.sh
+ENV ENV=/usr/local/bin/seal-dns.sh
+USER agent
+# === END DNS sinkhole ===
 WORKDIR /workspace/VibeComfy

@@ -19,7 +19,7 @@ timeout_sec = 180.0
 timeout_sec = 3600.0
 
 [environment]
-docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/unsloth-idefics3-finetune:1be2c6df44d0"
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/unsloth-idefics3-finetune:aa4ad7f34e30"
 build_timeout_sec = 900.0
 cpus = 4
 memory = "4G"
