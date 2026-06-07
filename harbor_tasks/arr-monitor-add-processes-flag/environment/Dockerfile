@@ -43,3 +43,16 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108
 ENV PATH="/home/agent/.local/bin:$PATH"
 RUN git config --global user.email "agent@test.com" && git config --global user.name "Test Agent" && git config --global --add safe.directory /workspace && git config --global --add safe.directory /opt/origin.git
 WORKDIR /workspace
+
+# === BEGIN DNS sinkhole (PR #221) ===
+USER root
+COPY seal-dns.sh /usr/local/bin/seal-dns.sh
+RUN chmod +x /usr/local/bin/seal-dns.sh && \
+    if id agent >/dev/null 2>&1; then \
+        (command -v sudo >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends sudo > /dev/null)) && \
+        (grep -q "^agent ALL=" /etc/sudoers 2>/dev/null || echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers); \
+    fi
+ENV BASH_ENV=/usr/local/bin/seal-dns.sh
+ENV ENV=/usr/local/bin/seal-dns.sh
+USER agent
+# === END DNS sinkhole ===
