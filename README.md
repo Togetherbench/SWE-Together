@@ -283,7 +283,7 @@ The user simulator (`src/user_agent/`) is an LLM that role-plays as the original
 ### Architecture (v0.6.0)
 
 - **Claude Code harness only.** Every target model — Opus, Sonnet, MiniMax, GLM, DeepSeek, Kimi, … — runs through Claude Code CLI v2.1.108 (baked into every task image) and reaches its provider via the in-sandbox LiteLLM proxy on `localhost:4210`. Mixing harnesses across models would conflate harness quality with model quality.
-- **User-sim model: Gemini 3.1 Pro** (default `openrouter/google/gemini-3.1-pro-preview`). Best GT coverage, most realistic turn structure, lower cost than Claude. See `src/user_agent/agent_test_comparison.md`.
+- **User-sim model: Gemini 3.1 Pro** (default `openrouter/google/gemini-3.1-pro-preview`). Best GT coverage, most realistic turn structure, lower cost than Claude.
 - **Multi-turn via `claude --resume`** — each user-sim turn appends a message to the existing CC session. The CC agent is instructed to "work incrementally — stop and report after each sub-task" so there are more intervention checkpoints for the sim.
 - **Repo config file injection** — CLAUDE.md, AGENTS.md, `.claude/`, `.ai/`, `.cursor/` are discovered and prepended to the agent instruction for cross-harness parity.
 - **Structured tool output** — the sim picks one of: `no-op`, `question`, `redirect`, `new_requirement`, `check_external`. v0.6.0 forces this via `tool_choice=required` (Gemini's `functionCallingConfig.mode = "ANY"`), eliminating ~1,269 text-as-no-op cases per eval run.
