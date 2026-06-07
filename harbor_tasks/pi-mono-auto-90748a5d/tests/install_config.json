@@ -7,6 +7,13 @@
   "FAIL_TO_PASS": [
     "converts BMP to PNG on Wayland/WSLg"
   ],
+  "FAIL_TO_PASS_REGEX": [
+    "(?i)\\bbmp\\b.*\\bpng\\b",
+    "(?i)\\bclipboard\\b.*\\bbmp\\b",
+    "(?i)\\bclipboard\\b.*\\bpng\\b",
+    "(?i)\\bwslg?\\b.*\\b(bmp|png)\\b"
+  ],
+  "_fail_to_pass_regex_rationale": "v3 rubric goal_6 is mechanism-agnostic: 'Test file name, framework, and assertion style are unconstrained' and the test only needs to exercise the unsupported-format-to-supported-format path. The single exact-name F2P contradicts this; the regex tier accepts any vitest test whose name plausibly describes the BMP-to-PNG / unsupported-clipboard-format path (e.g. 'BMP clipboard image is converted to PNG', 'clipboard returns PNG when BMP', 'WSLg BMP fallback to PNG'). Matching is OR over the exact name AND the regex list — a trial scores the F2P pass if any one matches.",
   "PASS_TO_PASS": [],
   "_upgraded_from_legacy": true,
   "_curated": "f2p_populated_from_canonical_patch",

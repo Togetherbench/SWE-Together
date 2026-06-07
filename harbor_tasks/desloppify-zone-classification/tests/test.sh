@@ -468,42 +468,178 @@ case "$S" in
 esac
 
 # ===================================================================
-# F2P 6 (0.10): LangConfig has zone_rules field AND it's wired up.
-# Tests that the language registers zone_rules so the pipeline can use them.
+# F2P 6 (0.10): Pipeline accessibility of language zone rules / zone
+# classification via SOME form of indirection — identifier-agnostic.
+# Per canonical_goals.json.v3.json goal_6, the user's plan requires the
+# pipeline to obtain language-correct rules WITHOUT hard-coding per-lang
+# conditionals at the call site. Valid satisfaction shapes (any one of):
+#   (A) `LangConfig.zone_rules` dataclass field with python lang's
+#       registered config carrying a non-empty rule list  [original v2 shape]
+#   (B) A registry/method on a per-language module — e.g.
+#       `desloppify.lang.python.PY_ZONE_RULES` plus
+#       `desloppify.lang.typescript.TS_ZONE_RULES` both importable as
+#       collection-typed module attributes
+#   (C) A factory/lookup function such as `build_zone_map(lang_name)` /
+#       `get_zone_rules(lang_name)` / `zone_rules_for(lang)` reachable
+#       from `desloppify.zones` or a per-language module
+#   (D) Dynamic attribute set at scan time — e.g. `lang._zone_map` /
+#       `lang.zone_map` populated to a non-None `FileZoneMap`-like object
+#       by the scan pipeline (the trial pattern the rubric explicitly
+#       allows)
+# Score: 2 if (A) holds, OR if any one of (B/C/D) holds. 1 if a partial
+# signal exists (e.g. a per-language rule list present but no callsite
+# indirection). 0 otherwise.
 # ===================================================================
-echo "--- F2P 6: LangConfig.zone_rules wired (0.10) ---"
+echo "--- F2P 6: pipeline accessibility for per-language zone rules (0.10) ---"
 F6=$(python3 - <<'PYEOF' 2>&1
-import sys
+import sys, importlib, inspect
 sys.path.insert(0, '.')
 score = 0
 notes = []
-try:
-    from desloppify.lang.base import LangConfig
-    import dataclasses
-    fields = {f.name for f in dataclasses.fields(LangConfig)}
-    if 'zone_rules' in fields:
-        score += 1
-    else:
-        notes.append(f"no_zone_rules_field;fields={fields}")
-except Exception as e:
-    notes.append(f"langconfig_err:{e}")
+shape_hit = None
 
-# Check that python lang module registers a config with non-empty zone_rules
-try:
-    from desloppify.lang import LANGS
-    py = LANGS.get('python') if isinstance(LANGS, dict) else None
-    if py is None:
-        # Try alternate access — maybe it's auto-registered on import
-        import desloppify.lang.python  # noqa
+# ---- Shape A: LangConfig.zone_rules dataclass field + python lang has rules
+def shape_A():
+    try:
+        from desloppify.lang.base import LangConfig
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(LangConfig)}
+        if 'zone_rules' not in fields:
+            return False, f"no_zone_rules_field;fields={fields}"
+    except Exception as e:
+        return False, f"langconfig_err:{type(e).__name__}:{e}"
+    try:
+        from desloppify.lang import LANGS
         py = LANGS.get('python') if isinstance(LANGS, dict) else None
-    if py is not None and hasattr(py, 'zone_rules') and py.zone_rules:
-        score += 1
-    else:
-        notes.append(f"py_lang_zone_rules_empty;py={py}")
-except Exception as e:
-    notes.append(f"py_lang_err:{e}")
+        if py is None:
+            import desloppify.lang.python  # noqa
+            py = LANGS.get('python') if isinstance(LANGS, dict) else None
+        if py is not None and hasattr(py, 'zone_rules') and py.zone_rules:
+            return True, "A_ok"
+        return False, f"py_lang_zone_rules_empty;py={py}"
+    except Exception as e:
+        return False, f"py_lang_err:{type(e).__name__}:{e}"
 
-print(f"SCORE:{score}/2 {notes}")
+# ---- Shape B: per-lang module-level rule registries (PY_ZONE_RULES + TS_ZONE_RULES)
+def shape_B():
+    try:
+        from desloppify.lang.python import PY_ZONE_RULES
+        from desloppify.lang.typescript import TS_ZONE_RULES
+        if (hasattr(PY_ZONE_RULES, '__iter__') and len(PY_ZONE_RULES) > 0
+            and hasattr(TS_ZONE_RULES, '__iter__') and len(TS_ZONE_RULES) > 0):
+            return True, "B_ok"
+        return False, "B_empty_or_non_iter"
+    except Exception as e:
+        return False, f"B_err:{type(e).__name__}:{e}"
+
+# ---- Shape C: factory/lookup callable returning language-correct rules
+def shape_C():
+    CANDIDATES = [
+        ('desloppify.zones', ['build_zone_map', 'get_zone_rules', 'zone_rules_for',
+                              'zone_rules_for_lang', 'rules_for_lang',
+                              'get_zone_map', 'make_zone_map']),
+        ('desloppify.lang', ['build_zone_map', 'get_zone_rules', 'zone_rules_for',
+                             'zone_rules_for_lang', 'rules_for_lang']),
+        ('desloppify.lang.base', ['build_zone_map', 'get_zone_rules', 'zone_rules_for',
+                                  'zone_rules_for_lang', 'rules_for_lang']),
+    ]
+    for mod_name, names in CANDIDATES:
+        try:
+            m = importlib.import_module(mod_name)
+        except Exception:
+            continue
+        for n in names:
+            fn = getattr(m, n, None)
+            if fn is None or not callable(fn):
+                continue
+            # Probe: call with 'python' and require a non-empty / non-None result
+            for arg in ('python', 'py'):
+                try:
+                    res = fn(arg)
+                    if res is None:
+                        continue
+                    # Accept iterables (rule lists) or objects with attrs
+                    try:
+                        if hasattr(res, '__iter__') and len(list(res)) > 0:
+                            return True, f"C_ok:{mod_name}.{n}"
+                    except Exception:
+                        pass
+                    if hasattr(res, 'get') or hasattr(res, 'zone_rules') or hasattr(res, 'classify'):
+                        return True, f"C_ok:{mod_name}.{n}"
+                except Exception:
+                    continue
+    return False, "C_no_factory_found"
+
+# ---- Shape D: dynamic attribute on language object set by pipeline (e.g. _zone_map / zone_map)
+# This is the trial's shape: scan code calls something like
+# `_generate_findings_from_lang(lang, ...)` which assigns `lang._zone_map = FileZoneMap(...)`.
+# We test this two ways:
+#   (D1) static: scan source for the attribute assignment (`lang._zone_map = ` / `lang.zone_map = `)
+#   (D2) dynamic: call the scan-finding entry-point if discoverable and check the attribute
+def shape_D():
+    import os, re
+    root = 'desloppify'
+    pat = re.compile(r'\b(?:lang|config|cfg)\.(?:_zone_map|zone_map)\s*=', re.MULTILINE)
+    hit_files = []
+    for dp, _, fns in os.walk(root):
+        for fn in fns:
+            if not fn.endswith('.py'):
+                continue
+            p = os.path.join(dp, fn)
+            try:
+                with open(p, 'r', encoding='utf-8', errors='ignore') as fh:
+                    txt = fh.read()
+            except Exception:
+                continue
+            if pat.search(txt):
+                hit_files.append(p)
+    if hit_files:
+        return True, f"D_ok:assigns={hit_files[:3]}"
+    # Also accept the attribute being declared as an optional field on LangConfig
+    # (i.e. `_zone_map: Optional[FileZoneMap] = None`) without an explicit dataclass field.
+    try:
+        from desloppify.lang.base import LangConfig
+        annotations = getattr(LangConfig, '__annotations__', {}) or {}
+        for nm in ('_zone_map', 'zone_map'):
+            if nm in annotations:
+                return True, f"D_ok:annot={nm}"
+    except Exception:
+        pass
+    return False, "D_no_dynamic_attr"
+
+A_ok, A_note = shape_A()
+B_ok, B_note = shape_B()
+C_ok, C_note = shape_C()
+D_ok, D_note = shape_D()
+
+# Scoring policy:
+#   - 2 points if Shape A holds (the "declarative dataclass field" form), OR
+#   - 2 points if ANY of B/C/D holds (equivalent indirection shapes accepted by goal_6).
+#   - 1 point if no full shape holds but a PARTIAL signal exists: either python module
+#     defines PY_ZONE_RULES (without the matching TS one), OR LangConfig has the field
+#     but the python registry doesn't carry rules yet.
+#   - 0 otherwise.
+if A_ok or B_ok or C_ok or D_ok:
+    score = 2
+    shape_hit = next((s for s, ok in (('A', A_ok), ('B', B_ok), ('C', C_ok), ('D', D_ok)) if ok), None)
+else:
+    # Partial: any single signal that the work is in progress
+    try:
+        from desloppify.lang.python import PY_ZONE_RULES  # noqa
+        partial = True
+    except Exception:
+        partial = False
+    if not partial:
+        try:
+            from desloppify.lang.base import LangConfig
+            import dataclasses
+            partial = 'zone_rules' in {f.name for f in dataclasses.fields(LangConfig)}
+        except Exception:
+            partial = False
+    score = 1 if partial else 0
+
+notes = [f"A:{A_note}", f"B:{B_note}", f"C:{C_note}", f"D:{D_note}"]
+print(f"SCORE:{score}/2 shape={shape_hit} {notes}")
 PYEOF
 )
 echo "  $F6"

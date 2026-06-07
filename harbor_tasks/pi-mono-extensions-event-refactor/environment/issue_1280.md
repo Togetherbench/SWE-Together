@@ -38,53 +38,9 @@ Only the last extension's return value is used. Other extensions' modifications 
 
 ### How? (optional)
 
-do something like this so tool result modifications are chained
-
-```ts
-// For tool_result events, chain modifications from all handlers
-if (event.type === "tool_result") {
-        let currentContent = event.content;
-        let currentDetails = event.details;
-        let currentIsError = event.isError;
-        let modified = false;
-
-        for (const ext of this.extensions) {
-                const handlers = ext.handlers.get("tool_result");
-                if (!handlers || handlers.length === 0) continue;
-
-                for (const handler of handlers) {
-                        try {
-                                // Create event with current accumulated values
-                                const toolResultEvent = { ...event, content: currentContent, details: currentDetails, isError: currentIsError };
-                                const handlerResult = (await handler(toolResultEvent, ctx)) as ToolResultEventResult | undefined;
-
-                                if (handlerResult) {
-                                        if (handlerResult.content !== undefined) {
-                                                currentContent = handlerResult.content;
-                                                modified = true;
-                                        }
-                                        if (handlerResult.details !== undefined) {
-                                                currentDetails = handlerResult.details;
-                                                modified = true;
-                                        }
-                                        if (handlerResult.isError !== undefined) {
-                                                currentIsError = handlerResult.isError;
-                                                modified = true;
-                                        }
-                                }
-                        } catch (err) {
-                                const message = err instanceof Error ? err.message : String(err);
-                                const stack = err instanceof Error ? err.stack : undefined;
-                                this.emitError({
-                                        extensionPath: ext.path,
-                                        event: "tool_result",
-                                        error: message,
-                                        stack,
-                                });
-                        }
-                }
-        }
-
-        return modified ? { content: currentContent, details: currentDetails, isError: currentIsError } : undefined;
-}
-```
+[REDACTED for benchmark: the reporter's "How?" section in the upstream issue
+included a near-complete proposed implementation. It was removed from this
+offline snapshot to avoid answer-leakage. The Problem / Context / Expected
+Behavior / Actual Behavior sections above describe the desired semantics
+(chaining modifications across handlers, middleware-style); design and
+implementation are left to the agent.]

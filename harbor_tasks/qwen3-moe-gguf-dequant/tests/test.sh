@@ -174,22 +174,70 @@ for seed, nb, w in g1_subs:
     ok, info = numerical_test("IQ3_XXS", seed=seed, n_blocks=nb, rtol=2e-3, atol=2e-3)
     record(f"IQ3_XXS seed={seed} nb={nb}", w, ok, info)
 
-# === Gate 2: IQ3_XXS structural — must NOT use F.embedding (instruction R1) ===
+# === Gate 2: IQ-family structural — must NOT use F.embedding (instruction R1) ===
 # Weight: 0.04
-print("=== F2P G2: IQ3_XXS uses elemental indexing (no F.embedding) ===")
+# Broadened to inspect the full dequant module so wrapper helpers that
+# internally call F.embedding (e.g. _grid_lookup / _ksigns_lookup that the
+# IQ functions delegate to) are also caught. Rubric goal_7 requires
+# elemental indexing inside the IQ-family dequantization PATH, not just the
+# IQ3_XXS function body — a thin wrapper that itself calls F.embedding is
+# still a violation. Comments are stripped before the check so a docstring
+# mentioning F.embedding does not false-positive.
+print("=== F2P G2: IQ-family path uses elemental indexing (no F.embedding) ===")
+def _strip_python_comments(src):
+    # Strip line comments and triple-quoted string blocks so docstrings /
+    # `# F.embedding` notes don't trip the search.
+    out_lines = []
+    in_triple_single = False
+    in_triple_double = False
+    for line in src.splitlines():
+        # Triple-quoted block tracking (whole-line approximation — adequate
+        # for source files that put docstrings on their own lines).
+        stripped = line.strip()
+        if in_triple_single:
+            if "'''" in line:
+                in_triple_single = False
+            continue
+        if in_triple_double:
+            if '"""' in line:
+                in_triple_double = False
+            continue
+        if stripped.startswith("'''") and not stripped.endswith("'''", 3):
+            in_triple_single = True
+            continue
+        if stripped.startswith('"""') and not stripped.endswith('"""', 3):
+            in_triple_double = True
+            continue
+        # Strip inline #-comments (naive, but module source uses standard style)
+        if "#" in line:
+            line = line.split("#", 1)[0]
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
 def check_no_f_embedding():
     try:
         fn = dequantize_functions.get(gguf.GGMLQuantizationType.IQ3_XXS)
         if fn is None:
             return False, "not registered"
-        src = inspect.getsource(fn)
-        # Allow comment containing 'embedding' but reject actual call
-        bad = "F.embedding" in src or "torch.nn.functional.embedding" in src or "nn.functional.embedding" in src
-        return (not bad), ("uses F.embedding" if bad else "ok")
+        # Inspect the full module source, not just the IQ3_XXS function body.
+        # This catches thin wrapper helpers (e.g. _grid_lookup, _ksigns_lookup)
+        # that the IQ-family functions might delegate to.
+        try:
+            module_src = inspect.getsource(dq_mod)
+        except Exception:
+            # Fall back to function source if module source is unavailable
+            module_src = inspect.getsource(fn)
+        cleaned = _strip_python_comments(module_src)
+        bad = (
+            "F.embedding" in cleaned
+            or "torch.nn.functional.embedding" in cleaned
+            or "nn.functional.embedding" in cleaned
+        )
+        return (not bad), ("uses F.embedding in IQ-family path" if bad else "ok")
     except Exception as e:
         return False, f"exc:{e}"
 ok, info = check_no_f_embedding()
-record("IQ3_XXS no F.embedding", 0.04, ok, info)
+record("IQ-family no F.embedding", 0.04, ok, info)
 
 # === Gate 3: IQ3_S numerical correctness ===
 # Weight: 0.16

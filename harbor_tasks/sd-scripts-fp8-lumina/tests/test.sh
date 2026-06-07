@@ -594,6 +594,120 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════
+# T4 GATE — goal_2 (mul_cuda bug): scale_weight cast to input dtype
+# Behavioral runtime check: invoke fp8_linear_forward_patch with an fp8
+# scale_weight + bf16 input and confirm no NotImplementedError and that
+# the output dtype matches the input dtype. AST fallback hardens against
+# environments where fp8_optimization_utils cannot be imported under mock.
+# ═══════════════════════════════════════════════════════════════════
+T4=$(python3 << 'PYEOF' 2>&1
+exec(open("/tmp/_vfp8mock.py").read())
+import sys, json, re, os, ast, torch, torch.nn as nn
+
+result = {"runtime_ok": False, "ast_ok": False, "err": ""}
+
+# AST/source check first — robust, no diffusers deps required.
+src_path = "/workspace/sd-scripts/library/fp8_optimization_utils.py"
+src = ""
+try:
+    src = open(src_path).read()
+except Exception as e:
+    result["err"] = "no_source:" + repr(e)[:120]
+
+if src:
+    # Locate fp8_linear_forward_patch body
+    try:
+        tree = ast.parse(src)
+        fn_body_src = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "fp8_linear_forward_patch":
+                end = getattr(node, "end_lineno", None)
+                if end:
+                    fn_body_src = "\n".join(src.split("\n")[node.lineno - 1: end])
+                break
+    except Exception as e:
+        fn_body_src = None
+        result["err"] = (result.get("err") or "") + ";ast:" + repr(e)[:80]
+
+    if fn_body_src:
+        # Strip comments for robust matching
+        no_comments = "\n".join(
+            ln for ln in fn_body_src.split("\n")
+            if ln.strip() and not ln.strip().startswith("#")
+        )
+        # Pattern A: `original_dtype = x.dtype` (canonical approach)
+        a = re.search(r'original_dtype\s*=\s*x\.dtype', no_comments) is not None
+        # Pattern B: scale_weight cast to x.dtype via .to(x.dtype) or .to(original_dtype where original_dtype is x.dtype)
+        b = re.search(r'scale_weight(?:\s*\.\s*to\s*\(\s*(?:x\.dtype|original_dtype)\s*\))', no_comments) is not None
+        # Pattern C: any explicit cast of scale_weight to the input compute dtype before multiply
+        # e.g. scale = self.scale_weight.to(x.dtype) ; dequantized_weight * scale
+        c = re.search(r'self\.scale_weight\s*\.\s*to\s*\(', no_comments) is not None
+        # Pattern D: alternative — cast .to(x.dtype) applied to whatever holds the scale
+        d = re.search(r'\.to\s*\(\s*x\.dtype\s*\)', no_comments) is not None
+        # Pattern E (anti-gaming guard): pre-fix line still present unchanged
+        prefix = re.search(
+            r'original_dtype\s*=\s*self\.scale_weight\.dtype', no_comments
+        ) is not None
+        if (a or (b and c) or (c and d)) and not prefix:
+            result["ast_ok"] = True
+
+# Behavioral runtime check
+try:
+    import library.fp8_optimization_utils as fou
+    fwd = getattr(fou, "fp8_linear_forward_patch", None)
+    if fwd is not None:
+        # Build a tiny nn.Linear with fp8 weight + fp8 scale_weight
+        lin = nn.Linear(8, 8, bias=False)
+        # Cast weight to fp8 to simulate post-optimize state
+        try:
+            lin.weight.data = lin.weight.data.to(torch.float8_e4m3fn)
+        except Exception as _e:
+            # fp8 cast not supported in this torch — abort runtime probe, ast still applies
+            raise
+        # Attach scale_weight in fp8 dtype to reproduce the user's symptom shape
+        scale = torch.ones(8, 1, dtype=torch.float8_e4m3fn)
+        lin.scale_weight = scale  # plain attr (not Parameter) is fine; fwd reads .scale_weight
+        x = torch.randn(2, 8, dtype=torch.bfloat16)
+        try:
+            out = fwd(lin, x)
+            # If we got here, no NotImplementedError was raised — the cast fix is present
+            # Verify output dtype is the input's compute dtype (not fp8)
+            if hasattr(out, "dtype") and out.dtype == x.dtype:
+                result["runtime_ok"] = True
+            elif hasattr(out, "dtype") and out.dtype != torch.float8_e4m3fn:
+                # Some implementations may upcast to fp32; either way not fp8 is fine
+                result["runtime_ok"] = True
+        except NotImplementedError as e:
+            result["err"] = (result.get("err") or "") + ";runtime_nie:" + repr(e)[:120]
+        except RuntimeError as e:
+            msg = repr(e)
+            if "mul_cuda" in msg or "Float8" in msg or "not implemented" in msg:
+                result["err"] = (result.get("err") or "") + ";runtime_rt:" + msg[:120]
+            else:
+                # Different runtime issue (e.g., shape) — fall back to AST verdict
+                result["err"] = (result.get("err") or "") + ";runtime_other:" + msg[:120]
+except Exception as e:
+    result["err"] = (result.get("err") or "") + ";probe_err:" + repr(e)[:120]
+
+# Pass if EITHER runtime probe succeeded OR the AST source check confirms the cast
+result["pass"] = bool(result["runtime_ok"] or result["ast_ok"])
+print("RESULT:" + json.dumps(result))
+PYEOF
+)
+T4_LINE=$(echo "$T4" | grep -E '^RESULT:' | tail -1 | sed 's/^RESULT://')
+if [ -z "$T4_LINE" ]; then
+    emit t4_f2p_fp8_linear_forward_cast_fix false "goal_2 probe did not run"
+else
+    if echo "$T4_LINE" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(0 if d.get('pass') else 1)" 2>/dev/null; then
+        emit t4_f2p_fp8_linear_forward_cast_fix true ""
+    else
+        # Surface a short diagnostic
+        DETAIL=$(echo "$T4_LINE" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(('runtime_ok='+str(d.get('runtime_ok'))+' ast_ok='+str(d.get('ast_ok'))+' '+(d.get('err') or ''))[:180])" 2>/dev/null)
+        emit t4_f2p_fp8_linear_forward_cast_fix false "$DETAIL"
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
 # Compute reward
 # ═══════════════════════════════════════════════════════════════════
 
@@ -608,15 +722,14 @@ with open("$GATES_FILE") as f:
         except: pass
 
 # P2P_REGRESSION failures zero the reward
+# Reconciled with v043 WEIGHTS (sonnet v3 final review 2026-06-06):
+# behavioral gates that always fail in CPU sandbox are demoted to weight 0
+# (kept in gates.json for diagnostics) and goal_2 (t4) carries its own gate.
 weights = {
-    "t1_f2p_target_keys_behavioral": 0.15,
-    "t1_f2p_apply_monkey_patch_wired": 0.15,
-    "t1_f2p_cli_flag_parses": 0.10,
-    "t1_f2p_train_network_wires_fp8": 0.10,
-    "t2_f2p_target_keys_match_real_modules": 0.15,
-    "t2_f2p_exclude_keys_norm": 0.10,
-    "t3_f2p_modulation_excluded": 0.15,
-    "t3_f2p_modulation_not_quantized_behavior": 0.10,
+    "t1_f2p_train_network_wires_fp8": 0.25,
+    "t2_f2p_target_keys_match_real_modules": 0.25,
+    "t3_f2p_modulation_excluded": 0.25,
+    "t4_f2p_fp8_linear_forward_cast_fix": 0.25,
 }
 p2p_fail = any(g["id"].startswith("p2p_") and not g["passed"] for g in gates)
 if p2p_fail:
@@ -667,9 +780,22 @@ fi
 run_v043_gate p2p_upstream_bad711cf 'py_compile_changed' 'cd /workspace/sd-scripts && /workspace/venv/bin/python3 -m py_compile library/lumina_models.py library/lumina_util.py lumina_train_network.py lumina_minimal_inference.py library/fp8_optimization_utils.py'
 
 # Recompute reward using v043 weights.
+# v3-rubric-final-review (sonnet 2026-06-06): the 5 "behavioral" gates above
+# (t1_f2p_target_keys_behavioral, t1_f2p_apply_monkey_patch_wired,
+#  t1_f2p_cli_flag_parses, t2_f2p_exclude_keys_norm,
+#  t3_f2p_modulation_not_quantized_behavior) ALL fail in the CPU sandbox
+# because diffusers.models.autoencoders is unavailable. test_manifest.yaml
+# already demoted them to P2P_REGRESSION (weight 0.0). The v043 WEIGHTS dict
+# is now reconciled to match: only the 3 structural F2P gates that actually
+# run in the sandbox + the new goal_2 (mul_cuda cast fix) gate carry weight.
 python3 - <<"V043_PY"
 import json, os
-WEIGHTS = {"t1_f2p_apply_monkey_patch_wired": 0.15, "t1_f2p_cli_flag_parses": 0.1, "t1_f2p_target_keys_behavioral": 0.15, "t1_f2p_train_network_wires_fp8": 0.1, "t2_f2p_exclude_keys_norm": 0.1, "t2_f2p_target_keys_match_real_modules": 0.15, "t3_f2p_modulation_excluded": 0.15, "t3_f2p_modulation_not_quantized_behavior": 0.1}
+WEIGHTS = {
+    "t1_f2p_train_network_wires_fp8": 0.25,
+    "t2_f2p_target_keys_match_real_modules": 0.25,
+    "t3_f2p_modulation_excluded": 0.25,
+    "t4_f2p_fp8_linear_forward_cast_fix": 0.25,
+}
 P2P_REGRESSION = ["p2p_fp8_utils_importable"]
 P2P_REGRESSION = ["p2p_upstream_62650655", "p2p_upstream_bad711cf"]
 verdicts = {}

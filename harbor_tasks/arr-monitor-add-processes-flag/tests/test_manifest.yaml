@@ -7,14 +7,14 @@ gates:
 - id: f2p_upstream_help_flag
   kind: F2P
   turn: null
-  weight: 0.5
+  weight: 0.15
   label: --add-new-processes in --help
   command: cd /workspace && python3 arr-monitor.py --help 2>&1 | grep -q -- '--add-new-processes'
   description: --add-new-processes in --help
 - id: f2p_upstream_exe_msi_ext
   kind: F2P
   turn: null
-  weight: 0.5
+  weight: 0.15
   label: .exe/.msi in IGNORE_EXTENSIONS
   command: cd /workspace && python3 -c "import ast; src=open('arr-monitor.py').read(); tree=ast.parse(src); found=[ast.literal_eval(n.value) for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name) and t.id=='IGNORE_EXTENSIONS']; exts=set(found[0]) if found else set(); exit(0 if '.exe' in exts and '.msi' in exts else 1)"
   description: .exe/.msi in IGNORE_EXTENSIONS

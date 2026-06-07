@@ -14,8 +14,12 @@ gates:
     description: "Detects indented multi-line run blocks (>3 lines) in triple-double-quote syntax"
   - id: g2_short_no_fp
     kind: F2P
-    weight: 0.15
-    description: "Does NOT flag short inline scripts (<=3 content lines, no false positives)"
+    weight: 0.075
+    description: "Does NOT flag NON-INDENTED short inline scripts (<=3 content lines, no false positives)"
+  - id: g2b_short_indented_no_fp
+    kind: F2P
+    weight: 0.075
+    description: "Does NOT flag INDENTED short inline scripts (<=3 content lines, no false positives) — closes coverage gap for rubric goal_4 'indented or not'"
   - id: g3_single_quote_syntax
     kind: F2P
     weight: 0.15

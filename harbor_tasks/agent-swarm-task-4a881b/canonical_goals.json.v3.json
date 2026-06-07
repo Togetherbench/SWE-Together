@@ -1,0 +1,141 @@
+{
+  "task_name": "agent-swarm-task-4a881b",
+  "_version": "v3",
+  "_authoring_notes": "v3 rebuilds the rubric from a strict user-provenance pass over the 3 real user utterances in oracle_session.jsonl. The plan file `plans/2026-03-06-one-time-scheduled-tasks.md` is NOT mounted in the sandbox (Dockerfile clones desplega-ai/agent-swarm at cc8c7f5; README.md and the plan file live only on the curator's filesystem). Therefore goals are derived from (a) the slash-command name `/desplega:implement-plan`, (b) the plan filename token `one-time-scheduled-tasks` which any agent can read off instruction.md ARGUMENTS line, and (c) inferences a reasonable agent makes from exploring the repo (existing `src/scheduler/`, `src/tools/schedules/`, `src/be/migrations/` give away the domain). Oracle identifiers (column name `scheduleType`, migration filename `002_one_time_schedules.sql`, field names `delayMs`/`runAt`/`hideCompleted`, library Zod, file paths under `new-ui/src/pages/schedules/`) are NOT pinned — alternates pass. Anti-effort floor at goal_0 prevents the degenerate test.sh (empty FAIL_TO_PASS → overall-pass-rate fallback that the trial under review saturated at 1.0 with only a package.json bump + two unrelated plugin markdown files) from rewarding no-op submissions.",
+  "_provenance": {
+    "user_utterance_T2": {
+      "verbatim": "/desplega:implement-plan plans/2026-03-06-one-time-scheduled-tasks.md",
+      "source": "oracle_session.jsonl turn 2 user_message (and instruction.md ARGUMENTS line)",
+      "yields_goals": ["goal_1", "goal_2", "goal_3", "goal_4", "goal_5", "goal_6"],
+      "reading": "Filename token `one-time-scheduled-tasks` is the only domain signal the agent has. It implies adding one-time scheduling alongside whatever recurring scheduling already exists. The slash-command name `implement-plan` plus the absence of the actual plan file in the sandbox means the agent must infer scope from repo exploration; the inference must therefore stop at observable subsystems (persistence, scheduler core, creation surfaces, list surface, update surface)."
+    },
+    "user_utterance_T7": {
+      "verbatim": "did you perform manual e2es?",
+      "source": "oracle_session.jsonl turn 7 user_message",
+      "yields_goals": ["goal_7_process"],
+      "reading": "The user explicitly demands manual end-to-end verification before accepting the work. Process goal: the agent must show evidence of having exercised the feature end-to-end against a running instance (HTTP request, scheduler run-through, or equivalent), not just unit tests."
+    },
+    "user_utterance_T8": {
+      "verbatim": "ok, bump tha version, commit the changes and push (disregard the workflow unstaged files!)",
+      "source": "oracle_session.jsonl turn 8 user_message",
+      "yields_goals": ["goal_8_process"],
+      "reading": "Pins three contractual finalization actions: (a) version bump in the package manifest, (b) git commit, (c) git push. Plus one negative pin: workflow-related unstaged files must NOT be included. Note 'workflow' here is read literally — files under .github/workflows/ or otherwise tagged 'workflow' that were already-unstaged before this session."
+    },
+    "user_did_NOT_say": [
+      "any specific column name (e.g. `scheduleType` vs `kind` vs `type`)",
+      "any specific enum value (e.g. `one_time` vs `oneshot` vs `one-time`)",
+      "any specific field names on the create surface (e.g. `delayMs`/`runAt` vs `delay_ms`/`run_at` vs `in_ms`/`at`)",
+      "any specific filename for the new migration",
+      "any specific UI widget choice (badge vs label vs icon)",
+      "any specific validation library (Zod vs anything else)",
+      "any specific HTTP route shape",
+      "any specific version-bump SemVer level (PATCH vs MINOR vs MAJOR — only that a bump happens)"
+    ]
+  },
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort floor. The submitted patch must constitute a substantive attempt at the one-time-scheduled-tasks feature in this repository's existing scheduling subsystem. Score 0 on this goal if ALL of the following are true: (a) zero files under the existing scheduling code paths (any of: persistence/migration files for the scheduled-tasks table, scheduler runtime, schedule creation/list/update surfaces, schedule-related types) were modified or added; (b) the patch only touches release metadata (e.g. version-bump in a package manifest), only adds documentation/markdown, only adds files under tooling/plugin/skill scaffolding directories, only renames files, or only reformats. A patch that adds a markdown file named `implement-plan.md` or a 'skill' file describing what would be done, without actually doing it, fails this goal.",
+      "tier": "core",
+      "weight": 0.0,
+      "rationale": "Anti-gaming. The verifier (tests/test.sh + tests/install_config.json) has an empty FAIL_TO_PASS list and falls back to overall test pass-rate, which is ~1.0 at the base commit because the base codebase passes its own tests. The reviewed trial __Mxc2Stz scored reward=1.0 with a patch that only bumped package.json from 1.35.4 to 1.35.5 and added two markdown files under plugin/ (implement-plan.md and a skill.md describing the implementing skill) — zero feature code. Without goal_0 the judge has no anti-effort signal. Weight 0 because it gates rather than adds credit: failing it doesn't subtract from other goals' weights, but it must be reported in the judge verdict so downstream aggregation can flag the trial."
+    },
+    {
+      "id": "goal_1",
+      "goal": "After the patch is applied and migrations run on a fresh database, the persistence layer for scheduled tasks can store a schedule whose semantics are 'fires once' alongside the existing 'fires repeatedly' schedules in the same table or collection. The persistence layer must NOT require a cron expression or recurring-interval field for the one-shot type, and existing recurring schedules must still validate and execute. Identifier choices (column name, enum literal, migration filename) are free — what matters is that a one-shot row can be persisted and round-tripped without a cron/interval value.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Foundational. The slash-command argument `plans/2026-03-06-one-time-scheduled-tasks.md` names the feature; one-time schedules cannot exist as a first-class concept without storage that admits them. Anti-gaming: the wording rejects implementations that add a column but still enforce the old CHECK constraint (one-shot rows that fail to insert) and rejects stub migrations that don't actually run. Identifiers stripped: oracle's `scheduleType` column + `one_time` enum literal + `002_one_time_schedules.sql` filename are NOT required."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Along every code path that fires a schedule — normal due-time execution, missed-schedule recovery on startup, manual run-now, and the error/failure handler — a one-shot schedule must end in a terminal state after firing. Terminal means: no future execution will be scheduled for the same row, AND the recurring next-run advancement (whatever function or method computes the next cron tick / next interval) MUST NOT be invoked on a one-shot row. Equivalent terminal predicates are all accepted: setting enabled=false plus clearing next-run-at, setting a status field to 'completed', deleting the row, or any other observable terminal mechanism — provided it is consistent across all four execution paths.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Primary behavioral contract. The whole point of 'one-time' is that it fires once and stops. Anti-gaming: the wording requires consistency across all four paths so a patch that only auto-disables on the happy path (skipping recovery / run-now / error) does not get full credit. Identifiers stripped: oracle's `enabled=false` + `nextRunAt=null` + `calculateNextRun` are not pinned by name; any equivalent terminal mechanism qualifies."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The schedule-creation surface (MCP create-schedule tool — present in the repo at the base commit) accepts inputs that specify the first-and-only run of a one-shot schedule. Two timing flavors must both be supported: a relative delay from creation time, and an absolute target timestamp. The tool must reject mutually-incompatible mixtures: a recurring request with one-shot-only timing fields, a one-shot request with cron/interval fields, and a one-shot request that supplies BOTH timing flavors at once. After a one-shot is created, its persisted next-run-at must reflect the timing the caller specified.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Programmatic creation. Anti-gaming: requires both timing flavors (a patch that only adds 'delay' or only 'absolute timestamp' is incomplete) AND requires mutual-exclusion validation (a patch that silently accepts contradictory inputs is incomplete). Identifiers stripped: oracle's `delayMs` + `runAt` + `scheduleType` literal + Zod library are not required; `delay_ms`/`run_at`, `in_ms`/`at`, or any equivalent pair, plus any validation library, qualify."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The HTTP API (an HTTP layer for scheduled tasks exists at the base commit) exposes the same one-shot create/update semantics as the MCP tool, with the same mutual-exclusion validation. Additionally, the list endpoint for scheduled tasks supports two new query-style filters: filter-by-schedule-type (recurring vs one-shot), and a hide-already-fired-one-shots flag whose default behavior excludes terminal one-shot rows from the default listing. The exact route shape, file paths, and parameter names are free.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "HTTP-MCP parity. Anti-gaming: the default behavior of the hide-completed flag is pinned (excludes terminal rows by default) so a stub that adds the parameter but defaults to showing everything fails. Identifiers stripped: oracle's `/api/schedules` route, `hideCompleted` literal, and file paths in `src/http/` are not required."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The schedule-list surface in the MCP tool layer accepts a filter for schedule type AND a flag (default: on) that hides already-fired one-shot rows from the default response. The default-on semantics of hide-completed is essential — a stub that exposes the parameter but defaults to including completed one-shots is incomplete.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "List ergonomics. The default-on of hide-completed is the load-bearing behavioral fact — without it, users see a list that grows monotonically with every one-shot ever fired. Identifiers stripped: oracle's `scheduleType`/`hideCompleted` parameter names not required."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The schedule-update surface (both MCP and HTTP) rejects updates to a one-shot schedule that has already fired (is in a terminal state). Additionally, when a one-shot schedule is updated while still pending, the recurring next-run advancement (cron/interval) must NOT be applied to recompute its next-run-at — a one-shot row never has its next-run-at recomputed by the recurring math, regardless of the update payload.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Lifecycle integrity. Anti-gaming: the rejection of updates on terminal one-shots prevents resurrection bugs; the prohibition on cron-recompute prevents type-confusion bugs. Identifiers stripped: oracle's `disabled && lastRunAt` exact predicate is not required; any equivalent terminal check qualifies."
+    },
+    {
+      "id": "goal_7_process",
+      "goal": "The agent must perform (or demonstrate it has performed) manual end-to-end verification of the one-shot scheduling feature against a running instance — for example: starting the API server, hitting the create endpoint with a short-delay one-shot payload, observing the schedule fire, observing the row transition to terminal state, and observing it disappear from the default list view. Mere passing of unit tests does NOT satisfy this goal; the trial transcript must contain evidence of an actual end-to-end exercise. Equivalent evidence (a curl/HTTPie session, a scripted scenario, a UI screenshot/dump) qualifies.",
+      "tier": "core",
+      "weight": 0.06,
+      "rationale": "User T7: `did you perform manual e2es?` — this is the user's literal question and the user was demanding evidence, not a hypothetical. Process goals get smaller weight than feature goals because they're easier to fake, but they're real user asks and must appear. Anti-gaming: 'mere unit tests do NOT satisfy' — the agent in the original session was specifically called out for unit-test-only verification."
+    },
+    {
+      "id": "goal_8_process",
+      "goal": "After implementation, the agent (a) bumps the project version in the project's manifest file (the manifest exists at the base commit; any SemVer increment is acceptable), (b) creates at least one git commit that contains the feature changes (the commit may exclude already-unstaged workflow files — see negative pin below), and (c) attempts a git push. Negative pin: files under workflow-configuration directories (for example .github/workflows/) that were ALREADY unstaged at session start must NOT be included in the commit — the user explicitly excluded them.",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "User T8 verbatim: `ok, bump tha version, commit the changes and push (disregard the workflow unstaged files!)`. Three contractual finalization actions plus one negative pin. Process goal — moderately weighted because the user explicitly requested it and listed three concrete sub-actions. Anti-gaming: the negative pin protects against the easy mistake of `git add -A` sweeping in pre-existing unstaged workflow files."
+    }
+  ],
+  "_weights_sum_check": "0.0 + 0.22 + 0.22 + 0.18 + 0.10 + 0.08 + 0.08 + 0.06 + 0.06 = 1.00",
+  "_dropped_from_v2": [
+    {
+      "v2_id": "goal_7",
+      "v2_goal_summary": "TypeScript type system distinguishes one-time vs recurring schedules end-to-end (Zod schema + persistence row/mapper + domain type + serialization round-trip).",
+      "drop_reason": "Mirror of F2P scaffolding rather than a user ask. The user never asked for end-to-end type-system integrity; they asked for the feature to work. Type-system flow is a downstream consequence of goals 1, 2, 3, 6 — if persistence, scheduler, create, and update all handle the distinction, types are necessarily threaded through. Keeping it as a separate goal double-counts implementation choice (TypeScript discriminated union) the user did not pin."
+    },
+    {
+      "v2_id": "goal_8 (UI)",
+      "v2_goal_summary": "The UI visibly distinguishes one-time vs recurring schedules in list and detail views.",
+      "drop_reason": "Not in any of the 3 user utterances. The UI changes appear in the oracle patch because the curator's plan happened to include a UI phase, but the agent's only signal is the filename `one-time-scheduled-tasks.md` which does not specify UI work. Including it in v2 was leaking oracle scope into the rubric. The judge can still award partial credit informally if the agent ships UI work, but it shouldn't be a weighted goal traceable to the user."
+    }
+  ],
+  "_added_for_coverage": [
+    {
+      "id": "goal_7_process",
+      "reason": "v2 had no goal capturing the user's T7 question `did you perform manual e2es?`. v2 was feature-only, but the multi-turn benchmark explicitly measures whether the agent responds to user interventions. T7 is the only mid-implementation user signal and the rubric must score whether the agent honored it."
+    },
+    {
+      "id": "goal_8_process",
+      "reason": "v2 mentioned the version bump only in `decomposition_notes` as 'excluded as a process/release goal' — but T8 is one of just 3 user utterances in the whole session, so excluding it leaves the rubric blind to one-third of the user signal. v3 adds it explicitly with the workflow-unstaged-files negative pin which is a direct quote-derived constraint."
+    }
+  ],
+  "_self_critique_passed": true,
+  "_self_critique": {
+    "step_1_quote_per_goal": "PASS. Every weighted goal traces to one of (T2 filename token `one-time-scheduled-tasks` — goals 1-6), (T7 `did you perform manual e2es?` — goal 7_process), (T8 `bump tha version, commit the changes and push (disregard the workflow unstaged files!)` — goal 8_process). goal_0 is meta (anti-effort floor) and traces to the verifier-degeneracy fact rather than to a user utterance — flagged as weight 0 specifically because it is not a user ask but an authoring guardrail.",
+    "step_2_coverage_gaps": "PASS. All 3 user utterances yield at least one goal. The under-specification of T2 (plan file absent from sandbox) is acknowledged in goals 1-6 by phrasing scope from observable repo subsystems rather than from plan-document content.",
+    "step_3_stub_passability": "PASS. Each goal contains anti-gaming language: goal_1 rejects stub migrations that don't run; goal_2 requires consistency across all 4 execution paths; goal_3 requires both timing flavors plus mutual exclusion; goal_4 pins default behavior of hide-completed; goal_5 explicitly calls out the default-on flag; goal_6 calls out both terminal-state rejection AND cron-recompute prohibition; goal_7_process explicitly excludes unit-tests-only; goal_8_process pins three concrete sub-actions plus the workflow-files negative pin.",
+    "step_4_oracle_leakage": "PASS. Reviewed every goal for oracle-specific identifiers and removed: `scheduleType` (column), `one_time` (enum literal), `002_one_time_schedules.sql` (filename), `delayMs`/`runAt`/`hideCompleted` (param names), `enabled=false`+`nextRunAt=null` (terminal predicate), `calculateNextRun` (function name), `/api/schedules` (route), `src/http/schedules.ts` etc. (file paths), Zod (library), `recurring`/`one_time` (Zod literals), badge widget choice, `new-ui/src/pages/schedules/page.tsx` etc. (file paths). The phrasing 'one-shot' is used instead of 'one_time' to avoid even string-matching the enum literal.",
+    "step_5_weights_vs_user_importance": "PASS. Core feature goals (1-3) at 0.22/0.22/0.18 = 0.62 reflect the bulk of the user's ask (implement the plan). Secondary feature goals (4-6) at 0.10/0.08/0.08 = 0.26 reflect downstream surfaces. Process goals (7_process, 8_process) at 0.06/0.06 = 0.12 reflect the two follow-up user turns — smaller because they're easier to fake, but present because the user said them.",
+    "step_6_goal_0_anti_effort": "PASS. goal_0 weight 0.0 (does not add credit) but specifically calls out the failure mode of the reviewed trial __Mxc2Stz: 'patch only adds files under tooling/plugin/skill scaffolding directories, only renames files, or only reformats' and 'a patch that adds a markdown file named implement-plan.md or a skill file describing what would be done, without actually doing it, fails this goal.'",
+    "step_7_no_F2P_mirror": "PASS. The F2P test list in tests/install_config.json is empty (the degenerate condition that made the trial score 1.0). v3 does not derive any goal from the F2P list — it derives them all from user utterances and observable repo subsystems."
+  },
+  "_task_quality_flags": {
+    "source": "v3_authoring_pass",
+    "flags": {
+      "verifier_degenerate": "tests/install_config.json has empty FAIL_TO_PASS list; tests/test.sh falls back to overall pass-rate, which is ~1.0 at base. The trial __Mxc2Stz scored reward.txt=1.0 with a no-op patch. The judge_verdict.json correctly scored it 0.0 against the v2 rubric — v3 sharpens this further with explicit goal_0 anti-effort.",
+      "instruction_under_specified": "instruction.md only contains the slash-command wrapper text, not the plan content. The plan file plans/2026-03-06-one-time-scheduled-tasks.md is not in the Docker image. Agent must infer scope from the filename token `one-time-scheduled-tasks` plus repo exploration. This is the load-bearing fairness fact for v3 phrasing.",
+      "internet_with_live_origin": "Dockerfile has live github.com clone AND task.toml sets allow_internet=true. Allows git-ops exfiltration of merged upstream fix. (Inherited from v2.)"
+    }
+  }
+}

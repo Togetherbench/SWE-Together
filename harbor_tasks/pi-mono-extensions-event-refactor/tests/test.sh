@@ -11,6 +11,39 @@ git config --global --add safe.directory "$(pwd)" 2>/dev/null || true
 
 export PATH="$PATH:/usr/local/cargo/bin:/root/.bun/bin:/usr/local/bin"
 
+# ─────────────────────────────────────────────────────────────────
+# COMMIT-LINEAGE / ANTI-EFFORT GATE (sonnet-review 2026-06-06)
+# Detect `git checkout main` bypass: the upstream main branch contains the
+# fix plus many unrelated commits. An honest agent edits files under
+# packages/coding-agent/ (plus maybe tests/). A bypass-via-checkout-main
+# pulls in hundreds of unrelated files (lockfiles, .github/, other packages).
+# If the diff against the buggy base mutates >20 files outside packages/, treat
+# it as a checkout-main bypass and zero the reward.
+# ─────────────────────────────────────────────────────────────────
+echo "=== ANTI-EFFORT GATE: commit-lineage / out-of-packages file count ==="
+BYPASS_DETECTED=0
+# Try diff vs HEAD~1 first (covers agent that committed), then vs HEAD
+# (covers agent that left work uncommitted in the working tree).
+DIFF_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
+if [ -z "$DIFF_FILES" ]; then
+    DIFF_FILES=$(git diff --name-only HEAD 2>/dev/null)
+fi
+# Also consider untracked files (agent might have created new files outside packages/)
+UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null)
+ALL_CHANGED=$(printf '%s\n%s\n' "$DIFF_FILES" "$UNTRACKED" | grep -v '^$' | sort -u)
+OUT_OF_SCOPE=$(echo "$ALL_CHANGED" | grep -v '^packages/' | grep -v '^$' | wc -l | tr -d ' ')
+TOTAL_CHANGED=$(echo "$ALL_CHANGED" | grep -v '^$' | wc -l | tr -d ' ')
+echo "  Files changed total: $TOTAL_CHANGED"
+echo "  Files changed outside packages/: $OUT_OF_SCOPE"
+if [ "$OUT_OF_SCOPE" -gt 20 ]; then
+    echo "BYPASS DETECTED: $OUT_OF_SCOPE files outside packages/ (>20 threshold)"
+    echo "  Likely a 'git checkout main' or equivalent bypass."
+    echo "  Sample out-of-scope files:"
+    echo "$ALL_CHANGED" | grep -v '^packages/' | head -10 | sed 's/^/    /'
+    BYPASS_DETECTED=1
+fi
+echo "ANTI-EFFORT GATE: BYPASS_DETECTED=$BYPASS_DETECTED"
+
 PKG_DIR="packages/coding-agent"
 RUNNER_TS="$PKG_DIR/src/core/extensions/runner.ts"
 WRAPPER_TS="$PKG_DIR/src/core/extensions/wrapper.ts"
@@ -264,25 +297,25 @@ mkdir -p /logs/verifier 2>/dev/null || true
 GATES_FILE="/logs/verifier/gates.json"
 > "$GATES_FILE"
 
-# F2P gate: emitSessionBefore method exists in runner.ts
+# F2P gate: emitToolResult method exists in runner.ts (oracle's actual addition)
 echo ""
-echo "=== UPSTREAM F2P: emitSessionBefore method exists in runner.ts ==="
-if grep -q 'async emitSessionBefore' packages/coding-agent/src/core/extensions/runner.ts 2>/dev/null; then
-    echo '{"id": "f2p_upstream_emitSessionBefore_method", "passed": true, "detail": "emitSessionBefore method found in runner.ts"}' >> "$GATES_FILE"
+echo "=== UPSTREAM F2P: emitToolResult method exists in runner.ts ==="
+if grep -q 'async emitToolResult' packages/coding-agent/src/core/extensions/runner.ts 2>/dev/null; then
+    echo '{"id": "f2p_upstream_emitToolResult_method", "passed": true, "detail": "emitToolResult method found in runner.ts"}' >> "$GATES_FILE"
     echo "PASS"
 else
-    echo '{"id": "f2p_upstream_emitSessionBefore_method", "passed": false, "detail": "emitSessionBefore method NOT found in runner.ts"}' >> "$GATES_FILE"
+    echo '{"id": "f2p_upstream_emitToolResult_method", "passed": false, "detail": "emitToolResult method NOT found in runner.ts"}' >> "$GATES_FILE"
     echo "FAIL"
 fi
 
-# F2P gate: Callers use emitSessionBefore in agent-session-runtime.ts
+# F2P gate: wrapper.ts calls emitToolResult instead of emit() for tool_result
 echo ""
-echo "=== UPSTREAM F2P: Callers use emitSessionBefore ==="
-if grep -q 'emitSessionBefore' packages/coding-agent/src/core/agent-session-runtime.ts 2>/dev/null; then
-    echo '{"id": "f2p_upstream_callers_use_emitSessionBefore", "passed": true, "detail": "agent-session-runtime.ts calls emitSessionBefore"}' >> "$GATES_FILE"
+echo "=== UPSTREAM F2P: wrapper.ts uses emitToolResult ==="
+if grep -q 'emitToolResult' packages/coding-agent/src/core/extensions/wrapper.ts 2>/dev/null; then
+    echo '{"id": "f2p_upstream_wrapper_uses_emitToolResult", "passed": true, "detail": "wrapper.ts calls emitToolResult"}' >> "$GATES_FILE"
     echo "PASS"
 else
-    echo '{"id": "f2p_upstream_callers_use_emitSessionBefore", "passed": false, "detail": "agent-session-runtime.ts does NOT call emitSessionBefore"}' >> "$GATES_FILE"
+    echo '{"id": "f2p_upstream_wrapper_uses_emitToolResult", "passed": false, "detail": "wrapper.ts does NOT call emitToolResult"}' >> "$GATES_FILE"
     echo "FAIL"
 fi
 
@@ -327,13 +360,25 @@ fi
 # Compute final reward from upstream gates (overrides existing broken reward)
 echo ""
 echo "=== UPSTREAM REWARD COMPUTATION ==="
+export BYPASS_DETECTED
 python3 - <<'PYEOF'
 import json, os, sys
 WEIGHTS = {
-    "f2p_upstream_emitSessionBefore_method": 0.5,
-    "f2p_upstream_callers_use_emitSessionBefore": 0.5
+    "f2p_upstream_emitToolResult_method": 0.5,
+    "f2p_upstream_wrapper_uses_emitToolResult": 0.5
 }
 P2P_REGRESSION = ["p2p_upstream_tsgo_build", "p2p_upstream_vitest_runner"]
+
+# Anti-effort gate (sonnet review 2026-06-06): if the bash prelude flagged a
+# checkout-main bypass (>20 files outside packages/), cap reward to 0.0 here
+# so neither the inner weighted reward nor the auto_gate_bridge boost can rescue it.
+bypass = os.environ.get("BYPASS_DETECTED", "0").strip() == "1"
+if bypass:
+    with open('/logs/verifier/reward.txt', 'w') as f:
+        f.write("0.0000\n")
+    print("BYPASS_DETECTED=1 — reward forced to 0.0000 (checkout-main / wholesale-import bypass)")
+    sys.exit(0)
+
 verdicts = {}
 try:
     with open('/logs/verifier/gates.json') as f:
@@ -378,6 +423,7 @@ PYEOF
 # Round-6 v4 bridge: yaml-free parser + canonical-detected boost + safe.directory.
 # Bridges manifest gates → /logs/verifier/gates.json so canonical_gates scoring
 # reflects the legacy reward + a boost when inner narrow gates miss the canonical.
+export BYPASS_DETECTED
 python3 - <<'AUTO_GATE_BRIDGE_PYEOF'
 import json, os, re, subprocess, sys
 from pathlib import Path
@@ -385,6 +431,14 @@ from pathlib import Path
 LOGS = Path("/logs/verifier")
 gates_path = LOGS / "gates.json"
 reward_path = LOGS / "reward.txt"
+
+# Anti-effort gate (sonnet review 2026-06-06): if the bash prelude flagged a
+# checkout-main bypass, do NOT run the auto_gate_bridge — the boost path could
+# otherwise lift the forced 0.0 reward back to 0.80 by detecting "canonical
+# applied" file changes which are exactly what the bypass produced.
+if os.environ.get("BYPASS_DETECTED", "0").strip() == "1":
+    print("auto_gate_bridge: skipping — BYPASS_DETECTED=1 (anti-effort gate held reward at 0.0)")
+    sys.exit(0)
 
 manifest_candidates = [
     Path("/tests/test_manifest.yaml"),

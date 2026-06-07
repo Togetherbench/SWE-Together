@@ -331,12 +331,41 @@ if "clip_text_pooled" not in src:
 
 # Must propagate via CONDRegular (pooled is per-batch single vector,
 # not cross-attn). CONDCrossAttn would be wrong.
-# Find the block that mentions clip_text_pooled and check.
-idx = src.find("clip_text_pooled")
-window = src[max(0, idx-200):idx+400]
-if "CONDCrossAttn" in window:
-    print("BAD:CONDCrossAttn"); sys.exit(0)
-if "CONDRegular" not in window:
+# The buggy state of model_base.py contains TWO clip_text_pooled blocks:
+#   (1) NewBieImage.extra_conds (synthesized, already uses CONDRegular)
+#   (2) Lumina2.extra_conds (broken: kwargs["pooled_output"] subscript)
+# A single-window search around the FIRST occurrence would pass on the
+# baseline because (1) already has CONDRegular even though (2) is broken
+# (this was the false-negative against the Opus trial — see review
+# v3_rubric_final_review_sonnet/comfyui-newbie-lumina-refactor.json).
+# Robust check: scan EVERY occurrence of clip_text_pooled with its
+# nearest-following cond class within a forward window; (a) no
+# occurrence may resolve to CONDCrossAttn, (b) at least one occurrence
+# must resolve to CONDRegular. Occurrences with NO cond class in the
+# window (e.g. `clip_text_pooled = kwargs.get(...)` setup lines) are
+# ignored.
+import re
+positions = [m.start() for m in re.finditer(r'clip_text_pooled', src)]
+saw_regular = False
+for idx in positions:
+    # forward-only window to catch the cond construction that uses
+    # this clip_text_pooled binding; 400 chars covers
+    # `out["clip_text_pooled"] = comfy.conds.CONDRegular(...)` patterns
+    fwd = src[idx:idx+400]
+    # restrict to the nearest cond class call only (whichever appears first)
+    cra = fwd.find("CONDCrossAttn")
+    creg = fwd.find("CONDRegular")
+    nearest = None
+    if cra >= 0 and (creg < 0 or cra < creg):
+        nearest = "CONDCrossAttn"
+    elif creg >= 0:
+        nearest = "CONDRegular"
+    if nearest == "CONDCrossAttn":
+        # any occurrence binding clip_text_pooled to CONDCrossAttn is a bug
+        print("BAD:CONDCrossAttn", idx); sys.exit(0)
+    if nearest == "CONDRegular":
+        saw_regular = True
+if not saw_regular:
     print("BAD:not_CONDRegular"); sys.exit(0)
 print("OK")
 PYEOF

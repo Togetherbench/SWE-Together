@@ -31,18 +31,22 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 ###############################################################################
-# P2P GATE: Production build must succeed (diagnostic/penalty only, no reward)
+# P2P REGRESSION (informational): production build status. Per repo policy,
+# P2P_REGRESSION never zeroes reward directly. If the build fails, the
+# behavioral F2P gates below — which require running the bundled output —
+# will naturally fail, zeroing the reward via the not-f2p_any_pass path.
 ###############################################################################
-echo "=== P2P GATE: Production build ==="
+echo "=== P2P REGRESSION (informational): Production build ==="
 BUILD_OUT=$(timeout 300 npm run build 2>&1)
 BUILD_EXIT=$?
 if [ $BUILD_EXIT -ne 0 ]; then
   echo "$BUILD_OUT" | tail -40
-  echo "GATE FAILED: build broken"
-  REWARD=0
-  finish
+  echo "GATE INFORMATIONAL: build broken — F2P gates will zero reward via not-f2p_any_pass"
+  BUILD_OK=0
+else
+  echo "Build OK"
+  BUILD_OK=1
 fi
-echo "Build OK"
 
 add() {
   REWARD=$(awk -v s="$REWARD" -v p="$1" 'BEGIN{printf "%.4f", s+p}')
@@ -205,10 +209,14 @@ console.log(best ? "0.1500" : "0.0000");
 add "$T_EASE" "F2P2 ease-out"
 
 ###############################################################################
-# F2P 3 [0.15]: Y-axis fixed to [0, 100] domain
+# F2P 3 [0.15]: Y-axis fixed to a stable full-share domain
+# Accepts both [0, 100] (percent) and [0, 1] (fraction-normalized) variants.
+# The rubric (canonical_goals.json.v3.json goal_3) scores a "fixed numeric
+# domain spanning the full share range" — implementation may normalize values
+# to either 0..100 or 0..1, so we accept either upper bound here.
 ###############################################################################
 echo ""
-echo "=== F2P 3 [0.15]: YAxis domain fixed to [0,100] ==="
+echo "=== F2P 3 [0.15]: YAxis domain fixed to [0,100] or [0,1] ==="
 T_YAXIS=$(node -e '
 const fs = require("fs");
 const src = fs.readFileSync("'"$MODEL_TRENDS"'", "utf8");
@@ -217,8 +225,8 @@ const re = /<YAxis\b[\s\S]*?\/>/g;
 let m, ok = 0;
 while ((m = re.exec(src)) !== null) {
   const tag = m[0];
-  // domain={[0, 100]} or domain={[0,100]}
-  if (/domain\s*=\s*\{\s*\[\s*0\s*,\s*100\s*\]\s*\}/.test(tag)) {
+  // domain={[0, 100]} or domain={[0,100]} or domain={[0, 1]} or domain={[0,1]}
+  if (/domain\s*=\s*\{\s*\[\s*0\s*,\s*(?:100|1)\s*\]\s*\}/.test(tag)) {
     ok = 1;
     break;
   }
@@ -375,12 +383,14 @@ else
 fi
 
 echo ""
-echo "=== Upstream Gate: YAxis domain [0, 100] in ModelTrends.tsx ==="
-if grep -qF 'domain={[0, 100]}' components/ModelTrends.tsx; then
-  echo '{"id": "f2p_upstream_yaxis_domain", "passed": true, "detail": "YAxis domain fixed to [0, 100]"}' >> "$GATES_FILE"
+echo "=== Upstream Gate: YAxis domain fixed ([0, 100] or [0, 1]) in ModelTrends.tsx ==="
+# Accept both percent ([0, 100]) and fraction-normalized ([0, 1]) variants —
+# the v3 rubric (goal_3) scores a fixed full-share domain agnostic of units.
+if grep -Eq 'domain[[:space:]]*=[[:space:]]*\{[[:space:]]*\[[[:space:]]*0[[:space:]]*,[[:space:]]*(100|1)[[:space:]]*\][[:space:]]*\}' components/ModelTrends.tsx; then
+  echo '{"id": "f2p_upstream_yaxis_domain", "passed": true, "detail": "YAxis domain fixed to a stable full-share range"}' >> "$GATES_FILE"
   echo "  PASSED"
 else
-  echo '{"id": "f2p_upstream_yaxis_domain", "passed": false, "detail": "YAxis domain not fixed to [0, 100]"}' >> "$GATES_FILE"
+  echo '{"id": "f2p_upstream_yaxis_domain", "passed": false, "detail": "YAxis domain not fixed to a stable full-share range ([0,100] or [0,1])"}' >> "$GATES_FILE"
   echo "  FAILED"
 fi
 

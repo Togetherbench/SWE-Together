@@ -163,8 +163,12 @@ fi
 echo ""
 echo "=== gate_roundtrip ==="
 cd "$REPO_DIR"
-PASS_COUNT=$(grep -c '\[PASS\]' "$SCRIPT_OUTPUT" 2>/dev/null || echo 0)
-FAIL_COUNT=$(grep -c '\[FAIL\]' "$SCRIPT_OUTPUT" 2>/dev/null || echo 0)
+PASS_COUNT=$(grep -c '\[PASS\]' "$SCRIPT_OUTPUT" 2>/dev/null)
+PASS_COUNT=${PASS_COUNT//[^0-9]/}
+PASS_COUNT=${PASS_COUNT:-0}
+FAIL_COUNT=$(grep -c '\[FAIL\]' "$SCRIPT_OUTPUT" 2>/dev/null)
+FAIL_COUNT=${FAIL_COUNT//[^0-9]/}
+FAIL_COUNT=${FAIL_COUNT:-0}
 echo "Round-trip results: $PASS_COUNT PASS, $FAIL_COUNT FAIL"
 
 if [ "$PASS_COUNT" -ge 6 ] && [ "$FAIL_COUNT" -eq 0 ]; then
@@ -181,7 +185,16 @@ fi
 echo ""
 echo "=== gate_compression ==="
 cd "$REPO_DIR"
-RATIO=$(grep -oP 'ratio:\s*\K[\d.]+(?=x)' "$SCRIPT_OUTPUT" 2>/dev/null || echo "0")
+RATIO=$(grep -oP 'ratio:\s*\K[\d.]+(?=x)' "$SCRIPT_OUTPUT" 2>/dev/null | head -1)
+if [ -z "$RATIO" ]; then
+    # Fallback: any line mentioning compression/ratio with a labeled float followed by 'x'
+    RATIO=$(grep -ioP '(?:compress(?:ion)?|ratio)[^\n]{0,40}?[0-9]+\.[0-9]+x' "$SCRIPT_OUTPUT" 2>/dev/null | grep -oP '[0-9]+\.[0-9]+' | head -1)
+fi
+if [ -z "$RATIO" ]; then
+    # Final fallback: any 'compression_ratio = X.YY' style assignment (no 'x' suffix required)
+    RATIO=$(grep -ioP 'compression[_ ]?ratio[^\n]{0,20}?[0-9]+\.[0-9]+' "$SCRIPT_OUTPUT" 2>/dev/null | grep -oP '[0-9]+\.[0-9]+' | head -1)
+fi
+RATIO=${RATIO:-0}
 echo "Compression ratio: ${RATIO}x"
 
 if python3 -c "exit(0 if float('$RATIO' or '0') >= 1.5 else 1)"; then
@@ -198,7 +211,11 @@ fi
 echo ""
 echo "=== gate_training ==="
 cd "$REPO_DIR"
-MERGE_LINES=$(grep -c 'merge\s\+[0-9]\+/' "$SCRIPT_OUTPUT" 2>/dev/null || echo 0)
+# Match progress lines that carry user-named fields (pair/freq/seqlen) regardless
+# of separator format — covers 'merge N/M:', 'merge N pair=...', 'step N pair=...'.
+MERGE_LINES=$(grep -ciE '(merge|step)[[:space:]]+[0-9]+[^[:alnum:]]*.*(pair|freq|seq)' "$SCRIPT_OUTPUT" 2>/dev/null)
+MERGE_LINES=${MERGE_LINES//[^0-9]/}
+MERGE_LINES=${MERGE_LINES:-0}
 echo "Merge progress lines: $MERGE_LINES"
 
 if [ "$MERGE_LINES" -ge 8 ]; then

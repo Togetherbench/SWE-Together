@@ -228,6 +228,16 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
             # `Authorization: Bearer ` (empty) and get 401'd.
             "PROXY_FALLBACK_KEY": or_key,
         })
+        # CC adaptive-thinking effort: previously only forwarded on the direct
+        # Anthropic branch (above), so CC + OR + Opus ran with thinking off by
+        # default. Bug surfaced 2026-06-06 alongside the opencode_opus
+        # reasoning=0 finding. Forward whatever the host has set so CC's
+        # /v1/messages body carries `thinking:{type:"adaptive"}` (or budget
+        # equivalent) and the proxy passes it through to OR for Anthropic-
+        # routed models. valid levels: low / medium / high / max (Opus 4.6).
+        effort = os.environ.get("CLAUDE_CODE_EFFORT_LEVEL")
+        if effort:
+            env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
         return env
 
     if provider == "fireworks":

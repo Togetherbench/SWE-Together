@@ -5,16 +5,19 @@ turns:
   deliverable: see instruction.md
 gates:
 - id: f2p_upstream_domain_kafka_propagation
-  kind: F2P
+  kind: P2P_REGRESSION
   turn: null
-  weight: 0.5
-  label: Domain + Kafka field propagation
+  weight: 0
+  label: Domain + Kafka field propagation (diagnostic only, v3 rubric demotes to bonus)
   command: cd /workspace/hyperswitch && grep -q 'active_attempts_group_id' crates/hyperswitch_domain_models/src/payments.rs
     && grep -q 'active_attempt_id_type' crates/hyperswitch_domain_models/src/payments.rs
     && grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent.rs
     && grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent_event.rs
-  description: Verifies new split payment fields propagated to domain models and kafka
-    event structs
+  description: "Diagnostic only — domain + kafka field propagation is oracle-internal
+    PR #9466 structure. v3 rubric maps this to bonus_downstream_propagation weight 0
+    because the USER never named Kafka or domain crates in instruction.md. Gate retained
+    for diagnostic completeness comparison against oracle; P2P_REGRESSION kind makes it
+    informational only and never affects reward."
 - id: f2p_upstream_migration_completeness
   kind: F2P
   turn: null

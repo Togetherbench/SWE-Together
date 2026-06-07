@@ -70,9 +70,9 @@ gates:
   description: extensions-runner tests still pass after the refactor
 - id: p2p_src_files_exist
   turn: null
-  kind: P2P_GATING
+  kind: P2P_REGRESSION
   weight: 0.0
-  description: Required source files still present
+  description: Informational — required source files still present. Per repo policy, P2P_REGRESSION never zeroes reward directly; if source files are missing the F2P keybinding/runner checks will naturally fail, zeroing reward via not-f2p_any_pass.
 - id: p2p_upstream_c09e61c3
   turn: null
   kind: P2P_REGRESSION

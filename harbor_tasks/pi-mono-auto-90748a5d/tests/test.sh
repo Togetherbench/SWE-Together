@@ -56,9 +56,27 @@ if parser is None:
 
 parsed = parser(log)  # {test_name: status}
 fail_to_pass = cfg.get("FAIL_TO_PASS", [])
+fail_to_pass_regex = cfg.get("FAIL_TO_PASS_REGEX", [])
 pass_to_pass = cfg.get("PASS_TO_PASS", [])
 
-if not fail_to_pass:
+def _f2p_matched(parsed_map, exact_names, regex_patterns):
+    """v3 rubric goal_6 is mechanism-agnostic. Accept the F2P as passed if
+    EITHER the exact-name test passed OR any test whose name matches one of
+    the FAIL_TO_PASS_REGEX patterns passed. This unpins the verifier from a
+    single literal test description so legitimate alternatives (e.g. 'BMP
+    clipboard image is converted to PNG') score the gate correctly."""
+    import re as __re
+    if any(parsed_map.get(name) == "PASSED" for name in exact_names):
+        return True
+    compiled = [__re.compile(p) for p in regex_patterns]
+    for tname, status in parsed_map.items():
+        if status != "PASSED":
+            continue
+        if any(cre.search(tname) for cre in compiled):
+            return True
+    return False
+
+if not fail_to_pass and not fail_to_pass_regex:
     print("[eval] no FAIL_TO_PASS — falling back to overall pass rate")
     total = len(parsed)
     if total == 0:
@@ -67,8 +85,11 @@ if not fail_to_pass:
         passed = sum(1 for v in parsed.values() if v == "PASSED")
         reward = passed / total
 else:
-    f2p_pass = sum(1 for t in fail_to_pass if parsed.get(t) == "PASSED")
-    reward = f2p_pass / max(1, len(fail_to_pass))
+    # v3-rev: treat the F2P set as 1 gate (the BMP-to-PNG behavioral path),
+    # passed if either the exact name OR any regex match passed. This matches
+    # goal_6's implementation-agnostic spec.
+    gate_passed = _f2p_matched(parsed, fail_to_pass, fail_to_pass_regex)
+    reward = 1.0 if gate_passed else 0.0
     if pass_to_pass:
         p2p_fail = sum(1 for t in pass_to_pass if parsed.get(t) and parsed[t] != "PASSED")
         if p2p_fail > 0:
@@ -77,8 +98,17 @@ else:
 
 reward = max(0.0, min(1.0, reward))
 open(reward_path, "w").write(f"{reward:.6f}\n")
+exact_pass_count = sum(1 for t in fail_to_pass if parsed.get(t) == "PASSED")
+regex_pass = 0
+if fail_to_pass_regex:
+    import re as __re_log
+    _compiled = [__re_log.compile(p) for p in fail_to_pass_regex]
+    regex_pass = sum(
+        1 for tn, st in parsed.items()
+        if st == "PASSED" and any(c.search(tn) for c in _compiled)
+    )
 print(f"[eval] reward={reward:.4f}  parser={cfg['log_parser']}  "
-      f"FAIL_TO_PASS: {sum(1 for t in fail_to_pass if parsed.get(t) == 'PASSED')}/{len(fail_to_pass)}")
+      f"FAIL_TO_PASS exact={exact_pass_count}/{len(fail_to_pass)} regex_matched={regex_pass}")
 PYEOF
 
 cat "$LOGS_DIR/reward.txt"
@@ -178,10 +208,40 @@ if f2p_total > 0 and (trigger_low_legacy or trigger_f2p_below_half) and explicit
         )
         untracked = [l.strip() for l in rc2.stdout.splitlines() if l.strip()]
         all_changed = changed + untracked
-        relevant = [c for c in all_changed if c.startswith("packages/")]
-        if len(relevant) >= 2:
+        # Exfiltration guard: a wholesale `git fetch <contributor-fork> + checkout
+        # FETCH_HEAD` (the goal_0 violation pattern documented in the v3 rubric)
+        # produces hundreds-to-thousands of changed files spanning the repo tree.
+        # The legitimate task scope is small: 1-2 files in packages/coding-agent/
+        # (clipboard module + a new test) plus CHANGELOG.md. A diff that touches
+        # >20 files anywhere or any files outside packages/coding-agent/ + the
+        # repo-root CHANGELOG is disproportionate to the in-task ask. Refuse to
+        # boost such trials — they are either exfiltration or accidental
+        # full-repo rewrites; either way the canonical signal is not credible.
+        EXFIL_TOTAL_FILES_THRESHOLD = 20
+        ALLOWED_PREFIXES = ("packages/coding-agent/",)
+        ALLOWED_ROOT_FILES = {"CHANGELOG.md"}
+        out_of_scope = [
+            c for c in all_changed
+            if not c.startswith(ALLOWED_PREFIXES) and c not in ALLOWED_ROOT_FILES
+        ]
+        exfil_suspected = (
+            len(all_changed) > EXFIL_TOTAL_FILES_THRESHOLD
+            or len(out_of_scope) > 0
+        )
+        # Scope the boost to in-task files only; ignore "packages/*" outside
+        # the coding-agent package (an exfiltration also tends to touch many
+        # sibling packages in the monorepo).
+        relevant = [c for c in all_changed if c.startswith("packages/coding-agent/")]
+        if len(relevant) >= 2 and not exfil_suspected:
             legacy_reward = 0.80
             boost_active = True
+        elif exfil_suspected:
+            # Log the refusal for audit; do NOT mutate reward beyond legacy.
+            print(
+                f"[auto_gate_bridge] boost REFUSED: exfiltration-shaped diff "
+                f"(total_changed={len(all_changed)}, out_of_scope={len(out_of_scope)}). "
+                f"goal_0 violation pattern; preserving legacy reward {legacy_reward:.4f}."
+            )
     except Exception:
         pass
 

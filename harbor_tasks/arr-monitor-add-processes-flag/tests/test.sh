@@ -302,8 +302,8 @@ echo "{\"id\": \"p2p_upstream_help_exits_clean\", \"passed\": $P2P_HELP_PASSED, 
 python3 - <<'PYEOF'
 import json, os, sys
 WEIGHTS = {
-    "f2p_upstream_help_flag": 0.5,
-    "f2p_upstream_exe_msi_ext": 0.5
+    "f2p_upstream_help_flag": 0.15,
+    "f2p_upstream_exe_msi_ext": 0.15
 }
 P2P_REGRESSION = ["p2p_upstream_py_compile", "p2p_upstream_help_exits_clean"]
 verdicts = {}

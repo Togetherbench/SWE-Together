@@ -1,6 +1,6 @@
 # Updated 2026-05-17 oracle triage: oracle replay confirmed which gates the
-# canonical patch satisfies under the actual sandbox runtime. The 3 F2P gates
-# below are the ones that consistently pass with the canonical applied:
+# canonical patch satisfies under the actual sandbox runtime. The 3 structural
+# F2P gates below pass with the canonical applied in the CPU sandbox.
 #   - t1_f2p_train_network_wires_fp8: AST check that load_target_model body
 #     references both fp8_scaled and load_lumina_model (canonical adds both).
 #   - t2_f2p_target_keys_match_real_modules: TARGET_KEYS contain 'layers'
@@ -11,25 +11,46 @@
 # deps (e.g. `diffusers.models.autoencoders`, lumina state_dict) which aren't
 # in the CPU sandbox — they remain in test.sh as informational P2P_REGRESSION
 # but do not feed the F2P coverage score.
+#
+# Added 2026-06-06 per v3-rubric final review (sonnet): goal_2 (T4 mul_cuda
+# crash fix, rubric weight 0.30) previously had ZERO verifier coverage in
+# test.sh — any agent could skip the cast fix and still score the maximum
+# achievable reward. New gate t4_f2p_fp8_linear_forward_cast_fix combines a
+# behavioral runtime probe (fp8 scale_weight + bf16 input through
+# fp8_linear_forward_patch) with an AST/source check that confirms the
+# scale_weight cast (e.g. `original_dtype = x.dtype` or `.scale_weight.to(...)`
+# before the multiply) is present. Either signal suffices to pass — the AST
+# fallback hardens against sandbox import quirks while the runtime check
+# is the gold-standard behavioral test the rubric calls for.
+# Weight redistribution: 4 gates × 0.25 each = 1.00. This makes the effective
+# max reward 1.00 (was 0.40 under the broken v043 WEIGHTS that gave real
+# weight to 5 always-failing behavioral gates).
 version: '1.0'
 task: sd-scripts-fp8-lumina
 gates:
 - id: t1_f2p_train_network_wires_fp8
   turn: 1
   kind: F2P
-  weight: 0.34
+  weight: 0.25
   description: lumina_train_network.load_target_model body forwards args.fp8_scaled into load_lumina_model.
 - id: t2_f2p_target_keys_match_real_modules
   turn: 2
   kind: F2P
-  weight: 0.33
+  weight: 0.25
   description: FP8_OPTIMIZATION_TARGET_KEYS prefixes match actual nn.Linear submodule paths in lumina model state dict (e.g.,
     'layers').
 - id: t3_f2p_modulation_excluded
   turn: 3
   kind: F2P
-  weight: 0.33
+  weight: 0.25
   description: FP8_OPTIMIZATION_EXCLUDE_KEYS contains a 'modulation' pattern that excludes adaLN_modulation layers from fp8.
+- id: t4_f2p_fp8_linear_forward_cast_fix
+  turn: 4
+  kind: F2P
+  weight: 0.25
+  description: fp8_linear_forward_patch casts self.scale_weight to the input compute dtype (x.dtype) before the dequantization
+    multiply. Behavioral runtime probe with fp8 scale_weight + bf16 input must not raise NotImplementedError; AST fallback
+    confirms the cast is present in source. Covers rubric goal_2 (T4 mul_cuda crash fix).
 # Behavioral gates that require runtime deps — informational only, not scored
 - id: t1_f2p_target_keys_behavioral
   turn: 1

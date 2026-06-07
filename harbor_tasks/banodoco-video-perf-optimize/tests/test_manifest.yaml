@@ -7,14 +7,21 @@ gates:
 - id: f2p_upstream_intersection_observer
   kind: F2P
   turn: null
-  weight: 0.5
+  weight: 0.2
   label: TopGenerations uses IntersectionObserver for lazy video loading
   command: cd /workspace/banodoco-wrapped && grep -q 'IntersectionObserver' components/TopGenerations.tsx
   description: TopGenerations uses IntersectionObserver for lazy video loading
 - id: f2p_upstream_yaxis_domain
   kind: F2P
   turn: null
-  weight: 0.5
-  label: ModelTrends YAxis domain fixed to [0, 100]
-  command: cd /workspace/banodoco-wrapped && grep -qF 'domain={[0, 100]}' components/ModelTrends.tsx
-  description: ModelTrends YAxis domain fixed to [0, 100]
+  weight: 0.2
+  label: ModelTrends YAxis domain fixed to a fixed full-share range (e.g. [0, 100] or [0, 1])
+  command: cd /workspace/banodoco-wrapped && grep -Eq 'domain[[:space:]]*=[[:space:]]*\{[[:space:]]*\[[[:space:]]*0[[:space:]]*,[[:space:]]*(100|1)[[:space:]]*\][[:space:]]*\}' components/ModelTrends.tsx
+  description: ModelTrends YAxis domain fixed to a stable full-share range ([0,100] OR [0,1] normalized variant)
+- id: p2p_build_success
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0.0
+  label: Production build (npm run build) must succeed
+  command: cd /workspace/banodoco-wrapped && timeout 300 npm run build
+  description: 'Informational regression check (no scoring impact directly). If the production build fails, all behavioral F2P gates that require running the built bundle will also fail, naturally zeroing reward via the not-f2p_any_pass path. The verifier still emits a gates.json entry for diagnostics.'

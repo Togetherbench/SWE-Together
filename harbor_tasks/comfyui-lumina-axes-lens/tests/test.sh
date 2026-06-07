@@ -364,8 +364,13 @@ GATES_JSON="/logs/verifier/gates.json"
 # 2026-05-17: relaxed from "LuminaRopeEmbedder" — the canonical session named
 # the class "LuminaEmbedND". Either class signals the same architectural intent
 # (a Lumina-specific rope embedder that accepts axes_lens).
-if grep -qE "class (LuminaRopeEmbedder|LuminaEmbedND)" /workspace/ComfyUI/comfy/ldm/lumina/model.py 2>/dev/null; then
-    echo '{"id": "f2p_upstream_lumina_class", "passed": true, "detail": "Lumina rope class (LuminaRopeEmbedder|LuminaEmbedND) found in model.py"}' >> "$GATES_JSON"
+# 2026-06-06: further relaxed to accept "Lumina2EmbedND" — the Diffusers
+# library's convention name for the same architectural intent. Trial Opus-4.6
+# (judge=1.0, all 8 probe gates pass) was scoring 0.36 purely because its
+# class name was Lumina2EmbedND not LuminaEmbedND. This is the SWE-bench
+# Verified false-negative anti-pattern (35.5% of failures from narrow tests).
+if grep -qE "class (LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)" /workspace/ComfyUI/comfy/ldm/lumina/model.py 2>/dev/null; then
+    echo '{"id": "f2p_upstream_lumina_class", "passed": true, "detail": "Lumina rope class (LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND) found in model.py"}' >> "$GATES_JSON"
 else
     echo '{"id": "f2p_upstream_lumina_class", "passed": false, "detail": "Lumina rope class NOT found in model.py"}' >> "$GATES_JSON"
 fi
@@ -374,7 +379,7 @@ fi
 if /workspace/venv/bin/python3 -c "
 import re, sys
 content = open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read()
-class_m = re.search(r'\bclass\s+(LuminaRopeEmbedder|LuminaEmbedND)\b', content)
+class_m = re.search(r'\bclass\s+(LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)\b', content)
 if not class_m:
     sys.exit(1)
 cls = class_m.group(1)

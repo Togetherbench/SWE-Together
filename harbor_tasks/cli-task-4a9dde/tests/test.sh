@@ -70,7 +70,7 @@ body = src[m.end():i-1]
 body_nc = re.sub(r'//[^\n]*', '', body)
 body_nc = re.sub(r'/\*.*?\*/', '', body_nc, flags=re.DOTALL)
 # Must select yolo as the approval mode somewhere in the function (active code).
-yolo = bool(re.search(r'"yolo"', body_nc))
+yolo = bool(re.search(r'"--?yolo"', body_nc))
 # Must NOT still pin --approval-mode to auto_edit (in active code).
 auto_edit = bool(re.search(r'"auto_edit"', body_nc))
 ok = yolo and not auto_edit

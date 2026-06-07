@@ -7,19 +7,21 @@ gates:
 - id: f2p_upstream_lumina_class
   kind: F2P
   turn: null
-  weight: 0.5
-  label: LuminaRopeEmbedder class defined
-  command: grep -q 'class LuminaRopeEmbedder' /workspace/ComfyUI/comfy/ldm/lumina/model.py
-  description: Checks that LuminaRopeEmbedder class is defined in model.py
+  weight: 0.20
+  label: Lumina rope/embed class defined (accepts canonical or Diffusers-convention names)
+  command: grep -qE 'class (LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)' /workspace/ComfyUI/comfy/ldm/lumina/model.py
+  description: Checks that a Lumina-specific rope embedder class (LuminaRopeEmbedder,
+    LuminaEmbedND, or Lumina2EmbedND) is defined in model.py
 - id: f2p_upstream_lumina_usage
   kind: F2P
   turn: null
-  weight: 0.5
-  label: LuminaRopeEmbedder used as rope_embedder
-  command: /workspace/venv/bin/python3 -c "import sys; c=open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read();
-    sys.exit(0 if 'class LuminaRopeEmbedder' in c and 'rope_embedder = LuminaRopeEmbedder'
-    in c else 1)"
-  description: Checks LuminaRopeEmbedder is defined and assigned as rope_embedder
+  weight: 0.20
+  label: Lumina rope/embed class used as rope_embedder
+  command: /workspace/venv/bin/python3 -c "import re, sys; c=open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read();
+    m=re.search(r'\bclass\s+(LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)\b', c);
+    sys.exit(1 if not m else (0 if f'rope_embedder = {m.group(1)}' in c else 1))"
+  description: Checks a Lumina rope class (LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)
+    is defined and assigned as rope_embedder
 - id: p2p_upstream_ast_parse
   kind: P2P_REGRESSION
   turn: null

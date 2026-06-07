@@ -175,18 +175,38 @@ import re,sys
 src = open("crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs").read()
 # Find TryFrom impls that build a PaymentsRequest. Since the struct uses Self, look for `Ok(Self {`
 # and check that 'processing' appears either as shorthand `processing,` or `processing: <something not None>`.
+#
+# v3-promotion fix (2026-06-06): also accept `let request = Self { ... }; Ok(request)` form
+# AND the tuple-destructuring binding form `let (customer, processing, shipping, items) = match ...`
+# that both the oracle and the trial-under-review use. The previous narrow regex
+# `let\s+processing\s*=` missed the destructuring case entirely and produced a 0.12
+# false-negative for fully-correct solutions.
 ok = False
+# Helper: prefix-search for any binding of `processing` that's driven by L2/L3 data.
+def prefix_binds_processing_from_l2l3(prefix):
+    has_l2l3_signal = ('l2_l3' in prefix.lower() or 'L2L3' in prefix
+                       or 'get_optional_l2_l3_data' in prefix or '.map(' in prefix)
+    if not has_l2l3_signal:
+        return False
+    # Case 1: classic single-name binding: `let processing = ...`
+    if re.search(r'let\s+(?:mut\s+)?processing\s*[:=]', prefix):
+        return True
+    # Case 2: tuple-destructuring binding that includes `processing` as a name,
+    # e.g. `let (customer, processing, shipping, items) = match l2_l3_data { ... }`
+    # or `let (processing, items) = ...`.
+    if re.search(r'let\s*\(\s*[^=)]*\bprocessing\b[^=)]*\)\s*=', prefix):
+        return True
+    return False
+
+# Pattern 1: direct `Ok(Self { ... })` constructor form.
 for m in re.finditer(r'Ok\(\s*Self\s*\{(.*?)\}\s*\)', src, re.DOTALL):
     body = m.group(1)
     # Must reference processing
-    if not re.search(r'(^|[\s,])processing\s*[,:]', body):
+    if not re.search(r'(^|[\s,])processing\s*([,:]|$)', body, re.MULTILINE):
         continue
-    # If shorthand `processing,` then check earlier in the function for a let processing = ...
-    # that is not `None`
     fn_start = src.rfind('fn ', 0, m.start())
     prefix = src[fn_start:m.start()] if fn_start != -1 else src[max(0,m.start()-4000):m.start()]
-    # If there's a 'let processing' that mentions l2_l3 / get_optional_l2_l3_data / L2L3Data / map(
-    if re.search(r'let\s+processing\s*=', prefix) and ('l2_l3' in prefix.lower() or 'L2L3' in prefix or 'get_optional_l2_l3_data' in prefix or '.map(' in prefix):
+    if prefix_binds_processing_from_l2l3(prefix):
         ok = True
         break
     # Or inline processing: <expr> where expr is not None
@@ -194,6 +214,28 @@ for m in re.finditer(r'Ok\(\s*Self\s*\{(.*?)\}\s*\)', src, re.DOTALL):
     if inline and 'None' not in inline.group(1):
         ok = True
         break
+
+# Pattern 2: `let <name> = Self { ... }; ... Ok(<name>)` form (oracle uses this).
+if not ok:
+    for m in re.finditer(r'let\s+(\w+)\s*=\s*Self\s*\{(.*?)\}\s*;', src, re.DOTALL):
+        binding_name, body = m.group(1), m.group(2)
+        if not re.search(r'(^|[\s,])processing\s*([,:]|$)', body, re.MULTILINE):
+            continue
+        # Confirm the binding is returned via Ok(<name>) downstream in the same function.
+        fn_start = src.rfind('fn ', 0, m.start())
+        fn_end_search = src.find('\nfn ', m.end())
+        fn_end = fn_end_search if fn_end_search != -1 else len(src)
+        fn_tail = src[m.end():fn_end]
+        if re.search(r'Ok\(\s*' + re.escape(binding_name) + r'\s*\)', fn_tail):
+            prefix = src[fn_start:m.start()] if fn_start != -1 else src[max(0,m.start()-4000):m.start()]
+            if prefix_binds_processing_from_l2l3(prefix):
+                ok = True
+                break
+            inline = re.search(r'processing\s*:\s*([^,\n}]+)', body)
+            if inline and 'None' not in inline.group(1):
+                ok = True
+                break
+
 if ok:
     sys.exit(0)
 sys.exit(1)

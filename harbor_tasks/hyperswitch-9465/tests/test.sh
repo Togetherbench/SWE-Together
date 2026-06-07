@@ -378,14 +378,18 @@ fi
 echo ""
 echo "=== F2P Gate 6 [0.15]: domain models compile with v2 ==="
 G6_OK=0
+G6_INFRA=0
 if [ $V2_OK -eq 1 ]; then
-    timeout 900 cargo check -p hyperswitch_domain_models --features v2 2>/tmp/cargo_dom.log
+    _cargo_check_with_oom_detect timeout 900 cargo check -p hyperswitch_domain_models --features v2 2>/tmp/cargo_dom.log
     RC_DOM=$?
     echo "domain_models v2 exit: $RC_DOM"
     tail -30 /tmp/cargo_dom.log
     if [ $RC_DOM -eq 0 ]; then
         G6_OK=1
         add_reward 0.15 "Gate 6: domain_models v2 build"
+    elif [ $RC_DOM -eq 99 ]; then
+        G6_INFRA=1
+        echo "SKIP Gate 6 (infra_fault: OOM/SIGKILL — neither credited nor penalised)"
     else
         echo "FAIL Gate 6"
     fi
@@ -401,25 +405,34 @@ fi
 echo ""
 echo "=== F2P Gate 7 [0.15]: router v2 build ==="
 G7_OK=0
+G7_INFRA=0
 if [ $V2_OK -eq 1 ] && [ $G6_OK -eq 1 ]; then
-    timeout 1200 cargo check -p router --no-default-features --features "v2 olap oltp" 2>/tmp/cargo_router.log
+    _cargo_check_with_oom_detect timeout 1200 cargo check -p router --no-default-features --features "v2 olap oltp" 2>/tmp/cargo_router.log
     RC_ROUTER=$?
     echo "router v2 exit: $RC_ROUTER"
-    if [ $RC_ROUTER -ne 0 ]; then
+    if [ $RC_ROUTER -ne 0 ] && [ $RC_ROUTER -ne 99 ]; then
         # Try alternate feature combo
-        timeout 1200 cargo check -p router --features v2 2>/tmp/cargo_router2.log
+        _cargo_check_with_oom_detect timeout 1200 cargo check -p router --features v2 2>/tmp/cargo_router2.log
         RC_ROUTER2=$?
         if [ $RC_ROUTER2 -eq 0 ]; then
             RC_ROUTER=0
+        elif [ $RC_ROUTER2 -eq 99 ]; then
+            RC_ROUTER=99
         fi
         tail -40 /tmp/cargo_router.log
     fi
     if [ $RC_ROUTER -eq 0 ]; then
         G7_OK=1
         add_reward 0.15 "Gate 7: router v2 build"
+    elif [ $RC_ROUTER -eq 99 ]; then
+        G7_INFRA=1
+        echo "SKIP Gate 7 (infra_fault: OOM/SIGKILL — neither credited nor penalised)"
     else
         echo "FAIL Gate 7"
     fi
+elif [ $G6_INFRA -eq 1 ]; then
+    G7_INFRA=1
+    echo "SKIP Gate 7 (Gate 6 hit infra_fault — cannot evaluate router build)"
 else
     echo "SKIP Gate 7 (upstream broken)"
 fi
@@ -435,8 +448,8 @@ echo "Gate 2 (dsl):     $G2_OK"
 echo "Gate 3 (struct):  $G3_OK"
 echo "Gate 4 (insert):  $G4_OK"
 echo "Gate 5 (migrate): $G5_OK"
-echo "Gate 6 (domain):  $G6_OK"
-echo "Gate 7 (router):  $G7_OK"
+echo "Gate 6 (domain):  $G6_OK $([ $G6_INFRA -eq 1 ] && echo '(SKIP: infra_fault)')"
+echo "Gate 7 (router):  $G7_OK $([ $G7_INFRA -eq 1 ] && echo '(SKIP: infra_fault)')"
 echo "Final reward:     $REWARD"
 
 echo "$REWARD" > /logs/verifier/reward.txt
@@ -447,18 +460,21 @@ rustup default stable > /dev/null 2>&1 || true
 
 mkdir -p /logs/verifier
 
-# F2P upstream gate: Domain + Kafka field propagation
+# Diagnostic upstream gate: Domain + Kafka field propagation (v3 rubric demotes to
+# P2P_REGRESSION / bonus_downstream_propagation — weight 0; never affects reward).
+# The USER never named Kafka or domain crates in instruction.md, so we log the
+# verdict for completeness comparison against the oracle without scoring it.
 echo ""
-echo "=== Upstream F2P: Domain + Kafka field propagation ==="
+echo "=== Diagnostic: Domain + Kafka field propagation (informational, weight=0) ==="
 if grep -q 'active_attempts_group_id' crates/hyperswitch_domain_models/src/payments.rs 2>/dev/null && \
    grep -q 'active_attempt_id_type' crates/hyperswitch_domain_models/src/payments.rs 2>/dev/null && \
    grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent.rs 2>/dev/null && \
    grep -q 'active_attempts_group_id' crates/router/src/services/kafka/payment_intent_event.rs 2>/dev/null; then
-    echo '{"id": "f2p_upstream_domain_kafka_propagation", "passed": true, "detail": "All split payment fields found in domain models and kafka events"}' >> /logs/verifier/gates.json
-    echo "PASS"
+    echo '{"id": "f2p_upstream_domain_kafka_propagation", "kind": "P2P_REGRESSION", "passed": true, "detail": "All split payment fields found in domain models and kafka events (diagnostic only — weight 0 per v3 rubric)"}' >> /logs/verifier/gates.json
+    echo "PASS (informational)"
 else
-    echo '{"id": "f2p_upstream_domain_kafka_propagation", "passed": false, "detail": "Missing split payment fields in domain models or kafka events"}' >> /logs/verifier/gates.json
-    echo "FAIL"
+    echo '{"id": "f2p_upstream_domain_kafka_propagation", "kind": "P2P_REGRESSION", "passed": false, "detail": "Domain/kafka propagation incomplete (diagnostic only — weight 0 per v3 rubric, does not affect reward)"}' >> /logs/verifier/gates.json
+    echo "FAIL (informational, no penalty)"
 fi
 
 # F2P upstream gate: Migration file completeness
@@ -491,10 +507,14 @@ fi
 python3 - <<'PYEOF'
 import json, os, sys
 WEIGHTS = {
-    "f2p_upstream_domain_kafka_propagation": 0.2,
+    # f2p_upstream_domain_kafka_propagation removed — v3 rubric demotes Kafka/domain
+    # propagation to bonus_downstream_propagation (weight 0). The USER never named
+    # Kafka or domain crates in instruction.md. The gate still runs (above) and is
+    # logged as P2P_REGRESSION for diagnostic comparison against the oracle, but
+    # does not contribute positive or negative reward.
     "f2p_upstream_migration_completeness": 0.2
 }
-P2P_REGRESSION = ["p2p_upstream_cargo_metadata"]
+P2P_REGRESSION = ["p2p_upstream_cargo_metadata", "f2p_upstream_domain_kafka_propagation"]
 verdicts = {}
 try:
     with open('/logs/verifier/gates.json') as f:

@@ -95,6 +95,29 @@ else
     emit_gate "g2_short_no_fp" "fail"
 fi
 
+# F2P_G2B: Does NOT flag INDENTED short inline scripts (<=3 content lines, no false positives)
+# Closes coverage gap for goal_4: the >3-content-line threshold must hold for indented blocks too.
+mkdir -p "$TMPDIR/g2b"
+cat > "$TMPDIR/g2b/mise.toml" << 'TOML'
+[tools]
+go = "1.26.0"
+
+[tasks.short_indented]
+description = "Short INDENTED inline script"
+    run = """
+echo one
+echo two
+echo three
+    """
+TOML
+G2B_OUT=$(cd "$TMPDIR/g2b" && bash "$LINT_SCRIPT" 2>&1)
+G2B_RC=$?
+if [ $G2B_RC -eq 0 ]; then
+    emit_gate "g2b_short_indented_no_fp" "pass"
+else
+    emit_gate "g2b_short_indented_no_fp" "fail"
+fi
+
 # F2P_G3: Handles single-quote triple syntax (''') with indentation
 mkdir -p "$TMPDIR/g3"
 cat > "$TMPDIR/g3/mise.toml" << 'TOML'
@@ -192,7 +215,7 @@ with open("/logs/verifier/gates.json") as f:
 
 verdicts = {d["id"]: d["verdict"] for d in lines}
 
-weights = json.loads('''{"g1_indented_detection":0.20,"g2_short_no_fp":0.15,"g3_single_quote_syntax":0.15,"g4_non_indented_still_works":0.10,"g5_line_count_excludes_delimiter":0.10}''')
+weights = json.loads('''{"g1_indented_detection":0.20,"g2_short_no_fp":0.075,"g2b_short_indented_no_fp":0.075,"g3_single_quote_syntax":0.15,"g4_non_indented_still_works":0.10,"g5_line_count_excludes_delimiter":0.10}''')
 
 # P2P_REGRESSION gates are informational only — diagnostic/penalty only
 p2p_failed = False

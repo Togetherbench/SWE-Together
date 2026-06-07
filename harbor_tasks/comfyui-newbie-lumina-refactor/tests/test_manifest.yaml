@@ -1,52 +1,250 @@
+# test_manifest.yaml — comfyui-newbie-lumina-refactor
+#
+# Manifest gates declare the F2P / P2P_REGRESSION verdicts that pipeline
+# scoring paths (compute_coverage_score, oracle_replay, candidate_replay)
+# consume when reading manifest-based gate results. The authoritative
+# scoring logic lives in tests/test.sh, which emits per-gate verdicts to
+# /logs/verifier/gates.json — when test.sh has already run inside the
+# sandbox, the auto_gate_bridge block at the tail of test.sh reconciles
+# this manifest with that file.
+#
+# Each F2P `command` below mirrors the corresponding test.sh gate check
+# end-to-end (behavioral forward-pass, AST anti-pattern scan, model
+# detection wiring) so that callers that score directly via this manifest
+# (without running test.sh first) produce the same per-gate verdicts as
+# the bash verifier. Pre-2026-06-06 these were compile()-only stubs that
+# only validated Python syntax — see
+# analysis/v3_rubric_final_review_sonnet/comfyui-newbie-lumina-refactor.json.
+#
+# Convention: each command exits 0 on PASS and non-zero on FAIL. Inline
+# Python heredocs read source from /workspace/ComfyUI (the repo path
+# inside the sandbox). Imports use sys.path.insert and the same cli_args
+# CPU guard test.sh uses, so behavioral gates execute identically.
+#
+# Weights:
+#   F2P sum   = 0.60 (proportional, scales test.sh add_reward contributions)
+#   P2P sum   = 0.00 (informational only, never zero reward)
+#   inner    ≃ 0.40 (legacy reward fills the remainder per
+#                    weighted-replace formula in CLAUDE.md)
 version: "1.0"
 turns:
   - turn: 1
     user_message: "legacy"
     deliverable: "see instruction.md"
 gates:
-  # Existing per-turn F2P gates (scaled from original 1.0 total to 0.60)
+  # ─────────────────────────────────────────────────────────────────────
+  # F2P gates — mirror test.sh inline checks. IDs match emit_gate names.
+  # ─────────────────────────────────────────────────────────────────────
   - id: f2p_lumina_clip_text_dim
     kind: F2P
     turn: 1
     weight: 0.12
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'x', 'exec')\""
-    description: "Lumina NextDiT clip_text_dim integration"
+    description: "Lumina NextDiT clip_text_dim integration (behavioral forward-pass differential)"
+    command: |
+      bash -c 'cd /workspace/ComfyUI && python3 - <<PYEOF
+      import sys, inspect
+      sys.path.insert(0, "/workspace/ComfyUI")
+      try:
+          import comfy.cli_args; comfy.cli_args.args.cpu = True
+      except Exception:
+          pass
+      import torch
+      import comfy.ops
+      from comfy.ldm.lumina.model import NextDiT
+      sig = inspect.signature(NextDiT.__init__)
+      if "clip_text_dim" not in sig.parameters:
+          sys.exit(1)
+      ops = comfy.ops.disable_weight_init
+      try:
+          m = NextDiT(
+              patch_size=2, in_channels=4, dim=96, n_layers=2,
+              n_heads=4, n_kv_heads=2,
+              axes_dims=[8, 8, 8], axes_lens=[300, 64, 64],
+              cap_feat_dim=32, clip_text_dim=24,
+              device="cpu", dtype=torch.float32, operations=ops,
+          )
+          m.eval()
+      except Exception:
+          sys.exit(1)
+      if not (hasattr(m, "clip_text_pooled_proj") and m.clip_text_pooled_proj is not None):
+          sys.exit(1)
+      if not (hasattr(m, "time_text_embed") and m.time_text_embed is not None):
+          sys.exit(1)
+      x = torch.randn(2, 4, 16, 16); t = torch.tensor([0.5, 0.5])
+      ctx = torch.randn(2, 8, 32); nt = torch.tensor([8, 8])
+      am = torch.ones(2, 8, dtype=torch.bool)
+      torch.manual_seed(0)
+      pooled_a = torch.randn(2, 24); pooled_b = torch.randn(2, 24) * 5.0 + 3.0
+      try:
+          with torch.no_grad():
+              ya = m(x, t, ctx, nt, attention_mask=am, clip_text_pooled=pooled_a)
+              yb = m(x, t, ctx, nt, attention_mask=am, clip_text_pooled=pooled_b)
+              yz = m(x, t, ctx, nt, attention_mask=am)
+      except Exception:
+          sys.exit(1)
+      if ya.shape[-2:] != (16, 16): sys.exit(1)
+      if (ya - yb).abs().mean().item() < 1e-5: sys.exit(1)
+      if (ya - yz).abs().mean().item() < 1e-5: sys.exit(1)
+      sys.exit(0)
+      PYEOF'
+
   - id: f2p_vendored_newbie_removed
     kind: F2P
     turn: 1
     weight: 0.09
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'x', 'exec')\""
-    description: "Vendored NewBie module removed or thin shim"
+    description: "Vendored NewBie diffusion module is removed or shrunk to a thin Lumina reuse shim (AST scan for heavy classes + anti-patterns)"
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import os, ast, sys
+      p = "/workspace/ComfyUI/comfy/ldm/newbie/model.py"
+      if not os.path.isfile(p):
+          sys.exit(0)
+      src = open(p).read()
+      try:
+          tree = ast.parse(src)
+      except Exception:
+          sys.exit(1)
+      heavy_classes = 0
+      for n in ast.walk(tree):
+          if isinstance(n, ast.ClassDef):
+              methods = [m for m in n.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
+              names = {m.name for m in methods}
+              if ("_forward" in names or "forward" in names) and len(methods) >= 3:
+                  heavy_classes += 1
+      if heavy_classes > 0: sys.exit(1)
+      if len(src.strip()) > 200:
+          if ("comfy.ldm.lumina" not in src) and ("from comfy.ldm.lumina" not in src):
+              sys.exit(1)
+      for tok in ("_pop_unexpected_kwargs", "_fallback_operations", "CONDCrossAttn"):
+          if tok in src: sys.exit(1)
+      if "nn.init." in src: sys.exit(1)
+      sys.exit(0)
+      PYEOF'
+
   - id: f2p_lumina_model_clean
     kind: F2P
     turn: 1
     weight: 0.09
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/ldm/lumina/model.py').read(), 'x', 'exec')\""
-    description: "lumina/model.py is clean of antipatterns"
+    description: "comfy/ldm/lumina/model.py contains no anti-patterns (no _pop_unexpected_kwargs, no _fallback_operations, no CONDCrossAttn, no nn.init.*, no try/except wrapping _forward body)"
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import os, ast, sys
+      p = "/workspace/ComfyUI/comfy/ldm/lumina/model.py"
+      if not os.path.isfile(p): sys.exit(1)
+      src = open(p).read()
+      bad = ["_pop_unexpected_kwargs", "_fallback_operations", "CONDCrossAttn",
+             "nn.init.xavier_", "nn.init.normal_", "nn.init.kaiming_",
+             "nn.init.zeros_", "nn.init.constant_"]
+      for tok in bad:
+          if tok in src: sys.exit(1)
+      tree = ast.parse(src)
+      for n in ast.walk(tree):
+          if isinstance(n, ast.FunctionDef) and n.name == "_forward":
+              body = n.body
+              if len(body) == 1 and isinstance(body[0], ast.Try):
+                  sys.exit(1)
+      sys.exit(0)
+      PYEOF'
+
   - id: f2p_model_base_robustness
     kind: F2P
     turn: 1
     weight: 0.09
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'x', 'exec')\""
-    description: "model_base extra_conds robustness"
+    description: "comfy/model_base.py uses kwargs.get for pooled_output (no KeyError-prone subscript), propagates clip_text_pooled, and every clip_text_pooled occurrence binds to CONDRegular (never CONDCrossAttn)"
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import os, re, sys
+      p = "/workspace/ComfyUI/comfy/model_base.py"
+      if not os.path.isfile(p): sys.exit(1)
+      src = open(p).read()
+      if re.search(r"kwargs\[\s*[\x27\x22]pooled_output[\x27\x22]\s*\]", src):
+          sys.exit(1)
+      if "clip_text_pooled" not in src: sys.exit(1)
+      positions = [m.start() for m in re.finditer(r"clip_text_pooled", src)]
+      saw_regular = False
+      for idx in positions:
+          fwd = src[idx:idx+400]
+          cra = fwd.find("CONDCrossAttn"); creg = fwd.find("CONDRegular")
+          if cra >= 0 and (creg < 0 or cra < creg):
+              sys.exit(1)
+          if creg >= 0:
+              saw_regular = True
+      if not saw_regular: sys.exit(1)
+      sys.exit(0)
+      PYEOF'
+
   - id: f2p_no_apply_model_override
     kind: F2P
     turn: 1
     weight: 0.09
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_base.py').read(), 'x', 'exec')\""
-    description: "No custom apply_model override on NewBie class"
+    description: "No apply_model method defined on any class whose name contains NewBie/Newbie (AST scan of model_base.py and the newbie module if present)"
+    command: |
+      bash -c 'python3 - <<PYEOF
+      import os, ast, sys
+      candidates = [
+          "/workspace/ComfyUI/comfy/model_base.py",
+          "/workspace/ComfyUI/comfy/ldm/newbie/model.py",
+      ]
+      for p in candidates:
+          if not os.path.isfile(p): continue
+          try: tree = ast.parse(open(p).read())
+          except Exception: continue
+          for n in ast.walk(tree):
+              if isinstance(n, ast.ClassDef) and ("NewBie" in n.name or "Newbie" in n.name):
+                  for m in n.body:
+                      if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == "apply_model":
+                          sys.exit(1)
+      sys.exit(0)
+      PYEOF'
+
   - id: f2p_model_detection_wiring
     kind: F2P
     turn: 1
     weight: 0.12
-    command: "cd /workspace/ComfyUI && python3 -c \"compile(open('comfy/model_detection.py').read(), 'x', 'exec')\""
-    description: "model_detection picks up clip_text_dim"
-  # Upstream F2P gates removed 2026-05-17: these required text_encoders/newbie.py and
-  # text_encoders/jina_clip_2.py which the canonical session did not create. Keeping
-  # them would zero the oracle even when the session's actual deliverable (Lumina
-  # refactor) is complete. The 6 inner F2P gates above sum to 0.60; remainder scales
-  # the legacy inner reward, naturally giving full credit at canonical.
-  # Upstream P2P regression gates
+    description: "comfy.model_detection picks up clip_text_dim from a Lumina-2-shaped state_dict that includes clip_text_pooled_proj.0.weight (behavioral)"
+    command: |
+      bash -c 'cd /workspace/ComfyUI && python3 - <<PYEOF
+      import sys
+      sys.path.insert(0, "/workspace/ComfyUI")
+      try:
+          import comfy.cli_args; comfy.cli_args.args.cpu = True
+      except Exception:
+          pass
+      import torch
+      try:
+          import comfy.model_detection as MD
+      except Exception:
+          sys.exit(1)
+      prefix = "model.diffusion_model."
+      sd = {}
+      def add(k, shape): sd[prefix + k] = torch.zeros(shape)
+      add("cap_embedder.1.weight", (2304, 2560))
+      add("x_embedder.weight", (2304, 4*2*2))
+      add("t_embedder.mlp.0.weight", (2304, 256))
+      add("final_layer.linear.weight", (2*2*4, 2304))
+      add("layers.0.attention.wq.weight", (2304, 2304))
+      add("layers.0.attention.wk.weight", (2304, 2304))
+      add("clip_text_pooled_proj.0.weight", (768,))
+      try:
+          cfg = MD.model_config_from_unet(sd, prefix)
+      except Exception:
+          sys.exit(1)
+      if cfg is None:
+          try: cfg2 = MD.detect_unet_config(sd, prefix)
+          except Exception: sys.exit(1)
+          if cfg2 is None: sys.exit(1)
+          unet_cfg = cfg2
+      else:
+          unet_cfg = getattr(cfg, "unet_config", None) or {}
+      ctd = unet_cfg.get("clip_text_dim")
+      if ctd is None or int(ctd) != 768: sys.exit(1)
+      sys.exit(0)
+      PYEOF'
+
+  # ─────────────────────────────────────────────────────────────────────
+  # P2P_REGRESSION — informational only, weight=0, never zero reward.
+  # Syntax-validity sentinels for the three core touched modules.
+  # ─────────────────────────────────────────────────────────────────────
   - id: p2p_upstream_lumina_model_compiles
     kind: P2P_REGRESSION
     turn: null

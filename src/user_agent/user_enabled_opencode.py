@@ -413,13 +413,35 @@ class UserEnabledOpenCode(BaseAgent):
         # for very simple queries", which on a 13-turn agentic trial means the
         # model skips reasoning on most tool-result observations.
         effort = self._reasoning_effort or "high"
-        # Switched from reasoning.effort to reasoning.max_tokens after empirical
-        # OR test: effort='high' yields ~50 reasoning tokens on Opus 4.6 + tool_use,
-        # but reasoning.max_tokens=8000 yields 117+ tokens. OR translates max_tokens
-        # to Anthropic's explicit thinking budget; effort is translated more
-        # conservatively when tool_use is present.
-        _budget_map = {"low": 2000, "medium": 5000, "high": 8000}
-        max_tokens = _budget_map.get(effort, 8000)
+        # Reasoning engages via per-model variants, not provider-factory options.
+        # opencode v1.15.13 resolves the effort by looking up
+        # `model.variants[<flag-value>]` (session/llm/request.ts:78-81); the
+        # auto-generator at provider/transform.ts:632-675 produces
+        # `{none,minimal,low,medium,high,xhigh: {reasoning:{effort:<name>}}}`
+        # for `@openrouter/ai-sdk-provider` + Claude IFF the model's
+        # `capabilities.reasoning` is true (line 633).
+        #
+        # The catch (2026-06-06): when our config registers
+        # `provider.openrouter.models["anthropic/claude-opus-4-6"]={}`, opencode
+        # looks up the catalog by that exact key. models.dev's `openrouter`
+        # catalog uses DOTTED versions (`anthropic/claude-opus-4.6`), so the
+        # dash key doesn't match, `existingModel` is undefined at
+        # provider/provider.ts:1308, `capabilities.reasoning` defaults to
+        # `false` (line 1333), the variants() generator early-returns `{}`,
+        # `--variant=high` resolves but `model.variants["high"]` is undefined
+        # → no `reasoning` field in the OR request → Anthropic returns 0
+        # reasoning tokens. Empirically observed: lite70 opencode_opus r1/r2/r3
+        # all 0/73 trials had any `type:"reasoning"` events.
+        #
+        # Defensive fix: stamp `reasoning: true` on every registered model so
+        # opencode's catalog-merge promotes capabilities.reasoning to true
+        # regardless of catalog-key alignment, and write the explicit variants
+        # dict so the path works even if opencode's auto-generator changes.
+        # The variant entries match what auto-gen would produce for OR/Claude.
+        # For OpenAI (gpt5*) Responses API, opencode picks `reasoningEffort`
+        # at a different layer (variants() switch case `@ai-sdk/openai`); we
+        # don't touch that path here.
+        _OR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
         # python3 instead of jq — guaranteed present in the base images.
         # Heredoc avoids shell-quoting hell around the embedded JSON literal.
         script = (
@@ -443,9 +465,26 @@ class UserEnabledOpenCode(BaseAgent):
                 "['baseURL'] = 'http://localhost:4210/v1'\n"
             )
         script += (
+            "or_efforts = " + json.dumps(list(_OR_EFFORTS)) + "\n"
+            # Only the `openrouter` provider entry needs the explicit variants
+            # write; for other providers (openai/deepseek/anthropic) opencode's
+            # auto-generator emits the right per-provider shape from the
+            # models.dev catalog hit (reasoningEffort for openai-compatible,
+            # thinking{type:adaptive}+effort for @ai-sdk/anthropic, etc.).
+            # Overwriting those with {reasoning:{effort}} would break gpt55,
+            # ds, and the proxied anthropic path. The reasoning=true flag on
+            # the model entry is safe across providers — it only ever upgrades
+            # capability detection.
             "for name in list(prov):\n"
-            "    opts = prov[name].setdefault('options', {})\n"
-            f"    opts['reasoning'] = {{'max_tokens': {max_tokens}}}\n"
+            "    models = prov[name].setdefault('models', {})\n"
+            "    for mid in list(models):\n"
+            "        entry = models[mid] if isinstance(models[mid], dict) else {}\n"
+            "        entry['reasoning'] = True\n"
+            "        if name == 'openrouter':\n"
+            "            variants = entry.setdefault('variants', {})\n"
+            "            for eff in or_efforts:\n"
+            "                variants.setdefault(eff, {'reasoning': {'effort': eff}})\n"
+            "        models[mid] = entry\n"
             "perm = cfg.get('permission')\n"
             "if perm != 'allow':\n"
             "    if not isinstance(perm, dict):\n"

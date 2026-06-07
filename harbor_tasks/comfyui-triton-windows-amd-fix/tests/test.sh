@@ -363,6 +363,7 @@ if has_bare and has_chained:
 # Build helper map: any assign in inner whose target is a Name and
 # whose value references q_scale or k_scale (transitively).
 helper_refs = {}  # name -> set of base scales referenced
+helper_values = {}  # name -> the ast value node (for terminal-broadening scan)
 def name_refs(expr):
     s = set()
     for sub in ast.walk(expr):
@@ -376,14 +377,57 @@ for n in ast.walk(inner):
         if nm == "qk": continue
         refs = name_refs(n.value)
         helper_refs.setdefault(nm, set()).update(refs)
+        helper_values.setdefault(nm, n.value)
 
-# Resolve transitive: for each name in qk RHS, walk helper map up to depth 5
+# Terminal-symbol broadening: any helper variable whose RHS expression
+# contains a tl.load referencing K_scale_ptr (or Q_scale_ptr) is
+# semantically equivalent to k_scale (resp. q_scale) for the purpose of
+# transitive resolution. This eliminates false-negatives when an agent
+# renames k_scale -> k_scale_vec (or similar) while still loading from
+# the correct pointer. The check is AST-based: walk the RHS for a Call
+# whose func is `tl.load` and whose first arg references K_scale_ptr /
+# Q_scale_ptr by Name (directly or as part of a BinOp like
+# `K_scale_ptr + tl.arange(...)`).
+def _load_targets_ptr(value, ptr_name):
+    """Return True if `value` contains a tl.load(...) whose first arg
+    transitively references the bare Name `ptr_name` (e.g. K_scale_ptr,
+    K_scale_ptr + offs, tl.load(K_scale_ptr).to(tl.float32))."""
+    for sub in ast.walk(value):
+        if isinstance(sub, ast.Call):
+            func = sub.func
+            is_tl_load = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "load"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "tl"
+            )
+            if not is_tl_load or not sub.args:
+                continue
+            first_arg = sub.args[0]
+            for inner_sub in ast.walk(first_arg):
+                if isinstance(inner_sub, ast.Name) and inner_sub.id == ptr_name:
+                    return True
+    return False
+
+k_scale_terminals = {"k_scale"}
+q_scale_terminals = {"q_scale"}
+for nm, value in helper_values.items():
+    if _load_targets_ptr(value, "K_scale_ptr"):
+        k_scale_terminals.add(nm)
+    if _load_targets_ptr(value, "Q_scale_ptr"):
+        q_scale_terminals.add(nm)
+
+# Resolve transitive: for each name in qk RHS, walk helper map up to depth 5.
+# A name is a terminal if it is one of the canonical scale names OR is a
+# helper variable that loads from K_scale_ptr / Q_scale_ptr (rename-tolerant).
 def resolve(name, depth=0, seen=None):
     if seen is None: seen = set()
     if name in seen or depth > 5: return set()
     seen.add(name)
-    if name in ("q_scale", "k_scale"):
-        return {name}
+    if name in k_scale_terminals:
+        return {"k_scale"}
+    if name in q_scale_terminals:
+        return {"q_scale"}
     out = set()
     if name in helper_refs:
         for sub in helper_refs[name]:

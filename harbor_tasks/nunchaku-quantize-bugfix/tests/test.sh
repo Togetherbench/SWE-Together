@@ -145,7 +145,14 @@ gs = 64
 def unpack_canonical(qw_packed, N, K):
     # Try both layouts: (N, K//2) flat OR (N//4, K//2) row-interleaved.
     # We test against full-row (N, K//2) here.
-    packed_3d = qw_packed.view(N, K//32, 4)
+    # Use reshape (not view) so non-contiguous candidate outputs from
+    # deinterleave_rows don't raise; if element count is wrong we re-raise
+    # so the outer per-candidate try/except can move on cleanly.
+    if qw_packed.numel() != N * (K // 2):
+        raise RuntimeError(
+            f"unpack_canonical: element count mismatch {qw_packed.numel()} vs {N * (K // 2)}"
+        )
+    packed_3d = qw_packed.reshape(N, K//32, 4)
     unpacked = torch.zeros((N, K//32, 32), dtype=torch.int32)
     for g in range(4):
         for j in range(4):
@@ -153,15 +160,23 @@ def unpack_canonical(qw_packed, N, K):
             io = 8*g + 2*j + 1
             unpacked[:, :, ie] = (packed_3d[:, :, j] >> (4*g)) & 0xF
             unpacked[:, :, io] = (packed_3d[:, :, j] >> (16 + 4*g)) & 0xF
-    return unpacked.view(N, K)
+    return unpacked.reshape(N, K)
 
 def deinterleave_rows(qw, N, K):
     # If shape is (N//4, K//2), try undoing the 4-row interleave that
     # nunchaku uses, returning to (N, K//2).
     # The exact permutation is tested by reconstruction quality below.
+    # NOTE: each candidate is wrapped in try/except so a view-error on small N
+    # (e.g. N=4, K=64 where Candidate A's element count mismatches the
+    # (N//4, K//2) row-interleaved input) does not abort enumeration and
+    # silently false-negative the gate against valid implementations.
     candidates = []
-    # Candidate A: simple reshape (no interleave)
-    candidates.append(qw.view(N, K//2))
+    # Candidate A: simple reshape (no interleave) — only valid when actual
+    # shape is already (N, K//2); otherwise the element count mismatches.
+    try:
+        candidates.append(qw.reshape(N, K//2))
+    except Exception:
+        pass
     # Candidate B: (N//4, K//64, 4, 2, 4) -> permute (0,2,1,3,4) -> (N, K//2)
     try:
         c = qw.reshape(N//4, K//64, 4, 2, 4).permute(0, 2, 1, 3, 4).contiguous().reshape(N, K//2)
@@ -171,6 +186,13 @@ def deinterleave_rows(qw, N, K):
     # Candidate C: simple reshape via different chunking
     try:
         c = qw.reshape(N//4, 4, K//2).permute(0, 1, 2).reshape(N, K//2)
+        candidates.append(c)
+    except Exception:
+        pass
+    # Candidate D: row-interleaved (N//4, K//2) treated as (N//4, 4, K//8)
+    # then reshaped to (N, K//2) via interleave-aware path
+    try:
+        c = qw.reshape(N//4, 1, K//2).expand(N//4, 4, K//2).reshape(N, K//2)
         candidates.append(c)
     except Exception:
         pass

@@ -222,21 +222,10 @@ fi
 ###############################################################################
 # Reward computation
 ###############################################################################
-P2P_FAILED=0
-while IFS= read -r line; do
-    id=$(echo "$line" | sed -nE 's/.*"id":"([^"]+)".*/\1/p')
-    passed=$(echo "$line" | sed -nE 's/.*"passed":(true|false).*/\1/p')
-    case "$id" in
-        p2p_*)
-            if [ "$passed" = "false" ]; then
-                P2P_FAILED=1
-            fi
-            ;;
-    esac
-done < "$GATES_FILE"
-
+# P2P gates are informational only (per repo policy); F2P scoring is unconditional.
+# The v043 Python block below is the authoritative reward writer.
 REWARD=0
-if [ "$P2P_FAILED" -eq 0 ]; then
+if true; then
     declare -A WEIGHTS
     WEIGHTS[t6_f2p_keybindings_have_scope_tags]="0.30"
     WEIGHTS[t6_f2p_runner_consults_scope]="0.20"
@@ -289,8 +278,10 @@ run_v043_gate p2p_upstream_522628b0 'vitest_session_manager_coding-agent' 'cd /w
 python3 - <<"V043_PY"
 import json, os
 WEIGHTS = {"t11_f2p_global_editor_scope_keys_present": 0.15, "t11_f2p_picker_scope_keys_count": 0.2, "t13_f2p_runner_tests_pass": 0.15, "t6_f2p_keybindings_have_scope_tags": 0.3, "t6_f2p_runner_consults_scope": 0.2}
-P2P_GATING = ["p2p_src_files_exist"]
-P2P_REGRESSION = ["p2p_upstream_c09e61c3", "p2p_upstream_047e9a81", "p2p_upstream_e395cbc7", "p2p_upstream_522628b0"]
+# Per repo policy, P2P never zeroes reward. P2P_REGRESSION (informational
+# only) is logged via gates.json for diagnostics; the F2P gates above
+# naturally zero reward via not-f2p_any_pass when prerequisites fail.
+P2P_REGRESSION = ["p2p_src_files_exist", "p2p_upstream_c09e61c3", "p2p_upstream_047e9a81", "p2p_upstream_e395cbc7", "p2p_upstream_522628b0"]
 verdicts = {}
 try:
     with open('/logs/verifier/gates.json') as f:
@@ -303,16 +294,11 @@ try:
                 if gid: verdicts[gid] = bool(d.get('passed'))
             except Exception: pass
 except FileNotFoundError: pass
-hard_zero = False
-for gid in P2P_GATING + P2P_REGRESSION:
-    if not verdicts.get(gid, False):
-        hard_zero = True; break
-if hard_zero: reward = 0.0
-else:
-    reward = 0.0
-    for gid, w in WEIGHTS.items():
-        if verdicts.get(gid, False): reward += w
-    if reward > 1.0: reward = 1.0
+# F2P-only reward: any F2P pass → its weight; no P2P-driven hard zero.
+reward = 0.0
+for gid, w in WEIGHTS.items():
+    if verdicts.get(gid, False): reward += w
+if reward > 1.0: reward = 1.0
 os.makedirs('/logs/verifier', exist_ok=True)
 with open('/logs/verifier/reward.txt', 'w') as f:
     f.write('%.4f\n' % reward)

@@ -2,11 +2,11 @@
 
 ## Simulator Calibration
 
-- **Total genuine user messages**: 15 (excluding auto-generated skill messages, continuation summaries, and trivial acks)
+- **Total genuine user messages**: 19 (excluding auto-generated skill messages, continuation summaries, and trivial acks)
 - **Total turns**: 622 messages (254 user, 368 assistant)
 - **Longest silence**: ~85 messages (~42 agent turns) between messages 91 and 176, during which the agent implemented the race condition fix, wrote tests, and ran verification
 - **Communication pattern**: User gives direction, then goes silent while the agent works autonomously. Intervenes only for course corrections, code review feedback, or to signal next steps (merge, switch branch).
-- **Target message count**: ~15 user messages across the full session
+- **Target message count**: ~19 user messages across the full session
 
 ## User Turns
 
@@ -75,6 +75,21 @@
 - **Said**: "move everything from the giant try block into another method. Maybe _async_setup since this is the actual setup?"
 - **Why**: Refactoring to improve code structure and error handling clarity.
 
+### Turn 269 (after ~9 messages / a few agent turns)
+- **Context**: User pivots away from PR #900 work to PR #899 (handle-duplicate-code-notification). The agent should `gh pr checkout 899` or otherwise switch the working branch to the PR-899 branch before doing anything else.
+- **Said**: "switch to 899"
+- **Why**: Branch / PR context switch. User is queueing up the next review pass on a different PR.
+
+### Turn 275 (after ~6 messages, immediately after the agent has switched branches)
+- **Context**: Now on PR #899. The user wants the agent to fetch and read Copilot's review comments on PR #899 so they can be triaged.
+- **Said**: "see copilot review comments"
+- **Why**: User is delegating the read of the Copilot review on PR #899 — expects the agent to enumerate the comments and propose which ones to address.
+
+### Turn 279 (after ~4 messages, immediately after the agent has summarized the Copilot review)
+- **Context**: Agent has listed Copilot's review comments on PR #899 and (likely) flagged any it disagrees with. User authorizes addressing all of them subject to the agent's own dissent.
+- **Said**: "address all unless you disagree witha ny of them"
+- **Why**: Explicit blanket authorization to apply the Copilot fixes. In the real session, the agent accepted three Copilot comments as valid — (1) clearing the in-progress code slot too eagerly (should be scoped to userCode-only Value Updates, not userIdStatus updates), (2) the duplicate-code notification body missing the affected LCM config entry's title, (3) the deferred task / log / metric name using the literal code_slot value 0 instead of the tracked `_set_in_progress_code_slot` fallback when code_slot == 0 — and skipped three others it considered hallucinated. The user simulator should NOT enumerate which comments to accept; the agent must do that triage itself. Typo in the original ("witha ny" not "with any") preserved verbatim.
+
 ### Turn 347 (after ~71 messages / ~35 agent turns of silence)
 - **Context**: User switched to PR #899 (handle-duplicate-code-notification). Agent was implementing changes independently.
 - **Said**: "we need to test early returns in handle duplicate code"
@@ -85,6 +100,11 @@
 - **Said**: "We want the base provider to have a protected setup and allow providers to setup with their own custom logic immediately after. Review my changes with that outcome in mind"
 - **Why**: User made changes to the provider architecture and wants code review against a specific design goal.
 
+### Turn 574 (after ~150 messages / many agent turns of silence — final session wrap-up)
+- **Context**: PR #900 has already been merged (the user noted this at msg ~564); PR #899 is now also merged. User wants the agent to fast-forward main, delete the merged branch, and then do a TODO.md cleanup pass and ship that as a small follow-up PR. This is the LAST substantive user instruction in the session.
+- **Said**: "merged, ff main and delete branch. Then review TODO.md and remove anything that is no longer needd or relevant. Create a new branch and PR for this update, use the PR template"
+- **Why**: Housekeeping ask. The user wants stale TODO entries removed/revised (items completed by the just-merged PRs, year/version stamps that have aged out, sub-bullets describing work that has since landed). The output should be a genuine non-trivial edit to TODO.md — not a whitespace-only diff and not a delete-the-whole-file diff. Typo in the original ("needd" not "needed") preserved verbatim.
+
 ## Overview
 
 | Field | Value |
@@ -92,7 +112,7 @@
 | Session ID | 7c955a97-89aa-424d-84c1-3b2571976d8a |
 | Repo | raman325/lock_code_manager (80 stars) |
 | Base commit | de0c2b8034dc0a4f8cb44fe7b1a2dc602c68601e |
-| Real user msgs (genuine) | 15 |
+| Real user msgs (genuine) | 19 |
 | Total messages | 622 |
 | Agent turns | 368 |
 | User turns | 254 |
