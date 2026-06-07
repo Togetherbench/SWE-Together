@@ -11,8 +11,7 @@ yet a merged PR.
 
 **Active harnesses** (`runner.py` / `run_eval.py` registry): `claude_code`
 (native `--resume`), `opencode` (native `--session`), `codex` (re-issue),
-`mini-swe-agent` (LiteLLM re-issue), `terminus` (in-process). *(gemini-cli
-removed in #214.)* User simulator: Gemini 3.1 Pro.
+`mini-swe-agent` (LiteLLM re-issue).
 
 **Timeouts** (`exec_helpers.py`, every wrapper, after #214):
 
