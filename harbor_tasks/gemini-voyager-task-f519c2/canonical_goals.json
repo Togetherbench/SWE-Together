@@ -1,0 +1,69 @@
+{
+  "task_name": "gemini-voyager-task-f519c2",
+  "_rubric_version": "v3",
+  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
+  "_provenance": {
+    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
+    "goal_1": "Turn 0: '过一会儿整个文件夹区域会变蓝(就是拖拽放入的那个样式)' — the whole folder area gets stuck with the drop-highlight; and '必须拖到文件夹上，而不能是文件夹的对话里' — you must aim at the folder, not its child conversations. The leave-handler firing on child-enter is the root cause of both the stuck highlight and the inability to drop while hovering a child.",
+    "goal_2": "Turn 0: '具体来说就是必须拖到文件夹上，而不能是文件夹的对话里' — the user must currently hit the folder exactly and cannot drop onto its conversations. The fix must make child-region drops land in the folder.",
+    "goal_3": "Turn 2: '现在可以拖进去了，但是并不能准确拖到选择的那个位置...好像是会默认变成那个文件夹的最后一个对话' — after the first fix, dropped conversations always land at the end instead of the aimed position. This is the multi-turn follow-up correction."
+  },
+  "_dropped_from_v2": [
+    {
+      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
+    }
+  ],
+  "_added_for_coverage": [
+    {
+      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
+    }
+  ],
+  "_self_critique_passed": true,
+  "_self_critique_log": [
+    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
+    "goal_1: weight=0.4, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_2: weight=0.25, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_3: weight=0.35, tier=core, user-turn cite=yes — provenance OK.",
+    "Gemini critic final: verdict=PASS score=0.9375 round=5.",
+    "  strength: Excellent separation of the two coupled Turn 0 symptoms into distinct behavioral goals (goal_1 and goal_2).",
+    "  strength: Strong, explicit allowance for alternative implementations (e.g., CSS pointer-events vs JS boundary checking).",
+    "  strength: Accurate identification of the root cause for the Turn 2 positioning bug (dragging from outside any folder).",
+    "  residual risk: The decomposition notes contain a minor factual error regarding the exact values of the F2P weights in the manifest."
+  ],
+  "_task_quality_flags": {
+    "source": "v3_scaleout_promoted",
+    "scanner_version": "v3",
+    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
+  },
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine fix to the folder drag-and-drop behavior in the application's source, not a gamed artifact. It must NOT consist of: a zero-edit / empty diff; a diff whose only content is a captured-repo-tree banner (e.g. a '=== repo/ ===' dump) or other non-source padding; git-ops exfiltration such as 'git checkout main', 'git reset --hard origin/...', or restoring files instead of editing them; a comment-only or whitespace-only change; or edits confined to temporary, scratch, or unmerged locations rather than the real drag-and-drop handling code. The change must alter runtime behavior of the drag/drop event handlers, not merely add dead code, stubs, or commented-out logic.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor to reject non-implementations. Evidence tier is golden_only with zero real model patches, so anti-gaming is calibrated against the golden diff (a real behavioral edit to manager.ts drag handlers) and the named bad patterns rather than a lowest-reward attempt."
+    },
+    {
+      "id": "goal_1",
+      "goal": "After an attempted drag over a folder, the folder's drop-target highlight (the blue 'dragover' styling) no longer gets stuck on. The highlight is successfully removed when the pointer genuinely leaves the folder's region, AND remains active when the pointer merely crosses into a child element nested inside the folder (such as one of the folder's conversation rows) — i.e. moving onto a descendant must not clear the highlight, but actually leaving the folder must. A correct fix distinguishes 'left the folder entirely' from 'moved onto a descendant', e.g. by comparing the pointer position against the folder element's bounds, or by an equivalent leave-vs-enter-child discrimination. Must be a real behavioral guard, not a stub, a hardcoded value, an always-false/never-removing condition, commented-out code, or a removed/disabled handler.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 0: '过一会儿整个文件夹区域会变蓝(就是拖拽放入的那个样式)' — the whole folder area gets stuck with the drop-highlight; and '必须拖到文件夹上，而不能是文件夹的对话里' — you must aim at the folder, not its child conversations. The leave-handler firing on child-enter is the root cause of both the stuck highlight and the inability to drop while hovering a child."
+    },
+    {
+      "id": "goal_2",
+      "goal": "A conversation can be successfully dropped into a folder even when the pointer is hovering over one of the folder's existing conversation rows (a child of the folder), not only when hovering the folder header itself. Dropping anywhere within the folder's area accepts the conversation into that folder. This must follow from the drag-and-drop event handling correctly processing drops that occur while the pointer is visually hovering the folder's child elements (by any valid means — e.g. event bubbling, CSS pointer-events on children, fixing the parent's leave-boundary logic, or attaching drop handling to the child rows), not from deleting tests or short-circuiting the handler.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0: '具体来说就是必须拖到文件夹上，而不能是文件夹的对话里' — the user must currently hit the folder exactly and cannot drop onto its conversations. The fix must make child-region drops land in the folder."
+    },
+    {
+      "id": "goal_3",
+      "goal": "When a conversation that was dragged in from outside any folder (e.g. the native sidebar list) is dropped at a chosen position within a target folder, it is inserted at that aimed position rather than always being forced to the end of the folder. The drop logic must correctly place such an externally-sourced conversation at the aimed index within the folder's ordered contents — whether by making the conversation known to the folder's data before the reorder step or by handling externally-sourced items natively within the positioning logic. This must be real positioning logic operating on the folder's conversation data, not a hardcoded index, a no-op, a parsed-but-ignored value, or commented-out code.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Turn 2: '现在可以拖进去了，但是并不能准确拖到选择的那个位置...好像是会默认变成那个文件夹的最后一个对话' — after the first fix, dropped conversations always land at the end instead of the aimed position. This is the multi-turn follow-up correction."
+    }
+  ],
+  "decomposition_notes": "Substantive asks span Turn 0 and Turn 2 (Turn 1 '为什么?' is a check-in, Turn 3 '提交,Fixes $430' is a commit request — neither is a scored deliverable). Turn 0 contains two coupled symptoms: (a) the folder highlight getting stuck blue and (b) being unable to drop while hovering a folder's child conversations; the golden diff fixes both with one dragleave boundary guard, but they are distinct user-observable behaviors so I split them into goal_1 (stuck highlight — highest weight, the most emphasized symptom) and goal_2 (child-region drop acceptance). goal_3 is the Turn-2 positioning correction (insert at aimed index, not end) and is weighted high (0.35) because it is a separate substantive multi-turn ask requiring its own implementation. Weights (0.4 + 0.25 + 0.35 = 1.0) rank by user-importance and deliberately do NOT mirror the four equal 0.25 F2P manifest weights, which are keyed to implementation-specific structural markers (helper name, sortIndex, .some existence check). Goal text stays behavioral and names no oracle identifiers (ensureConversationsInFolder, reorderOrMoveConversations, gv-folder-dragover, sortIndex, getBoundingClientRect) — those are accepted as one valid implementation but not required, so any behaviorally-equivalent solution passes."
+}

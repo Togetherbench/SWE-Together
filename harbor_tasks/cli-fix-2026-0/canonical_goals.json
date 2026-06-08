@@ -1,0 +1,78 @@
+{
+  "task_name": "cli-fix-2026-0",
+  "_rubric_version": "v3",
+  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
+  "_provenance": {
+    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
+    "goal_1": "Turn 0 verbatim: 'calculatePromptAttributionAtStart function silently returns an empty result on multiple error conditions ... consider logging these errors at Debug level to help diagnose issues where attribution is unexpectedly missing.' This is the opening and primary ask.",
+    "goal_2": "Turn 1 verbatim: attribution 'reads from the git index (staging area), but WriteTemporary captures from the worktree ... unstaged changes are captured in the shadow branch but not counted ... user contributions to be undercounted and agent contributions to be overcounted.' A correction the user wants fixed.",
+    "goal_3": "Turn 3 verbatim: 'User edits made after the base commit but before the first prompt are never captured. The condition state.CheckpointCount > 0 skips attribution ... returns early when no shadow branch exists ... incorrectly attributed to the agent ... callers prevent this logic from executing.'",
+    "goal_4": "Turn 4 verbatim: 'getAllChangedFilesBetweenTrees ... reads the content of every file in both trees twice ... inefficient for large repositories ... can't we get a hash from git for each file and check ... instead of getting the content?' The user even proposes the hash approach."
+  },
+  "_dropped_from_v2": [
+    {
+      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
+    }
+  ],
+  "_added_for_coverage": [
+    {
+      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
+    }
+  ],
+  "_self_critique_passed": false,
+  "_self_critique_log": [
+    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
+    "goal_1: weight=0.34, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_2: weight=0.3, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_3: weight=0.22, tier=major, user-turn cite=yes — provenance OK.",
+    "goal_4: weight=0.14, tier=major, user-turn cite=yes — provenance OK.",
+    "Gemini critic final: verdict=REVISE score=0.875 round=3.",
+    "  strength: Excellent behavioral descriptions of complex git-state bugs (especially goal_2 and goal_3).",
+    "  strength: Strong per-goal anti-cheating clauses tailored to the specific logic of each fix.",
+    "  strength: Clear and accurate mapping of user turns to weighted goals in the decomposition notes.",
+    "  residual risk: Goal 1's structural assumption about 'distinct' error paths could cause the LLM judge to penalize agents that write cleaner, consolidated error-handling code."
+  ],
+  "_task_quality_flags": {
+    "source": "v3_scaleout_promoted",
+    "scanner_version": "v3",
+    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
+  },
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine source-code implementation of the requested behavior, not a gaming artifact. It MUST be rejected if it exhibits any of: (a) a zero-edit or no-op diff; (b) a captured-tree artifact whose only content is a directory-listing banner such as a '=== repo/ ===' header instead of real code changes; (c) git-ops exfiltration that fakes progress by checking out or resetting to another ref (e.g. 'git checkout main', 'git reset --hard origin/...'); (d) a comment-only or whitespace-only diff; (e) changes confined to temporary, scratch, or unmerged locations rather than the actual attribution/strategy source files; or (f) satisfying assertions by deleting, skipping, or weakening existing tests. The change must alter real program logic that affects how prompt attribution and file-diffing actually behave at runtime.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Flag-only floor. The evidence tier is golden_only with zero real model patches, so this guards against the standard reward-hacking shapes; named bad patterns are non-exhaustive."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When the function that computes prompt attribution at prompt-start hits any of its error / missing-data conditions (e.g. the shadow branch is absent or corrupt, or a git operation such as reading a tree, the worktree, or worktree status fails), it emits a Debug-level log describing what was skipped and why, instead of silently returning an empty result. All of the conditions that previously caused a silent empty return must now produce such a log, even if the agent refactors or consolidates the error-handling into fewer code paths. The logging must run on the real error paths of the live function (not a stub, dead branch, or commented-out code) so that an operator can diagnose why attribution is unexpectedly missing.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Turn 0 verbatim: 'calculatePromptAttributionAtStart function silently returns an empty result on multiple error conditions ... consider logging these errors at Debug level to help diagnose issues where attribution is unexpectedly missing.' This is the opening and primary ask."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Prompt-start attribution counts a changed file's full working-tree content rather than only its staged/index content, so that when a user has both staged and unstaged edits to the same file, the unstaged portion is still attributed to the user. After the fix, the lines captured for attribution match what the checkpoint mechanism records from the worktree, so user contributions are no longer undercounted and the agent is no longer over-credited for the user's unstaged edits. The behavior change must be real (reflected in the computed attribution numbers), not achieved by a hardcoded count or a flag that is parsed but ignored.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 1 verbatim: attribution 'reads from the git index (staging area), but WriteTemporary captures from the worktree ... unstaged changes are captured in the shadow branch but not counted ... user contributions to be undercounted and agent contributions to be overcounted.' A correction the user wants fixed."
+    },
+    {
+      "id": "goal_3",
+      "goal": "User edits made after the base commit but before the very first prompt are attributed to the user rather than to the agent. The attribution-at-prompt-start calculation runs for the first checkpoint too (it is no longer skipped because no prior checkpoint exists), and it still produces a meaningful result when no shadow branch exists yet by falling back to comparing against the base tree. The fix must remove or restructure the guard conditions that previously short-circuited this path, such that the first-prompt attribution genuinely reflects the pre-prompt user edits; it must not be faked by always returning a fixed value.",
+      "tier": "major",
+      "weight": 0.22,
+      "rationale": "Turn 3 verbatim: 'User edits made after the base commit but before the first prompt are never captured. The condition state.CheckpointCount > 0 skips attribution ... returns early when no shadow branch exists ... incorrectly attributed to the agent ... callers prevent this logic from executing.'"
+    },
+    {
+      "id": "goal_4",
+      "goal": "The routine that determines which files differ between two git trees no longer reads each file's full content twice to detect changes. Instead it identifies changed (added, modified, or deleted) files using a cheaper signal such as comparing git blob hashes / tree metadata, without reading the files' full contents to decide whether they differ, fulfilling the user's ask to detect changes 'instead of getting the content'. The set of files it reports as changed must remain correct (same added/modified/deleted semantics as before); the optimization must be a real algorithmic change, not a stub that always returns the same list or that still reads contents under a renamed helper.",
+      "tier": "major",
+      "weight": 0.14,
+      "rationale": "Turn 4 verbatim: 'getAllChangedFilesBetweenTrees ... reads the content of every file in both trees twice ... inefficient for large repositories ... can't we get a hash from git for each file and check ... instead of getting the content?' The user even proposes the hash approach."
+    }
+  ],
+  "decomposition_notes": "Source: entireio/cli manual-commit attribution. Evidence tier golden_only (no real model patches), so goals are derived from the verbatim user asks plus the F2P tests and golden patch, kept behavioral. Four substantive code-change asks span the session: Turn0 debug logging (goal_1, highest weight as the primary opening ask), Turn1 worktree-vs-index attribution correctness (goal_2, a data-correctness bug the user wants fixed), Turn3 first-prompt/pre-prompt edit attribution (goal_3), Turn4 tree-diff performance via hashes (goal_4, user even proposed the approach). The three analysis-only turns (explain unstaged handling; is getFileContent still used; does the diff fn have tests) request no code change and so get no weighted goal; the 'is getFileContent still used' answer is the user confirming the helper should NOT be deleted, which is captured implicitly by goal_4's 'same semantics' clause and the anti-gaming test-preservation language rather than a standalone goal. Weights rank by user-importance (logging first, then the two correctness bugs, then the perf optimization) and deliberately do NOT mirror test_manifest F2P weights (which put 0.20 on debug logs and treat build/test pass as 0.30 combined; we drop build/test-pass and test-existence as process/structural rather than substantive asks). Weighted goals sum to 1.00. No oracle-specific identifiers appear in goal text except function names the user themselves named verbatim in their messages (calculatePromptAttributionAtStart, WriteTemporary, getAllChangedFilesBetweenTrees, getFileContent, CheckpointCount), which is permitted."
+}

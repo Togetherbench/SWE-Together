@@ -1,0 +1,87 @@
+{
+  "task_name": "cli-task-e5813e",
+  "_rubric_version": "v3",
+  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
+  "_provenance": {
+    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
+    "goal_1": "Turn 0 plan, Problem Summary item 1 ('Creates custom JSONL format instead of using opencode export (native JSON)') and Design Decision ('Store opencode export JSON as NativeData ... The Go hook handler will call opencode export to get the canonical transcript'), plus Phases 1-3. This is the central deliverable: switch the transcript source/format to native export JSON.",
+    "goal_2": "Turn 0 plan, Problem Summary items 2-3 ('ExportData never populated so rewind doesn't restore OpenCode's database', 'Two file formats written by plugin') and Phases 4-5 (ReadSession populates ExportData, WriteSession imports it). Distinct user-stated correctness goal: rewind must actually restore the agent DB, and the dual-format split must be collapsed to one canonical format.",
+    "goal_3": "Turn 0 plan Phases 7-8 and the Files-to-Modify list: simplify entire_plugin.ts (delete the JSONL-writing/formatting helpers, all .jsonl references, pass only session_id), and remove the .export.json special-case copy in the outer lifecycle. This is a substantive part of the user's plan beyond the Go parsing change.",
+    "goal_4": "Turn 5 ('are we keeping track of the position in the logs now at each checkpoint?') is a direct multi-turn correction; the surviving fix adds message-index slicing for OpenCode in the condensation/scoping path and switches item-counting to message counts for the JSON format. This is a real behavioral follow-on the user demanded after the Turn-0 refactor.",
+    "goal_5": "Turns 3-4 ('is there cleanup for the files in the folder?', 'yes, do 1') establish that the new temp directory must not accumulate stale files, and Turn 6 ('at least add it to entire clean for now') pins the surviving solution: wire temp-file cleanup into the existing clean command. The automatic per-turn cleanup was tried and reverted, so the durable requirement is the clean-command integration, expressed behaviorally."
+  },
+  "_dropped_from_v2": [
+    {
+      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
+    }
+  ],
+  "_added_for_coverage": [
+    {
+      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
+    }
+  ],
+  "_self_critique_passed": true,
+  "_self_critique_log": [
+    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
+    "goal_1: weight=0.34, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_2: weight=0.22, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_3: weight=0.14, tier=important, user-turn cite=yes — provenance OK.",
+    "goal_4: weight=0.16, tier=important, user-turn cite=yes — provenance OK.",
+    "goal_5: weight=0.14, tier=important, user-turn cite=yes — provenance OK.",
+    "Gemini critic final: verdict=REVISE score=0.9375 round=2.",
+    "  strength: Excellent coverage of a complex, multi-turn conversation with clear distinction between actionable requests and explanation asks.",
+    "  strength: Strong behavioral descriptions that capture the essence of the user's architectural refactoring plan without over-pinning to specific code structures.",
+    "  strength: Accurate and detailed provenance citations for every goal.",
+    "  residual risk: An LLM judge might award full points to an agent that implements a stub `runOpenCodeExport` function returning a hardcoded JSON string, as goal_1 does not explicitly forbid stubs."
+  ],
+  "_task_quality_flags": {
+    "source": "v3_scaleout_promoted",
+    "scanner_version": "v3",
+    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
+  },
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation of the requested OpenCode-integration refactor that actually changes how transcripts are produced, parsed, and stored, and the project still builds. Reject gaming artifacts: an empty or no-op diff; a diff whose only content is a captured directory-tree banner (e.g. a '=== repo/ ===' listing); comment-only or whitespace-only changes; git-ops exfiltration that fakes work instead of implementing it (e.g. 'git checkout main', 'git reset --hard origin/...'); deleting, skipping wholesale, or weakening the package's tests instead of adapting them to the new format; hardcoding a value purely to satisfy one test; or changes confined to temporary/scratch/unmerged locations rather than the real source tree.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. evidence_tier=golden_only (no model patches for calibration), so the floor must catch generic stub/no-op/diff-pad/test-deletion cheats while staying behavioral. The accepted golden change is a large, real refactor across parsing, lifecycle, plugin, and cleanup, so cosmetic or exfiltration-style diffs must be flagged."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The OpenCode integration consumes the agent's own native exported session JSON as its canonical transcript instead of a hand-built custom line-delimited (JSONL) transcript. Concretely: the Go side obtains the transcript by invoking the OpenCode CLI's export capability for a session id (rather than the plugin hand-serializing messages), and the transcript parsing operates on the nested export JSON shape (a top-level object carrying session info plus a messages array, where each message has its own info block and a parts list) rather than parsing one message per line. The prior per-line/JSONL parsing path must be genuinely replaced, not left as the live code path behind a renamed wrapper, satisfied only by a comment, or satisfied by a stub/hardcoded return.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Turn 0 plan, Problem Summary item 1 ('Creates custom JSONL format instead of using opencode export (native JSON)') and Design Decision ('Store opencode export JSON as NativeData ... The Go hook handler will call opencode export to get the canonical transcript'), plus Phases 1-3. This is the central deliverable: switch the transcript source/format to native export JSON."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Rewind/resume is made functional by populating the session's export data so the agent's own database can be restored, eliminating the previous behavior where export data was never set. The session object that the integration produces on read must carry the export-format payload (not leave it empty), and on write that same export payload is what gets imported back into the agent. A solution that reads the export JSON but still leaves the export-data field unset, satisfies it only with a hardcoded dummy payload, or keeps writing two divergent on-disk formats, does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Turn 0 plan, Problem Summary items 2-3 ('ExportData never populated so rewind doesn't restore OpenCode's database', 'Two file formats written by plugin') and Phases 4-5 (ReadSession populates ExportData, WriteSession imports it). Distinct user-stated correctness goal: rewind must actually restore the agent DB, and the dual-format split must be collapsed to one canonical format."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The plugin layer is simplified to stop hand-writing transcripts: it no longer serializes its own message/JSONL files or carries the custom transcript-formatting helpers, and instead just signals the relevant lifecycle events with the session identifier so the Go side fetches the canonical export itself. The obsolete special-case that copied a separate exported-JSON file in the top-level lifecycle handling is also removed because the canonical transcript now IS the export data. References to the old line-delimited transcript file format in the plugin must be gone, not merely commented out.",
+      "tier": "important",
+      "weight": 0.14,
+      "rationale": "Turn 0 plan Phases 7-8 and the Files-to-Modify list: simplify entire_plugin.ts (delete the JSONL-writing/formatting helpers, all .jsonl references, pass only session_id), and remove the .export.json special-case copy in the outer lifecycle. This is a substantive part of the user's plan beyond the Go parsing change."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Checkpoint position tracking is preserved under the new format by scoping the transcript per checkpoint using a message-based offset rather than a line-based offset. Because the export JSON is a single document rather than line-delimited, the position/scoping logic for this agent must slice the transcript by message index (consistent with how the other JSON-document agent is handled) and counting of transcript items for this agent must count messages, not lines. A solution that leaves position tracking on the old line-offset path for this agent, returns a wrong/zero count for the JSON document, or satisfies the count with a hardcoded return value, does not satisfy this goal.",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Turn 5 ('are we keeping track of the position in the logs now at each checkpoint?') is a direct multi-turn correction; the surviving fix adds message-index slicing for OpenCode in the condensation/scoping path and switches item-counting to message counts for the JSON format. This is a real behavioral follow-on the user demanded after the Turn-0 refactor."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The temporary cache directory introduced to hold the fetched export output is given a cleanup path, and at minimum that cleanup is wired into the existing manual cleanup command so a user can purge accumulated cached transcript files on demand. The cleanup must genuinely enumerate and delete the cached files (and report them) rather than be a stub, a no-op flag, or a comment; counting the temp files toward the command's reported total output and removing them when run in force/delete mode is the expected behavior.",
+      "tier": "important",
+      "weight": 0.14,
+      "rationale": "Turns 3-4 ('is there cleanup for the files in the folder?', 'yes, do 1') establish that the new temp directory must not accumulate stale files, and Turn 6 ('at least add it to entire clean for now') pins the surviving solution: wire temp-file cleanup into the existing clean command. The automatic per-turn cleanup was tried and reverted, so the durable requirement is the clean-command integration, expressed behaviorally."
+    }
+  ],
+  "decomposition_notes": "Evidence tier is golden_only (no model patches). The session is a 7-real-message thread: a large Turn-0 implementation plan followed by terse mid-stream corrections. goal_1 (consume native export JSON via the CLI export instead of custom JSONL parsing) is weighted highest because it is the spine of the plan (Problem item 1, the Design Decision, Phases 1-3) and everything else builds on it. goal_2 (populate export data so rewind restores the agent DB, collapse the dual-format split) is the second core deliverable (Problem items 2-3, Phases 4-5). goal_3 (simplify the plugin, drop JSONL helpers/refs, remove the outer lifecycle .export.json copy) captures Phases 7-8. goal_4 encodes the explicit Turn-5 follow-on about per-checkpoint position tracking, realized as message-index scoping + message-count items for the JSON document. goal_5 encodes the Turns 3/4/6 cleanup thread, anchored to the durable outcome (wire temp cleanup into the existing clean command), since the automatic per-turn cleanup was tried then reverted. Turn 2 ('since when is this using .entire/tmp?') and Turn 7 ('look at the comments on the PR and let me know which one to fix') are explanation/prioritization asks with no deliverable workspace behavior, so they are intentionally not scored. Goals are described behaviorally and avoid pinning oracle-specific identifiers (no ExportSession/ParseExportSession/runOpenCodeExport/SliceFromMessage/CleanupCachedTranscript/fetchAndCacheExport/.entire/tmp function or field names), since none of those were named verbatim by the user and the plan's literal snippets are illustrative, not mandated implementations. Weights deliberately differ from the F2P manifest (which front-loads build+unit-test gates and AST-structural checks): user-importance ranks the format switch and rewind-correctness highest, with the multi-turn corrections (position tracking, cleanup) weighted as important follow-ons. Sum of weighted goals = 0.34 + 0.22 + 0.14 + 0.16 + 0.14 = 1.00."
+}

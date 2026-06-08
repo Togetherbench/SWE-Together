@@ -1,0 +1,78 @@
+{
+  "task_name": "pi-mono-auto-6f8288bb",
+  "_rubric_version": "v3",
+  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
+  "_provenance": {
+    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
+    "goal_1": "Core deliverable. Turn 3 verbatim: 'how can we fix this nicely? none should map to none, any other pi-ai reasoning effort should map to default for that model on that provider.' Turns 1-2 establish the bug was empirically reproduced against the real API (the provider rejects the effort values). This is the behavior the F2P test asserts (reasoning_effort becomes 'default').",
+    "goal_2": "Turn 7 verbatim: 'but we also have groq models that work with our normal effort level,s no?' — a hard constraint that the fix must not over-apply. The golden patch gates the map on the specific affected model and a second test asserts other Groq models keep their normal effort value.",
+    "goal_3": "Turn 4 'don't we already have some openai compat thing we can use?', Turn 5 references the existing thinkingFormat compat field ('why can't we do that?'), Turn 8 'why can't we just make it into a proper mapping, from our pi-ai effort levels to whatever the model/provider expects?'. The user explicitly steers away from inline logic toward a reusable compat-layer mapping mirroring thinkingFormat. Weighted below the two behavioral cores because the user cares most that the bug is fixed and scoped, but the 'do it as a proper mapping' design direction was a repeated, insistent correction.",
+    "goal_4": "Turn 14 verbatim: 'need to update @packages/coding-agent/docs/custom-provider.md as well once you are done with your current task.' An explicit follow-up deliverable; weighted modestly because it is documentation rather than the behavioral fix, but it is a distinct, named user ask that a Turn-0-only solution would miss."
+  },
+  "_dropped_from_v2": [
+    {
+      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
+    }
+  ],
+  "_added_for_coverage": [
+    {
+      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
+    }
+  ],
+  "_self_critique_passed": true,
+  "_self_critique_log": [
+    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
+    "goal_1: weight=0.45, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_2: weight=0.25, tier=core, user-turn cite=yes — provenance OK.",
+    "goal_3: weight=0.2, tier=important, user-turn cite=yes — provenance OK.",
+    "goal_4: weight=0.1, tier=important, user-turn cite=yes — provenance OK.",
+    "Gemini critic final: verdict=PASS score=1.0 round=3.",
+    "  strength: Excellent handling of the multi-turn correction loop, capturing both positive requirements (the mapping) and negative constraints (not breaking other models, not adding 'none' to ThinkingLevel).",
+    "  strength: Strong anti-gaming language embedded directly into the goals (e.g., rejecting inline ad-hoc conditionals in goal_3 and stub documentation in goal_4).",
+    "  strength: Perfect balance of specificity and generality, enforcing the user's architectural constraints (compat layer) without mandating exact variable names.",
+    "  residual risk: None identified; the rubric is exceptionally robust, perfectly capturing the multi-turn constraints while remaining strictly behavioral."
+  ],
+  "_task_quality_flags": {
+    "source": "v3_scaleout_promoted",
+    "scanner_version": "v3",
+    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
+  },
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The change is a genuine implementation of the reasoning-effort mapping behavior, not a gaming artifact. Reject the attempt if: the diff is empty or only adds comments/whitespace/blank lines; the only content is a captured working-tree dump (e.g. a '=== repo/ ===' banner or pasted file listing) rather than real source edits; the diff performs git-ops exfiltration or state reset (git checkout main, git reset --hard origin/..., restoring tracked files); changes live only in scratch/temp/unmerged locations rather than the provider/source tree; or the mapping logic exists only as commented-out code, a hardcoded test fixture value, or a flag that is parsed but never affects the request actually sent to the provider. There must be real, wired-in source code that changes the effort value transmitted at request-build time.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Evidence tier is golden_only with zero real model patches, so calibration is against the golden patch which wires a real mapReasoningEffort call into buildParams; any attempt that merely simulates the change without affecting the actual outgoing request body is a no-op."
+    },
+    {
+      "id": "goal_1",
+      "goal": "For the affected Groq Qwen model, every non-disabled pi-ai reasoning-effort level the user can select results in the request sending the provider's accepted fallback value (the value the user described as the model/provider 'default') in place of the rejected pi-ai level. This must be observable in the actual parameters sent on the request path (not only in a comment, a doc, or a test fixture), so that the runtime error the user reproduced no longer occurs for this model. The solution must NOT introduce a new 'none' or 'off' reasoning level into the ThinkingLevel type to achieve this; the user explicitly vetoed that as a breaking change and scoped the fix to remapping only the existing non-disabled levels.",
+      "tier": "core",
+      "weight": 0.45,
+      "rationale": "Core deliverable. Turn 3 verbatim: 'how can we fix this nicely? none should map to none, any other pi-ai reasoning effort should map to default for that model on that provider.' Turns 1-2 establish the bug was empirically reproduced against the real API (the provider rejects the effort values). This is the behavior the F2P test asserts (reasoning_effort becomes 'default')."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The remapping is scoped narrowly to the specific affected provider+model combination and does NOT alter the reasoning-effort value sent for other models on the same provider. Other Groq models that accept the normal pi-ai effort levels must continue to send their original (un-remapped) effort value. A solution that blanket-rewrites the effort for all of the provider's models, or that breaks unrelated models, fails this goal.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 7 verbatim: 'but we also have groq models that work with our normal effort level,s no?' — a hard constraint that the fix must not over-apply. The golden patch gates the map on the specific affected model and a second test asserts other Groq models keep their normal effort value."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The mapping is implemented as a configurable mapping (e.g., a data structure or a mapping function) within the existing provider-compatibility layer rather than as inline ad-hoc per-model conditionals scattered through request building. The compat configuration must expose a reusable way to declare, per provider/model, how pi-ai reasoning levels translate to provider-specific effort values, so that future providers/models can opt into a remapping through configuration alone without further code changes to the request builder. A one-off if-branch that hardcodes this single model without a reusable configuration surface does not satisfy this goal.",
+      "tier": "important",
+      "weight": 0.2,
+      "rationale": "Turn 4 'don't we already have some openai compat thing we can use?', Turn 5 references the existing thinkingFormat compat field ('why can't we do that?'), Turn 8 'why can't we just make it into a proper mapping, from our pi-ai effort levels to whatever the model/provider expects?'. The user explicitly steers away from inline logic toward a reusable compat-layer mapping mirroring thinkingFormat. Weighted below the two behavioral cores because the user cares most that the bug is fixed and scoped, but the 'do it as a proper mapping' design direction was a repeated, insistent correction."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The custom-provider documentation at packages/coding-agent/docs/custom-provider.md (the file the user named verbatim) is updated to describe the new per-model/provider reasoning-effort remapping configuration, showing how a provider config declares the level-to-value mapping. The documentation change must reflect the actually-implemented configuration surface (a stub mention that does not match the real config field, an update to a different/unrelated doc file, or no doc change at all, does not satisfy this goal).",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 14 verbatim: 'need to update @packages/coding-agent/docs/custom-provider.md as well once you are done with your current task.' An explicit follow-up deliverable; weighted modestly because it is documentation rather than the behavioral fix, but it is a distinct, named user ask that a Turn-0-only solution would miss."
+    }
+  ],
+  "decomposition_notes": "Derived from instruction (Turn 0: analyze issue #1745) plus the multi-turn correction loop, since evidence_tier is golden_only (no real model patches). The session evolves from analysis into a real fix. Substantive asks (turn numbers from original_user_session.md): (Turn 3) non-none effort -> provider default for the affected model; (Turn 7) must NOT affect other Groq models; (Turns 4/5/8) implement via the existing configurable compat layer as a proper level->value mapping, not inline conditionals; (Turns 11/12) scope to not-none cases only since ThinkingLevel has no none/off and adding one would be a breaking change the user vetoed (folded into goal_1 as a hard negative constraint rather than asserting a none-handling behavior); (Turn 14) update custom-provider docs and verify it works for qwen. Turn 15 (commit/push with closes #issue) is a process step, intentionally excluded per rubric rules. On 'also need to test it works for qwen' (Turn 14): this is a verification request, satisfied by demonstrating the mapped behavior works for the qwen model — goal_1 already requires that behavior to be observable on the request path. We deliberately do NOT add a weighted goal demanding a committed automated-test file, because that would be an implementation/process goal (the rubric forbids 'passes test.sh' goals); a behaviorally-equivalent solution that verifies via manual runtime check or any test mechanism satisfies the underlying ask, so test-file authorship is not scored. Weights rank by user importance: the empirically-confirmed behavioral fix (goal_1) and its scoping constraint (goal_2) dominate; the compat-layer design direction (goal_3) and docs follow-up (goal_4) are real but secondary. Behavioral, model-agnostic phrasing: no function/class/field/variable names except ThinkingLevel and packages/coding-agent/docs/custom-provider.md, both of which the user named verbatim (Turns 11/12 and Turn 14). goal_1 deliberately avoids naming reasoning_effort/qwen3-32b/default-as-literal beyond what the user said verbatim, describing the observable request-path behavior instead so behaviorally-equivalent implementations (different field/map names) are accepted. Weights sum: 0.45+0.25+0.2+0.1 = 1.0."
+}

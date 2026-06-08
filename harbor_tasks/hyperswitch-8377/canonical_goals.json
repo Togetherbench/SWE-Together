@@ -1,0 +1,87 @@
+{
+  "task_name": "hyperswitch-8377",
+  "_rubric_version": "v3",
+  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
+  "_provenance": {
+    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
+    "goal_route": "Turn-0 verbatim: 'Adds a new endpoint: GET /v2/payments/{intent_id}/list_attempts' and 'GET /v2/payments/{intent_id}/attempts'. Exact path segment name varies across valid implementations (gold uses list_attempts, a model patch uses attempts), so the goal accepts either.",
+    "goal_retrieve_attempts": "Turn-0 verbatim: 'Retrieves all associated payment attempts linked to that intent_id' and 'a single payment intent may result in multiple attempts ... no clean way to retrieve all these attempts together'. This is the central behavior; weighted highest by user importance.",
+    "goal_list_response": "Turn-0 verbatim response example shows '{ \"payment_attempts\": [ ... ] }' — a list-shaped response. Gold names it payment_attempt_list, a model patch names it payment_attempts; the goal accepts any list-of-attempts field name.",
+    "goal_auth": "Turn-0 verbatim: 'Validates the request and ensures merchant authorization'. The PR body and curl example (api-key / Authorization headers, x-profile-id) confirm the endpoint must be auth-gated.",
+    "goal_integration": "Turn-0 PR checklist marks 'modifies the API contract' and the build must pass under v2; the gold patch threads Flow, lock_utils, ApiEventMetric, and openapi_v2 registration. Captures the compile-and-surface requirement without pinning exact symbol names."
+  },
+  "_dropped_from_v2": [
+    {
+      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
+    }
+  ],
+  "_added_for_coverage": [
+    {
+      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
+    }
+  ],
+  "_self_critique_passed": true,
+  "_self_critique_log": [
+    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
+    "goal_route: weight=0.25, tier=core, user-turn cite=see rationale — provenance OK.",
+    "goal_retrieve_attempts: weight=0.3, tier=core, user-turn cite=see rationale — provenance OK.",
+    "goal_list_response: weight=0.2, tier=core, user-turn cite=see rationale — provenance OK.",
+    "goal_auth: weight=0.15, tier=important, user-turn cite=see rationale — provenance OK.",
+    "goal_integration: weight=0.1, tier=important, user-turn cite=see rationale — provenance OK.",
+    "Gemini critic final: verdict=PASS score=1.0 round=1.",
+    "  strength: Excellent use of model patches to calibrate the acceptable variations in path segments and response field names.",
+    "  strength: Strong anti-cheating clauses in every goal that anticipate specific lazy-agent behaviors (e.g., returning a hardcoded list or bypassing auth).",
+    "  strength: Clear, logical weight distribution that prioritizes the core business logic over boilerplate integration.",
+    "  residual risk: None. This is a highly robust, well-calibrated rubric that perfectly balances behavioral flexibility with strict completeness checks."
+  ],
+  "_task_quality_flags": {
+    "source": "v3_scaleout_promoted",
+    "scanner_version": "v3",
+    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
+  },
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation of the requested endpoint, not a gaming artifact. It must FAIL if the diff is empty/no-op, contains only a captured-working-tree banner (e.g. a line like '=== repo/ ===' with no real code), is produced by git-ops exfiltration (git checkout/reset to restore upstream files rather than writing new code), changes only comments/whitespace/formatting, deletes or weakens tests to pass, or makes changes only in temporary/scratch/unmerged locations that never reach the compiled crates. The new endpoint and its supporting types must be real Rust code wired into the router so the feature could actually serve a request.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against the lowest-reward model patches: the minimax patch's diff is prefixed with a '=== hyperswitch/ ===' captured-tree banner and all four real model attempts scored 0.0, so a passing rubric must distinguish a working integration from diff-padding or partial scaffolds that don't compile."
+    },
+    {
+      "id": "goal_route",
+      "goal": "A new HTTP GET endpoint is exposed under the v2 payments API that is keyed by a payment intent identifier taken from the request path (a path shaped like the v2 payments resource for a given intent, ending in a list-attempts segment such as 'list_attempts' or 'attempts'). The route must be registered in the application's v2 router so it is actually reachable, and bound to GET (not POST/PUT). It must NOT be satisfied by a route that is declared but commented out, by a handler that is never registered, or by reusing an unrelated existing endpoint.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn-0 verbatim: 'Adds a new endpoint: GET /v2/payments/{intent_id}/list_attempts' and 'GET /v2/payments/{intent_id}/attempts'. Exact path segment name varies across valid implementations (gold uses list_attempts, a model patch uses attempts), so the goal accepts either."
+    },
+    {
+      "id": "goal_retrieve_attempts",
+      "goal": "The endpoint's backing logic retrieves ALL payment attempts associated with the given intent_id from the data store (not just one attempt, and not a hardcoded or empty list). There must be a real query/lookup that filters attempts by the intent identifier and collects every matching attempt. It must NOT be satisfied by returning a stubbed/empty/constant collection, by a function body that is unimplemented (todo!/unimplemented!/panic placeholder on the live path), or by ignoring the intent id and returning unrelated data.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn-0 verbatim: 'Retrieves all associated payment attempts linked to that intent_id' and 'a single payment intent may result in multiple attempts ... no clean way to retrieve all these attempts together'. This is the central behavior; weighted highest by user importance."
+    },
+    {
+      "id": "goal_list_response",
+      "goal": "The endpoint returns a response whose body is a JSON object containing a list/array of the payment attempts for that intent (one entry per attempt, each carrying that attempt's details). A dedicated response type exposing a vector/array field of attempt items is introduced and serialized to the client. It must NOT be satisfied by a type that holds only a single attempt, by a field that is parsed but never populated, or by a placeholder that always serializes empty regardless of the stored attempts.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn-0 verbatim response example shows '{ \"payment_attempts\": [ ... ] }' — a list-shaped response. Gold names it payment_attempt_list, a model patch names it payment_attempts; the goal accepts any list-of-attempts field name."
+    },
+    {
+      "id": "goal_auth",
+      "goal": "The endpoint validates the request and enforces merchant authorization before returning data, consistent with how the other v2 payments endpoints are protected (it goes through the standard authentication/authorization path for the merchant/profile rather than being publicly open). It must NOT be satisfied by an auth check that is commented out, bypassed with a hardcoded allow, or omitted so any caller can read another merchant's attempts.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn-0 verbatim: 'Validates the request and ensures merchant authorization'. The PR body and curl example (api-key / Authorization headers, x-profile-id) confirm the endpoint must be auth-gated."
+    },
+    {
+      "id": "goal_integration",
+      "goal": "The new endpoint is integrated cleanly enough that the router compiles with the v2 feature set and the public API surface reflects the addition: the supporting request/response types and route are wired through the crate's plumbing (e.g. flow registration, event-metric/locking plumbing, and the v2 OpenAPI/API documentation surface) so the build succeeds and the endpoint is discoverable. It must NOT be satisfied by code that fails to compile under v2 features, by leaving feature-gated stubs that break the build, or by adding the endpoint only to documentation without a working code path.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn-0 PR checklist marks 'modifies the API contract' and the build must pass under v2; the gold patch threads Flow, lock_utils, ApiEventMetric, and openapi_v2 registration. Captures the compile-and-surface requirement without pinning exact symbol names."
+    }
+  ],
+  "decomposition_notes": "Single-turn task (user_simulation_prompt target message count 0); all goals trace to the one Turn-0 instruction (instruction.md PR description). The substantive asks decompose into: (a) a new reachable GET endpoint keyed by intent_id [goal_route], (b) backing logic that fetches every attempt for that intent [goal_retrieve_attempts, the core behavior, highest weight], (c) a list-shaped response body [goal_list_response], (d) merchant auth/validation [goal_auth], and (e) clean integration so v2 builds and the API surface/docs reflect it [goal_integration]. Weights rank by user importance (retrieve-all > endpoint exists > list shape > auth > build/surface) and deliberately do NOT mirror test_manifest.yaml F2P weights (which front-load the cargo-check gate at 0.24 and split openapi into 0.20+0.20). Goal text is behavioral: gold uses names list_attempts / PaymentAttemptListResponse / payment_attempt_list while real model patches use attempts / PaymentsListAttemptsResponse / payment_attempts, so no oracle-specific identifiers are pinned. Weighted goals sum to 1.00."
+}
