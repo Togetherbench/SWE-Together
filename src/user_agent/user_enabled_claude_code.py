@@ -32,6 +32,21 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4  # allow agent to continue N times without user input before stopping
 
+# What of each tool call to surface to the user-sim in the trajectory snapshot.
+# Kept identical to user_enabled_opencode / user_enabled_mini_swe_agent so all
+# three harnesses present the same view to the simulator. The sim role-plays a
+# HUMAN user, who reacts to what a human sees — the agent's natural-language
+# narration and the visible code changes (the per-turn git diff) — NOT
+# agent-internal tool data. Showing raw ARGS (grep patterns, bash commands, file
+# paths) or RESULTS (raw output) lets the sim react to things the original human
+# never saw, hurting fidelity (it could "redirect" on a grep pattern a real user
+# couldn't have known). So we emit only the tool NAME — a thin "the agent is
+# searching/reading/editing" activity indicator. Flip either flag on only if a
+# faithfulness analysis justifies it (and flip the other harnesses' flags in
+# lockstep).
+_SHOW_TOOL_ARGS = False
+_SHOW_TOOL_RESULTS = False
+
 # Allowlist of roots searched for `.git` dirs during per-turn patch capture.
 # Covers every task layout observed in `harbor_tasks/` as of issue #159:
 #   - /workspace (default base-image + most task-level clones)
@@ -599,16 +614,26 @@ server.serve_forever()
 
     # ── trajectory snapshot for user sim ─────────────────────────────
 
-    def _parse_stream_json(self, raw: str) -> list[str]:
-        """Parse Claude Code stream-json output into structured step summaries.
+    def _parse_stream_json(self, raw: str) -> list[tuple]:
+        """Parse Claude Code stream-json output into an ordered event list.
 
-        Converts raw JSONL (thinking, tool_use, text, result) into a format
-        similar to Terminus 2's trajectory steps, so the user simulator sees
-        structured information instead of raw JSON noise.
+        Returns the same (kind, sid, payload) shape user_enabled_opencode and
+        user_enabled_mini_swe_agent use, so the user simulator sees a consistent
+        structure across all three harnesses:
+          - ("text", sid, str)                  — thinking / text narration
+          - ("tool", sid, (name, args, result)) — a tool call (result is "" since
+            claude's tool_result comes back as a separate user message we don't
+            surface)
 
         Uses self._global_step_id so step numbers are continuous across turns.
+
+        claude's terminal `result` event duplicates the final `text` block, so we
+        only fall back to it when the turn produced no text/thinking at all (e.g.
+        a tool-only turn) — otherwise it would double-count across the
+        trajectory/observation split in _snapshot_latest_turn.
         """
-        steps: list[str] = []
+        events: list[tuple] = []
+        pending_result: str | None = None
         for line in raw.split("\n"):
             line = line.strip()
             if not line:
@@ -625,50 +650,38 @@ server.serve_forever()
                     bt = block.get("type")
                     if bt == "thinking":
                         self._global_step_id += 1
-                        text = block.get("thinking", "")[:300]
-                        steps.append(f"[{self._global_step_id}] thinking: {text}")
+                        events.append(("text", self._global_step_id, block.get("thinking", "")))
+                    elif bt == "text":
+                        self._global_step_id += 1
+                        events.append(("text", self._global_step_id, block.get("text", "")))
                     elif bt == "tool_use":
                         self._global_step_id += 1
                         name = block.get("name", "?")
                         inp = block.get("input", {})
-                        # Show the most useful part of each tool call
-                        if name in ("Bash", "bash"):
-                            detail = inp.get("command", "")[:200]
-                        elif name in ("Read", "read"):
-                            detail = inp.get("file_path", "")
-                        elif name in ("Edit", "edit"):
-                            detail = inp.get("file_path", "")
-                        elif name in ("Write", "write"):
-                            detail = inp.get("file_path", "")
-                        elif name in ("Grep", "grep"):
-                            detail = f'pattern={inp.get("pattern", "")} path={inp.get("path", "")}'
-                        elif name in ("Glob", "glob"):
-                            detail = inp.get("pattern", "")
-                        else:
-                            detail = json.dumps(inp)[:200]
-                        steps.append(f"[{self._global_step_id}] tool_call({name}): {detail}")
-                    elif bt == "text":
-                        self._global_step_id += 1
-                        text = block.get("text", "")[:300]
-                        steps.append(f"[{self._global_step_id}] agent: {text}")
+                        args = inp if isinstance(inp, str) else json.dumps(inp)
+                        events.append(("tool", self._global_step_id, (name, args, "")))
 
             elif t == "result":
-                self._global_step_id += 1
                 result = obj.get("result", "")
-                if isinstance(result, str):
-                    steps.append(f"[{self._global_step_id}] result: {result[:300]}")
-                else:
-                    steps.append(f"[{self._global_step_id}] result: {json.dumps(result)[:300]}")
+                pending_result = result if isinstance(result, str) else json.dumps(result)
 
-        return steps
+        if pending_result and not any(k == "text" for k, _, _ in events):
+            self._global_step_id += 1
+            events.append(("text", self._global_step_id, pending_result))
+
+        return events
 
     def _snapshot_latest_turn(self) -> tuple[str, str]:
-        """Return structured steps and raw observation for the LATEST turn only.
+        """Return (trajectory, observation) for the LATEST turn only.
 
-        Returns (trajectory, observation) where:
-        - trajectory: structured step summary of the latest turn's agent activity
-        - observation: the last result/agent text from the latest turn (what the
-          agent actually produced, not the full tool-call log)
+        Truncation + role-partitioning are kept identical to
+        user_enabled_opencode / user_enabled_mini_swe_agent so the user simulator
+        sees the same shape of input from all three harnesses:
+          - trajectory ("Agent activity") = intermediate thinking + tool calls
+            (+ results, both gated by _SHOW_TOOL_* flags), with the final report
+            removed, tail-capped at ctx_budget*2.
+          - observation ("Agent output") = the agent's FINAL narration this turn
+            (the decision-critical conclusion), kept whole up to 3000 chars.
 
         Prior turns are already in the user sim's conversation history, so
         re-sending them would cause O(N²) growth and confuse the LLM.
@@ -676,27 +689,58 @@ server.serve_forever()
         if not self._cumulative_output:
             return "(nothing yet)", "(nothing yet)"
 
-        # Parse only the latest turn's raw output
+        # Parse only the latest turn's raw output into the shared event list.
         latest_raw = self._cumulative_output[-1]
-        steps = self._parse_stream_json(latest_raw)
+        events = self._parse_stream_json(latest_raw)
 
-        if not steps:
-            trajectory = latest_raw[:self._ctx_budget] if latest_raw else "(no structured output)"
+        if not events:
+            tail = latest_raw[:self._ctx_budget] if latest_raw else "(no structured output)"
+            return tail, tail
+
+        # Dedup the two sections by role (mirrors opencode). The agent's FINAL
+        # narration is reserved for the observation; everything else — earlier
+        # thinking + tool calls + results — is the trajectory, with that final
+        # report removed so it isn't duplicated across both sections.
+        last_text_idx = None
+        for idx, ev in enumerate(events):
+            if ev[0] == "text":
+                last_text_idx = idx
+
+        steps: list[str] = []
+        for idx, (kind, sid, payload) in enumerate(events):
+            if kind == "text":
+                if idx == last_text_idx:
+                    continue  # reserved for the observation; don't duplicate
+                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
+                steps.append(f"[{sid}] thinking: {snippet}")
+            else:
+                name, args, result = payload
+                if _SHOW_TOOL_ARGS and args and args != "{}":
+                    if len(args) > 200:
+                        args = args[:200] + "…"
+                    steps.append(f"[{sid}] tool_call({name}): {args}")
+                else:
+                    steps.append(f"[{sid}] tool_call({name})")
+                if _SHOW_TOOL_RESULTS and result:
+                    # 300-char tail keeps the conclusion/error without
+                    # re-flooding the ctx_budget*2 trajectory cap.
+                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
+                    steps.append(f"[{sid}] result: {r}")
+
+        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
+        if len(trajectory) > self._ctx_budget * 2:
+            trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
+
+        if last_text_idx is not None:
+            sid, report = events[last_text_idx][1], events[last_text_idx][2]
+            observation = f"[{sid}] agent: {report[:3000]}"
         else:
-            trajectory = "\n".join(steps)
-
-        # Observation: extract the last result/agent text as what the agent
-        # actually produced (the user cares about the outcome, not every tool call)
-        observation_lines = [s for s in steps if any(
-            s.split("] ", 1)[-1].startswith(prefix)
-            for prefix in ("result:", "agent:")
-        )]
-        if observation_lines:
-            # Show last few result/agent lines (the actual output)
-            observation = "\n".join(observation_lines[-5:])
-        else:
-            observation = trajectory[-self._ctx_budget:] if trajectory else "(no output)"
-
+            # No narration this turn (rare) — surface the last tool result.
+            observation = "(no agent narration this turn)"
+            for kind, sid, payload in reversed(events):
+                if kind == "tool" and payload[2]:
+                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
+                    break
         return trajectory, observation
 
     # ── user simulation ──────────────────────────────────────────────

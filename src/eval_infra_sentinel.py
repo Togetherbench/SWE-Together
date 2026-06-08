@@ -85,6 +85,9 @@ class TrialSignals:
     edit_tool_calls: int = 0
     all_tool_calls: int = 0
     api_retry_count: int = 0
+    # opencode-only: step-finish events whose reason == "error" (the codex
+    # OAuth backend 503/429/overloaded that ends a turn with 0 tokens).
+    backend_error_turns: int = 0
     result_subtypes: list[str] = field(default_factory=list)
     transcript_present_but_empty: bool = False
     empty_transcript_names: list[str] = field(default_factory=list)
@@ -159,9 +162,67 @@ def _stream_signals(claude_code_path: Path) -> TrialSignals:
     return sig
 
 
+_OPENCODE_EDIT_TOOLS = frozenset({"edit", "write", "patch", "apply_patch", "multiedit"})
+
+
+def _stream_signals_opencode(opencode_path: Path) -> TrialSignals:
+    """Parse opencode.txt (a different JSONL schema than claude-code.txt).
+
+    Opencode emits one JSON object per event: ``type`` in {step_start,
+    step_finish, tool_use, text, reasoning}. A turn ends with a
+    ``step_finish`` carrying ``part.reason`` (``tool-calls`` on success,
+    ``error`` when the model call failed — the codex OAuth 503/429 case,
+    which also shows ``tokens.output == 0``). Edit-class tools live under
+    ``part.tool``. Without this, the sentinel saw zero signals for every
+    opencode trial and ``no_agent_progress`` could never fire.
+    """
+    sig = TrialSignals()
+    if not opencode_path.exists():
+        return sig
+    try:
+        fh = opencode_path.open("r", encoding="utf-8", errors="replace")
+    except OSError:
+        return sig
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            t = obj.get("type")
+            part = obj.get("part") if isinstance(obj.get("part"), dict) else {}
+            if t == "tool_use":
+                sig.all_tool_calls += 1
+                tool = part.get("tool") or obj.get("tool")
+                if tool in _OPENCODE_EDIT_TOOLS:
+                    sig.edit_tool_calls += 1
+            elif t == "step_finish":
+                sig.assistant_turn_count += 1
+                if part.get("reason") == "error":
+                    sig.backend_error_turns += 1
+            elif t == "text":
+                txt = part.get("text") or obj.get("text") or ""
+                if isinstance(txt, str) and txt:
+                    sig.assistant_texts.append(txt[:400])
+    return sig
+
+
 def collect_signals(trial_dir: Path) -> TrialSignals:
     """Public entry: assemble all signals for a trial directory."""
     sig = _stream_signals(trial_dir / "agent" / "claude-code.txt")
+    # opencode / mini-swe-agent don't write claude-code.txt, so the CC parse
+    # above sees zero turns. Fall back to the opencode transcript so the
+    # progress/backend-error detectors have real signals to work with.
+    if sig.assistant_turn_count == 0 and sig.all_tool_calls == 0:
+        oc = _stream_signals_opencode(trial_dir / "agent" / "opencode.txt")
+        sig.assistant_turn_count = oc.assistant_turn_count
+        sig.assistant_texts = oc.assistant_texts
+        sig.edit_tool_calls = oc.edit_tool_calls
+        sig.all_tool_calls = oc.all_tool_calls
+        sig.backend_error_turns = oc.backend_error_turns
     patch_path = trial_dir / "agent" / "final.patch"
     if patch_path.exists():
         sig.patch_missing = False
@@ -308,6 +369,26 @@ def _detect_no_agent_progress(sig: TrialSignals) -> tuple[bool, str, dict[str, A
     }
 
 
+def _detect_opencode_backend_error(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
+    """opencode step(s) ended with reason=error — the codex OAuth backend
+    returning 503/429/overloaded (turn ends with 0 output tokens). Reaches
+    this detector only when the patch is empty (gated in classify_trial), so
+    a trial that errored on some turns but still produced a real diff stays
+    ``ok``. This is the dominant opencode-gpt failure: ~50% of the gpt cohort
+    at 50 workers were silent codex errors the sentinel previously missed."""
+    if sig.backend_error_turns < 1:
+        return False, "", {}
+    return True, (
+        f"opencode backend errored on {sig.backend_error_turns}/"
+        f"{sig.assistant_turn_count} step(s) (codex 503/429/overloaded — "
+        f"turn ended with 0 tokens) and the patch is empty"
+    ), {
+        "backend_error_turns": sig.backend_error_turns,
+        "assistant_turns": sig.assistant_turn_count,
+        "patch_bytes": sig.patch_bytes,
+    }
+
+
 # Order matters: most specific provider signature first; the catch-all
 # "no_agent_progress" detector runs last so a real provider error gets the
 # precise reason in its sidecar instead of the generic one.
@@ -318,6 +399,7 @@ DETECTORS: list[tuple[str, Any]] = [
     ("provider_401_auth", _detect_provider_401_auth),
     ("provider_html_error", _detect_provider_html_error),
     ("parse_failure_corruption", _detect_parse_failure_corruption),
+    ("opencode_backend_error", _detect_opencode_backend_error),
     ("no_agent_progress", _detect_no_agent_progress),
 ]
 

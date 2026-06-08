@@ -48,6 +48,20 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4  # allow agent to continue N times without user input before stopping
 
+# What of each tool call to surface to the user-sim in the trajectory snapshot.
+# Kept identical to user_enabled_opencode so both harnesses present the same
+# view to the simulator. The sim role-plays a HUMAN user, who reacts to what a
+# human sees — the agent's natural-language narration (assistant `content`) and
+# the visible code changes (the per-turn git diff) — NOT agent-internal tool
+# data. Showing raw ARGS (grep patterns, file paths) or RESULTS (raw output)
+# lets the sim react to things the original human never saw, hurting fidelity
+# (it could "redirect" on a grep pattern a real user couldn't have known). So we
+# emit only the tool NAME — a thin "the agent is searching/reading/editing"
+# activity indicator. Flip either flag on only if a faithfulness analysis
+# justifies it (and flip the opencode flags in lockstep).
+_SHOW_TOOL_ARGS = False
+_SHOW_TOOL_RESULTS = False
+
 
 def _normalize_content(raw_content: Any) -> str:
     """Normalize an LLM message content field (string, list of parts, None).
@@ -447,17 +461,19 @@ class UserEnabledMiniSweAgent(BaseAgent):
         """Return (trajectory, observation) for the LATEST turn's mini-swe-agent
         run, parsed from its trajectory JSON.
 
-        - trajectory: structured step summary
-              `[step] thinking: ...`
-              `[step] tool_call(name, args): ...`
-              `[step] result: ...`
-        - observation: the last few `result` / `agent` lines (what the agent
-          actually produced), so user_sim sees outcomes not every shell call.
+        Truncation + role-partitioning are kept identical to
+        user_enabled_opencode's `_snapshot_latest_turn` so the user simulator
+        sees the same shape of input from both harnesses:
+          - trajectory ("Agent activity") = intermediate thinking + tool calls
+            (+ results, both gated by _SHOW_TOOL_* flags), with the final report
+            removed, tail-capped at ctx_budget*2.
+          - observation ("Agent output") = the agent's FINAL narration this turn
+            (the decision-critical conclusion), kept whole up to 3000 chars.
 
         Prior turns are already in the user-sim's conversation history; only
         the latest turn's trajectory.json is parsed (mini-swe-agent rewrites
         its --output file on every run, so each trajectory.json IS the
-        latest turn). Ports v0.5 #2 to mini-swe-agent.
+        latest turn).
         """
         traj_path = self._find_trajectory_path()
         if not traj_path or not traj_path.exists():
@@ -472,8 +488,12 @@ class UserEnabledMiniSweAgent(BaseAgent):
             return tail, tail
 
         messages = data.get("messages") or []
-        steps: list[str] = []
-        observation_lines: list[str] = []
+        # First pass: collect this turn's events in order, mirroring opencode's
+        # event list. ("text", sid, str) | ("tool", sid, (name, args, result)).
+        # mini-swe-agent packs reasoning + the tool call into the assistant
+        # message `content`, so each assistant content IS a "text" event; the
+        # following `tool` message carries that call's result.
+        events: list[tuple] = []
         step_id = 0
         i = 0
         while i < len(messages):
@@ -482,43 +502,70 @@ class UserEnabledMiniSweAgent(BaseAgent):
             if role == "assistant":
                 step_id += 1
                 content = _normalize_content(msg.get("content"))
-                # mini-swe-agent often packs reasoning + the tool call into the
-                # assistant message text; surface it as thinking.
                 if content.strip():
-                    snippet = content.strip()
-                    if len(snippet) > 300:
-                        snippet = snippet[:300] + "…"
-                    steps.append(f"[{step_id}] thinking: {snippet}")
+                    events.append(("text", step_id, content.strip()))
                 for tc in msg.get("tool_calls") or []:
                     fn = (tc.get("function") or {})
                     name = fn.get("name", "?")
                     args = fn.get("arguments", "")
-                    if len(args) > 200:
-                        args = args[:200] + "…"
-                    steps.append(f"[{step_id}] tool_call({name}): {args}")
-                if not msg.get("tool_calls") and content.strip():
-                    # No tool call — pure agent message, this IS observation material.
-                    observation_lines.append(f"[{step_id}] agent: {content.strip()[:500]}")
-            elif role == "tool":
-                content = _normalize_content(msg.get("content"))
-                if len(content) > 500:
-                    content = "…[truncated]…\n" + content[-500:]
-                steps.append(f"[{step_id}] result: {content}")
-                observation_lines.append(f"[{step_id}] result: {content[:500]}")
+                    if not isinstance(args, str):
+                        args = json.dumps(args)
+                    # Pair the call with its result in the next `tool` message.
+                    result = ""
+                    if i + 1 < len(messages) and messages[i + 1].get("role") == "tool":
+                        result = _normalize_content(messages[i + 1].get("content"))
+                    events.append(("tool", step_id, (name, args, result)))
             i += 1
 
-        if not steps:
+        if not events:
             tail = self._snapshot_recent_output()
             return tail, tail
 
-        trajectory = "\n".join(steps)
+        # Dedup the two sections by role (mirrors opencode). The agent's FINAL
+        # narration is reserved for the observation; everything else — earlier
+        # thinking + tool calls + results — is the trajectory, with that final
+        # report removed so it isn't duplicated across both sections.
+        last_text_idx = None
+        for idx, ev in enumerate(events):
+            if ev[0] == "text":
+                last_text_idx = idx
+
+        steps: list[str] = []
+        for idx, (kind, sid, payload) in enumerate(events):
+            if kind == "text":
+                if idx == last_text_idx:
+                    continue  # reserved for the observation; don't duplicate
+                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
+                steps.append(f"[{sid}] thinking: {snippet}")
+            else:
+                name, args, result = payload
+                if _SHOW_TOOL_ARGS and args and args != "{}":
+                    if len(args) > 200:
+                        args = args[:200] + "…"
+                    steps.append(f"[{sid}] tool_call({name}): {args}")
+                else:
+                    steps.append(f"[{sid}] tool_call({name})")
+                if _SHOW_TOOL_RESULTS and result:
+                    # 300-char tail keeps the conclusion/error without
+                    # re-flooding the ctx_budget*2 trajectory cap.
+                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
+                    steps.append(f"[{sid}] result: {r}")
+
+        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
         if len(trajectory) > self._ctx_budget * 2:
             # Keep tail — last steps matter more for "what just happened".
             trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
 
-        observation = ("\n".join(observation_lines[-5:])
-                       if observation_lines
-                       else trajectory[-self._ctx_budget:])
+        if last_text_idx is not None:
+            sid, report = events[last_text_idx][1], events[last_text_idx][2]
+            observation = f"[{sid}] agent: {report[:3000]}"
+        else:
+            # No narration this turn (rare) — surface the last tool result.
+            observation = "(no agent narration this turn)"
+            for kind, sid, payload in reversed(events):
+                if kind == "tool" and payload[2]:
+                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
+                    break
         return trajectory, observation
 
     def _find_trajectory_path(self) -> Path | None:
@@ -549,7 +596,11 @@ class UserEnabledMiniSweAgent(BaseAgent):
         decision = await self._sim_user.process(
             task_description=self._task_instruction,
             recent_trajectory=trajectory,
-            latest_observation=observation[:self._ctx_budget],
+            # observation is already bounded by _snapshot_latest_turn (the final
+            # narration ≤3000, or a ≤500-char tool-result fallback); the old
+            # [:self._ctx_budget] re-truncation never fired and only obscured
+            # where the real bound lives. Matches user_enabled_opencode.
+            latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
             is_completion_attempt=completing,

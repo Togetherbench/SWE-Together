@@ -2,17 +2,19 @@
 set -euo pipefail
 
 apt-get update
-apt-get install -y curl
+apt-get install -y curl ca-certificates
 
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
-
-export NVM_DIR="$HOME/.nvm"
-# Source nvm with || true to handle nvm.sh's internal non-zero returns
-\. "$NVM_DIR/nvm.sh" || true
-# Verify NVM loaded successfully
-command -v nvm &>/dev/null || { echo "Error: NVM failed to load" >&2; exit 1; }
-
-nvm install 22
+# Install Node.js 22 via NodeSource (deb.nodesource.com).
+#
+# We deliberately do NOT use nvm here: nvm's installer is fetched from
+# raw.githubusercontent.com and then clones github.com, both of which are
+# sinkholed to 127.0.0.1 by the PR #221 contamination defense (seal-dns.sh).
+# That made agent setup fail with `curl: (7) ... raw.githubusercontent.com`
+# on ~58% of trials. NodeSource's apt repo is not sinkholed, so node installs
+# cleanly while the github/raw sinkhole stays fully intact for the agent.
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+node -v
 npm -v
 
 {% if version %}
