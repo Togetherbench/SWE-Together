@@ -58,6 +58,18 @@ _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4
 _OPENCODE_LOG = "/logs/agent/opencode.txt"
 
+# What of each tool call to surface to the user-sim in "## Agent activity".
+# The sim role-plays a HUMAN user, who reacts to what a human sees — the agent's
+# natural-language narration (the `text` events) and the visible code changes
+# (the per-turn git diff) — NOT agent-internal tool data. Showing raw ARGS (grep
+# patterns, full file paths) or RESULTS (raw output) lets the sim react to things
+# the original human never saw, hurting fidelity (it could "redirect" on a grep
+# pattern a real user couldn't have known). So we emit only the tool NAME — a
+# thin "the agent is searching/reading/editing" activity indicator, like a UI
+# status line. Flip either flag on only if a faithfulness analysis justifies it.
+_SHOW_TOOL_ARGS = False
+_SHOW_TOOL_RESULTS = False
+
 
 def _normalize_content(raw_content: Any) -> str:
     """Stringify an OpenCode content field (string, dict, list of parts, None)."""
@@ -608,11 +620,14 @@ class UserEnabledOpenCode(BaseAgent):
 
         # Latest turn's events are the last entry appended to cumulative_output
         latest_raw = self._cumulative_output[-1]
-        steps: list[str] = []
-        observation_lines: list[str] = []
+        # First pass: collect this turn's events in order (gated by
+        # step_start/step_finish exactly as before). step_finish is dropped —
+        # it's only token-accounting JSON ({"total":…,"cache":…}) the sim never
+        # uses (~47% of trajectory chars across the cohort); step_id still
+        # increments on step_start so step structure is unchanged.
+        events: list[tuple] = []  # ("text", sid, str) | ("tool", sid, (name,args,result))
         step_id = 0
         current_turn_open = False
-
         for line in latest_raw.split("\n"):
             line = line.strip()
             if not line:
@@ -630,51 +645,83 @@ class UserEnabledOpenCode(BaseAgent):
                 continue
             if etype == "step_finish":
                 current_turn_open = False
-                fin = part.get("cost") or part.get("tokens")
-                if fin:
-                    steps.append(f"[{step_id}] step_finish: {json.dumps(fin)[:150]}")
                 continue
             if etype == "text" and current_turn_open:
                 text = _normalize_content(part.get("text") or part)
-                if not text.strip():
-                    continue
-                snippet = text.strip()
-                if len(snippet) > 300:
-                    snippet = snippet[:300] + "…"
-                steps.append(f"[{step_id}] thinking: {snippet}")
-                observation_lines.append(f"[{step_id}] agent: {text.strip()[:500]}")
+                if text.strip():
+                    events.append(("text", step_id, text.strip()))
                 continue
             if etype == "tool_use" and current_turn_open:
                 name = part.get("tool") or part.get("name") or "?"
-                args = part.get("input") or part.get("arguments") or {}
+                # This opencode version nests the tool's input/output under
+                # `part.state` (matching Harbor's own _parse_stdout); the old
+                # top-level `part.input`/`part.output` were always null, so the
+                # sim saw `tool_call(bash): {}` and zero results — blind to what
+                # commands ran. Read state first, fall back to the legacy fields.
+                state = part.get("state")
+                if not isinstance(state, dict):
+                    state = {}
+                args = state.get("input") or part.get("input") or part.get("arguments") or {}
                 if not isinstance(args, str):
                     args = json.dumps(args)
-                if len(args) > 200:
-                    args = args[:200] + "…"
-                steps.append(f"[{step_id}] tool_call({name}): {args}")
-                result = part.get("output") or part.get("result") or ""
+                result = state.get("output") or part.get("output") or part.get("result") or ""
                 if isinstance(result, dict):
                     result = json.dumps(result)
-                if result:
-                    result = str(result)
-                    if len(result) > 500:
-                        result = "…[truncated]…\n" + result[-500:]
-                    steps.append(f"[{step_id}] result: {result}")
-                    observation_lines.append(f"[{step_id}] result: {str(result)[:500]}")
+                events.append(("tool", step_id, (name, args, str(result) if result else "")))
                 continue
             # error / other event types — quietly skipped, mirrors mini-swe-agent
 
-        if not steps:
+        if not events:
             tail = self._snapshot_recent_output()
             return tail, tail
 
-        trajectory = "\n".join(steps)
+        # Dedup the two sections by role. Previously the agent's narration was
+        # emitted into BOTH "Agent activity" (as `thinking:`) and "Agent output"
+        # (as `agent:`), duplicating the report. Instead partition:
+        #   - "Agent output" (observation) = the agent's FINAL narration this
+        #     turn — the decision-critical conclusion, kept whole (≤3000).
+        #   - "Agent activity" (trajectory) = everything else — intermediate
+        #     thinking + tool calls + results — with that final report removed.
+        last_text_idx = None
+        for i, ev in enumerate(events):
+            if ev[0] == "text":
+                last_text_idx = i
+
+        steps: list[str] = []
+        for i, (kind, sid, payload) in enumerate(events):
+            if kind == "text":
+                if i == last_text_idx:
+                    continue  # reserved for the observation; don't duplicate
+                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
+                steps.append(f"[{sid}] thinking: {snippet}")
+            else:
+                name, args, result = payload
+                if _SHOW_TOOL_ARGS and args and args != "{}":
+                    if len(args) > 200:
+                        args = args[:200] + "…"
+                    steps.append(f"[{sid}] tool_call({name}): {args}")
+                else:
+                    steps.append(f"[{sid}] tool_call({name})")
+                if _SHOW_TOOL_RESULTS and result:
+                    # 300-char tail keeps the conclusion/error without
+                    # re-flooding the ctx_budget*2 trajectory cap.
+                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
+                    steps.append(f"[{sid}] result: {r}")
+
+        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
         if len(trajectory) > self._ctx_budget * 2:
             trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
 
-        observation = ("\n".join(observation_lines[-5:])
-                       if observation_lines
-                       else trajectory[-self._ctx_budget:])
+        if last_text_idx is not None:
+            sid, report = events[last_text_idx][1], events[last_text_idx][2]
+            observation = f"[{sid}] agent: {report[:3000]}"
+        else:
+            # No narration this turn (rare) — surface the last tool result.
+            observation = "(no agent narration this turn)"
+            for kind, sid, payload in reversed(events):
+                if kind == "tool" and payload[2]:
+                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
+                    break
         return trajectory, observation
 
     def _archive_turn_stdout(self, turn: int, stdout: str) -> None:
@@ -723,7 +770,10 @@ class UserEnabledOpenCode(BaseAgent):
         decision = await self._sim_user.process(
             task_description=self._task_instruction,
             recent_trajectory=trajectory,
-            latest_observation=observation[:self._ctx_budget],
+            # observation is already bounded by _snapshot_latest_turn (last 5
+            # lines, each capped); the old [:self._ctx_budget] re-truncation
+            # never fired and only obscured where the real bound lives.
+            latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
             is_completion_attempt=completing,
@@ -763,6 +813,19 @@ class UserEnabledOpenCode(BaseAgent):
         }
         path = episode_dir / "user_decision.json"
         path.write_text(json.dumps(record, indent=2, ensure_ascii=False))
+
+        # Record the EXACT prompt the user-sim received this turn (the INPUT),
+        # so downstream tooling reads ground truth instead of reconstructing it.
+        prompt_record = {
+            "turn": turn,
+            "tool_choice": "required",
+            "system_prompt": self._sim_user._sys,
+            "turn_content": self._sim_user.last_turn_content,
+            "messages": self._sim_user.last_messages_sent,
+        }
+        (episode_dir / "user_sim_prompt.json").write_text(
+            json.dumps(prompt_record, indent=2, ensure_ascii=False)
+        )
 
     # ── per-turn diff capture ─────────────────────────────────────────
 

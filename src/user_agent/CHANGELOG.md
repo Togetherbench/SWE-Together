@@ -34,6 +34,87 @@ translated per-provider (mini-swe → `reasoning.max_tokens`; opencode →
 `--variant` + `opencode.json`; Anthropic → thinking budget; DeepSeek floors
 at `high`). Full mapping in the v1.0 *Reasoning depth* table.
 
+## Unreleased
+
+- **opencode snapshot — tool NAME only (args + results off, on fidelity grounds)**
+  (`user_enabled_opencode.py`, **local**): the tool parse read
+  `part.input`/`part.output`, which this opencode version leaves null (the data
+  is under `part.state.*`), so `tool_call(bash): {}` was always empty. Rather
+  than surface the now-readable args/results, we deliberately **don't**: the sim
+  role-plays a *human user*, who reacts to the agent's natural-language
+  narration (`text`) and the visible code changes (per-turn git diff) — not
+  agent-internal tool data. Showing raw grep patterns / file paths / outputs
+  would let the sim react to things the original human never saw (e.g. redirect
+  on a grep pattern), hurting fidelity (G1). So we emit only the tool **name** —
+  a thin activity indicator. Both gated by `_SHOW_TOOL_ARGS` / `_SHOW_TOOL_RESULTS`
+  (default False; `part.state` reading is kept so flipping a flag works). Bonus:
+  it's also the leanest — avg trajectory ~742 vs 3920 with args+results.
+
+- **Record the user-sim prompt input** (`user_agent.py` + `user_enabled_opencode.py`,
+  **local**): the exact prompt sent to the user-sim LLM was never persisted —
+  only the decision (`user_decision.json`) was — so any downstream view (the
+  trajectory visualizer, debugging) had to *reconstruct* it by replaying the
+  parser, which drifts whenever the parser changes. Now `UserAgent.process()`
+  stashes the literal `turn_content` + full `messages` it sent, and opencode's
+  `_log_user_decision` writes `episode-N/user_sim_prompt.json`
+  (`system_prompt` + `turn_content` + `messages` + `tool_choice`). The
+  visualizer prefers this file (verbatim ground truth) and falls back to
+  reconstruction only for older trials that predate it, labeling which mode it
+  used. (Recording is wired for opencode; the stash is shared on `UserAgent`,
+  so extending the other wrappers' `_log_user_decision` is a 3-line change.)
+
+- **Turn summary — stop truncating the task to 400 chars** (`user_agent.py:
+  _build_turn_summary`, **local**, all harnesses): the first-turn `## Task`
+  block clipped the instruction at 400 chars, but **62% of tasks (102/165)
+  have instructions longer than that** (median ~1200, p95 ~15K). The sim never
+  saw the full requirements — yet "the agent tried to finish but missed
+  requirements" is one of its primary triggers, unjudgeable without them. Now
+  shows the full task (carried forward in history) with a generous 16K safety
+  cap that only guards the long tail (a few tasks run 80K–440K chars).
+
+- **opencode snapshot — dedup "Agent activity" vs "Agent output"**
+  (`user_enabled_opencode.py:_snapshot_latest_turn`, **local**): the agent's
+  narration was emitted into BOTH sections (`[n] thinking:` in activity and
+  `[n] agent:` in output), duplicating the report. Rewrote the parse as a
+  two-pass that partitions by role: "Agent output" = the agent's FINAL
+  narration this turn (the decision-critical conclusion, kept whole ≤3000);
+  "Agent activity" = everything else (intermediate thinking + tool calls +
+  results) with that final report removed. Combined activity+output size
+  **2895 → 2173 chars/turn (−25%)** across the cohort, with no signal loss —
+  the two sections now cover disjoint content.
+
+- **opencode trajectory snapshot — drop `step_finish` token-noise lines**
+  (`user_enabled_opencode.py:_snapshot_latest_turn`, **local**): the snapshot
+  fed to the user-sim emitted one `[N] step_finish: {"total":…,"input":…,
+  "cache":…}` line per step. Measured across the `trials_70_opencode_opus_r1`
+  cohort (611 turns), these token-accounting lines were **47% of all
+  trajectory characters** the simulator read — pure noise it never uses
+  (timing comes from `elapsed_sec`, not these counts). Worse, the noise was
+  crowding real `thinking`/`tool_call` content past the `ctx_budget*2` (6000
+  char) cap: **15% of turns hit the cap** and dropped real content. Fix: close
+  the step (`current_turn_open = False`) but emit no line; `step_id` still
+  increments on `step_start`, so step structure is unchanged. After: step_finish
+  share **47% → 0%**, cap-hit rate **15% → 4%**, average trajectory **2946 →
+  1573 chars** — same signal, half the bytes, far less truncation pressure.
+- **opencode snapshot — stop clipping the agent report, drop a dead
+  re-truncation** (`user_enabled_opencode.py`, **local**, follow-up to the
+  step_finish fix): two more cleanups now that the noise budget is freed.
+  (1) Raised the agent-narration cap in the observation from **500 → 3000**
+  chars (= ctx_budget; observation is now a single final-report line so it can
+  use the full budget). The agent's report is the single most decision-relevant
+  signal (every opencode turn is a "completion attempt"); 500 clipped **18%** of
+  reports (804/4480, longest 11.8K). (2) Deleted the redundant `observation[:self._ctx_budget]`
+  re-truncation at the `_consult_user` call site — it re-clamped something the
+  snapshot already bounds (last-5-lines window), so it never fired at the old
+  cap and only hid where the real bound lives. Observation is now bounded solely
+  by the 5-line window × per-line caps (worst case ~7.4K, avg 1.3K).
+  **Still open (bigger than truncation): the tool-call args/results are dropped
+  entirely** — `_snapshot_latest_turn` reads `part.input`/`part.output` but this
+  opencode version nests them under `part.state.input`/`part.state.output`, so
+  every `tool_call(bash): {}` is empty and no tool-result line is ever emitted.
+  The sim currently can't see what commands ran or their output, only the
+  agent's self-narration. Fix pending.
+
 ## v1.0 — 2026-05-31
 
 **Stabilization release: mini-swe-agent + opencode wrappers production-ready

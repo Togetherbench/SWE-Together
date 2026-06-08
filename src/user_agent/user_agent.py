@@ -230,6 +230,10 @@ class UserAgent:
         self.message_count = 0
         self._counts: dict[str, int] = {}
 
+        # exact prompt sent on the most recent process() call (for logging)
+        self.last_turn_content: str = ""
+        self.last_messages_sent: list[dict[str, str]] = []
+
     # ── public ──
 
     async def process(
@@ -268,6 +272,16 @@ class UserAgent:
         # a kwarg gets silently dropped by drop_params when it's not in the
         # provider's supported params list.
         history_with_sys = [{"role": "system", "content": self._sys}] + self._messages
+
+        # Stash the EXACT prompt sent to the user-sim LLM this turn so the
+        # wrapper can persist it (episode-N/user_sim_prompt.json). The runtime
+        # prompt is otherwise never logged — downstream tools (the trajectory
+        # visualizer, debugging) had to reconstruct it by replaying the parse.
+        # `turn_content` is the final user message; `messages` is the full array.
+        self.last_turn_content = turn_content
+        self.last_messages_sent = history_with_sys + [
+            {"role": "user", "content": turn_content}
+        ]
 
         try:
             resp = await self._llm.call(
@@ -353,8 +367,14 @@ class UserAgent:
             sections.append("** The agent is signaling completion.")
 
         if self.total_calls == 1:
-            # First call — include task description for context
-            sections.append(f"\n## Task\n{task[:400]}")
+            # First call — include the (near-)full task description. The old
+            # 400-char cap hid the requirements for 62% of tasks (median ~1200),
+            # making the "agent tried to finish but missed requirements" trigger
+            # unjudgeable. Shown once on turn 1; history carries it forward.
+            # A generous 16K safety cap (≈ p95 of instruction length) only
+            # guards the long tail — a handful of tasks run 80K–440K chars and
+            # would otherwise blow up every cached turn.
+            sections.append(f"\n## Task\n{task[:16000]}")
 
         sections.append(f"\n## Agent activity (this turn)\n{trajectory}")
         sections.append(f"\n## Agent output\n{observation}")
