@@ -30,8 +30,10 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-TRIAL_BUDGET_SEC = 5400
-PER_EXEC_CAP_SEC = 1800
+import os
+
+TRIAL_BUDGET_SEC = int(os.environ.get("TRIAL_BUDGET_SEC", "5400"))
+PER_EXEC_CAP_SEC = int(os.environ.get("PER_EXEC_CAP_SEC", "1800"))
 
 
 @dataclass

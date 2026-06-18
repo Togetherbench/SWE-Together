@@ -85,9 +85,13 @@ class TrialSignals:
     edit_tool_calls: int = 0
     all_tool_calls: int = 0
     api_retry_count: int = 0
-    # opencode-only: step-finish events whose reason == "error" (the codex
-    # OAuth backend 503/429/overloaded that ends a turn with 0 tokens).
+    # opencode-only: step-finish events whose reason == "error" PLUS top-level
+    # {"type":"error"} events (the codex OAuth backend 503/429/overloaded, and
+    # OpenRouter-surfaced upstream errors like OpenAI 502 "quota exceeded").
     backend_error_turns: int = 0
+    # opencode-only: extracted message strings from {"type":"error"} events,
+    # used to attribute the failure to a concrete provider cause.
+    provider_error_texts: list[str] = field(default_factory=list)
     result_subtypes: list[str] = field(default_factory=list)
     transcript_present_but_empty: bool = False
     empty_transcript_names: list[str] = field(default_factory=list)
@@ -203,6 +207,18 @@ def _stream_signals_opencode(opencode_path: Path) -> TrialSignals:
                 sig.assistant_turn_count += 1
                 if part.get("reason") == "error":
                     sig.backend_error_turns += 1
+            elif t == "error":
+                # Top-level error event: opencode aborts the step and emits
+                # {"type":"error","error":{"name":..,"data":{"message":..}}}.
+                # This is how OpenRouter surfaces upstream failures (OpenAI 502
+                # "quota exceeded"/provider_unavailable, 429, 5xx). These never
+                # carry a step_finish, so they'd otherwise be invisible.
+                sig.backend_error_turns += 1
+                err = obj.get("error") if isinstance(obj.get("error"), dict) else {}
+                data = err.get("data") if isinstance(err.get("data"), dict) else {}
+                msg = data.get("message") or err.get("message") or err.get("name") or ""
+                if isinstance(msg, str) and msg:
+                    sig.provider_error_texts.append(msg[:500])
             elif t == "text":
                 txt = part.get("text") or obj.get("text") or ""
                 if isinstance(txt, str) and txt:
@@ -223,6 +239,7 @@ def collect_signals(trial_dir: Path) -> TrialSignals:
         sig.edit_tool_calls = oc.edit_tool_calls
         sig.all_tool_calls = oc.all_tool_calls
         sig.backend_error_turns = oc.backend_error_turns
+        sig.provider_error_texts = oc.provider_error_texts
     patch_path = trial_dir / "agent" / "final.patch"
     if patch_path.exists():
         sig.patch_missing = False
@@ -369,6 +386,39 @@ def _detect_no_agent_progress(sig: TrialSignals) -> tuple[bool, str, dict[str, A
     }
 
 
+_OPENCODE_PROVIDER_HINTS = (
+    "exceeded your current quota", "insufficient_quota", "provider_unavailable",
+    "resource_exhausted", "rate limit", "rate_limit", "overloaded",
+    "service unavailable", "bad gateway", "quota", "billing",
+)
+_OPENCODE_PROVIDER_STATUS = ("429", "502", "503", "529")
+
+
+def _detect_opencode_provider_error(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
+    """An opencode {"type":"error"} event whose message names a concrete
+    upstream-provider failure — quota/billing exhaustion, provider_unavailable,
+    or a 429/5xx status. This is the OpenRouter-routed gpt-5.5 case: OpenAI
+    returns 502 "You exceeded your current quota" through OpenRouter, the agent
+    lands no edits, and the patch is empty. Distinct from (and more specific
+    than) the generic opencode_backend_error / no_agent_progress — it pins the
+    blame on the provider so these get re-run, not scored as agent failures."""
+    hits = [
+        t for t in sig.provider_error_texts
+        if any(h in t.lower() for h in _OPENCODE_PROVIDER_HINTS)
+        or any(c in t for c in _OPENCODE_PROVIDER_STATUS)
+    ]
+    if not hits:
+        return False, "", {}
+    return True, (
+        f"opencode upstream provider error on {len(hits)} event(s) "
+        f"(quota/billing/5xx/429 surfaced via OpenRouter) and the patch is empty"
+    ), {
+        "hit_count": len(hits),
+        "error_events": sig.backend_error_turns,
+        "sample": hits[0][:200],
+    }
+
+
 def _detect_opencode_backend_error(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
     """opencode step(s) ended with reason=error — the codex OAuth backend
     returning 503/429/overloaded (turn ends with 0 output tokens). Reaches
@@ -399,6 +449,7 @@ DETECTORS: list[tuple[str, Any]] = [
     ("provider_401_auth", _detect_provider_401_auth),
     ("provider_html_error", _detect_provider_html_error),
     ("parse_failure_corruption", _detect_parse_failure_corruption),
+    ("opencode_provider_error", _detect_opencode_provider_error),
     ("opencode_backend_error", _detect_opencode_backend_error),
     ("no_agent_progress", _detect_no_agent_progress),
 ]
