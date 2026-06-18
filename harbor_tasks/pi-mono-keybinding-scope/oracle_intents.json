@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-keybinding-scope",
+  "n_oracle_turns_in": 0,
+  "intents": [],
+  "extractor_model": "trivial-no-turns"
+}
