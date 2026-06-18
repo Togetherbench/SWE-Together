@@ -28,7 +28,7 @@
     {
       "id": "goal_3",
       "goal": "Confine the edits to the translation unit named in the build error and preserve the structural invariants of that file: the file must remain present and non-empty after editing, syntactically balanced (no unmatched braces, parentheses, or string-literal delimiters), and the function symbols and loop idioms that the user's error log references must still be present in non-comment code after the fix. Edits must not be hidden inside comments or string literals, and must not consist solely of inserting `#if 0 ... #endif` or analogous removal blocks around the cited code regions.",
-      "tier": "structural",
+      "tier": "secondary",
       "weight": 0.1,
       "traces_to_ask": "T1",
       "rationale": "T1 reports a build failure on a specific file; the implicit precondition is that the file continues to compile after the fix. This goal locks down the basic structural invariants (file present, balanced syntax, named function still callable) that an agent could otherwise game by deleting the file's contents or commenting out the offending lines. Comment/string-literal placement is excluded because the test infrastructure strips comments before checking — codifying that here makes the rubric coverage explicit. This goal is anchored to T1 via 'the file the user named is the file whose post-fix state we evaluate'."

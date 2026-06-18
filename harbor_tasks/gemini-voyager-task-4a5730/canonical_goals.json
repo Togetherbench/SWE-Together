@@ -25,7 +25,7 @@
     {
       "id": "goal_3",
       "goal": "After the user approves and asks to commit with a reference to the issue, a commit exists whose message closes the GitHub issue being fixed — i.e. it contains a 'Fixes #<issue-number>' style reference to issue 421 (any conventional closing-keyword form is acceptable). The commit must actually contain the functional code change that fixes the bug (not an empty commit, comment-only or whitespace-only diff, or stub), so the real fix and its issue-closing reference are recorded together.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.15,
       "rationale": "Turn 2 verbatim: 'push Fixes 那个 issue' (user_simulation_prompt: 'committed and pushed with \"Fixes #421\" in the commit message'). A genuine multi-turn follow-up beyond Turn 0. Behavioral (any closing-keyword form), not the exact literal, and requires the commit to carry the fix. Pushing to a remote is not asserted since no remote/credentials exist in the sandbox; the recorded commit captures the user's substantive ask."
     }

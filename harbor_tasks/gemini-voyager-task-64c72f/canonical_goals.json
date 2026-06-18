@@ -32,21 +32,21 @@
     {
       "id": "goal_preserve_accessibility_tooltip",
       "goal": "Each node's per-node display state must stay in sync with that node's current content rather than going stale after the fix. If the solution keeps and reuses an element across re-renders, it must refresh ALL of that element's dynamic, content-derived properties for the current turn — not only its accessible label/tooltip text, but also its position and any visual state that depends on the turn (e.g. styling/classes and layout that reflect the node's data). Reject a fix that reuses elements but leaves any of these properties pointing at outdated turn data (a stale label, a node rendered at the wrong position, or stale visual state), or that hardcodes a placeholder instead of the real current value.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.05,
       "rationale": "Necessary non-regression constraint of the Turn-0 fix ('现在鼠标放在这个时间线上的节点的时候，这个节点会一直抽搐...'): any approach that stops tearing nodes down by reusing elements risks leaving the reused element's content-derived state stale — not just its tooltip label but its position and turn-dependent visual state — so keeping the full per-node display state in sync is required for the stabilization fix not to silently introduce a visual/labeling regression. Kept broad (all dynamic state, not just the label) so it does not mirror the narrow aria-label F2P check. Weighted low since the user did not explicitly mention these properties."
     },
     {
       "id": "goal_explain_fix_in_chinese",
       "goal": "After completing the fix, the agent provides a clear Chinese-language explanation, in a message to the user, of what it actually changed and why — naming the root cause it actually identified and fixed (e.g. the re-render logic tearing down and recreating the node elements, or the unnecessary re-render triggers firing during interaction — whichever its fix addressed) and the concrete behavioral change it made. Reject a vacuous or non-Chinese reply, a generic 'I fixed the bug / 已修复' with no technical substance, or an explanation that describes changes the submission did not actually make (fabricated/inconsistent with the real diff).",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.12,
       "rationale": "Turn 1 verbatim: '你做了什么修复这个问题？' (what did you do to fix this problem?). User asks in Chinese for an account of the fix; per the multi-turn benchmark thesis, correctly handling this follow-up is part of the measured capability. Behavioral: judged on substance + language + faithfulness to the actual change, not exact wording."
     },
     {
       "id": "goal_identify_bug_introduction",
       "goal": "In response to the user's question about when the bug originated, the agent investigates the repository history (e.g. via git archaeology) and identifies the point in time / change at which this rendering behavior was introduced, and reports this to the user in its reply, citing a real change from the repo rather than guessing. The agent's reply to the user is correct when the cited change is the one that introduced the offending behavior — the logic that tears down and recreates the timeline node elements on re-render (the blanket dot-removal-and-rebuild that the fix replaces), or the change that introduced the continuous re-render loop that exposed this flaw as the visible hover/click symptom. The judge works only from the agent's trajectory (it cannot access the repo itself), so the trajectory must contain evidence that grounds the answer — e.g. the agent ran git history/blame commands (git log, git show, git blame) whose output identifies the change that added the teardown/rebuild-on-re-render behavior. The agent need not paste the entire diff, but the surfaced evidence must connect the cited commit to that offending behavior rather than to an unrelated change. Reject a fabricated/hallucinated commit hash or date not grounded in the actual history, a confidently-cited but irrelevant commit unrelated to the teardown/re-render behavior, and a non-answer that simply declines to look.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.08,
       "rationale": "Turn 5 verbatim: '这个是什么时候被引入的？' (when was this introduced?). A genuine follow-up asking the agent to trace the bug's origin in version history; covered as a multi-turn capability signal. Behavioral and approach-agnostic — any grounded method of locating the introducing change qualifies."
     }

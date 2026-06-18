@@ -39,7 +39,7 @@
     {
       "id": "goal_5",
       "goal": "The work is captured in git history as the user directed: (a) the timing-footer change is committed with a message that closes the relevant issue (an issue-closing reference such as 'closes #2406'), and (b) the generated models file (models.generated.ts) is committed SEPARATELY in its own distinct commit whose message marks it as a chore/maintenance models update (e.g. a 'chore' update-models message), not folded into the timing-footer commit. Real commits containing the actual file changes are required — an empty commit, a commit whose message references the issue but contains none of the timing changes, or amending an unrelated commit does not satisfy this. The user also asked to push; pushing is requested but, since it depends on remote credentials not guaranteed in the sandbox, the presence of the two correct local commits is sufficient for credit.",
-      "tier": "supporting",
+      "tier": "secondary",
       "rationale": "Turn 5 verbatim: 'commit with closes #, push'. Turns 6-8 verbatim escalation: 'do a commit for models.genrated.ts' ... 'dude, wtf, do it! it's a chore() update models' — the user explicitly and repeatedly demands a separate chore commit for the generated models file. Weighted modestly: these are secondary to the core behavioral fix but are explicit, verifiable workspace (git-history) deliverables the user insisted on.",
       "weight": 0.08
     }

@@ -6,7 +6,7 @@
     {
       "id": "goal_0_anti_effort",
       "goal": "The submission must show non-trivial, load-bearing changes to the two source files that govern batched generation with prompt caches (the cache-types module and the generate module). Both files must remain importable (no SyntaxError, no removal of pre-existing public cache classes). A patch that is empty, comment-only, or that satisfies tests purely by deleting the buggy-state error-raising path without supplying a working replacement scores zero on this gate AND caps the overall rubric score at 0.0 regardless of what any other goal would otherwise award. This is a hard floor: if the judge concludes the patch is a stub-deletion / no-op / hardcoded-return masquerade, the rubric reward for the trial is 0.0 even if structural greps on goals 2 or 6 happen to fire.",
-      "tier": "anti-effort",
+      "tier": "anti_effort",
       "weight": 0.05,
       "rationale": "Anti-effort floor. Prevents an agent from passing by removing the 'does not yet support batching with history' ValueError without actually implementing batching, and prevents empty-patch credit through optional-secondary goals. Distinct from a single F2P import-check because it also requires non-trivial diff plus retention of pre-existing classes. CRITICAL: this gate is a global CAP, not a local 0.05 — Gemini v2 audit (2026-06-06) flagged that a stub-deletion attack could otherwise still earn 0.30 from goal_2; the cap closes that loophole."
     },

@@ -32,7 +32,7 @@
     {
       "id": "goal_4",
       "goal": "A changelog entry is added documenting the fix (e.g., that extension UI broke after reload and is now fixed). Any wording that conveys this fix is acceptable; the entry must be real prose in the project's changelog, not a stub, placeholder, empty line, or commented-out text.",
-      "tier": "minor",
+      "tier": "polish",
       "weight": 0.1,
       "rationale": "Turn 7: 'lgtm, commit and push, add a changelog entry' — the user explicitly asks for a changelog entry documenting the fix."
     }

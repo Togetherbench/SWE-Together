@@ -32,7 +32,7 @@
     {
       "id": "goal_docs_updated",
       "goal": "User-facing documentation and the changelog must reflect the new padding setting. The relevant package changelog must record the addition, and the settings documentation (e.g. the settings reference/README) must list the new padding option with its default. A documentation-only stub that mislabels the default or omits the setting does not satisfy this.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.1,
       "rationale": "Turn 0 step 4/5 asks to verify and, if needed, add a changelog entry and update docs; Turn 10 verbatim: 'ok, docs are in order?' confirms documentation completeness is an explicit deliverable."
     }

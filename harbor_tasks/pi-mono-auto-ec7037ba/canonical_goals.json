@@ -32,7 +32,7 @@
     {
       "id": "goal_4",
       "goal": "User-facing changes that originate in the lower-level packages (such as ai, tui, or agent) are also reflected in the user-facing `coding-agent` changelog, per the project's cross-package duplication rule, so a user reading only the top-level `coding-agent` changelog sees those changes. This duplication must be reflected as real entries in the `coding-agent` changelog, not omitted and not faked with empty placeholders.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.1,
       "rationale": "Turn 0 verbatim: 'Changes in ai, agent or tui that affect end users should be duplicated to coding-agent changelog, since coding-agent is the user-facing package that depends on them.' This is an explicit Turn-0 rule and the golden patch shows several cross-duplicated entries in the coding-agent changelog."
     }

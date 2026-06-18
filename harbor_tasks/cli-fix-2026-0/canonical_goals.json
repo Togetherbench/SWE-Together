@@ -25,14 +25,14 @@
     {
       "id": "goal_3",
       "goal": "User edits made after the base commit but before the very first prompt are attributed to the user rather than to the agent. The attribution-at-prompt-start calculation runs for the first checkpoint too (it is no longer skipped because no prior checkpoint exists), and it still produces a meaningful result when no shadow branch exists yet by falling back to comparing against the base tree. The fix must remove or restructure the guard conditions that previously short-circuited this path, such that the first-prompt attribution genuinely reflects the pre-prompt user edits; it must not be faked by always returning a fixed value.",
-      "tier": "major",
+      "tier": "important",
       "weight": 0.22,
       "rationale": "Turn 3 verbatim: 'User edits made after the base commit but before the first prompt are never captured. The condition state.CheckpointCount > 0 skips attribution ... returns early when no shadow branch exists ... incorrectly attributed to the agent ... callers prevent this logic from executing.'"
     },
     {
       "id": "goal_4",
       "goal": "The routine that determines which files differ between two git trees no longer reads each file's full content twice to detect changes. Instead it identifies changed (added, modified, or deleted) files using a cheaper signal such as comparing git blob hashes / tree metadata, without reading the files' full contents to decide whether they differ, fulfilling the user's ask to detect changes 'instead of getting the content'. The set of files it reports as changed must remain correct (same added/modified/deleted semantics as before); the optimization must be a real algorithmic change, not a stub that always returns the same list or that still reads contents under a renamed helper.",
-      "tier": "major",
+      "tier": "important",
       "weight": 0.14,
       "rationale": "Turn 4 verbatim: 'getAllChangedFilesBetweenTrees ... reads the content of every file in both trees twice ... inefficient for large repositories ... can't we get a hash from git for each file and check ... instead of getting the content?' The user even proposes the hash approach."
     }

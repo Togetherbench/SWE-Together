@@ -39,14 +39,14 @@
     {
       "id": "goal_docs_shortcut",
       "goal": "The user-facing documentation for the input-collapse feature mentions the keyboard shortcut for expanding the input, presented in a way that conveys both the macOS and non-macOS modifier so readers on either platform learn the shortcut. This must be added to the documentation that previously lacked it, across the documentation's localized variants rather than a single language. A doc edit that omits the shortcut, or only adds it to one locale while the feature ships in many, does not satisfy this. A doc edit that is commented out (e.g., via HTML comments) or otherwise hidden from the rendered output does not satisfy this.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.1,
       "rationale": "Turn 2 follow-up: '好，vitepress 文档里没有的话也加上' — the user asked to also document the expand shortcut in the VitePress docs if missing; the golden patch adds it to all input-collapse.md locale variants."
     },
     {
       "id": "goal_platform_helper_tests",
       "goal": "Automated unit tests are added that exercise the platform-detection and modifier-label logic, asserting the macOS branch yields the macOS modifier label and the non-macOS branch yields the textual modifier label by simulating different platform/user-agent signals. The tests must make real assertions on the helpers' return values across simulated platforms; a test that is skipped, always-passing, asserts nothing meaningful, or deletes/weakens existing coverage instead of adding new coverage does not satisfy this.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.1,
       "rationale": "Turn 0 plan item 5: '添加测试 — 为 isMac() 和 getModifierKey() 在 src/core/utils/__tests__/ 添加单元测试'. The golden patch adds vitest cases mocking navigator.platform/userAgent for both helpers; described behaviorally (assert each platform branch) without pinning file paths or test names."
     }

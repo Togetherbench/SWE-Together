@@ -155,7 +155,7 @@
     {
       "id": "goal_8",
       "goal": "Fix the PR #899 in-progress-slot clearing race so that the in-progress tracking field (e.g. `_set_in_progress_code_slot`) is only cleared on Z-Wave JS Value Updates that actually carry a new user-code payload (the `LOCK_USERCODE_PROPERTY` value, or the equivalent property name in the codebase). Updates carrying only user-id-status information (`userIdStatus`, or the equivalent) must NOT clear the in-progress slot, because Copilot review comment #4 (acknowledged by the user in Turn 20) demonstrated that the `userIdStatus` Value Update can arrive before the duplicate-code notification handler runs, racing the clear against the duplicate detection. The behavioral requirement is: a value update whose property indicates a status-only change must leave the in-progress slot intact; a value update whose property indicates an actual user-code change MAY clear it.",
-      "tier": "core_followup",
+      "tier": "secondary",
       "weight": 0.05,
       "rationale": "Turn 18 ('switch to 899') + Turn 19 ('see copilot review comments') + Turn 20 ('address all unless you disagree with any of them') anchor this goal. The agent's Turn-20 response explicitly categorized Copilot comment #4 ('Clear in-progress code slot too eagerly — cleared on any User Code CC update including userIdStatus, not just userCode updates') as a comment they should ADDRESS (vs. SKIP for the three hallucinated ones). The oracle session's grading_patch is `_fidelity: directional` and the replay dropped the zwave_js.py edits for this fix (4 `replay_warnings: edit: old text not found`), so the absence of this change in the oracle grading_patch is a replay artifact — not evidence that the user did not ask for it. The user verbatim said 'address all unless you disagree' and the agent agreed comment #4 was valid.",
       "provenance": {
@@ -175,7 +175,7 @@
     {
       "id": "goal_9",
       "goal": "Include the affected LCM config entry's title in the user-visible duplicate-code notification / error message produced when a slot's code is rejected as a duplicate (Copilot review comment #5 on PR #899, acknowledged by user in Turn 20). The current message shows only the lock entity_id and the slot number; the fix must add identifying information for the LCM config entry that owns the slot (typically the entry's `title`) so users with multiple LCM entries can identify which entry to fix. The format is not pinned — any phrasing that makes the entry identifiable to the user (e.g. parenthetical `(config entry <title>)`, prefix, suffix) satisfies the goal. NOT satisfied by: adding the entry title only to a code comment, a docstring, or a `logger.info` / `logger.debug` line without changing the user-facing notification body text. NOT satisfied by: changing only the test fixture's expected message string without altering the production code that produces the notification. NOT satisfied by: appending the config entry's id (a UUID-like opaque slug) instead of the human-readable title — the user-facing surface needs an identifier a human can map to a UI entry, not an internal id.",
-      "tier": "core_followup",
+      "tier": "secondary",
       "weight": 0.05,
       "rationale": "Turn 20 ('address all unless you disagree with any of them') applied to Copilot review comment #5 ('Notification message missing entry titles — The error/notification only shows lock entity_id and slot number, not which LCM config entry is affected'), which the agent categorized as 'Address — Valid. Helps users find the right config entry.' Same provenance and same replay-artifact caveat as goal_8.",
       "provenance": {
@@ -195,7 +195,7 @@
     {
       "id": "goal_10",
       "goal": "Fix the task / log / metric name slot when the duplicate-code-handler falls back to using the previously-tracked in-progress slot (`_set_in_progress_code_slot`) because the incoming `code_slot` is 0 / sentinel (Copilot review comment #6 on PR #899, acknowledged by user in Turn 20). The current code uses the incoming slot value (0) when naming the deferred task / log / notification id; the fix must substitute the tracked in-progress slot value in those name strings when the incoming value is 0, so observers see a meaningful slot number rather than the placeholder. NOT satisfied by: changing the name string template (or the surrounding scaffolding) but still interpolating the incoming `code_slot` value, so observers still see `0` at runtime. NOT satisfied by: adding the substitution only inside a debug-only branch, a conditional that never executes on the duplicate-code fallback path, or a comment describing what the value should be. NOT satisfied by: renaming the variable to a more descriptive name without actually swapping the substituted value when code_slot == 0.",
-      "tier": "core_followup",
+      "tier": "secondary",
       "weight": 0.04,
       "rationale": "Turn 20 ('address all unless you disagree with any of them') applied to Copilot review comment #6 ('Task name uses wrong slot — When code_slot == 0 and we fall back to _set_in_progress_code_slot, the task name still shows 0'), which the agent categorized as 'Address — Valid, minor improvement.' Smaller weight than goals 8/9 because the surface (task/log name) is less user-visible than the notification body.",
       "provenance": {

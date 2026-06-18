@@ -32,14 +32,14 @@
     {
       "id": "goal_4",
       "goal": "When two sources of file paths (the transcript-derived set and the working-tree-derived set) are combined at the checkpoint boundary, the combined list must not contain duplicate entries; both sources can legitimately mention the same file. The mechanism may be a small utility, a hashset pass, a sorted-merge, a stdlib call, or inline code — the goal is that no downstream consumer of the combined set sees the same path twice.",
-      "tier": "informational",
+      "tier": "anti_gaming",
       "weight": 0.0,
       "rationale": "The user does not raise deduplication as an explicit ask in any of the 6 turns. Retained at zero weight as a diagnostic/informational note for reviewers — a checkpoint that lists 'M layout.py, M layout.py' would be a self-inflicted regression worth flagging — but the weight is zero so the rubric strictly tracks user provenance and does not penalize agents who solve the customer symptom without explicit dedup."
     },
     {
       "id": "goal_5",
       "goal": "The combine-and-deduplicate behavior used at the checkpoint boundary must be covered by automated tests in the project's existing test runner, exercising at least: a disjoint-input case, an overlapping-input case where at least one path appears on both sides, and at least one empty-input case (either side or both). A single happy-path assertion, or a test that only checks the helper's existence/signature, does not meet this goal. Equivalent coverage via table-driven, parameterized, or per-case tests is acceptable.",
-      "tier": "informational",
+      "tier": "anti_gaming",
       "weight": 0.0,
       "rationale": "No user turn explicitly asks for tests. Retained at zero weight as a diagnostic/informational note — the combine step is the load-bearing correctness primitive of goals 2 and 3, and uncovered behavior could regress silently — but the weight is zero so the rubric strictly tracks user provenance rather than oracle-mimicry."
     },

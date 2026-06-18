@@ -32,7 +32,7 @@
     {
       "id": "goal_4",
       "goal": "The package's existing tests for the restore/resume/checkpoint code remain green after the change: the agent must update the legitimately-affected test expectations to match the new behavior (e.g. changed restore output or resume-command wording) WITHOUT deleting, emptying, or disabling tests, and without hollowing out assertions to force a pass. The build of the touched packages must also succeed.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.1,
       "rationale": "Turn 4: 'fix test' — after the behavior changed, the user required the test suite to be brought back to green legitimately. Kept low-weight and worded to forbid test deletion/weakening as a shortcut, consistent with the anti-gaming intent."
     }

@@ -26,7 +26,7 @@
     {
       "id": "goal_3",
       "goal": "The fix in reconstruct_weight.py is a principled inversion of the upstream packing format — i.e., the integer-weight bit-packed layout is unpacked (not just byte-split), the per-group scales are unpacked rather than naively transposed, and the low-rank up/down projections are unpacked rather than used in their packed memory layout — so that the end-to-end reconstruction is correct for both square and rectangular shapes rather than for one shape class by accident.",
-      "tier": "diagnostic",
+      "tier": "secondary",
       "weight": 0.1,
       "rationale": "Captures the substantive engineering required by the instruction's 'read the original source code in the folders nunchaku and ComfyUI-Nunchaku to understand how the SVDQ layer works' clause and the three packing-format inversions implied by the task (qweight, wscales, lowrank up/down). Folded into a single diagnostic gate because the three sub-stages co-pass when goals 1 and 2 both pass across square and rectangular shapes — splitting them into three independent secondaries (as v2 of this rubric did before consolidation) gave them duplicative weight against the cores. Diagnostic tier means this is informational: a patch that fails this conceptual check but somehow passes both shape classes still gets the cores."
     }

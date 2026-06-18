@@ -54,7 +54,7 @@
     },
     {
       "id": "goal_4",
-      "tier": "tertiary",
+      "tier": "polish",
       "weight": 0.08,
       "goal": "After the rename, the repository must remain in a non-broken state: any test assertions or fixtures in the repository that hard-coded the old brand string as their expected value must be updated so they remain consistent with the new branding. The goal is satisfied either by updating the assertion to reference the new name OR by relaxing the assertion to a structurally-equivalent check that does not embed any literal brand string. Removing the entire test, or skipping it, does NOT satisfy this goal.",
       "anti_gaming_clauses": [

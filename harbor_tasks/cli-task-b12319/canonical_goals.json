@@ -46,7 +46,7 @@
     {
       "id": "goal_6",
       "goal": "A protocol specification document is created that describes the external-agent contract so a third party could implement a conforming binary: it must document the discovery convention (PATH-scanned `entire-agent-<name>` binaries), the communication model (per-operation subcommands exchanging data over stdin/stdout/arguments), the capability-declaration mechanism, and the success/error signaling convention. Not satisfied by an empty or placeholder file, by a stub heading with no substantive protocol content, or by merely mentioning the protocol in passing inside an unrelated file.",
-      "tier": "supporting",
+      "tier": "secondary",
       "weight": 0.03,
       "rationale": "Turn 0 Step 1 (verbatim): 'Create docs/architecture/external-agent-protocol.md documenting the full protocol.' Low weight: a documentation artifact, far less user-critical than the working plugin behavior, but explicitly named as Step 1 so it is covered. F2P gate f2p-protocol-doc confirms the deliverable."
     }
