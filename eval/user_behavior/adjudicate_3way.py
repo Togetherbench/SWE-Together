@@ -13,7 +13,7 @@ model's idiosyncrasy:
 Reconciled label per message = A when A==B, else the Arbiter's call (majority of
 the three). Writes `trial_msg_tags_3way` into each intent_coverage_verdict.json
 and leaves the original `trial_msg_tags` (Gemini) untouched. User Correction /
-User Effort (kind_groups) read trial_msg_tags_3way when present.
+User Effort (user_metrics) read trial_msg_tags_3way when present.
 
 Judge B comes from a sidecar (pipeline_logs/adj_judgeB_<cohort>.json), produced
 by the same multi-label tag prompt under a different model. The Arbiter (GPT-5.5)

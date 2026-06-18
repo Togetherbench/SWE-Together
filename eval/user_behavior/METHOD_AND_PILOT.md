@@ -22,17 +22,18 @@ Closely related design docs:
 eval/user_behavior/
 ├── extract_intents.py        # Stage 1 — per-task oracle intents, run once, cached
 ├── coverage_one.py           # Stage 2 — per-trial match table + Coverage scores
-├── tag_messages.py           # Stage 3 — per-trial multi-label tags + tier  → trial_msg_tags
-├── adjudicate_3way.py        # Stage 3b — 3-way correction adjudication (majority of
-│                             #   A=Gemini + B=Claude-opus-4.6 + GPT-5.5 arbiter on the
-│                             #   A/B disputes) → trial_msg_tags_3way
-├── kind_groups.py            # SINGLE SOURCE OF TRUTH — taxonomy, tier weights,
+├── tag_messages.py           # Stage 3 — SPLIT judge: tag-call + tier-call (same model,
+│                             #   default Gemini-3.1-Pro), merged → trial_msg_tags
+├── adjudicate_3way.py        # Stage 3b (legacy) — 3-way correction adjudication; the
+│                             #   split tagger reproduces it to ±0.04 (see eval/result.md)
+├── user_metrics.py            # SINGLE SOURCE OF TRUTH — taxonomy, tier weights,
 │                             #   user_effort() + user_correction() metric fns
 ├── run_batch.py              # Stage 4 — async batch wrapper (drives Stage 2)
 └── prompts/
     ├── extract_intents_system.md
     ├── coverage_system.md          # match-table prompt (coverage only)
-    └── tag_messages_system.md      # multi-label tag + tier prompt
+    ├── tag_messages_system.md      # Stage 3 tag-call — tags + frustration (no tier)
+    └── tier_messages_system.md     # Stage 3 tier-call — specificity tier only
 ```
 
 Per-task artifact (committed alongside each task):
@@ -46,10 +47,11 @@ Per-trial artifact (one file, written by Stage 2, then **augmented in place** by
 ```
 trials_*/<trial>/intent_coverage_verdict.json
   ├── match_table + coverage_rate / weighted_coverage / scope_precision / overall_score   (Stage 2)
-  └── trial_msg_tags: [{trial_idx, tags:[...], tier, frustration}, ...]                    (Stage 3)
+  ├── trial_msg_tags: [{trial_idx, tags:[...], tier, frustration}, ...]                    (Stage 3)
+  └── user_effort + user_correction  (derived from trial_msg_tags via user_metrics)         (Stage 3)
 ```
 
-`user_effort` and `user_correction` are **not stored** in the verdict — they're recomputed on demand from `trial_msg_tags` via `kind_groups` (single source of truth), the same way `eval/run_eval.py::_tag_metrics` does it.
+`user_effort` and `user_correction` are **persisted** into the verdict by Stage 3 (top-level keys), derived from `trial_msg_tags` via `user_metrics.metrics_from_rows` — the single source of truth. `eval/run_eval.py::_tag_metrics` recomputes from the same deriver during aggregation, so the stored values and the aggregated values are always identical (the stored copy is a convenience for downstream readers; the tags remain the canonical input).
 
 ---
 
@@ -57,7 +59,7 @@ trials_*/<trial>/intent_coverage_verdict.json
 
 ### Pipeline at a glance
 
-Three LLM passes: one **per task** (extract_intents, cached forever) and two **per trial** (coverage_one → match table; tag_messages → multi-label tags + tier). All numeric scores — Coverage (`coverage_one`), and User Effort / User Correction (`kind_groups`) — are computed **deterministically in code**, never by the LLM. The LLM only does intent extraction, match-finding, and per-message tagging.
+LLM passes: one **per task** (extract_intents, cached forever) and **three per trial** — `coverage_one` → match table, then Stage 3's split tagger makes two calls (tag-call → tags+frustration, tier-call → tier). All numeric scores — Coverage (`coverage_one`), and User Effort / User Correction (`user_metrics`) — are computed **deterministically in code**, never by the LLM. The LLM only does intent extraction, match-finding, and per-message tagging.
 
 ```mermaid
 flowchart TD
@@ -79,10 +81,10 @@ flowchart TD
     COMP --> V["trials_*/&lt;trial&gt;/intent_coverage_verdict.json<br/>(match_table + coverage scores, rounded 2dp)"]
   end
 
-  subgraph S2b ["Stage 3 — tag_messages.py (per trial)"]
-    T --> TAG["Gemini-3.1-Pro + tag_messages_system.md<br/>multi-label tags + tier per sim message"]
-    TAG --> V2["augments same verdict in place:<br/>trial_msg_tags: [{trial_idx, tags:[...], tier, frustration}]"]
-    V2 -.read by.-> KG["kind_groups (code, not LLM):<br/>user_effort = Σ tier_weight over directive msgs<br/>user_correction = Σ (correction + 0.2·nudge)"]
+  subgraph S2b ["Stage 3 — tag_messages.py (per trial, SPLIT judge)"]
+    T --> TAG["Gemini-3.1-Pro, two calls/trial:<br/>tag-call (tag_messages_system.md → tags+frustration)<br/>tier-call (tier_messages_system.md → tier)"]
+    TAG --> V2["merged per trial_idx, augments verdict in place:<br/>trial_msg_tags: [{trial_idx, tags:[...], tier, frustration}]"]
+    V2 -.read by.-> KG["user_metrics (code, not LLM):<br/>user_effort = Σ tier_weight over directive msgs<br/>user_correction = Σ (correction + 0.2·nudge)"]
   end
 
   subgraph S3 ["Stage 4 — run_batch.py (cohort orchestration)"]
@@ -175,11 +177,18 @@ Output (`<trial>/intent_coverage_verdict.json`):
 }
 ```
 
-`overall_score` = `round(0.70·0.28 + 0.30·1.00, 2)` = **0.50**. `trial_msg_tags` is added by Stage 3 (`tag_messages.py`); `user_effort`/`user_correction` are derived from it on demand (not stored).
+`overall_score` = `round(0.70·0.28 + 0.30·1.00, 2)` = **0.50**. `trial_msg_tags` is added by Stage 3 (`tag_messages.py`), which also persists `user_effort`/`user_correction` (derived from it via `user_metrics.metrics_from_rows`) as top-level keys.
 
-### Stage 3 — `tag_messages.py` (per trial)
+### Stage 3 — `tag_messages.py` (per trial, SPLIT judge)
 
-A second per-trial LLM pass tags **every** sim message with multi-label `tags` (from `{request, correction, nudge, question, verification, workflow, approval, context}`) plus a specificity `tier` (`none`…`patch_level`), and writes `trial_msg_tags` into the **same** verdict file (popping any legacy `trial_msg_specificity`). `kind_groups.py` then derives **User Effort** and **User Correction** from these tags (formulas below). This replaced the old single-label `kind_hint`/`tier` block that `coverage_one` used to emit — the formula is unchanged, only the producer moved.
+A per-trial pass tags **every** sim message via **two separate LLM calls on the same model** (default Gemini-3.1-Pro @ temp 0):
+
+1. **tag-call** (`prompts/tag_messages_system.md`) — multi-label `tags` (from `{request, correction, nudge, question, verification, workflow, approval, context}`) + `frustration`.
+2. **tier-call** (`prompts/tier_messages_system.md`) — the specificity `tier` (`none`…`patch_level`) only.
+
+The two are **merged per `trial_idx`** into `{trial_idx, tags, frustration, tier}` and written to `trial_msg_tags` in the **same** verdict file (popping any legacy `trial_msg_specificity`). `user_metrics.py` then derives **User Effort** and **User Correction** (formulas below).
+
+**Why split.** Asking one call to emit tags *and* tier conflates the two judgments and over-tags `correction`. Separating them lets each call focus on one axis; a single Gemini split pass averaged with a GPT-5.5 split pass reproduces the old 3-way `adjudicate_3way.py` reconciliation to **±0.04 with identical ranking** (full table in `eval/result.md`). The split is therefore the canonical Stage 3; `adjudicate_3way.py` (Stage 3b) is retained only as the reference it was validated against. For the reconciled-equivalent, re-run with a second `--model` and average the per-cohort metrics (`scripts/_split_compute.py`).
 
 ```bash
 python -m eval.user_behavior.tag_messages \
@@ -217,7 +226,7 @@ Plan file shape:
 
 ## Score formulas (computed in code)
 
-Three user-side metrics, all deterministic. **Coverage** comes from `coverage_one.py` (off the match table); **User Effort** and **User Correction** come from `kind_groups.py` applied to `trial_msg_tags`.
+Three user-side metrics, all deterministic. **Coverage** comes from `coverage_one.py` (off the match table); **User Effort** and **User Correction** come from `user_metrics.py` applied to `trial_msg_tags`.
 
 ### 1. User Coverage — `coverage_one.py`
 
@@ -239,9 +248,9 @@ Edge cases:
 - `n_trial_msgs = 0` (sim silent) — `scope_precision = 0`
 - a single trial msg matching multiple intents counts ONCE in `scope_precision` (deliberate — discourages credit-stuffing)
 
-### 2. User Effort & User Correction — `kind_groups.py` (from `trial_msg_tags`)
+### 2. User Effort & User Correction — `user_metrics.py` (from `trial_msg_tags`)
 
-These are derived from the per-message multi-label tags (`tag_messages.py`), not from the coverage judge. `kind_groups.py` is the single source of truth for the taxonomy + weights:
+These are derived from the per-message multi-label tags (`tag_messages.py`), not from the coverage judge. `user_metrics.py` is the single source of truth for the taxonomy + weights:
 
 ```python
 SPECIFICITY_WEIGHTS = {"none":0, "vague":1, "directional":2,

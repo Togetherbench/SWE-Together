@@ -12,11 +12,6 @@ Pipeline:
        scope_precision   = unique matched trial msgs / total trial msgs
        overall_score     = 0.70 * weighted_coverage + 0.30 * scope_precision
 
-Usage:
-    .venv/bin/python -m eval.user_behavior.coverage_one \\
-        --trial-dir trials_eval_pilot_10_task_r1/cli-task-2a55af__LXqASZW \\
-        --task-dir  harbor_tasks/cli-task-2a55af
-
 Output: `<trial_dir>/intent_coverage_verdict.json`
 """
 from __future__ import annotations
@@ -40,10 +35,8 @@ from eval.user_behavior.extract_intents import extract_one as extract_intents_on
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "coverage_system.md"
 # Default judge: Gemini-3.1-Pro. Calibrated against Opus-4.6 on the v0.5.1 pilot
-# (see eval/pilot_study_two_way.md §"Calibration delta"); success@k and effort_AUC
-# agree to ~0.001, mean_judge within 0.023. Gemini has its own provider quota
-# (GEMINI_API_KEY in .env) and doesn't share the Anthropic OAuth 5-hour window,
-# which made Opus impractical for parallel judge runs during the Opus-pilot.
+# success@k and effort_AUC agree to ~0.001, mean_judge within 0.023.
+
 DEFAULT_MODEL = "gemini/gemini-3.1-pro-preview"
 
 
@@ -89,9 +82,7 @@ class _OAuthLiteLLMShim:
             "anthropic-beta": "oauth-2025-04-20",
             "content-type": "application/json",
         }
-        # Retry on transient 429/5xx. OAuth shares the 5-hour budget with whatever
-        # else is running (typically r3 trials in this pilot), so back off and try
-        # again rather than fail the whole coverage step on a single throttle.
+        # Retry on transient 429/5xx. 
         backoffs = (5, 15, 30, 60, 120, 240)
         async with httpx.AsyncClient(timeout=300.0) as client:
             for i, wait in enumerate((*backoffs, 0)):
@@ -132,7 +123,7 @@ W_PRECISION = 0.30
 MATCH_CONFIDENCE_FLOOR_FOR_COVERED = 0.5  # ≥ this counts as "covered"
 _FLOAT_TOL = 1e-6
 
-# Per-message tier/kind/effort moved to tag_messages.py + kind_groups.py (the
+# Per-message tier/kind/effort moved to tag_messages.py + user_metrics.py (the
 # single source of truth). This file does the match table + coverage scores only.
 
 

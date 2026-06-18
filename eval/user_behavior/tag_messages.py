@@ -1,12 +1,26 @@
-"""Multi-label message tagger — the production tagging step.
+"""Split message tagger — the production tagging step (Stage 3).
 
-One Gemini call per trial → per-message {tags, frustration, tier}, written into
-intent_coverage_verdict.json :: trial_msg_tags. Drives BOTH user axes:
-  - User Correction = #correction + 0.2·#nudge   (kind_groups.user_correction)
-  - User Effort      = Σ tier_weight over directives (kind_groups.user_effort)
+TWO independent judge calls per trial, same model (default Gemini-3.1-Pro):
+  - tag-call  (prompts/tag_messages_system.md)  → per-message {tags, frustration}
+  - tier-call (prompts/tier_messages_system.md) → per-message {tier}
+merged per trial_idx into intent_coverage_verdict.json :: trial_msg_tags. Splitting
+the two axes into separate calls (vs the legacy single combined call) measurably
+reduces correction over-tagging — a single Gemini split pass averaged with a GPT-5.5
+split pass lands within ~0.04 of the old 3-way adjudication, ranking identical; see
+eval/result.md.
 
-Reproducibility: pinned gemini-3.1-pro-preview @ temp 0, versioned prompt
-(prompts/tag_messages_system.md), versioned taxonomy (kind_groups.py).
+trial_msg_tags drives BOTH user axes (user_metrics owns the weights):
+  - User Correction = #correction + 0.2·#nudge   (user_metrics.user_correction)
+  - User Effort      = Σ tier_weight over directives (user_metrics.user_effort)
+Both are also derived (user_metrics.metrics_from_rows) and persisted into the verdict
+as top-level user_effort / user_correction — same deriver eval/run_eval.py aggregates,
+so the stored and recomputed values can never diverge.
+
+Reproducibility: pinned model @ temp 0, versioned split prompts
+(prompts/tag_messages_system.md + prompts/tier_messages_system.md), versioned taxonomy
+(user_metrics.py). The old single combined tag+tier prompt was removed. For the
+reconciled-equivalent, re-run with a second --model and average the per-cohort metrics
+(scripts/_split_compute.py).
 
 RUN WITH .venv/bin/python3 (bare python3 = anaconda, no harbor → silent crash).
 """
@@ -21,9 +35,10 @@ sys.path.insert(0, str(REPO / "external" / "harbor" / "src"))
 from eval.user_behavior.coverage_one import (   # noqa: E402
     _make_llm, load_dotenv, load_trial_sim_msgs, parse_json, DEFAULT_MODEL,
 )
-from eval.user_behavior import kind_groups as kg  # noqa: E402
+from eval.user_behavior import user_metrics as kg  # noqa: E402
 
-SYSTEM = (_HERE.parent / "prompts" / "tag_messages_system.md").read_text()
+TAG_SYS = (_HERE.parent / "prompts" / "tag_messages_system.md").read_text()    # tags + frustration
+TIER_SYS = (_HERE.parent / "prompts" / "tier_messages_system.md").read_text()  # tier only
 TIERS = set(kg.SPECIFICITY_WEIGHTS)
 
 
@@ -45,15 +60,41 @@ def _normalize(r: dict) -> dict | None:
             "frustration": int(bool(r.get("frustration"))), "tier": tier}
 
 
+async def _ask(llm, system: str, user: str, attempts: int = 3) -> dict:
+    """One judge call → {trial_idx: raw_row}. Retries transient parse/API failures."""
+    for att in range(attempts):
+        try:
+            resp = await llm.call(system + "\n\n" + user)
+            obj = parse_json(resp.content)
+            return {r["trial_idx"]: r for r in obj.get("results", [])
+                    if isinstance(r, dict) and isinstance(r.get("trial_idx"), int)}
+        except Exception:
+            if att == attempts - 1:
+                raise
+            await asyncio.sleep(4)
+
+
 async def tag_one(llm, trial_dir: Path, task_dir: Path | None) -> list[dict]:
-    """Tag every (non-instruction) sim message of one trial. Returns the rows."""
+    """Tag every (non-instruction) sim message of one trial via the SPLIT judge:
+    a tag-call (tags + frustration) then a tier-call (tier), merged per trial_idx.
+    Two sequential calls on the SAME model, so in-flight concurrency stays == workers."""
     sim = load_trial_sim_msgs(trial_dir, task_dir)
     msgs = [m for m in sim if m["trial_idx"] != 0]
     if not msgs:
         return []
-    resp = await llm.call(SYSTEM + "\n\n" + _build_user(msgs))
-    obj = parse_json(resp.content)
-    rows = [x for x in (_normalize(r) for r in obj.get("results", []) if isinstance(r, dict)) if x]
+    user = _build_user(msgs)
+    tag_rows = await _ask(llm, TAG_SYS, user)     # {trial_idx: {tags, frustration}}
+    tier_rows = await _ask(llm, TIER_SYS, user)   # {trial_idx: {tier}}
+    rows = []
+    for m in msgs:
+        i = m["trial_idx"]
+        merged = {"trial_idx": i,
+                  "tags": (tag_rows.get(i) or {}).get("tags"),
+                  "frustration": (tag_rows.get(i) or {}).get("frustration"),
+                  "tier": (tier_rows.get(i) or {}).get("tier")}
+        nr = _normalize(merged)
+        if nr:
+            rows.append(nr)
     return rows
 
 
@@ -82,6 +123,9 @@ async def _tag_into_verdict(llm, sem, vp: str, force: bool):
         except Exception as e:
             return f"err: {type(e).__name__}: {e}"[:160]
         v["trial_msg_tags"] = rows
+        m = kg.metrics_from_rows(rows)          # persist the two derived user-axis metrics
+        v["user_effort"] = m["user_effort"]
+        v["user_correction"] = m["user_correction"]
         v.pop("trial_msg_specificity", None)   # drop the old single-label kind_hint/tier block
         json.dump(v, open(vp, "w"), ensure_ascii=False, indent=2)
         return "ok"

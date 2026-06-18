@@ -73,6 +73,26 @@ def expected_tier(tags, tier):
     return tier, None
 
 
+def metrics_from_rows(trial_msg_tags) -> dict:
+    """Derive the per-trial user-axis metrics from `trial_msg_tags` rows
+    ([{tags, tier, ...}, ...]). SINGLE SOURCE OF TRUTH for both what gets persisted
+    into intent_coverage_verdict.json (by tag_messages.py) and what eval/run_eval.py
+    aggregates — so the stored and recomputed values can never diverge.
+    Returns Nones when the trial wasn't tagged (no rows)."""
+    rows = trial_msg_tags or []
+    if not rows:
+        return {"user_correction": None, "user_effort": None,
+                "n_tagged_msgs": 0, "n_correction": None, "n_nudge": None}
+    tags = [r.get("tags", []) for r in rows]
+    return {
+        "user_correction": round(user_correction(tags), 4),
+        "user_effort": user_effort([(r.get("tags", []), r.get("tier", "none")) for r in rows]),
+        "n_tagged_msgs": len(rows),
+        "n_correction": sum(1 for t in tags if "correction" in t),
+        "n_nudge": sum(1 for t in tags if "nudge" in t),
+    }
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 def primary_kind(tags) -> str:
     """Back-compat single label (when something needs one): correction > nudge > base act."""

@@ -6,13 +6,13 @@ verdict files, and prints a summary at the end.
 
 Usage:
     .venv/bin/python -m eval.user_behavior.run_batch \\
-        --plan pipeline_logs/intent_coverage_plan_v3_r1.json \\
+        --plan pipeline_logs/intent_coverage_plan.json \\
         --workers 5
 
 Plan file shape (JSON list):
     [
       {"trial_dir": "<abs path>", "task_dir": "<abs path>",
-       "out_name": "intent_coverage_verdict_v3_r1.json"},
+       "out_name": "intent_coverage_verdict.json"},
       ...
     ]
 
