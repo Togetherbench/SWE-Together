@@ -1,52 +1,5 @@
 {
   "task_name": "comfyui-refactor-d3a759",
-  "_rubric_version": "v3",
-  "_self_critique_passed": true,
-  "_provenance": {
-    "framework": "Every goal cites the specific USER turn (instruction.md or user_simulation_prompt.md trigger message T*) that motivates it. Goal-text quotes user phrasing where possible. No reference to oracle line numbers, oracle file paths, oracle identifiers, or the oracle's chosen mechanism (thin-subclass vs. merge-into-Lumina vs. delete-module). Anti-pattern names (e.g. _pop_unexpected_kwargs) are observable in the BUGGY container state the agent sees, not oracle-only artifacts — but are nonetheless described semantically in goal text and used only as 'e.g.' examples.",
-    "user_asks": {
-      "instruction_turn_0": "Analyze Lumina vs NewBie. Should old code be removed? Minimize PR by reusing Lumina architecture and existing ops such as linear and RMSNorm in ComfyUI, and follow all other ComfyUI conventions.",
-      "trigger_T4": "Use operation_settings.get('operations').Linear. We should not pop unexpected kwargs or set kwargs to hardcoded values. NewBieNextDiT should assume the caller passes proper args.",
-      "trigger_T5": "Do we need to init the model parameters in NewBieNextDiT?",
-      "trigger_T6": "There is no nn.init in Lumina. The model parameters will be loaded later in ComfyUI.",
-      "trigger_T7": "In Lumina is there a module with the same functionality as NewBie's time_text_embed?",
-      "trigger_T8": "The try ... except ... may cause problem with torch.compile. Can we rewrite it without try ... except ...?",
-      "trigger_T9": "Why does NewBie have t = timesteps and return img, while Lumina has t = 1.0 - timesteps and return -img? How do other models in ComfyUI handle this?",
-      "trigger_T12": "Why does NewBie use CONDCrossAttn for c_crossattn, while Lumina2 uses CONDRegular? Where will c_crossattn be used?"
-    },
-    "intent_coverage": {
-      "intent_0_powershell_not_bash": "out-of-rubric (environment shell preference; orthogonal to refactor goals)",
-      "intent_1_no_double_amp": "out-of-rubric (environment shell preference)",
-      "intent_2_git_diff_command": "out-of-rubric (workflow step; means, not end)",
-      "intent_3_idiomatic_ops_no_kwargs_pop": "goal_1",
-      "intent_4_assume_proper_args": "goal_1",
-      "intent_5_question_init_params": "goal_3 (the answer is the gate)",
-      "intent_6_no_nn_init_in_newbie": "goal_3",
-      "intent_7_time_text_embed_overlap": "goal_2",
-      "intent_8_remove_try_except_for_compile": "goal_4",
-      "intent_9_timesteps_and_return_sign": "goal_5",
-      "intent_10_apply_user_edits": "out-of-rubric (means, not end; user-driven scaffolding)",
-      "intent_11_CONDCrossAttn_vs_CONDRegular": "goal_6",
-      "intent_12_where_are_cond_classes_defined": "goal_6 (sub-question of intent 11)",
-      "intent_13_reread_diff": "out-of-rubric (workflow step)",
-      "intent_14_merge_features_into_NextDiT_Lumina2": "goal_2 (refactor mechanism is open; merging is one valid path)",
-      "intent_15_image_model_usage": "out-of-scope per user_simulation_prompt.md HARD RULE 10 (Turns 14-16 OUT OF SCOPE)",
-      "intent_16_image_model_repo_scope": "out-of-scope per HARD RULE 10"
-    }
-  },
-  "_dropped_from_v2": [
-    {
-      "v2_goal_id": "goal_5",
-      "v2_goal_text_summary": "No NewBie-specific class overrides apply_model.",
-      "drop_reason": "Does not trace to any USER turn (intent_id 0-16) or any trigger message T4-T12. apply_model override is mentioned only in user_simulation_prompt.md's 'Ground Truth' curator-annotation block and the README, not in the simulated session itself. Per the v3 provenance bar, every goal must trace to a USER ask. The buggy state DOES synthesize an apply_model override on NewBieImage (synthesize_buggy_state.py uses it), but the user never asks the agent to remove it during the session, so it is not a measured user-correction-loop signal."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "v3_goal_id": "goal_2",
-      "rationale": "v1/v2 folded T7 (time_text_embed module duplication) into the headline 'reuse Lumina' goal_1, but T7 is a distinct user correction in the session (a separate trigger, separate cooldown, separate intent_id 7) about the SPECIFIC observation that NewBie re-declares modules that Lumina already provides. v3 promotes it to its own goal so the rubric measures whether the agent acted on that specific correction — not just 'reused Lumina at a high level'."
-    }
-  ],
   "completeness_goals": [
     {
       "id": "goal_0",
@@ -98,13 +51,5 @@
       "rationale": "T12 verbatim: 'Why does NewBie use CONDCrossAttn for c_crossattn, while Lumina2 uses CONDRegular? Where will c_crossattn be used?' The user explicitly names the wrong class (CONDCrossAttn) and the right class (CONDRegular) for the pooled-CLIP feature. Intent_12 ('Where are CONDRegular and CONDCrossAttn defined? What's the difference?') is a sub-question of the same correction and is rolled into this gate."
     }
   ],
-  "decomposition_notes": "7 goals: 1 anti-effort (goal_0, weight 0.10), 1 core (goal_1, weight 0.40), 5 secondaries (goal_2..goal_6, weight 0.10 each). Sum = 0.10 + 0.40 + 5*0.10 = 1.00. Differences from v2: (1) v2 goal_5 'no apply_model override' is REMOVED in v3 — does not trace to any user turn or trigger message. (2) v2 implicitly folded T7 (time_text_embed duplication) into the headline reuse goal; v3 promotes it to its own goal_2. (3) Goal text is mechanism-independent: each gate enumerates the acceptable shapes (subclass / merge-into-Lumina / use-Lumina2-directly) so v3 does not encode the oracle's chosen shape. (4) Anti-gaming inside goal text: goal_0 floor + each absence-based goal explicitly gated on goal_0 + goal_1 names two specific anti-patterns (silent kwargs-swallowing helpers, hardcoded-fallback ops helpers) using semantic descriptions in addition to the buggy-state names as 'e.g.' examples + goal_2 forbids 'duplicated, structurally-identical' modules rather than name-matching (which an agent could evade by renaming) + goal_4 names the SPECIFIC structural pattern (top-level try/except around the layer loop) not just 'no try/except anywhere' (which would forbid legitimate uses). (5) These rubric weights are intentionally NOT identical to the test_manifest.yaml F2P weights — they are decomposition rubric weights for the agentic judge; the verifier's F2P gates (test.sh) test partially overlapping but not identical structural facts (e.g. F2P-6 model_detection wiring is verifier-side only, not in the rubric because no user turn names model_detection). The rubric and the verifier are intentionally diagnostic-of-different-things per eval_design.md.",
-  "_task_quality_flags": {
-    "source": "carried_forward_from_v2",
-    "scanner_version": "v1",
-    "flags": {
-      "unpinned_python_deps": "Dockerfile pip installs unpinned packages. Reproducibility risk.",
-      "file_refs_unmentioned": "Test script references files not mentioned in instruction.md (e.g., comfy/ldm/lumina/model.py). Agent may not know required filenames — partially mitigated by trigger T4 explicitly naming Lumina."
-    }
-  }
+  "decomposition_notes": "7 goals: 1 anti-effort (goal_0, weight 0.10), 1 core (goal_1, weight 0.40), 5 secondaries (goal_2..goal_6, weight 0.10 each). Sum = 0.10 + 0.40 + 5*0.10 = 1.00. Differences from v2: (1) v2 goal_5 'no apply_model override' is REMOVED in v3 — does not trace to any user turn or trigger message. (2) v2 implicitly folded T7 (time_text_embed duplication) into the headline reuse goal; v3 promotes it to its own goal_2. (3) Goal text is mechanism-independent: each gate enumerates the acceptable shapes (subclass / merge-into-Lumina / use-Lumina2-directly) so v3 does not encode the oracle's chosen shape. (4) Anti-gaming inside goal text: goal_0 floor + each absence-based goal explicitly gated on goal_0 + goal_1 names two specific anti-patterns (silent kwargs-swallowing helpers, hardcoded-fallback ops helpers) using semantic descriptions in addition to the buggy-state names as 'e.g.' examples + goal_2 forbids 'duplicated, structurally-identical' modules rather than name-matching (which an agent could evade by renaming) + goal_4 names the SPECIFIC structural pattern (top-level try/except around the layer loop) not just 'no try/except anywhere' (which would forbid legitimate uses). (5) These rubric weights are intentionally NOT identical to the test_manifest.yaml F2P weights — they are decomposition rubric weights for the agentic judge; the verifier's F2P gates (test.sh) test partially overlapping but not identical structural facts (e.g. F2P-6 model_detection wiring is verifier-side only, not in the rubric because no user turn names model_detection). The rubric and the verifier are intentionally diagnostic-of-different-things per eval_design.md."
 }

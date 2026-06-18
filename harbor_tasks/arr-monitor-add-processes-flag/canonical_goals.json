@@ -7,212 +7,36 @@
       "goal": "The deliverable is a genuine implementation of what the user asked for, not a stub, no-op, or diff-padding edit. Specifically: (a) the monitoring entrypoint script remains valid, executable Python (parses without SyntaxError and runs `--help` without crashing); (b) any pre-existing membership of the file-extension ignore set is preserved (entries are not deleted to inflate the diff or replaced wholesale rather than extended); (c) if a new command-line flag is registered in the argument parser, it is also wired into the runtime path it is supposed to influence — a flag that is parsed and then ignored does not satisfy this guard; (d) the changes are present in the workspace tree the verifier inspects, not only in temporary directories or unmerged feature branches that were never integrated into the working source.",
       "tier": "anti_gaming",
       "weight": 0.0,
-      "rationale": "Sanity guard against the failure modes observed in low-quality attempts: argparse entries that never reach the monitoring loop (help-only stub), edits made inside throwaway clones rather than the live workspace, IGNORE_EXTENSIONS being rewritten from scratch and silently dropping prior members, and broken scripts that no longer compile. Zero-weighted; goal_0 is flagged in the verdict but does not contribute to the summed score.",
-      "_provenance": {
-        "user_turn_ids": [],
-        "user_excerpts": [],
-        "kind": "anti_gaming_floor",
-        "note": "Not tied to a specific user ask. Enforces that whatever-was-asked is actually implemented rather than gamed."
-      }
+      "rationale": "Sanity guard against the failure modes observed in low-quality attempts: argparse entries that never reach the monitoring loop (help-only stub), edits made inside throwaway clones rather than the live workspace, IGNORE_EXTENSIONS being rewritten from scratch and silently dropping prior members, and broken scripts that no longer compile. Zero-weighted; goal_0 is flagged in the verdict but does not contribute to the summed score."
     },
     {
       "id": "goal_1",
       "goal": "The set of file extensions that the monitor treats as 'ignored' (the file-extension exclusion list defined near the top of the monitoring script) is extended to include Windows executable and installer extensions — i.e. the two extensions associated with native Windows executables and MSI installer packages. Entries already present in that set before the change must still be present after the change.",
       "tier": "core",
       "weight": 0.35,
-      "rationale": "The user's opening instruction asks the agent to merge all open PRs. One of those open PRs is the branch that extends the ignore list to cover Windows executable/installer artefacts. Merging that PR — by any mechanism (gh pr merge, cherry-pick, manual edit reproducing the same content) — must result in the workspace tree containing those two extensions in the ignore set, with prior membership preserved.",
-      "_provenance": {
-        "user_turn_ids": ["instruction"],
-        "user_excerpts": ["Merge all open PRs (use the `gh` tool) and clean up the feature branches."],
-        "kind": "user_request",
-        "note": "The user did not name the extensions; they named the action ('merge all open PRs'). The extensions are content of one of those PRs; merging it is the user's ask, and the verifiable footprint of having merged it is the extended ignore set."
-      }
+      "rationale": "The user's opening instruction asks the agent to merge all open PRs. One of those open PRs is the branch that extends the ignore list to cover Windows executable/installer artefacts. Merging that PR — by any mechanism (gh pr merge, cherry-pick, manual edit reproducing the same content) — must result in the workspace tree containing those two extensions in the ignore set, with prior membership preserved."
     },
     {
       "id": "goal_2",
       "goal": "A CLI flag that toggles 'keep watching for newly spawned target processes during a monitoring run' is present in the workspace's monitoring script end-to-end: (i) it is registered in the argument parser; (ii) it appears in the program's --help output with an accompanying help string; (iii) the value of that flag flows from the entrypoint into the long-running monitoring loop (e.g. as a parameter, attribute, or other equivalent channel); (iv) when the flag is active, the loop actually invokes the existing process-discovery routine and grows its working list of monitored process IDs with any newly discovered ones. A flag that is declared and parsed but is never consulted inside the monitoring loop, or a function-signature change that is not accompanied by a matching call-site update, does NOT satisfy this goal — the help-text-only stub failure mode must be caught here.",
       "tier": "core",
       "weight": 0.35,
-      "rationale": "The user's opening instruction asks the agent to merge all open PRs. The largest of those PRs introduces precisely this flag together with the runtime rescan logic; merging that PR is meaningless unless the resulting workspace tree contains both the surface (argparse + help text) and the substance (the loop actually using the flag to extend the PID list). The user's later turn explicitly re-grounds the surface side by asking that the new flag be documented in --help, but documenting the flag without the runtime plumbing leaves the user's original 'merge that PR' ask only half-honoured.",
-      "_provenance": {
-        "user_turn_ids": ["instruction", "T7"],
-        "user_excerpts": [
-          "Merge all open PRs (use the `gh` tool) and clean up the feature branches.",
-          "Okay, now, that new command line flag? Document it in the `--help` text."
-        ],
-        "kind": "user_request",
-        "note": "The surface (--help documentation) is asked twice — once implicitly via 'merge all open PRs' and once explicitly via T7. The end-to-end plumbing is asked once, via the merge ask: the PR being merged is what introduces it. The anti-stub clause in this goal exists because the observed low-quality attempt added the argparse entry without the loop integration."
-      }
+      "rationale": "The user's opening instruction asks the agent to merge all open PRs. The largest of those PRs introduces precisely this flag together with the runtime rescan logic; merging that PR is meaningless unless the resulting workspace tree contains both the surface (argparse + help text) and the substance (the loop actually using the flag to extend the PID list). The user's later turn explicitly re-grounds the surface side by asking that the new flag be documented in --help, but documenting the flag without the runtime plumbing leaves the user's original 'merge that PR' ask only half-honoured."
     },
     {
       "id": "goal_3",
       "goal": "Invoking the program with the new add-new-processes-style flag but without the all-processes-style flag must not silently succeed. It must exit with a non-zero status and surface an error message that mentions the all-processes flag, making clear that the two are required together.",
       "tier": "secondary",
       "weight": 0.15,
-      "rationale": "The new flag is only meaningful when the program is in all-processes mode (otherwise the rescan logic has nothing to extend). The PR the user asks to merge contains this validation check at the entrypoint; therefore the user's 'merge all open PRs' ask transitively asks for this behaviour to be present in the workspace tree.",
-      "_provenance": {
-        "user_turn_ids": ["instruction"],
-        "user_excerpts": ["Merge all open PRs (use the `gh` tool) and clean up the feature branches."],
-        "kind": "user_request_transitive",
-        "note": "User did not separately demand a validation error. This is content of the PR they asked to merge."
-      }
+      "rationale": "The new flag is only meaningful when the program is in all-processes mode (otherwise the rescan logic has nothing to extend). The PR the user asks to merge contains this validation check at the entrypoint; therefore the user's 'merge all open PRs' ask transitively asks for this behaviour to be present in the workspace tree."
     },
     {
       "id": "goal_4",
       "goal": "Both the new add-new-processes-style flag and the all-processes flag have short-option aliases registered in the argument parser. The user explicitly named their preferred letters in a follow-up turn — capital-A for the add-new-processes flag and lowercase-a for the all-processes flag — and those exact letters should be considered the canonical match. Other consistent letter choices are acceptable ONLY if the agent had already committed to short options before the user named the letters; once the user has stated their preference, the implementation should adopt those letters and the help epilog/examples (if updated) should be consistent with whatever short letters were chosen.",
       "tier": "secondary",
       "weight": 0.15,
-      "rationale": "The user first asks for a short option in a generic turn, then in the next turn names the exact letters. Both turns are direct user asks; this goal is graded against the resulting state of the argument parser.",
-      "_provenance": {
-        "user_turn_ids": ["T8", "T9"],
-        "user_excerpts": [
-          "Give it a short option as well.",
-          "`-A`, most likely. `-a` should be equivalent to `--all`."
-        ],
-        "kind": "user_request",
-        "note": "T8 asks for short options abstractly; T9 pins the letters. The goal accepts either exact-letter compliance or a defensible pre-T9 letter choice that was then left in place; the rubric does not punish an agent for committing to short letters before the user finished specifying them, provided both long flags do end up with a short alias."
-      }
+      "rationale": "The user first asks for a short option in a generic turn, then in the next turn names the exact letters. Both turns are direct user asks; this goal is graded against the resulting state of the argument parser."
     }
   ],
-  "decomposition_notes": "One anti-gaming guard (goal_0, weight 0) plus 2 cores plus 2 secondaries. Real-weight sum: 0.35 + 0.35 + 0.15 + 0.15 = 1.00. Weights are intentionally NOT a mirror of the test.sh F2P manifest (which splits 0.50/0.50 between two surface-level upstream gates — help-text grep and ignore-set membership). The rubric rebalances toward end-to-end behaviour: goal_2 absorbs the runtime plumbing that grep-on-help-output cannot easily check, and goal_3/goal_4 carry the validation-and-short-option work that the upstream gates ignore entirely. Process steps the user mentioned (git push/pull, branch cleanup, commit-and-push-only-when-done, the goodbye/quit exchange, the 'you committed early' debrief) are not graded as code deliverables — they are session-flow artefacts that do not produce a workspace footprint the verifier can inspect, so they would either grade as no-ops or as impossible-to-verify. Mechanism citations in goals and rationales are deliberately written without referencing oracle-specific identifiers (no NEW_PROCESS_SCAN_INTERVAL, no specific function names other than where the user named them, no exact line ranges); the goal text describes WHAT must end up true of the workspace tree, not HOW it was achieved.",
-  "_provenance": {
-    "user_turn_index": {
-      "instruction": "Merge all open PRs (use the `gh` tool) and clean up the feature branches.",
-      "T2": "git push/pull/whatever?",
-      "T3": "yes",
-      "T4": "yes",
-      "T5": "Goodbye.",
-      "T6": "quit",
-      "T7": "Okay, now, that new command line flag? Document it in the `--help` text.",
-      "T8": "Give it a short option as well.",
-      "T9": "`-A`, most likely. `-a` should be equivalent to `--all`.",
-      "T10": "Commit and push when you are done.",
-      "T11": "WHEN YOU ARE DONE",
-      "T12": "Not until then",
-      "T13": "Were you done working?",
-      "T14": "No, just making sure. It seemed like my instruction interrupted your work and you prematurely committed. Sorry."
-    },
-    "coverage_table": {
-      "instruction (merge all open PRs)": ["goal_1", "goal_2", "goal_3"],
-      "T2 (git push/pull/whatever?)": ["workflow_only_not_graded"],
-      "T3 (yes)": ["confirmation_not_graded"],
-      "T4 (yes)": ["confirmation_not_graded"],
-      "T5 (Goodbye.)": ["session_flow_not_graded"],
-      "T6 (quit)": ["session_flow_not_graded"],
-      "T7 (document the new flag in --help)": ["goal_2"],
-      "T8 (give it a short option as well)": ["goal_4"],
-      "T9 (-A most likely; -a should be equivalent to --all)": ["goal_4"],
-      "T10 (commit and push when you are done)": ["workflow_only_not_graded"],
-      "T11 (WHEN YOU ARE DONE)": ["timing_nag_not_graded"],
-      "T12 (Not until then)": ["timing_nag_not_graded"],
-      "T13 (Were you done working?)": ["status_check_not_graded"],
-      "T14 (No, just making sure ...)": ["resolution_not_graded"]
-    },
-    "ungraded_turns_justification": "All ungraded turns are session-flow artefacts (git sync confirmations, goodbye/quit exchanges, timing nags, post-hoc status checks, and the closing apology). They do not specify a code deliverable that the verifier can inspect on the workspace tree. Grading them would require introspecting git history, which is not the artefact the canonical patch represents."
-  },
-  "_self_critique_passed": true,
-  "_self_critique_log": [
-    {
-      "check": "every goal traces to a specific user ask (verbatim excerpt or user_turn_id)",
-      "result": "pass",
-      "note": "goal_1, goal_2 (in part), goal_3 trace to the instruction; goal_2 additionally to T7; goal_4 to T8+T9. goal_0 is anti-gaming and intentionally not tied to a single ask."
-    },
-    {
-      "check": "no oracle-specific identifiers in goal/rationale text",
-      "result": "pass",
-      "note": "Goal text uses descriptive phrasing — 'monitoring loop', 'process-discovery routine', 'argument parser' — not run_monitor, find_arr_processes, NEW_PROCESS_SCAN_INTERVAL, Config.NEW_PROCESS_SCAN_INTERVAL, or any line ranges. The flag long names (--add-new-processes, --all) and short letters (-A, -a) are quoted because they are taken from user turns themselves, not from the oracle patch."
-    },
-    {
-      "check": "anti-gaming language is inside the relevant goals, not only in goal_0",
-      "result": "pass",
-      "note": "goal_2 contains an explicit anti-stub clause covering the help-only failure mode observed in the low-quality trial. goal_1 has the 'entries already present must still be present' anti-replacement clause. goal_0 is the catch-all sanity floor; specific anti-gaming language lives in the goal it protects."
-    },
-    {
-      "check": "goal_0 present and zero-weighted",
-      "result": "pass",
-      "note": "goal_0 present, tier 'anti_gaming', weight 0.0, summed-weight check excludes it."
-    },
-    {
-      "check": "real-weight sum equals 1.00",
-      "result": "pass",
-      "note": "0.35 + 0.35 + 0.15 + 0.15 = 1.00"
-    },
-    {
-      "check": "weights are not a mirror of the test.sh F2P manifest",
-      "result": "pass",
-      "note": "test.sh upstream F2P weights are 0.50/0.50 across two surface-level gates (help-flag grep, ignore-set extension). v3 distributes 0.35/0.35/0.15/0.15 across four behavioural goals, deliberately upweighting end-to-end plumbing and downweighting surface grepability. Distributions differ in both shape and dimensionality."
-    },
-    {
-      "check": "every substantive user ask is covered or has a justified non-grading reason",
-      "result": "pass",
-      "note": "See _provenance.coverage_table. All 14 user turns are accounted for: 4 graded turns map to 4 goals; 10 ungraded turns are session-flow artefacts (sync confirmations, goodbye/quit, timing nags, status checks, resolution) with explicit justification."
-    },
-    {
-      "check": "no leakage from oracle patch into goal text beyond what the user explicitly named",
-      "result": "pass",
-      "note": "The oracle adds NEW_PROCESS_SCAN_INTERVAL, modifies main()'s elif args.all branch with a 'Waiting for new processes...' message, and uses 'processes = find_arr_processes()' inside run_monitor. None of those identifiers appear in the goal text. goal_2(iv) requires that the loop 'actually invokes the existing process-discovery routine' but does not name that routine, leaving the implementation free to refactor or rename it."
-    },
-    {
-      "check": "rubric is implementation-agnostic where the user did not specify",
-      "result": "pass",
-      "note": "goal_2 leaves the channel through which the flag value flows ('parameter, attribute, or other equivalent channel') open. goal_4 allows alternative short letters under defined conditions. goal_1 leaves the merge mechanism open ('gh pr merge, cherry-pick, manual edit reproducing the same content')."
-    },
-    {
-      "check": "no goal grades a process step (git push, branch cleanup, commit timing)",
-      "result": "pass",
-      "note": "Process steps are explicitly excluded in decomposition_notes and ungraded_turns_justification. Verifier inspects workspace tree state, not git history."
-    },
-    {
-      "check": "test_sh_f2p_upstream_weights_sum_check",
-      "result": "fixed_2026-06-06",
-      "note": "Initial state FAILED: the PYEOF tail block in tests/test.sh declared WEIGHTS={'f2p_upstream_help_flag': 0.5, 'f2p_upstream_exe_msi_ext': 0.5} (sum=1.0), driving inner_weight=0.0 and fully discarding the 6-gate G1-G6 bash score. Per the v3 rubric design (goal_2 plumbing at 0.35, goal_3 validation at 0.15), the inner score MUST carry significant weight or shallow help-text-only implementations score 1.0. Fix applied (Sonnet review 2026-06-06): both upstream gate weights reduced to 0.15 (sum=0.30, inner_weight=0.70), matching the rubric's intent. test.sh PYEOF block and test_manifest.yaml updated in lockstep. Trial __LoTqpaH would now score in the ~0.30 range (surface gates only) rather than 1.0, restoring alignment with judge_score=0.0."
-    },
-    {
-      "check": "goal_4_precommit_ambiguity_verifiability",
-      "result": "documented_known_limitation",
-      "note": "goal_4's 'alternative short letters acceptable if agent committed before user named -A/-a in T9' conditional cannot be evaluated from a static workspace patch. A judge scoring the final state sees only the final argparse short letters, not the commit history. In practice this is low-impact because the user named the letters explicitly in T9 and any agent processing the multi-turn session sees that turn before producing the final tree. Future v4: simplify to require exact -A/-a, period."
-    }
-  ],
-  "_dropped_from_v2": [
-    {
-      "v2_text": null,
-      "drop_reason": "Nothing in v2 was dropped wholesale. v3 retains v2's 5-goal structure (goal_0 anti-gaming + 4 substantive goals) and v2's 0/0.35/0.35/0.15/0.15 weight distribution. The changes from v2 to v3 are tightening of provenance bookkeeping and language sharpening — see _added_for_coverage and _changed_from_v2 — not goal removal."
-    }
-  ],
-  "_changed_from_v2": [
-    {
-      "goal_id": "goal_0",
-      "change": "Added clause (d): 'changes are present in the workspace tree the verifier inspects, not only in temporary directories or unmerged feature branches that were never integrated into the working source.' This captures the exact failure mode of trial __LoTqpaH, where the agent edited /tmp/tmp.*/repo clones rather than the live /workspace tree."
-    },
-    {
-      "goal_id": "goal_2",
-      "change": "Replaced run_monitor-specific language ('the monitoring loop receives the flag, calls the process-discovery routine') with implementation-agnostic phrasing ('the value of that flag flows from the entrypoint into the long-running monitoring loop … the loop actually invokes the existing process-discovery routine'). Semantically equivalent; removes the oracle-coupled noun phrasing."
-    },
-    {
-      "goal_id": "goal_3",
-      "change": "Removed the parenthetical 'e.g., a post-parse validation block in the program entrypoint that raises or calls parser.error'. v3 lets any mechanism that produces the observable behaviour (non-zero exit + error mentioning --all) satisfy the goal; the v2 rationale's mechanism hint is moved out of the rubric entirely."
-    },
-    {
-      "goal_id": "goal_4",
-      "change": "Tightened the conditional in v2 ('alternative short letters are acceptable if the agent registered short options before the user specified exact letters') into a single sentence with the same semantics. No change in graded behaviour."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "addition": "_provenance.coverage_table",
-      "reason": "Explicitly maps each of the 14 user turns (instruction + T2..T14) to either a goal_id or a non-grading category, satisfying the 'every goal traces to USER ask + coverage' bar."
-    },
-    {
-      "addition": "_provenance.user_turn_index",
-      "reason": "Records the verbatim text of every user turn referenced anywhere in the rubric, so a future reviewer can audit provenance without re-opening oracle_session.jsonl."
-    },
-    {
-      "addition": "per-goal _provenance block",
-      "reason": "Each goal carries its own user_turn_ids + user_excerpts + kind + note, so the trace from goal back to user ask is local to the goal rather than only inferable from the rationale prose."
-    },
-    {
-      "addition": "_self_critique_log",
-      "reason": "Phase B self-critique made explicit as 10 enumerated checks with pass/fail verdict and per-check note, so the 'self-critique passed' boolean is auditable."
-    }
-  ]
+  "decomposition_notes": "One anti-gaming guard (goal_0, weight 0) plus 2 cores plus 2 secondaries. Real-weight sum: 0.35 + 0.35 + 0.15 + 0.15 = 1.00. Weights are intentionally NOT a mirror of the test.sh F2P manifest (which splits 0.50/0.50 between two surface-level upstream gates — help-text grep and ignore-set membership). The rubric rebalances toward end-to-end behaviour: goal_2 absorbs the runtime plumbing that grep-on-help-output cannot easily check, and goal_3/goal_4 carry the validation-and-short-option work that the upstream gates ignore entirely. Process steps the user mentioned (git push/pull, branch cleanup, commit-and-push-only-when-done, the goodbye/quit exchange, the 'you committed early' debrief) are not graded as code deliverables — they are session-flow artefacts that do not produce a workspace footprint the verifier can inspect, so they would either grade as no-ops or as impossible-to-verify. Mechanism citations in goals and rationales are deliberately written without referencing oracle-specific identifiers (no NEW_PROCESS_SCAN_INTERVAL, no specific function names other than where the user named them, no exact line ranges); the goal text describes WHAT must end up true of the workspace tree, not HOW it was achieved."
 }

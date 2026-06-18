@@ -1,26 +1,5 @@
 {
   "task_name": "sd-scripts-reg-image-dedup",
-  "_provenance": {
-    "instruction_md_verbatim": "Read `git diff HEAD~`. Do we really need `rebalance_regularization_images`?",
-    "instruction_md_user_asks": [
-      "Inspect the recent diff (git diff HEAD~) and reason about it.",
-      "Answer the design question: is `rebalance_regularization_images` actually necessary, or is the call structure (register-at-init + post-filter rebalance) redundant?"
-    ],
-    "simulator_turns_in_play": [
-      "T2 (sim) = original session U3: 'Why do we need to call register_balanced_regularization_images at two places, then call rebalance_regularization_images? Can't we always register reg images after filtering?' — design question about the two-call-site pattern; trigger condition assumes the agent has already extracted/refactored a balancing helper, so dedup is an implicit user expectation gated by the trigger.",
-      "T2 redirect (sim): if no helper is created or it has the wrong name, sim instructs: 'Extract a new helper called register_regularization_images -- call it from both __init__ and rebalance_regularization_images. Don't call rebalance_regularization_images from __init__ directly...' — this is the explicit user-facing dedup directive that materializes at runtime when the agent under-delivers.",
-      "T3 (sim) = original session U4: 'Ok I've did some cleanup. Now check another issue: In every dataset type, does every conditioning image correctly match the main image after the filtering' — verification ask covering ControlNet conditioning pairing.",
-      "T4 (sim) = original session U5: 'In ControlNetDataset.__init__, why can we ignore missing conditioning images when the filter is enabled? Do we really need to check missing images again in ControlNetDataset.make_buckets?' — design question on the two-phase conditioning validation.",
-      "T5 (sim) = original session U6: 'Can we avoid calling self.update_dataset_image_counts() two times when reg image count needs updating?' — points out the redundant double call.",
-      "T6 (sim) = original session U7: 'Do it' — approves the proposed fix; agent must actually implement the change.",
-      "T5/T6 redirect (sim): if agent picks a different mechanism, sim instructs: 'Use an update_counts: bool = True parameter on filter_registered_images_by_orig_resolution -- DreamBooth passes False so base skips the count update, then DreamBooth calls it after rebalancing.'"
-    ],
-    "user_asks_NOT_in_play_excluded_from_rubric": [
-      "Original session U1 ('Is the regularization image balance correct after the filtering in all other dataset types?') — not sent by the simulator's trigger table; excluded from rubric.",
-      "Original session U2 ('Refactor it to remove duplicate code in reg imag balancing.') — NOT sent by the simulator's trigger table (sim trigger T2 starts at original U3 and only fires the dedup redirect if the agent visibly under-delivers). Dedup is therefore a CONDITIONAL ask, not an unconditional one; the rubric reflects this in goal weighting.",
-      "'Zero regularization images edge case' — DOES NOT appear in instruction.md or any actual user turn (original or simulated). user_simulation_prompt.md's narrative `Context` section paraphrases this from a hypothetical earlier instruction, but instruction.md is just the design question. The buggy state's helper already has `if len(reg_infos) == 0 or num_train_images <= 0: return` and the canonical patch does not modify that guard. This goal is dropped from v3."
-    ]
-  },
   "completeness_goals": [
     {
       "id": "goal_0",
@@ -33,7 +12,7 @@
       "id": "goal_1",
       "goal": "Investigate the code path before changing it: at least read the relevant source (the file containing the dataset classes and the filter/rebalance code) and either run `git diff HEAD~` or inspect the recent change being asked about, before proposing or applying edits. The agent must produce some response to the design question raised in the instruction — whether `rebalance_regularization_images` is actually necessary — rather than silently editing without engaging with the question. NOT satisfied by stubs, NOT satisfied by a generic 'I will inspect the file' acknowledgement with no actual inspection, NOT satisfied if the agent only paraphrases the question back without taking any position.",
       "tier": "core",
-      "weight": 0.20,
+      "weight": 0.2,
       "rationale": "Traces to instruction.md verbatim: 'Read `git diff HEAD~`. Do we really need `rebalance_regularization_images`?' This is the literal first user ask: read the diff, engage with the design question. An agent that skips inspection and starts editing immediately, or never offers any answer/position on the design question, has not satisfied the first turn at all."
     },
     {
@@ -61,7 +40,7 @@
       "id": "goal_5",
       "goal": "When simulator T6 ('Do it') fires, the agent must actually implement the proposed fix in the source file — i.e., the change appears in the code, not only in chat / proposal text. After T6, the file's filter-override code path reflects the agreed-upon fix (a structural change that aligns with whatever fix was proposed in response to T5). NOT satisfied by stubs, NOT satisfied by chat-only 'here is what I would change' descriptions, NOT satisfied by a TODO comment standing in for the actual edit; the on-disk file content must reflect the proposed change.",
       "tier": "secondary",
-      "weight": 0.10,
+      "weight": 0.1,
       "rationale": "Traces to simulator T6 verbatim ('Do it'). Distinct from goal_4 in that goal_4 measures the *outcome* (one call) while goal_5 measures the *execution discipline* (the agent actually edited the file in response to the approval), which is the simulator's specific request. Secondary tier because in most successful runs goal_4 implies goal_5; this goal exists to catch agents that propose-but-don't-implement."
     },
     {
@@ -72,89 +51,5 @@
       "rationale": "Traces to simulator's T3-pre-redirect: 'If rebalance_regularization_images was removed by the agent (completely gone from the code), say: Don't remove rebalance_regularization_images...'. This is an explicit, narrowly-scoped user constraint that exists in the simulator and is preservation-style (not deletion-style), so it isn't covered by goal_0's anti-gaming floor. Low weight because conditional."
     }
   ],
-  "decomposition_notes": "Seven goals: goal_0 anti-effort floor (weight 0.0, zero-gates the rubric on gaming patterns — zero-edits, git-ops exfiltration, feature-gutting, stubs), four core scored goals each tracing to a specific user-ask cluster (instruction.md inspect+answer, simulator T2 two-call-site, simulator T3+T4 ControlNet, simulator T5+T6 double-call), and two secondary goals (T6 execution discipline, T2-redirect 'don't remove rebalance'). Scored weights sum to 1.00 (0.00 + 0.20 + 0.25 + 0.15 + 0.25 + 0.10 + 0.05) and are NOT aligned with the test_manifest F2P gate weights — rubric weights reflect rater-judged centrality to the user's actual asks, while gate weights reflect what the verifier happens to check. No oracle-specific identifiers (`register_balanced_regularization_images`, `update_counts=not self.is_training_dataset`, `_balance_reg_images`, specific line numbers) appear in any goal text; mechanism hints, where present, are tagged 'e.g.' or 'any equivalent' so behaviorally-equivalent implementations receive credit. Goal_0 provides the anti-effort floor at 0.0 weight because three of the substantive goals (goal_2 dedup, goal_4 double-call, goal_6 'don't remove') are deletion/suppression-style and individually gameable by over-deletion or by git-ops exfiltration of the upstream fix.",
-  "_dropped_from_v2": [
-    {
-      "v2_goal_id": "goal_2 (zero reg images edge case)",
-      "reason": "No user turn — original or simulated — mentions 'zero reg images', 'edge case', or 'empty'. The v2 rationale cites user_simulation_prompt.md's Context section, but that section is an INACCURATE summary of instruction.md (instruction.md is the Socratic 'Do we really need rebalance_regularization_images?' question, not a refactor + edge-case + double-call directive). The buggy state's helper already contains the zero-reg guard; the canonical patch does not modify it. Including this goal would penalize agents for not addressing something the user never asked, and reward agents for adding redundant guards. Dropped."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "v3_goal_id": "goal_1 (inspect + answer the design question)",
-      "reason": "Instruction.md is literally 'Read `git diff HEAD~`. Do we really need `rebalance_regularization_images`?' — a two-part request: inspect, then answer. v1/v2 had no goal anchored to this first-turn behavior; they conflated instruction.md with the (paraphrased and inaccurate) Context section."
-    },
-    {
-      "v3_goal_id": "goal_3 (ControlNet conditioning questions)",
-      "reason": "Simulator T3 and T4 are substantive ControlNet conditioning-pairing questions that v1/v2 entirely ignore. They are part of the user-driven turn budget (the simulator will send them), so a complete rubric must cover them."
-    },
-    {
-      "v3_goal_id": "goal_5 (T6 execution discipline)",
-      "reason": "'Do it' is a distinct user act — separate from 'propose a fix' — and an agent that proposes without ever editing should be penalized for that specific failure mode. v1/v2 had no goal for this."
-    },
-    {
-      "v3_goal_id": "goal_6 ('don't remove rebalance_regularization_images')",
-      "reason": "The simulator has an explicit, named redirect: 'Don't remove rebalance_regularization_images — it's needed when external code calls filter on an already-initialized dataset.' This is a preservation constraint the user (via the simulator) will actively assert, distinct from the anti-gaming floor in goal_0."
-    }
-  ],
-  "_self_critique_passed": true,
-  "_self_critique": {
-    "phase_a_draft_issues_found_and_fixed": [
-      "DRAFT 1 had goal_2 phrased as 'must extract a helper method'. FIX: rephrased as 'either explain or restructure' to match the actual user turn shape (T2 is a design question), with restructuring only required if the T2 redirect fires.",
-      "DRAFT 1 had goal_4 mentioning 'update_counts kwarg' as the mechanism. FIX: removed mechanism from goal text, moved to rationale-only example tagged as one possible approach; goal is now behavioral (exactly-one update_counts call).",
-      "DRAFT 1 weights summed to 0.97. FIX: rebalanced to exactly 1.00.",
-      "DRAFT 1 lacked goal_5 (T6 execution discipline) and goal_6 (T2-redirect preservation). FIX: added both with secondary weights to cover the remaining simulator-specific asks."
-    ],
-    "no_oracle_identifiers_in_goal_text": true,
-    "no_oracle_line_numbers_in_goal_text": true,
-    "every_goal_traces_to_user_ask": "goal_0 anti-gaming (implicit from overall user intent of *fixing* the code path); goal_1 → instruction.md; goal_2 → sim T2 + T2 redirect; goal_3 → sim T3 + T4; goal_4 → sim T5 + T6; goal_5 → sim T6; goal_6 → sim T2/T3-pre redirect.",
-    "weights_not_aligned_with_f2p_gates": "F2P gates in test_manifest are weighted 0.15/0.15/0.15/0.10/0.20/0.15/0.10 across 7 gates; rubric weights are 0.20/0.15/0.20/0.10/0.20/0.10/0.05 across 7 goals. Different distribution, anchored to user-ask centrality (e.g., the rubric weights goal_3 ControlNet at 0.10 because it's exploratory; the verifier has no ControlNet gate at all).",
-    "anti_gaming_present": true,
-    "goal_0_present_with_anti_gaming_role": true
-  },
-  "_self_critique_log": [
-    {
-      "date": "2026-06-06",
-      "source": "analysis/v3_rubric_audit_gemini/sd-scripts-reg-image-dedup.json (gemini-3.1-pro-preview)",
-      "issues_addressed": [
-        {
-          "criterion": "anti_effort_floor (FAIL) + user_provenance (FAIL on goal_0)",
-          "fix": "Rewrote goal_0 as a true 0.0-weight anti-effort floor. Added explicit zeroing patterns: zero-edits, git-ops exfiltration (checkout/reset/stash/revert/branch-swap), reverting to upstream known-good, feature-gutting, and stub/chat-only submissions. Removed positive-weight feature-preservation framing; goal_0 now scores 0 on pass and zeros the rubric on fail. Resolves the provenance complaint by eliminating the need to anchor goal_0 to a specific user turn (0.0-weight floors are exempt)."
-        },
-        {
-          "criterion": "anti_cheating_clauses (PARTIAL)",
-          "fix": "Added explicit 'NOT satisfied by stubs' / 'NOT satisfied by chat-only proposals' / 'NOT satisfied by TODO comments' boilerplate to every scored goal body (goal_1 through goal_6). Each goal now names its own stub-rejection pattern tuned to its specific failure mode (e.g., goal_2 rejects pass-through delegating helpers, goal_4 rejects commented-out calls without invariant preservation, goal_6 rejects `pass`/`NotImplementedError` re-additions)."
-        },
-        {
-          "criterion": "weight redistribution to maintain sum = 1.00",
-          "fix": "Removed 0.20 weight from goal_0 (now 0.0) and redistributed to scored goals proportional to centrality: goal_1 0.15->0.20, goal_2 0.20->0.25, goal_3 0.10->0.15, goal_4 0.20->0.25. Goal_5 (0.10) and goal_6 (0.05) unchanged. Verified sum = 0.00 + 0.20 + 0.25 + 0.15 + 0.25 + 0.10 + 0.05 = 1.00."
-        }
-      ],
-      "unaddressed_criticism": [],
-      "kept_v3_invariants": [
-        "All seven goals retained",
-        "No oracle-specific identifiers introduced",
-        "Mechanism-agnostic language preserved on goal_2 and goal_4",
-        "decomposition_notes updated to reflect new weight distribution"
-      ]
-    },
-    {
-      "date": "2026-06-06",
-      "source": "analysis/v3_rubric_audit_gemini_v2/sd-scripts-reg-image-dedup.json (gemini-3.1-pro-preview, overall 0.90, would_judge_fairly=YES)",
-      "issues_addressed": [
-        {
-          "criterion": "typos_and_consistency (FAIL)",
-          "fix": "Goal 6 text referred to the 'T2-redirect constraint' while the rationale and user_simulation_prompt.md correctly identify the redirect as the T3-pre redirect (the simulator fires the 'Don't remove rebalance_regularization_images' redirect before sending T3, gated on whether the agent removed the method). Renamed both occurrences in goal_6.goal from 'T2-redirect'/'T2 redirect' to 'T3-pre-redirect'/'T3-pre redirect' to match the simulator config and the existing rationale. Clarified the auto-satisfy clause to mention the preservation case explicitly. No weight or structural change; sum stays at 1.00."
-        }
-      ],
-      "unaddressed_criticism": [],
-      "kept_v3_invariants": [
-        "All seven goals retained, weights unchanged (0.00 + 0.20 + 0.25 + 0.15 + 0.25 + 0.10 + 0.05 = 1.00)",
-        "No oracle-specific identifiers introduced",
-        "Mechanism-agnostic language preserved on goal_2 and goal_4",
-        "Anti-effort floor (goal_0) and per-goal anti-stub clauses intact",
-        "All other criteria in v2 audit (PASS x9) preserved"
-      ]
-    }
-  ]
+  "decomposition_notes": "Seven goals: goal_0 anti-effort floor (weight 0.0, zero-gates the rubric on gaming patterns — zero-edits, git-ops exfiltration, feature-gutting, stubs), four core scored goals each tracing to a specific user-ask cluster (instruction.md inspect+answer, simulator T2 two-call-site, simulator T3+T4 ControlNet, simulator T5+T6 double-call), and two secondary goals (T6 execution discipline, T2-redirect 'don't remove rebalance'). Scored weights sum to 1.00 (0.00 + 0.20 + 0.25 + 0.15 + 0.25 + 0.10 + 0.05) and are NOT aligned with the test_manifest F2P gate weights — rubric weights reflect rater-judged centrality to the user's actual asks, while gate weights reflect what the verifier happens to check. No oracle-specific identifiers (`register_balanced_regularization_images`, `update_counts=not self.is_training_dataset`, `_balance_reg_images`, specific line numbers) appear in any goal text; mechanism hints, where present, are tagged 'e.g.' or 'any equivalent' so behaviorally-equivalent implementations receive credit. Goal_0 provides the anti-effort floor at 0.0 weight because three of the substantive goals (goal_2 dedup, goal_4 double-call, goal_6 'don't remove') are deletion/suppression-style and individually gameable by over-deletion or by git-ops exfiltration of the upstream fix."
 }

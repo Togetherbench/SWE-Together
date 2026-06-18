@@ -1,35 +1,5 @@
 {
   "task_name": "pi-mono-extensions-event-refactor",
-  "_schema_version": "v3",
-  "_authored_for_trial": "pi-mono-extensions-event-refactor__k7AbuGd",
-  "_authoring_bar": "every scoring goal traces to an explicit USER ask (instruction.md or a user_simulation_prompt.md trigger message); no oracle-specific identifiers, type names, or file-layout choices appear in goal text; weights distinct from test.sh F2P inner weights; anti-effort goal_0 present; self-critique pass completed before write",
-  "_provenance": {
-    "user_inputs_consulted": [
-      "harbor_tasks/pi-mono-extensions-event-refactor/instruction.md (initial ask — analyze issue #1280)",
-      "harbor_tasks/pi-mono-extensions-event-refactor/user_simulation_prompt.md (T2..T19 verbatim user messages)",
-      "harbor_tasks/pi-mono-extensions-event-refactor/oracle_intents.json (17 enumerated intents, schema_version 1)"
-    ],
-    "oracle_artifacts_consulted_for_context_only": [
-      "oracle_session.jsonl header (_base_commit, file list — used ONLY to confirm anti-effort gate is needed)",
-      "reference_patch.json (numstat — used ONLY to confirm files_changed list is reasonable)",
-      "tests/test.sh (F2P weights — used to confirm v3 weights are distinct from test.sh weights, not to seed goals)"
-    ],
-    "oracle_artifacts_NOT_used_as_goal_sources": [
-      "reference_patch.json::patch body (would leak symbol names like emitToolResult, RunnerEmitEvent, SessionBeforeEvent)",
-      "trial agent/final.patch (anti-exfil; the trial git-checkout-main'd so its diff is the upstream solution)",
-      "trial mini-swe-agent.trajectory.turn-*.json (anti-exfil; would bias toward what the trial happened to write)",
-      "judge_verdict.json (read after rubric drafted; used only to inform self-critique adequacy)"
-    ],
-    "goal_to_user_message_map": {
-      "goal_0": ["INFERRED from instruction-vs-base-state divergence; the user did not literally ask 'don't git-checkout-main' but the task scaffolding (allow_internet=true with live origin) makes the bypass available; goal_0 is anti-effort, weight 0.0, does not draw reward"],
-      "goal_1": ["T2 verbatim: 'do we really need an acumulator? can't we just pass the same object reference to the handlers and they modify in place?'", "T7: 'now for the chaining, propose how it would loo'", "T8: 'looks good to me, implement as proposed'"],
-      "goal_2": ["T3 verbatim: 'shouldn't the event type exclude the types for which we have special emitXXX methods? like tool_call or user_bash?'", "T4: 'please fix that up first, then we can talk about tool result events getting its own emitXXX method'"],
-      "goal_3": ["T10 verbatim: cites the 'if (this.isSessionBeforeEvent(event.type) && handlerResult)' block and asks 'should we possibly clean this up as well?'", "T13: repeats the same question after the first cleanup attempt did not land"],
-      "goal_4": ["T9 verbatim: 'should we update @packages/coding-agent/docs/extensions.md as well?'"],
-      "goal_5": ["T16 verbatim: 'need to adjust test.sh to also exclude kimi for coding api keys. not sure what the key name is. do env and see'"],
-      "goal_6": ["T6 verbatim: 'i mean the changes you made, don't touch the other files, another agent is doing shit'"]
-    }
-  },
   "completeness_goals": [
     {
       "id": "goal_0",
@@ -56,7 +26,7 @@
       "id": "goal_3",
       "goal": "Tighten the session_before special-case block inside emit() so the cast (e.g., 'handlerResult as SessionBeforeCompactResult | SessionBeforeTreeResult') and the early-return-on-cancel logic are made type-safe, with a result-type surface that covers every session_before variant the codebase already declares (not just compact/tree). The refactor shape — whether via a discriminated-union helper, a conditional return type, a renamed guard, an extracted method, or another mechanism — is unconstrained; what must hold is that an unchecked cast is no longer needed to keep the cancel-short-circuit type-safe across the full session_before family.",
       "tier": "secondary",
-      "weight": 0.10,
+      "weight": 0.1,
       "rationale": "Direct trace to T10 (which quotes the 'if (this.isSessionBeforeEvent(event.type) && handlerResult)' block verbatim and asks 'should we possibly clean this up as well?') and T13 (user repeats the same quoted block when the first attempt missed it, signaling importance). The goal text avoids prescribing the specific cleanup shape (e.g., does NOT require the guard to take an event object instead of a string, does NOT require conditional return types) because the user's ask was about the cast and cancel ergonomics, not a particular type-system idiom."
     },
     {
@@ -81,120 +51,5 @@
       "rationale": "Direct trace to T6 verbatim: 'i mean the changes you made, don't touch the other files, another agent is doing shit'. This is a correction the user issues mid-session because the agent's commit picked up files outside the refactor scope; honoring it is part of the work, not a free pass. Behavioral: the judge inspects what landed in the final tree, not which intermediate edits the agent attempted."
     }
   ],
-  "decomposition_notes": "Six scoring goals + one anti-effort gate. Weight allocation: 2 core × 0.34 + 4 secondary (0.10 + 0.08 + 0.08 + 0.06) = 0.68 + 0.32 = 1.00. goal_3 is bumped slightly above the other secondaries (0.10 vs 0.08/0.08/0.06) because the user asked about it twice (T10 and T13) and explicitly re-quoted the same code block — that repetition is signal. goal_6 is the smallest secondary (0.06) because while the user did issue the correction, it is a scope-discipline correction rather than a feature, and the agent can succeed on goals_1-5 without it. Weights are deliberately distinct from test.sh F2P inner weights (which are 0.25/0.20/0.20/0.20/0.15 over five different gates focused on the chained-emission method's existence, callability, emit() cleanliness, wrapper.js call-site, and wrapper.ts call-site) — the rubric is judge-side and measures user-ask coverage, while the F2P gates are runtime/structural assertions. The two scoring schemes intentionally do not align.",
-  "_dropped_from_v2": [
-    {
-      "what": "HF_TOKEN as a named key in goal_5",
-      "why": "Oracle-specific leakage: the user (T16) said 'not sure what the key name is. do env and see' and only named Kimi. HF_TOKEN is what the oracle agent discovered by running env; encoding it as a required identifier would penalize agents who scrub a different reasonable set of coding-API keys (e.g., OpenRouter, Anthropic-proxy variants). v3 keeps Kimi (user-named) and softens the rest to 'coding-API keys the agent surfaces by inspecting the environment'."
-    },
-    {
-      "what": "v2 goal_3 phrasing 'The type guard must operate on a typed event rather than a bare string'",
-      "why": "Over-prescriptive: that is the oracle's specific refactor (the guard's parameter type changed from string to RunnerEmitEvent). The user's actual ask (T10/T13) was about the cast on handlerResult and the cancel early-return — not about the guard's parameter type. v3 keeps the cast / cancel framing and drops the guard-parameter constraint."
-    },
-    {
-      "what": "v2 goal_3 phrasing 'the return type from emit() must narrow appropriately for session_before vs. non-session_before callers'",
-      "why": "Over-prescriptive: that is the oracle's RunnerEmitResult<TEvent> conditional-type addition, which is one of several valid shapes. The user did not ask for return-type narrowing — they asked for the special-case block to be cleaner. v3 drops the return-type-narrowing constraint and broadens the cleanup objective to the cast and cancel ergonomics."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "id": "goal_6",
-      "why": "v2 covered every coding/docs/test ask but omitted T6 ('don't touch the other files, another agent is doing shit'), which is a load-bearing user correction in the session — the user explicitly resets the agent's scope mid-session. A rubric that ignores T6 cannot distinguish an agent that produces the same code diff but also dumps unrelated package.json / lockfile churn into the final commit, even though the user expressly forbade it. v3 adds goal_6 as a small secondary (0.06) to keep the scope-discipline ask in the scoring surface without dominating the headline refactor."
-    },
-    {
-      "id": "_provenance.goal_to_user_message_map",
-      "why": "v2 had rationale strings citing T-numbers but no machine-readable goal→message map. v3 adds an explicit JSON map so future audits can confirm provenance without re-parsing prose."
-    }
-  ],
-  "_self_critique_passed": true,
-  "_self_critique_log": [
-    {
-      "round": 1,
-      "check": "Does every goal trace to a verbatim user message?",
-      "result": "PASS — goal_0 is the only goal without a literal user message; it is marked tier=anti_effort with weight 0.0, justified in _provenance as 'INFERRED', and operates as a hard gate, not a reward source. goals 1-6 each have at least one verbatim quotation in _provenance.goal_to_user_message_map."
-    },
-    {
-      "round": 1,
-      "check": "Do any goal descriptions name oracle-specific identifiers (RunnerEmitEvent, SessionBeforeEvent, emitToolResult, Exclude<>, etc.)?",
-      "result": "PASS — none of those identifiers appear in any goal description text. goal_1 says 'dedicated chained-emission path' (not 'emitToolResult'). goal_2 says 'restriction must be enforced at compile time by the event parameter's type' (not 'Exclude<>'). goal_3 names the in-source code block via the cast string the user quoted in T10, which is permitted because the user named it, not the oracle."
-    },
-    {
-      "round": 1,
-      "check": "Do any goal descriptions reproduce file-layout choices specific to the oracle?",
-      "result": "PASS — no goal names a file path. goal_4 references 'the extensions documentation' (user named '@packages/coding-agent/docs/extensions.md' in T9, but the goal abstracts to 'extensions documentation' so an agent that places the chaining notes in a sibling doc page is not penalized incorrectly). goal_5 references 'test.sh' which is the literal filename the user named in T15/T16."
-    },
-    {
-      "round": 1,
-      "check": "Is goal_0 present and weighted at 0.0?",
-      "result": "PASS — goal_0 present, tier=anti_effort, weight=0.0, explicitly enforced as a gate."
-    },
-    {
-      "round": 1,
-      "check": "Do the scoring weights sum to 1.0 over non-anti-effort goals?",
-      "result": "PASS — 0.34 + 0.34 + 0.10 + 0.08 + 0.08 + 0.06 = 1.00 exactly."
-    },
-    {
-      "round": 1,
-      "check": "Are the rubric weights distinct from test.sh F2P inner weights?",
-      "result": "PASS — test.sh F2P weights are 0.25 / 0.20 / 0.20 / 0.20 / 0.15 over five different gates targeting runtime/structural assertions about the chained-emission method, the emit() cleanup, and the wrapper call-sites. v3 rubric weights are 0.34 / 0.34 / 0.10 / 0.08 / 0.08 / 0.06 over six user-ask categories. The two schemes share neither cardinality nor weight values."
-    },
-    {
-      "round": 1,
-      "check": "Does the rubric cover all load-bearing user intents from oracle_intents.json?",
-      "result": "PASS — intents 0/5/6 → goal_1; intents 1/2 → goal_2; intents 8/9/11 → goal_3; intent 7 → goal_4; intent 13 → goal_5; intent 4 → goal_6. Workflow-only intents (3 commit, 10 commit and push, 16 commit and push) and verification-only intents (12 run test.sh, 14 how did it go, 15 run again) are deliberately not represented as scoring goals because they do not produce diffs — they are session-flow signals, not code asks."
-    },
-    {
-      "round": 2,
-      "check": "Self-critique adequacy: would a held-out reader, given only the goal descriptions, be able to evaluate the agent's solution without needing the oracle patch?",
-      "result": "PASS — each goal's pass criterion is a behavioral check (e.g., 'a TypeScript caller would be rejected at compile time when passing one of the dedicated event types to emit()' for goal_2) that a held-out reader can run on the agent's tree directly. No goal requires comparing against the oracle's specific symbols or file layout."
-    },
-    {
-      "round": 2,
-      "check": "Anti-gaming inside goal text: does each goal pre-empt the most likely cheap shortcut?",
-      "result": "PASS — goal_1 explicitly excludes accumulator patterns (the user's own anti-pattern from T2) and requires the call-site to be updated (so a method that exists but isn't wired in fails). goal_2 explicitly requires compile-time enforcement (so a runtime assert is not enough). goal_3 explicitly notes that the result-type surface must cover EVERY session_before variant 'not just compact/tree' (so an agent that only widens the existing two-variant union fails). goal_5 explicitly requires that running test.sh with a Kimi key exported no longer leaks (behavioral pass criterion, not a grep). goal_6 explicitly judges the final tree, not intermediate edits (so an agent that staged then unstaged is fine)."
-    },
-    {
-      "round": 3,
-      "date": "2026-06-06",
-      "reviewer": "claude-sonnet-4-6 (NEEDS_WORK patch application)",
-      "check": "CRITICAL: test_manifest.yaml F2P gates were measuring the wrong refactor",
-      "result": "FIXED — the two upstream F2P gates checked for 'emitSessionBefore' which is a DIFFERENT later refactor not present in this task's oracle patch. When a trial agent ran 'git checkout main', main happened to contain emitSessionBefore and the verifier awarded reward to the bypass instead of penalizing it. Gates rewritten in test_manifest.yaml and test.sh to assert what the oracle patch ACTUALLY adds: (1) 'async emitToolResult' method in runner.ts, (2) 'emitToolResult' caller in wrapper.ts. Updated WEIGHTS dict in test.sh PYEOF block to match new gate IDs (f2p_upstream_emitToolResult_method, f2p_upstream_wrapper_uses_emitToolResult)."
-    },
-    {
-      "round": 3,
-      "date": "2026-06-06",
-      "reviewer": "claude-sonnet-4-6 (NEEDS_WORK patch application)",
-      "check": "MEDIUM: goal_0 was judge-side only with no verifier-side commit-lineage check",
-      "result": "FIXED — added an explicit anti-effort gate at the top of test.sh that counts files changed outside packages/ (combining git diff vs HEAD~1/HEAD and untracked files). If >20 files outside packages/ are mutated, BYPASS_DETECTED=1 is set; the upstream PYEOF reward block hard-caps reward to 0.0000 and short-circuits; the auto_gate_bridge tail block also short-circuits so it cannot lift the forced zero back to 0.80 via its canonical-detected boost. An honest agent solving this task touches packages/coding-agent/{src,docs}/ + tests/test.sh; >20 files outside packages/ is a strong checkout-main signal."
-    },
-    {
-      "round": 3,
-      "date": "2026-06-06",
-      "reviewer": "claude-sonnet-4-6 (NEEDS_WORK patch application)",
-      "check": "HIGH: issue_1280.md 'How?' section contained near-complete proposed implementation",
-      "result": "FIXED — the 'How? (optional)' code block (lines 39-89 of the offline snapshot) included the reporter's implementation proposal: chaining loop, currentContent/currentDetails/currentIsError accumulator, modified flag sentinel, partial-patch field merge, try/catch with emitError fallback — substantially the oracle's implementation. Replaced the code block with a [REDACTED for benchmark] note. The Problem / Context / Expected Behavior / Actual Behavior sections remain intact and are sufficient to specify the task; the implementation shape is left to the agent."
-    },
-    {
-      "round": 3,
-      "date": "2026-06-06",
-      "reviewer": "claude-sonnet-4-6 (NEEDS_WORK patch application)",
-      "check": "Dockerfile main-branch deletion (sonnet review HIGH severity)",
-      "result": "DEFERRED — the review also flagged that the Dockerfile does not 'git branch -D main' after stripping origin refs, leaving local 'main' accessible via checkout. This patch has authority to edit inside the task dir EXCEPT environment/Dockerfile. The new BYPASS_DETECTED commit-lineage gate makes a successful checkout-main shortcut score 0.0 even if the branch remains accessible, which is the load-bearing requirement; the Dockerfile defense-in-depth fix is left for a follow-up with Dockerfile-edit authority."
-    }
-  ],
-  "_review_patch_log": {
-    "date": "2026-06-06",
-    "reviewer": "claude-sonnet-4-6",
-    "verdict_input": "NEEDS_WORK",
-    "applied_changes": [
-      "tests/test_manifest.yaml: replaced emitSessionBefore F2P gates with emitToolResult / wrapper-uses-emitToolResult gates (matches actual oracle patch)",
-      "tests/test.sh: added BYPASS_DETECTED commit-lineage gate at prelude (>20 files outside packages/ → reward forced to 0.0)",
-      "tests/test.sh: updated upstream F2P emit blocks and Python WEIGHTS dict to use emitToolResult IDs",
-      "tests/test.sh: added BYPASS_DETECTED short-circuit in both the upstream PYEOF reward block AND the auto_gate_bridge tail block, so neither path can rescue a bypass-zero reward",
-      "environment/issue_1280.md: redacted the 'How?' code block (reporter's proposed implementation), kept problem/context/behavior sections intact"
-    ],
-    "deferred": [
-      "environment/Dockerfile: 'git branch -D main' deletion of local main branch (review recommended but out of scope for this patch's edit authority; the new BYPASS_DETECTED gate covers the scoring impact)"
-    ]
-  }
+  "decomposition_notes": "Six scoring goals + one anti-effort gate. Weight allocation: 2 core × 0.34 + 4 secondary (0.10 + 0.08 + 0.08 + 0.06) = 0.68 + 0.32 = 1.00. goal_3 is bumped slightly above the other secondaries (0.10 vs 0.08/0.08/0.06) because the user asked about it twice (T10 and T13) and explicitly re-quoted the same code block — that repetition is signal. goal_6 is the smallest secondary (0.06) because while the user did issue the correction, it is a scope-discipline correction rather than a feature, and the agent can succeed on goals_1-5 without it. Weights are deliberately distinct from test.sh F2P inner weights (which are 0.25/0.20/0.20/0.20/0.15 over five different gates focused on the chained-emission method's existence, callability, emit() cleanliness, wrapper.js call-site, and wrapper.ts call-site) — the rubric is judge-side and measures user-ask coverage, while the F2P gates are runtime/structural assertions. The two scoring schemes intentionally do not align."
 }

@@ -1,42 +1,5 @@
 {
   "task_name": "pi-mono-auto-0750e8eb",
-  "_rubric_version": "v3",
-  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
-  "_provenance": {
-    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
-    "goal_1": "The whole session is rooted in Turn 0 ('i dont understand how this can happen at all') over a merge that made image detection capability-gated and thus broke it; Turn 4 ('can't we do startsWith to short circuit?') and Turn 6 ('optimize the includes() check') confirm the surviving behavior is a substring/includes-style check over the raw escape sequences, not a capability lookup. This is the central correctness restoration.",
-    "goal_2": "Turn 1 ('there was a pr merge from a user called can, guess we need to revert that'), Turn 2 ('yes'). The user explicitly directed a full revert of the merge. Behaviorally this means the added helper and its import/usage sites must be unwound, not just shadowed — described without naming the specific symbol/file the merge introduced.",
-    "goal_3": "Turns 1-2 directed reverting the entire merge, which (per the model patch and F2P gates f2p_box_cache_reverted / f2p_markdown_wraps_unconditionally) also touched the box cache structure and the markdown wrap loop. A complete revert must undo these collateral changes, expressed behaviorally rather than by naming the RenderCache type.",
-    "goal_4": "Turn 3 ('then do a patch release') is an explicit instruction to release after the revert, and Turn 0 establishes that a changelog entry is required before merge and sets the changelog format rules — so a proper patch release bundles the version bump with a matching changelog entry. Kept lower-weighted than the code restoration because a version bump alone (the reward-0.2 model patch) is worthless without the revert it accompanies."
-  },
-  "_dropped_from_v2": [
-    {
-      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
-    }
-  ],
-  "_self_critique_passed": false,
-  "_self_critique_log": [
-    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
-    "goal_1: weight=0.42, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_2: weight=0.3, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_3: weight=0.18, tier=important, user-turn cite=see rationale — provenance OK.",
-    "goal_4: weight=0.1, tier=important, user-turn cite=yes — provenance OK.",
-    "Gemini critic final: verdict=REVISE score=0.875 round=3.",
-    "  strength: Excellent behavioral framing in goal_1 that captures the required string-check logic without mandating specific keywords or method names.",
-    "  strength: Strong anti-gaming floor (goal_0) that specifically targets the lockfile-only version bump seen in the model patches.",
-    "  strength: Clear and comprehensive coverage of the collateral reverts (goal_3) without over-specifying the exact type names.",
-    "  residual risk: Turn-number citation mismatches in goal_1's rationale and the decomposition notes could confuse an evaluator trying to trace the user's intent, as Turn 7 actually says 'probably not'."
-  ],
-  "_task_quality_flags": {
-    "source": "v3_scaleout_promoted",
-    "scanner_version": "v3",
-    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
-  },
   "completeness_goals": [
     {
       "id": "goal_0",

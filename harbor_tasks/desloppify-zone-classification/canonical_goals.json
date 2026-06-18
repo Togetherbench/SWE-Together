@@ -1,20 +1,5 @@
 {
   "task_name": "desloppify-zone-classification",
-  "_provenance": {
-    "rubric_version": "v3",
-    "based_on": ["canonical_goals.json.v2.json"],
-    "trial_referenced_for_context_only": "trials_70_mini_opus_r1/desloppify-zone-classification__pp4ZheS",
-    "in_scope_user_turns": [1, 2, 3],
-    "out_of_scope_user_turns": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
-    "canonical_patch_status": "no_canonical (stripped_export — bare-string tool inputs, no diffable content). Rubric is the only ground truth.",
-    "authoring_constraints_followed": [
-      "Every goal traces to an in-scope USER turn (Turn 1 plan items 1-6 + Turn 2 verification ask). Turn 3 quality-rhetoric ask not encoded behaviorally.",
-      "Goals are behavioral and identifier-agnostic. No reference to specific function/class/constant names that the user did not themselves write in the plan as load-bearing identifiers.",
-      "Where the user named a specific identifier in instruction.md (e.g. 'COMMON_ZONE_RULES', 'adjust_potential', 'zone show/set/clear'), the goal allows that exact name OR a documented equivalent — verifier-side flexibility is preserved.",
-      "Weights are coverage-weighted (4 core + 3 secondary + 1 polish + anti-effort floor) and intentionally do NOT mirror the F2P gate weights in tests/test_manifest.yaml. The manifest is the harness scoring path; this rubric is a separate judge-coverage view.",
-      "Anti-gaming language is woven INTO each goal (false-positive traps, no-op contracts, breadth requirements) rather than living only in a separate notes block."
-    ]
-  },
   "completeness_goals": [
     {
       "id": "goal_0",
@@ -80,91 +65,5 @@
       "rationale": "Turn 1 plan items #5 (first-scan reporting in query.json) and #6 (narrative reminder in narrative.py) are TWO distinct visibility asks the user listed as separate plan items with separate file targets. v3-initial dropped these into one disjunctive 'OR' goal, which the Gemini v2 audit flagged (coverage_completeness PARTIAL) as allowing full credit for doing half the work. Fixed to a conjunctive 'BOTH' goal that requires structured-artifact reporting AND narrative reminder, with explicit partial-credit guidance for the judge so a one-channel implementation is not silently zeroed."
     }
   ],
-  "decomposition_notes": "1 anti-effort floor (goal_0, weight 0.0) + 4 cores (each 0.19, sum 0.76) + 3 secondaries (each 0.07, sum 0.21) + 1 polish (0.03). Total 1.00. Weight allocation rationale: the four cores are the four MOST load-bearing behavioral gaps the user explicitly named in the plan (substring traps, rule structure, potentials denominator, skip-detector enforcement). Secondaries cover user-facing/threading mechanisms (overrides + CLI, pipeline accessibility, cross-language coverage). Polish covers the visibility surface. Weights intentionally diverge from F2P weights in tests/test_manifest.yaml: the manifest is the harness's authoritative scoring path; this rubric is a parallel judge-coverage view. Notably v3 RAISES the relative weight of skip-detector enforcement (goal_4) compared to v2, which dropped it entirely, because the user explicitly named it as the second gap in the plan and a no_canonical task has no F2P-coverage upper bound — judges must score against the user's expressed asks, not against an oracle diff. Turn 3 ('beautifully and elegantly structured?') is intentionally NOT encoded as a behavioral goal because (a) it is a rhetorical quality question rather than a falsifiable behavioral ask, and (b) tying any reward to subjective elegance would invite gaming via cosmetic cleanups that don't advance the substantive plan. Cross-language verification (Turn 2) IS encoded (goal_7) because it has a falsifiable behavioral surface (TS rules instantiable + correctly classify TS paths).",
-  "_dropped_from_v2": [
-    {
-      "v2_id": "goal_6",
-      "v2_goal_summary": "Touch enough files across the codebase for a complete integration",
-      "reason_dropped": "Structural file-count signals invite gaming via shotgun edits and conflict with the SWE-bench-Verified guidance against narrow patch-specific signals. Behavioral coverage of the same underlying intent (integration breadth) is now distributed across goal_3 (potentials adjustment APPLIED by both lang runners), goal_4 (skip-detector filtering applied), goal_6 (pipeline accessibility), and goal_7 (cross-language coverage). A patch that lands these behavioral goals will necessarily touch the same files; a patch that touches files without landing the behaviors will not score."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "v3_id": "goal_4",
-      "user_ask_traced_to": "Turn 1 plan item #4 ('ZONE_POLICIES.skip_detectors defined but not enforced — Only phase_dupes filters by zone. Graph-based and other detectors still run on and generate findings for all files.') plus the entire 'Implementation §4: Skip-detector enforcement in phase runners' subsection",
-      "why_added": "v2 dropped this because no F2P gate tests it directly. v3 re-adds because (a) the user named it as the second gap in their own plan, (b) a no_canonical task has no F2P-coverage upper bound — the rubric is the only ground truth, so judges scoring against user asks must include it, (c) the user's plan even specified the design principle ('filter findings, not inputs') making it falsifiable.",
-      "weight_assigned": 0.19
-    },
-    {
-      "v3_id": "goal_7",
-      "user_ask_traced_to": "Turn 2 — 'Did you test it in react + python to see how it actually works?'",
-      "why_added": "v2 had no goal corresponding to the cross-language verification ask. The user explicitly asked for both-language working behavior; an implementation that only handles Python would pass goal_1 + goal_2 individually but fail the user's expressed end-to-end ask.",
-      "weight_assigned": 0.07
-    },
-    {
-      "v3_id": "goal_8",
-      "user_ask_traced_to": "Turn 1 plan item #5 ('First-scan reporting: When zone_distribution is first computed, include it in query.json so the LLM can tell the user what was classified and suggest overrides if something looks wrong.') + plan item #6 ('Narrative zone awareness — Add reminder when non-production zones have files')",
-      "why_added": "v2 had no goal corresponding to the visibility/awareness surface even though the user listed it as a distinct plan item (#6) and as a subsection of #5. v3 adds it at polish weight (0.03) because the user described it as a small reminder/output addition rather than as load-bearing behavior.",
-      "weight_assigned": 0.03
-    }
-  ],
-  "_self_critique_log": [
-    {
-      "review_source": "analysis/v3_rubric_final_review_sonnet/desloppify-zone-classification.json (claude-sonnet-4-6 final review, verdict=MINOR_PATCH)",
-      "audit_findings": [
-        {"criterion": "hidden_bias", "verdict": "FAIL_FOR_VERIFIER_ONLY", "issue": "test.sh F2P 6 gate tested `LangConfig.zone_rules` as a dataclass field by name AND `LANGS['python'].zone_rules` non-empty, but rubric goal_6 explicitly enumerates multiple equivalent indirection shapes (dataclass field, registry, per-language module method, dynamic attribute looked up at scan time). The referenced trial (mini-swe-agent, trials_70_mini_opus_r1/desloppify-zone-classification__pp4ZheS) uses dynamic `_zone_map` attribute assignment in `_generate_findings_from_lang` — a valid satisfaction of goal_6 — but silently lost the 0.10 F2P 6 weight because the verifier only inspected the field-by-name. Rubric was already correct (identifier-agnostic); verifier was narrowly oracle-fit."}
-      ],
-      "fix_applied": [
-        "test.sh F2P 6: broadened to accept four equivalent indirection shapes per goal_6's explicit enumeration — Shape A (original `LangConfig.zone_rules` field), Shape B (per-language module registries `PY_ZONE_RULES`/`TS_ZONE_RULES`), Shape C (factory/lookup callable like `build_zone_map`/`get_zone_rules`/`zone_rules_for` reachable from zones.py or lang modules), Shape D (dynamic attribute set at scan time, detected via static scan of `lang._zone_map = ` / `lang.zone_map = ` assignments in desloppify source or via `_zone_map` annotation on LangConfig). Full credit (2/2 → 0.10) for any one of A/B/C/D; partial credit (1/2 → 0.04) for in-progress signal; zero otherwise.",
-        "Rubric (canonical_goals.json.v3.json) goal_6 text unchanged — rubric was already correct; only the verifier was misaligned.",
-        "No other gate touched. F2P weights, manifest weights, and rubric weights unchanged."
-      ],
-      "non_addressed": [
-        "The reviewer's secondary observation (user simulator re-sent T2 in episodes 1 and 2 before T3 fired in episode 3) is a sim-calibration note, not a rubric/verifier defect, and is out of scope for a MINOR_PATCH."
-      ],
-      "would_re_audit": "Expected verdict on re-audit: hidden_bias PASS (verifier now matches rubric's enumerated acceptable shapes). All other criteria already PASS in the Sonnet review."
-    },
-    {
-      "review_source": "analysis/v3_rubric_audit_gemini_v2/desloppify-zone-classification.json (gemini-3.1-pro-preview, overall 0.85, MOSTLY would_judge_fairly)",
-      "audit_findings": [
-        {"criterion": "coverage_completeness", "verdict": "PARTIAL", "issue": "goal_8 combined two distinct user asks (zone_distribution in query.json AND narrative reminder) into a disjunctive OR, allowing full credit for doing half the visibility work."},
-        {"criterion": "structured_output_pinned_when_user_did", "verdict": "FAIL", "issue": "Rubric goals omitted the exact function names the user dictated in the plan (_match_pattern, COMMON_ZONE_RULES, adjust_potential, should_skip_finding), under-pinning the user's explicit API requirements."}
-      ],
-      "fix_applied": [
-        "goal_8: rewrote disjunctive OR → conjunctive AND. Now requires BOTH structured-artifact zone distribution AND narrative.py reminder. Partial-credit guidance added inline so judges can score one-channel implementations gracefully without zeroing.",
-        "goal_1: added '(the user's plan names this helper `_match_pattern` — that exact name is preferred, but any equivalently-named helper with the same behavior is acceptable)'.",
-        "goal_2: added the same preferred-name clause for `COMMON_ZONE_RULES`.",
-        "goal_3: added the same preferred-name clause for `adjust_potential`.",
-        "goal_4: added the same preferred-name clause for `should_skip_finding`.",
-        "goal_5: zone show/set/clear CLI subcommands were already named in the goal text (audit did not flag this one) — no change.",
-        "Weights unchanged: 0 + 4×0.19 + 3×0.07 + 1×0.03 = 1.00. Tier composition unchanged.",
-        "Identifier-agnostic policy preserved: each preferred-name clause explicitly allows equivalent identifiers, so this does not regress oracle_independence (which passed in the audit)."
-      ],
-      "non_addressed": [],
-      "would_re_audit": "Expected verdicts on re-audit: coverage_completeness PASS (disjunctive OR removed), structured_output_pinned_when_user_did PASS (user-dictated identifiers now referenced as preferred). Other 8 criteria already PASS — no changes that would regress them."
-    }
-  ],
-  "_self_critique_passed": {
-    "self_critique_questions_checked": [
-      {"question": "Does every goal trace to a specific in-scope USER ask?", "verdict": "YES", "evidence": "goal_0 floor; goal_1→Turn 1 #1; goal_2→Turn 1 #2; goal_3→Turn 1 #3; goal_4→Turn 1 #4; goal_5→Turn 1 #5 (override+CLI); goal_6→Turn 1 #5 (pipeline threading); goal_7→Turn 2; goal_8→Turn 1 #5+#6 (visibility)."},
-      {"question": "Are goals identifier-agnostic (no oracle-specific function/class names locked in)?", "verdict": "YES_WITH_DELIBERATE_EXCEPTIONS", "evidence": "Identifiers the USER themselves named in their plan (e.g. 'COMMON_ZONE_RULES', 'adjust_potential', 'zone show/set/clear', 'config.py' as the canonical override example, 'tests/', 'test_', '.test.', '.spec.', '__tests__') are referenced in goals as the user wrote them. No identifiers specific to the trial's implementation choices (e.g. 'build_zone_map', 'should_skip_finding', 'FileZoneMap', 'LangConfig.zone_rules') are required by the rubric. goal_6 explicitly enumerates multiple acceptable indirection shapes."},
-      {"question": "Is anti-gaming language inside each goal rather than only in notes?", "verdict": "YES", "evidence": "goal_1 carries the explicit trap list (5 false-positive paths + positive cases). goal_2 enumerates minimum zone coverage. goal_3 specifies the empty-list, None-zone-map, and applied-by-both-runners contracts inline. goal_4 specifies 'filter findings not inputs' inline. goal_5 specifies the 'unrelated paths unaffected' + persistence clauses inline. goal_7 requires cross-language coverage inline. goal_8 forbids silent classification inline."},
-      {"question": "Is there a goal_0 anti-effort floor with weight 0?", "verdict": "YES", "evidence": "goal_0 weight 0.0, tier 'anti_effort', enumerates four trivial/regressive failure modes."},
-      {"question": "Do weights sum to 1.0 and differ from F2P weights?", "verdict": "YES", "evidence": "0 + 4×0.19 + 3×0.07 + 1×0.03 = 0 + 0.76 + 0.21 + 0.03 = 1.00. F2P weights are 0.22/0.15/0.18/0.15/0.12/0.10/0.08 — no v3 weight equals any F2P weight, and the v3 ordering (4 cores at 0.19 each) does NOT mirror the F2P single-largest-gate (0.22) structure."},
-      {"question": "Are all out-of-scope user turns (4-14) excluded?", "verdict": "YES", "evidence": "_provenance.out_of_scope_user_turns enumerates 4-14. No goal references GitHub issues, qlty comparison, version bump, push, or other Turn-4+ content."},
-      {"question": "Is Turn 3 ('beautifully and elegantly structured?') handled?", "verdict": "INTENTIONALLY_NOT_ENCODED_AS_GOAL", "evidence": "decomposition_notes explains the decision: Turn 3 is rhetorical/subjective, not falsifiable, and encoding it would invite gaming via cosmetic cleanups."},
-      {"question": "Does the rubric remain useful when canonical patch is no_canonical?", "verdict": "YES", "evidence": "All goals are behavioral and probe-testable independent of a reference diff. _provenance flags canonical_patch_status: no_canonical so judges/auditors know the rubric is the only ground truth."},
-      {"question": "Does any goal lock in a specific implementation file path?", "verdict": "NO", "evidence": "Goals describe behavior at the module/function-surface level. The dropped v2 goal_6 (cross-file touch breadth) is explicitly retired in _dropped_from_v2."}
-    ],
-    "rewrite_iterations": 1,
-    "final_pass": true
-  },
-  "_task_quality_flags": {
-    "source": "harbor_default_rubric.toml (programmatic subset) + manual v3 authoring pass",
-    "scanner_version": "v1",
-    "flags": {
-      "unpinned_python_deps": "Dockerfile pip installs unpinned packages. Reproducibility risk — does not affect rubric correctness.",
-      "no_canonical_stub": "_status: no_canonical (stripped_export). No oracle patch — rubric is the only ground truth; judge cannot triangulate against a reference diff. v3 goals are deliberately broader and identifier-agnostic to reduce false-negative scoring on valid alternative implementations."
-    }
-  }
+  "decomposition_notes": "1 anti-effort floor (goal_0, weight 0.0) + 4 cores (each 0.19, sum 0.76) + 3 secondaries (each 0.07, sum 0.21) + 1 polish (0.03). Total 1.00. Weight allocation rationale: the four cores are the four MOST load-bearing behavioral gaps the user explicitly named in the plan (substring traps, rule structure, potentials denominator, skip-detector enforcement). Secondaries cover user-facing/threading mechanisms (overrides + CLI, pipeline accessibility, cross-language coverage). Polish covers the visibility surface. Weights intentionally diverge from F2P weights in tests/test_manifest.yaml: the manifest is the harness's authoritative scoring path; this rubric is a parallel judge-coverage view. Notably v3 RAISES the relative weight of skip-detector enforcement (goal_4) compared to v2, which dropped it entirely, because the user explicitly named it as the second gap in the plan and a no_canonical task has no F2P-coverage upper bound — judges must score against the user's expressed asks, not against an oracle diff. Turn 3 ('beautifully and elegantly structured?') is intentionally NOT encoded as a behavioral goal because (a) it is a rhetorical quality question rather than a falsifiable behavioral ask, and (b) tying any reward to subjective elegance would invite gaming via cosmetic cleanups that don't advance the substantive plan. Cross-language verification (Turn 2) IS encoded (goal_7) because it has a falsifiable behavioral surface (TS rules instantiable + correctly classify TS paths)."
 }

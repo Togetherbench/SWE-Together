@@ -1,20 +1,5 @@
 {
   "task_name": "cli-task-4a9dde",
-  "_schema_version": "v3",
-  "_provenance": {
-    "user_turn_source": "harbor_tasks/cli-task-4a9dde/user_simulation_prompt.md (25 user turns) + oracle_intents.json (23 intents)",
-    "bar": "every completeness goal traces to at least one USER ask (question/request/correction/context). No oracle-source-only goals. Identifiers (function names, env-var names, flag values, API call shapes) are scrubbed from goal text — only behavioral outcomes appear.",
-    "non_alignment_with_f2p": "v3 weights are chosen for user-intent salience (frequency × emphasis × turn-position in the dialog), not for parity with test_manifest.yaml's F2P scoring weights. Specifically: the test manifest concentrates 0.20 on each of the two hook guards and 0.20 on the runner's approval-mode switch, but in the dialog the user spent the majority of their attention on the runner-side debugging (turns 1-15, 21) before identifying the hook as root cause (turns 16-20); meanwhile the carry-forward HEAD/shadow check only surfaced in late verification (turns 22-24). v3 reflects that user attention curve rather than the verifier's gate weights.",
-    "per_goal_user_turns": {
-      "goal_0": "No specific turn — anti-effort floor. Justified by the bar that any submission that disables / skips / stubs the failing harness defeats the user's repeated requests to run the tests (turns 1, 9-15, 22-24).",
-      "goal_1": "Turn 16 (user identifies the hanging process is the prepare-commit-msg hook); Turn 17 (user generalizes: 'this is an issue in general with gemini, right? like if the user tells gemini to commit then he would face this?'); Turn 19 ('can you search if there is a way to know we are being called out of gemini?'); Turn 20 ('yes, let's try this' — approves the detection approach).",
-      "goal_2": "Turn 17 ('any command that it runs expecting an input would hang') — user generalizes beyond the first reading path to all interactive-confirmation paths in the same hook module.",
-      "goal_3": "Turn 1 ('issue with allowed tools or something'); Turns 5-7 (user supplies correct --allowed-tools doc syntax then realizes auto_edit's per-tool exact-match list is the wrong shape); Turn 8 ('it works, so what's the issue then' — user blessed the looser invocation form they tested manually).",
-      "goal_4": "Turn 21 ('do you think the devnull fix is still needed?') — explicit mention of the subprocess hang-prevention guards as a discrete fix the user wanted to evaluate (and ultimately keep).",
-      "goal_5": "Turns 12-15 (user discovers the exact-match per-command allowlist is the proximate cause of the policy denial); user repeatedly requests the brittle config be removed via the corrected invocation shape.",
-      "goal_6": "Turn 22 ('there is this one test failing, can you take a look?' — paraphrase from sim of user supplying shadow-branch-mismatch test output); Turn 25 ('this test works for claude code, but fails for gemini, does this make sense with your analysis?') — user explicitly tasked the agent with making the failing carry-forward test pass."
-    }
-  },
   "completeness_goals": [
     {
       "id": "goal_0",
@@ -48,7 +33,7 @@
       "id": "goal_4",
       "goal": "The test-harness subprocess invocation must add at least two distinct guards that make the spawned CLI safe to run unattended in CI: an environment signal the hook code reads to skip its terminal probe AND at least one of {a non-terminal source attached to the subprocess's standard input, an explicit override of the inherited environment so the signal actually reaches the child}. The point is belt-and-suspenders: if one guard fails to propagate (e.g., the child shells out further), the other still prevents the hang. A submission that adds only one of the three guards does not satisfy this goal.",
       "tier": "secondary",
-      "weight": 0.10,
+      "weight": 0.1,
       "rationale": "Turn 21 ('do you think the devnull fix is still needed?') makes the multiple-guard question explicit. Phrased as a 2-of-3 admit so equivalent guard combinations score equally and so a submission that picks any two valid guards does not have to also match the canonical pair."
     },
     {
@@ -64,66 +49,6 @@
       "tier": "secondary",
       "weight": 0.08,
       "rationale": "Verification-phase bug surfaced at user turn 22 (failing shadow-branch test) and re-emphasized at turn 25 (cross-agent comparison). Behavioral phrasing — the goal requires content-equivalence at the object layer, not a specific API; the anti-race clause prevents a working-tree-stat 'fix' that would regress under concurrent edits."
-    }
-  ],
-  "_self_critique_passed": true,
-  "_self_critique_log": [
-    {
-      "round": 1,
-      "issue": "Initial v3 draft retained the function names hasTTY / askConfirmTTY / filesWithRemainingAgentChanges and the env var GEMINI_CLI inline.",
-      "fix": "Replaced with behavioral descriptors: 'commit-hook code that would otherwise probe the terminal', 'the companion interactive-confirmation helper in the same hook module', 'the carry-forward step', 'the specific CLI agent the user identified in the dialog'. The CLI's product identity is referenced only obliquely so re-implementations using parent-process inspection or sentinel files are not penalized."
-    },
-    {
-      "round": 1,
-      "issue": "Goal_4 originally read 'environment variable named ENTIRE_TEST_TTY' which both names the canonical env-var and oracle-pins.",
-      "fix": "Re-cast as 'an environment signal the hook code reads to skip its terminal probe' — outcome-defined, not name-defined. The 2-of-3 admit pattern stays."
-    },
-    {
-      "round": 1,
-      "issue": "Initial v3 weight vector (0.10/0.30/0.25/0.08/0.09/0.08/0.10) was effectively v2's weights — too close to test_manifest's F2P pattern (which has the two hook guards at 0.20/0.15 and the carry-forward at 0.15).",
-      "fix": "Redistributed: anti-effort 0.08, goal_1 0.28, goal_2 0.22, goal_3 0.16, goal_4 0.10, goal_5 0.08, goal_6 0.08, sum = 1.00. The 0.28/0.22 split between the two hook guards (vs the manifest's flat 0.20/0.15) and the 0.16 on the approval-mode switch (vs manifest's 0.20) deliberately misalign with the F2P weight vector while still tracking dialog-attention shape: more weight on the root-cause hook (goal_1) where the user spent turns 16-20 explicitly, less on the second hook site (goal_2) which user generalized but did not separately verify, more on approval-mode (goal_3) than the manifest because that was the dominant topic for turns 1-15."
-    },
-    {
-      "round": 2,
-      "issue": "Anti-gaming language in goal_0 was generic ('don't stub/skip tests'). The bar requires anti-gaming guards embedded INSIDE each substantive goal, not just at the floor.",
-      "fix": "Added per-goal anti-gaming clauses: goal_1 requires detection to be agent-specific (not blanket-disable interactivity for human users), goal_2 requires both helpers guarded not just one, goal_3 requires the allowlist actually stop sending the unmatchable list (not just add another flag), goal_4 requires at least 2 distinct guards (rejects single-guard half-fixes), goal_5 distinguishes comments from active code, goal_6 requires content-equivalence at the object layer not working-tree stat (anti-race)."
-    },
-    {
-      "round": 2,
-      "issue": "Goal_3 still mentioned 'yolo' as an example flag value, which oracle-pins.",
-      "fix": "Rewrote as 'switching the approval-mode flag to a permissive value the CLI documents for unattended runs, dropping the allowlist mechanism entirely, or any equivalent reshape'. The example was removed and replaced with the outcome-defined family of acceptable solutions."
-    },
-    {
-      "round": 2,
-      "issue": "v2 listed goal_6 with the API names commitTree.File / shadowTree.File / .Hash.",
-      "fix": "Replaced with 'content stored at the object layer' and 'tree-entry hash equality, or an equivalent content-equivalence check' — describes the invariant without naming the go-git API."
-    },
-    {
-      "round": 3,
-      "issue": "_provenance per_goal_user_turns originally cited intent_id values; intent IDs are an oracle-derived index that an agent doesn't see.",
-      "fix": "Restated all per-goal provenance entries by quoting the user's verbatim words and citing the user-simulation turn number, both of which exist independent of the oracle."
-    },
-    {
-      "round": 3,
-      "issue": "Initially missed that goal_3 should explicitly trace to user blessing the looser invocation form, not just to the user complaining about the original form.",
-      "fix": "Added turn 8 ('it works, so what's the issue then') to goal_3 provenance — that turn is what establishes the looser approval-mode shape as user-endorsed rather than just user-tolerated."
-    },
-    {
-      "round": 4,
-      "issue": "Sonnet MINOR_PATCH review (2026-06-06) identified a verifier false negative in tests/test.sh G1 (F2P_GEMINI_YOLO_MODE, weight 0.20): the regex `re.search(r'\"yolo\"', body_nc)` matched the standalone string literal `\"yolo\"` (used in `--approval-mode`, `\"yolo\"`) but not `\"--yolo\"` (the shorthand Gemini CLI flag that is behaviorally equivalent per Opus judge confirmation). Caused a 0.10 vs 0.25 verifier/judge gap on a trial that used the shorthand flag form. v3 goal_3 text was already correctly permissive (`a permissive value the CLI documents`); the test.sh was not keeping up.",
-      "fix": "Broadened G1 regex in tests/test.sh from `re.search(r'\"yolo\"', body_nc)` to `re.search(r'\"--?yolo\"', body_nc)` so both `\"yolo\"` (approval-mode value) and `\"--yolo\"` (shorthand flag) match. No rubric weight changes; only the verifier-side check is widened to the behavioral family already expressed in goal_3."
-    }
-  ],
-  "_dropped_from_v2": [
-    {
-      "v2_id": "(none)",
-      "reason": "All seven v2 goals (goal_0 through goal_6) are retained in v3. None were dropped. Each maps 1:1 to a v3 goal of the same id."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "v3_id": "(none)",
-      "reason": "No new substantive goal was added for coverage. The user-turn-trace check confirmed that every v2 goal already maps to a user ask, and no orphan user ask in the 25-turn dialog corresponded to a code change in the canonical patch but was missing from v2's goal set. The dialog also contains two questions ('this is an issue in general' / 'this test works for claude code') that the agent should respond to in conversation; those are conversational rather than code-change goals and are scored by the user_behavior_verdict, not by completeness_goals."
     }
   ],
   "decomposition_notes": "1 anti-effort floor + 2 cores + 4 secondaries. Weights sum to 1.00 (0.08 + 0.28 + 0.22 + 0.16 + 0.10 + 0.08 + 0.08). All goals are behaviorally phrased without naming the oracle-canonical function names, environment variable, flag value, or library API. Anti-gaming guards are embedded INSIDE each goal — not just in goal_0 — so a submission cannot satisfy a goal via a trivial / destructive shortcut. Provenance for every goal cites the verbatim user-simulator turn(s) that justify the goal; goal_0 is the only one without a specific turn cite (it's the standard anti-effort floor). Weights deliberately disagree with the F2P-gate weight vector in tests/test_manifest.yaml — the manifest assigns 0.20/0.20/0.20/0.15/0.15/0.10 to the same conceptual fixes plus a TTY-guard gate; v3 puts more weight on the root-cause hook detection (goal_1 at 0.28) where the user actually steered the conversation, less weight on the second hook site (goal_2 at 0.22) which the user generalized but did not separately verify, and substantially less weight on the verification-phase carry-forward bug (goal_6 at 0.08) because it only surfaced after the main task was already complete and was discussed in only 3 of 25 turns."

@@ -1,42 +1,5 @@
 {
   "task_name": "hyperswitch-8008",
-  "_rubric_version": "v3",
-  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
-  "_provenance": {
-    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
-    "goal_1": "Turn 0 verbatim: 'Move code related to stripe connector from router crate to hyperswitch_connectors'. The headline deliverable is that the actual connector code now resides in the shared connectors crate. This is the gate the cheating patches fail (they declare the module but never move the code).",
-    "goal_2": "The Turn-0 ask is a MOVE, not a copy: 'move stripe connector from router crate to hyperswitch_connectors'. A genuine move requires the source to leave the router crate, otherwise the connector is duplicated. Together with goal_1 this captures the two halves of 'move'.",
-    "goal_3": "The Turn-0 ask is to 'move stripe connector from router crate to hyperswitch_connectors'. A genuine move implies the router code that consumes Stripe must keep working by sourcing the connector from its new location; if those references dangle, the move is incomplete. This goal stays behavioral (any valid wiring) rather than mandating a specific re-export mechanism.",
-    "goal_4": "A refactor that moves code but leaves the tree non-compiling is not a completed move. The instruction's checklist asserts the change builds cleanly ('cargo clippy', formatting). This goal guards against the partial cheats that add a module declaration with no backing file (which would fail to build) and ensures the relocated connector is genuinely wired into the destination crate's public surface."
-  },
-  "_dropped_from_v2": [
-    {
-      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
-    }
-  ],
-  "_self_critique_passed": true,
-  "_self_critique_log": [
-    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
-    "goal_1: weight=0.4, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_2: weight=0.3, tier=core, user-turn cite=see rationale — provenance OK.",
-    "goal_3: weight=0.2, tier=important, user-turn cite=see rationale — provenance OK.",
-    "goal_4: weight=0.1, tier=important, user-turn cite=see rationale — provenance OK.",
-    "Gemini critic final: verdict=PASS score=1.0 round=2.",
-    "  strength: Excellent decomposition of a 'move' operation into its behavioral components (addition, removal, wiring, buildability).",
-    "  strength: Highly robust against the specific 'dangling declaration' cheat observed in the model patches.",
-    "  strength: Perfectly avoids over-specificity by allowing any valid wiring mechanism (re-exports vs. direct call site updates).",
-    "  residual risk: None. The rubric is exceptionally well-crafted, highly behavioral, and perfectly calibrated against the specific failure modes and cheats seen in the model patches."
-  ],
-  "_task_quality_flags": {
-    "source": "v3_scaleout_promoted",
-    "scanner_version": "v3",
-    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
-  },
   "completeness_goals": [
     {
       "id": "goal_0",

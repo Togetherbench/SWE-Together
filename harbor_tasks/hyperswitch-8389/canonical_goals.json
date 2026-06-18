@@ -1,42 +1,5 @@
 {
   "task_name": "hyperswitch-8389",
-  "_rubric_version": "v3",
-  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
-  "_provenance": {
-    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
-    "goal_pi_kv_storage": "Turn 0 verbatim: 'Added Kv Redis support to - payment_intent V2 ... models' and 'Extend kv support for v2 models'. This is the headline deliverable. Behavioral (read+write through KV when scheme=KV); does not name the kv_wrapper/PartitionKey symbols since the reward-0.4 model patch reuses an existing partition variant — any KV machinery that writes to cache + drainer is acceptable.",
-    "goal_pa_kv_storage": "Turn 0 verbatim: 'Added Kv Redis support to - ... payment_attempt V2 models'. Co-equal with payment_intent. Folds in the attempt-side UniqueConstraints + apply-changeset machinery (test_manifest F2P gates t1_f2p_pa_apply_changeset_v2, t1_f2p_unique_constraints_pa_v2) but described behaviorally as 'what KV needs to function' rather than by impl/method name.",
-    "goal_v2_kv_route": "Turn 0 verbatim: 'Added enable Kv route for v2 merchant-account' plus the explicit curl example for POST /v2/merchant-accounts/:mid/kv with {\"kv_enabled\": true}. User named the path/method/body verbatim, so citing them is allowed. Anti-gaming explicitly rejects the route-only/docs-only shape of the lowest model patch.",
-    "goal_v2_apply_changeset": "Turn 0: 'Use existing construct to extend to v2 models' — KV updates for BOTH models require their v2 apply-changeset path to merge correctly or cached records corrupt. Covers F2P t1_f2p_pi_apply_changeset_v2 and t1_f2p_pa_apply_changeset_v2 symmetrically (per round-2 critic, so missing either changeset costs the same), stated as behavior (carry-forward + override merge over many fields) rather than the constructor-spread test heuristic (..source / field count) which would over-pin valid alternatives."
-  },
-  "_dropped_from_v2": [
-    {
-      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
-    }
-  ],
-  "_self_critique_passed": false,
-  "_self_critique_log": [
-    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
-    "goal_pi_kv_storage: weight=0.34, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_pa_kv_storage: weight=0.3, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_v2_kv_route: weight=0.24, tier=important, user-turn cite=yes — provenance OK.",
-    "goal_v2_apply_changeset: weight=0.12, tier=important, user-turn cite=yes — provenance OK.",
-    "Gemini critic final: verdict=REVISE score=0.875 round=3.",
-    "  strength: Excellent consolidation of fragmented F2P gates into cohesive, behavioral goals.",
-    "  strength: Strong anti-cheating language tailored to the specific failure modes of each component.",
-    "  strength: Good recognition of alternative valid implementations (e.g., partition key variants).",
-    "  residual risk: goal_0 violates independent scoring by forcing a score of 0.0 for a submission that perfectly implements the requested route but misses the storage logic."
-  ],
-  "_task_quality_flags": {
-    "source": "v3_scaleout_promoted",
-    "scanner_version": "v3",
-    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
-  },
   "completeness_goals": [
     {
       "id": "goal_0",

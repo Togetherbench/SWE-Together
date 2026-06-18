@@ -1,79 +1,6 @@
 {
   "task_name": "comfyui-gemma3-sliding-window",
   "rubric_version": "v3",
-  "_provenance": {
-    "session_messages_considered": 4,
-    "user_turns": [
-      {
-        "turn": 0,
-        "role": "instruction.md",
-        "anchor_quote": "Is there any difference in functionality from the reference implementation in C:\\transformers ? What do we need to implement the sliding attention?",
-        "feeds_goals": ["goal_1", "goal_4", "goal_5"]
-      },
-      {
-        "turn": 1,
-        "role": "trigger T2",
-        "anchor_quote": "Is there any other difference between functionality apart from the softcap?",
-        "feeds_goals": ["goal_4"]
-      },
-      {
-        "turn": 2,
-        "role": "trigger T3",
-        "anchor_quote": "Shouldn't the sliding window be 1024 ?",
-        "feeds_goals": ["goal_2"]
-      },
-      {
-        "turn": 3,
-        "role": "trigger T4 (repeat of T3)",
-        "anchor_quote": "Shouldn't the sliding window be 1024 ?",
-        "feeds_goals": ["goal_2"]
-      }
-    ],
-    "goal_provenance": {
-      "goal_0": {
-        "type": "anti_effort_guard",
-        "source": "session failure mode T1 (agent set window=4096 instead of 1024 after first comparison pass)",
-        "user_ask_traced": false,
-        "note": "Anti-effort guard does not need to trace to a user ask; it codifies what the user implicitly rejected by re-asserting 1024 twice."
-      },
-      "goal_1": {
-        "type": "substantive",
-        "primary_user_ask": "instruction.md: 'What do we need to implement the sliding attention?'",
-        "user_ask_traced": true
-      },
-      "goal_2": {
-        "type": "substantive",
-        "primary_user_ask": "T3/T4: 'Shouldn't the sliding window be 1024?'",
-        "user_ask_traced": true
-      },
-      "goal_3": {
-        "type": "substantive",
-        "primary_user_ask": "instruction.md: 'What do we need to implement the sliding attention?' — correctness sub-requirement so the implementation does not silently drop the causal/padding mask the caller already passes.",
-        "user_ask_traced": true,
-        "note": "Indirect: not separately requested, but a hidden correctness constraint of fulfilling the explicit ask without regressing the surrounding caller contract."
-      },
-      "goal_4": {
-        "type": "substantive",
-        "primary_user_ask": "instruction.md: 'Is there any difference in functionality from the reference implementation?' + T1: 'any other difference apart from softcap?'",
-        "user_ask_traced": true,
-        "note": "Indirect-substantive: user did not name rope_theta, but explicitly asked twice for differences vs the HuggingFace reference, of which the per-branch theta routing is one. Weighted below cores to reflect the indirection."
-      },
-      "goal_5": {
-        "type": "polish",
-        "primary_user_ask": "implicit consequence of instruction.md ask to implement sliding attention — the 'not implemented' string and TODO are no longer accurate once the implementation lands.",
-        "user_ask_traced": true,
-        "note": "Polish: the user did not explicitly ask for cleanup, but completing the headline ask logically obsoletes the stale marker. Weighted at the minimum tier."
-      }
-    },
-    "no_oracle_specific_identifiers_in_goals": true,
-    "verified_no_prescribed_apis": [
-      "no requirement to call torch.triu",
-      "no requirement to call masked_fill_",
-      "no requirement that the combine operator be '+=' (any preserve-both operator qualifies)",
-      "no requirement that the config list be [False,False,False,False,False,1024] specifically",
-      "no requirement to edit rope_theta in the config (swapping the freqs_cis index in the forward is equally accepted)"
-    ]
-  },
   "completeness_goals": [
     {
       "id": "goal_0",
@@ -86,14 +13,14 @@
       "id": "goal_1",
       "goal": "When a Gemma3 sliding-attention layer processes a sequence longer than its configured window W, the mask handed to `optimized_attention(xq, xk, xv, ..., mask=<m>)` inside that layer's self_attn must contain values <= -1e30 (effectively -inf) at positions (i, j) where j is outside the window relative to query i, and finite at positions inside the window. The judge grades the observable mask values at the attention call site, not which mechanism produced them. Two acceptable implementation shapes are documented in this repository's history: (a) ALWAYS build the window mask whenever `seq_len > window` and combine with `attention_mask` if non-None — this passes the test harness which constructs the block directly and calls forward with attention_mask=None; (b) build the window mask only when `attention_mask is not None` — this is sound against the real Llama2_.forward caller (which always passes a non-None causal mask) but is INSUFFICIENT against test.sh's direct-block harness path (F2P4 instantiates the block and passes attention_mask=None). Implementations that take shape (b) without also patching the call chain to guarantee a non-None mask reaches every sliding block will be observed by the harness to pass no mask, which fails this goal. The mask-construction technique (boolean triangular fill, additive 0/-inf tensor, explicit index arithmetic with torch.arange comparison, `torch.where`, etc.) is unconstrained.",
       "tier": "core",
-      "weight": 0.40,
+      "weight": 0.4,
       "rationale": "Headline ask. Traces directly to instruction.md: 'What do we need to implement the sliding attention?' The trial's Opus agent shipped shape (b), which IS a defensible reading of the real caller's contract — the goal language makes both shapes explicit AND warns judges that the harness measures shape-(a)-equivalent behavior so a shape-(b) submission is graded as not-met on observable behavior, regardless of code-review-level defensibility."
     },
     {
       "id": "goal_2",
       "goal": "The model is configured so that, under `config.sliding_attention[index % len(config.sliding_attention)]` for layer indices 0..L-1, exactly 1 layer in every 6 is global (non-sliding) and the other 5 are sliding with window size 1024 (the HuggingFace Gemma-3-4b-it reference value). Any length-6 list whose values, under the index-mod rotation in TransformerBlockGemma2.__init__, produce this 5-sliding/1-global cadence with every sliding entry equal to 1024 is acceptable. Examples of accepted layouts: `[False, False, False, False, False, 1024]` (canonical session layout — global at modular position 5); `[1024, 1024, 1024, 1024, 1024, False]` (upstream-HEAD layout — global at modular position 0). Examples of unacceptable layouts: any list whose sliding entries are NOT 1024 (4096, 2048, 8192, etc.); any list that produces a cadence other than 5/6 (e.g., length-6 with 2 globals, length-12, all-1024-no-global); replacing the list with a scalar `1024` or `True`; setting the field to None to short-circuit the branch.",
       "tier": "core",
-      "weight": 0.30,
+      "weight": 0.3,
       "rationale": "Pinned by user T3 and T4: 'Shouldn't the sliding window be 1024?' — the only numeric anchor the user gives. Phrased behaviorally (5/6 cadence + window=1024) so the upstream-HEAD list layout is not penalized vs the canonical-session layout. test.sh's F2P2 and F2P3 already accept both."
     },
     {
@@ -117,60 +44,6 @@
       "weight": 0.03,
       "rationale": "Implicit consequence of completing the instruction.md ask. Weighted minimum because the user never asked for tidiness directly; the cleanup is morally subsidiary to goal_1 and the weight reflects that."
     }
-  ],
-  "_self_critique_passed": true,
-  "_self_critique": {
-    "checks_performed": [
-      {
-        "check": "every substantive goal traces to a user ask in the session",
-        "result": "PASS",
-        "detail": "goal_1, goal_2 trace to direct user text (instruction.md / T3+T4). goal_3 indirect-but-anchored to caller-contract correctness of the goal_1 ask. goal_4 indirect (user asked for 'any other difference', rope_theta is one such difference). goal_5 is consequence-of-goal_1. goal_0 is the anti-effort guard and explicitly does not need a user ask. All five substantive goals have an anchor_quote recorded in _provenance.goal_provenance with user_ask_traced=true."
-      },
-      {
-        "check": "no oracle-specific identifiers prescribed in goal text",
-        "result": "PASS",
-        "detail": "goal_1 names torch.triu and masked_fill_ only in the negative — as ONE acceptable mechanism in a non-exclusive enumeration that also includes 'additive 0/-inf tensor', 'explicit index arithmetic with torch.arange comparison', 'torch.where'. goal_2 names two list layouts as ACCEPTED, not REQUIRED. goal_3 enumerates four combine operators as accepted, not required. goal_4 enumerates three implementation shapes as accepted, not required."
-      },
-      {
-        "check": "anti-gaming guards embedded inside goal text (not only goal_0)",
-        "result": "PASS",
-        "detail": "goal_2 lists unacceptable layouts (non-1024 windows, non-5/6 cadences, scalar replacement, None short-circuit). goal_3 lists unacceptable combine (discarding caller mask, assignment-replace). goal_4 lists unacceptable routing (pre-fix routing left unchanged, single-theta collapse). goal_1 explicitly warns about shape-(b) being measured-as-not-met by the harness."
-      },
-      {
-        "check": "goal_0 anti-effort goal exists, weight=0.0",
-        "result": "PASS",
-        "detail": "goal_0 tier='anti_effort', weight=0.0. Six concrete gaming patterns enumerated (a-f), including the session's actual mid-trajectory failure mode (window=4096) and the v2-flagged silent-disable case."
-      },
-      {
-        "check": "weights do not equal F2P gate weights",
-        "result": "PASS",
-        "detail": "Goal weights: [0.40, 0.30, 0.15, 0.12, 0.03] over 5 substantive goals; F2P weights in test.sh: [0.10, 0.15, 0.15, 0.25, 0.15, 0.10] over 6 gates. Cardinality differs (5 vs 6) and distribution differs (cores weighted to user-anchored asks, not verifier gate granularity). Sum of substantive goal weights = 1.00 exactly."
-      },
-      {
-        "check": "weights sum to 1.0 (excluding anti-effort goal_0 at 0.0)",
-        "result": "PASS",
-        "detail": "0.40 + 0.30 + 0.15 + 0.12 + 0.03 = 1.00."
-      },
-      {
-        "check": "coverage of user asks in the session is complete",
-        "result": "PASS",
-        "detail": "T0 (compare ComfyUI vs HF + how to implement sliding) → goal_1 (headline) + goal_4 (a difference to fix) + goal_5 (cleanup after implementing). T1 ('any other difference apart from softcap') → goal_4. T3 ('Shouldn't the sliding window be 1024?') → goal_2. T4 (repeat) → goal_2. Every user message has at least one goal feeding from it; no goal is orphaned."
-      },
-      {
-        "check": "Opus-trial behavior is gradable under v3 without prescribing a fix that differs from v2's intent",
-        "result": "PASS",
-        "detail": "Opus trial used shape-(b) on goal_1 (guarded on attention_mask not None) → goal_1 not-met under v3 because the harness path observes no mask. Used [1024×5, False] layout on goal_2 → goal_2 met. Cloned then masked_fill on goal_3 → goal_3 met. Swapped freqs_cis index for goal_4 → goal_4 met. Removed TODO+warning for goal_5 → goal_5 met. v3 awards: 0×0.40 + 1×0.30 + 1×0.15 + 1×0.12 + 1×0.03 = 0.60. (v2 judge awarded 0.61 with goal_1 weight 0.39; the 0.01 drift is from the v3 rebalance to weight=0.40, not a semantic change.)"
-      }
-    ]
-  },
-  "_dropped_from_v2": [],
-  "_added_for_coverage": [],
-  "_change_log_v2_to_v3": [
-    "Added _provenance block with explicit per-goal user-ask anchor quotes.",
-    "Added _self_critique block with 8 enumerated checks, all passing.",
-    "Tightened goal_0 anti-effort enumeration from 1 generic case to 6 named gaming patterns, including silent-disable (v2 oversight) and unreachable-code-path.",
-    "Goal text unchanged structurally for goal_1..5 — v2's already-loosened mechanism enumerations were preserved; only goal_4's unacceptable list was made explicit (pre-fix routing must change).",
-    "Weights unchanged from v2: [0.40, 0.30, 0.15, 0.12, 0.03] over the 5 substantive goals, with goal_0 anti-effort at 0.0."
   ],
   "decomposition_notes": "v3 (2026-06-06) is an additive refinement of v2 (2026-06-06). v1 had three over-prescription issues (oracle-pattern mask construction, literal [F,F,F,F,F,1024] layout, config-side rope reorder); v2 rewrote goal_1, goal_2, goal_4 to be behavioral and added goal_0 anti-effort. v3 keeps v2's substantive goal text and weights but adds (a) full _provenance traceability per goal back to user-ask anchor quotes, (b) explicit _self_critique block enumerating eight pass/fail checks for the rubric itself (every substantive goal traces; no oracle identifiers; anti-gaming inside goals; goal_0 present with weight=0.0; weights ≠ F2P; weights sum to 1.0; coverage complete; Opus-trial gradable), (c) tightened goal_0 from one generic case to six named gaming patterns including the v2-overlooked silent-disable and unreachable-code anti-patterns, (d) tightened goal_4's unacceptable enumeration to explicitly name the pre-fix routing as wrong. No goals were dropped from v2; no new goals were added for coverage. Weights are deliberately divergent from F2P (different cardinality, different distribution) per rubric requirements."
 }

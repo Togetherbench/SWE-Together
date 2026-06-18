@@ -1,40 +1,5 @@
 {
   "task_name": "cli-task-577e8c",
-  "_rubric_version": "v3",
-  "_authoring_notes": "v3 first-pass rubric (no prior v2 on main). Authored via the scaleout author↔Gemini-critic loop under the strict-provenance bar: every scored goal must trace to a verbatim or paraphrased user message (instruction.md, user_simulation_prompt.md, or oracle_intents.json). Oracle-specific identifiers the user never voiced are stripped unless the user pinned them verbatim. Weights reflect user emphasis, not test_manifest.yaml F2P gate weights.",
-  "_provenance": {
-    "goal_0": "N/A — anti-gaming guard, derived from the harbor benchmark's defensive floor (no positive weight, can only zero the trial). Not a user ask.",
-    "goal_1": "Turn 0 verbatim: 'if we catch any error unmarshaling session data we should, at least, log a warning message'. This is the central ask — surface previously-swallowed unmarshal errors as warnings.",
-    "goal_2": "Turn 0 verbatim qualifier: 'log a warning message WITH THE CONTENT'. The user explicitly required the content (and implicitly the error) to be in the message, not just a generic warning.",
-    "goal_3": "Turn 1 redirect: 'add warning logging there' — the user explicitly converged the agent onto the opencode session-read error site (the non-fatal modified-files extraction failure) per user_simulation_prompt.md Turn 2, making this the single location the session ultimately required."
-  },
-  "_dropped_from_v2": [
-    {
-      "note": "No v2 rubric existed on main for this task. This is the first-pass rubric authored at the v3 bar via the scaleout author↔critic loop."
-    }
-  ],
-  "_added_for_coverage": [
-    {
-      "note": "Not applicable — no v2 baseline to diff against. Per-goal user-ask tracing lives in each goal's rationale and in _provenance."
-    }
-  ],
-  "_self_critique_passed": false,
-  "_self_critique_log": [
-    "goal_0: anti_gaming floor present, weight 0.0 — OK.",
-    "goal_1: weight=0.45, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_2: weight=0.3, tier=core, user-turn cite=yes — provenance OK.",
-    "goal_3: weight=0.25, tier=important, user-turn cite=yes — provenance OK.",
-    "Gemini critic final: verdict=REVISE score=0.875 round=3.",
-    "  strength: Excellent handling of the user's mid-session redirect, correctly adjusting the evaluation to not require exhaustive coverage across the codebase.",
-    "  strength: Strong weight justification that correctly prioritizes the user's primary behavioral ask over the F2P manifest's heavy weighting of the specific location.",
-    "  strength: Comprehensive anti-cheating clauses in every goal that specifically target hardcoded strings and discarded results.",
-    "  residual risk: The rubric strictly requires a 'warning-level' log, which would wrongly reject a valid error-level log despite the user explicitly stating 'at least, log a warning message', and it uses the oracle-specific name 'opencode' which the user never named verbatim."
-  ],
-  "_task_quality_flags": {
-    "source": "v3_scaleout_promoted",
-    "scanner_version": "v3",
-    "internet_with_live_origin": "task.toml sets allow_internet=true. goal_0 anti-gaming guard names git-ops exfiltration as a zeroing trigger where applicable."
-  },
   "completeness_goals": [
     {
       "id": "goal_0",
