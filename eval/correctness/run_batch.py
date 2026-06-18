@@ -47,7 +47,7 @@ from eval.correctness.sandbox import (  # noqa: E402
     run_judge_in_e2b,
 )
 from eval.correctness.generate_task_goals import generate_one as _phase1_generate_one
-from eval.correctness.judge_one import load_dotenv  # shared helper, not the judge logic
+from eval.correctness._env import load_dotenv  # shared .env loader
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PHASE2_PROMPT = (

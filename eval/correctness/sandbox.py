@@ -69,7 +69,14 @@ def template_alias(task_name: str) -> str:
     """
     env_dir = TASKS_DIR / task_name / "environment"
     h = dirhash(str(env_dir), "sha256")[:8]
-    return f"tb-{task_name}__{h}".replace(".", "-")
+    # Read the team prefix from env (default "tb") so the judge reuses the SAME
+    # templates Step-0 built. Critical when the prefix was changed (e.g. to
+    # "tbalx7") to dodge the shichaopei alias collision — otherwise the judge
+    # looks up tb-<task>__<hash>, which resolves to shichaopei's broken template
+    # and 404s. Mirrors external/harbor/.../e2b.py prefix logic.
+    prefix = os.environ.get("HARBOR_TEAM_PREFIX", "tb").strip()
+    p = f"{prefix}-" if prefix else ""
+    return f"{p}{task_name}__{h}".replace(".", "-")
 
 
 @dataclass
@@ -86,11 +93,11 @@ class JudgeInputs:
     # not just read it.
     tests_files: dict[str, bytes] = None  # type: ignore[assignment]
     # Phase 1/2 split (see eval/correctness/prompts/judge_phase{1,2}_system.md):
-    #   phase=0  → legacy single-pass mode (decompose + score in one run; default)
     #   phase=1  → DECOMPOSE-ONLY (apply oracle.patch; produce canonical_goals.json)
     #   phase=2  → SCORE-ONLY (apply agent.patch + use frozen rubric from
     #             canonical_goals_json; produce verdict.json with met-per-goal)
-    phase: int = 0
+    # (Legacy phase=0 single-pass mode removed together with judge_one.py.)
+    phase: int = 2
     # Phase-2 only: the FROZEN rubric JSON content (Phase 1's output, read from
     # harbor_tasks/<task>/canonical_goals.json on the host and passed in here).
     canonical_goals_json: str = ""
@@ -218,7 +225,6 @@ async def run_judge_in_e2b(
 
     try:
         # 1. Apply the right patch to /workspace AS ROOT, depending on phase:
-        #   phase=0 (legacy single-pass) → agent.patch
         #   phase=1 (decompose-only)      → oracle.patch (we judge the reference state)
         #   phase=2 (score-only)          → agent.patch (judge what the agent did)
         # Some Dockerfiles never chown the repo to `agent` (e.g.
@@ -523,13 +529,9 @@ if __name__ == "__main__":
                 f"{inputs_dir}/verdict.json."
             )
         else:
-            # Legacy single-pass mode (judge_system.md).
-            first_message = (
-                f"Begin by reading {inputs_dir}/README.md and "
-                f"{inputs_dir}/user_simulation_prompt.md. Then evaluate the agent "
-                f"solution and write your verdict to {inputs_dir}/verdict.json. "
-                f"Use Bash freely to explore the project repo at {repo_hint} "
-                f"(the agent's patch has already been applied there) and run tests."
+            raise ValueError(
+                f"unsupported judge phase={inputs.phase!r}: the legacy single-pass "
+                f"mode (phase 0) was removed — use phase 1 (decompose) or 2 (score)."
             )
         # `--setting-sources user` skips loading the workspace's .claude/settings.json,
         # which often defines SessionStart/SessionEnd hooks pointing at binaries not in
