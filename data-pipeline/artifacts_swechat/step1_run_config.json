@@ -1,9 +1,0 @@
-{
-  "source": "swechat",
-  "min_stars": 10,
-  "min_agent_percentage": 30,
-  "per_repo_cap": null,
-  "limit": null,
-  "n_input_sessions": 5851,
-  "n_output_records": 760
-}

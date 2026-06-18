@@ -1,8 +1,0 @@
-{
-  "task": "light-protocol-task-a3ba62",
-  "decision": "DROP",
-  "summary": "Verifier completely disconnected from the agent's deliverable. Agent edits programs/registry/src/lib.rs (the registry program crate) per instruction.md; install_config.json's test_cmd is `cargo test -p light-sdk-macros` (an entirely different crate, the proc-macro crate). Empty FAIL_TO_PASS forces overall-pass-rate fallback against the macros crate's tests, which never reference the agent's edits to registry. Comment in install_config.json admits this is 'essentially mark-dead for behavioral signal'. v0.4.3.1 patched in this scope-mismatch as a workaround for a missing-clang infra issue — the right move now is to drop the task. Even if the agent perfectly implements the 3 authority checks across initialize_state_merkle_tree, initialize_batched_state_merkle_tree, initialize_batched_address_merkle_tree, the verifier won't see it. No path to a meaningful F2P signal without rebuilding the Docker image with clang + a new test_cmd that runs the registry-test crate.",
-  "drop_reason": "test_cmd targets the wrong package; verifier cannot detect agent's actual edits. Confirmed by the existing _fix_notes admitting 'mark-dead for behavioral signal'.",
-  "fixes_applied": [],
-  "files_modified": []
-}
