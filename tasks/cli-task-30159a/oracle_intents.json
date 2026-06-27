@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-30159a",
+  "n_oracle_turns_in": 5,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "How does mise install discover and know how to install packages like entire?",
+      "verbatim_excerpt": "how does mise install knows of packages? like how does it know how to install entire?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 3,
+      "intent_kind": "question",
+      "text": "What is the aqua registry?",
+      "verbatim_excerpt": "what's the aqua registry?"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 4,
+      "intent_kind": "question",
+      "text": "How could we guard against the username being \"mise\" without implementing it yet?",
+      "verbatim_excerpt": "guard against the user name is \"mise\" not do anything, just let me know how we could do"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 5,
+      "intent_kind": "request",
+      "text": "Implement option 1 (guard against username \"mise\") for both mise and homebrew.",
+      "verbatim_excerpt": "yeah let's do 1 for both mise homebrew"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 6,
+      "intent_kind": "question",
+      "text": "Explain the test change switching the linuxbrew exec path from /home/user/.linuxbrew to /home/linuxbrew/.linuxbrew.",
+      "verbatim_excerpt": "/home/user/.linuxbrew/bi -n/entire\" to \"/home/linuxbrew/.linuxbr +ew/bin/entire\""
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 7.1
+}

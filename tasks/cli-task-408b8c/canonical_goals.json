@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-408b8c",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine, working implementation of the requested caching change, not a gaming artifact. It must FAIL if the diff is empty / a no-op, if it only adds comments or whitespace, if the worktree-path function is unchanged from its original uncached form (still shelling out to git on every call), if changes appear only in a scratch/temp/unmerged location rather than the actual source file, if the diff merely pads a captured repo tree (e.g. a banner like '=== repo/ ===' with no real code), or if it contains git-state exfiltration/reset operations (e.g. 'git checkout main', 'git reset --hard origin/...') in lieu of real edits. The behavior described in the weighted goals must be exercisable by the test suite, not stubbed, hardcoded, or commented out.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor to reject non-genuine submissions. No model patches exist (golden_only tier), so calibrated against the cheapest cheats for a 'add caching to a function' task: leaving the function untouched, or producing a diff that does not actually change runtime behavior."
+    },
+    {
+      "id": "goal_cached_avoids_repeated_git",
+      "goal": "The worktree-root lookup is cached so that repeated calls do not re-invoke the underlying git command on every call: after a first successful resolution, a subsequent call returns the same path even if the external git binary would now fail or is unavailable. The cache must serve real prior results, not a hardcoded or stubbed constant.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 0 verbatim: 'GetWorkTreePath function that i think shoudl be able to be acached like RepoRoot and GetCommonDir functions ... update the GetworktreePath function'. The whole task originates here: avoid running git on every call. This is the dominant user ask, so it carries the most weight."
+    },
+    {
+      "id": "goal_reuse_existing_root_cache",
+      "goal": "The worktree-root resolution is implemented by delegating to the package's existing repo-root resolution path (the same one already used for opening repositories) rather than introducing a second, independent cache for the same git toplevel command. There must NOT be two parallel caches that each run the same git invocation; the existing cached resolver is reused. Wrapping/adapting the returned error message is acceptable; merely copy-pasting a duplicate caching layer is not.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 4 review feedback verbatim: 'This introduces a second, independent cache ... even though paths.RepoRoot() already implements the same cwd-keyed caching ... consider implementing GetWorktreePath in terms of paths.RepoRoot ... and removing this separate cache.' The user explicitly named paths.RepoRoot, so referencing it is in-bounds; the goal is stated behaviorally (no duplicate cache) to accept equivalent reuse."
+    },
+    {
+      "id": "goal_worktree_root_resolution",
+      "goal": "When invoked from inside a linked git worktree (a checkout sharing a common git dir with other worktrees), the function returns that worktree's own working-tree root, NOT the main repository's root; in the ordinary single-checkout case it returns the repository root as before. Behavior must match the existing repo-root resolver in both the simple and multi-worktree scenarios. The resolution must be derived dynamically from the actual git working tree at call time; it must NOT be satisfied by hardcoding a path, branching on a directory name or test-fixture string, or otherwise short-circuiting the genuine resolution to pass a specific scenario.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn 6 verbatim: 'ensure that getworktree path and reporoot funcitonally do the same thing, but in the simple use-case and in the use-case where it's being used inside of a worktree with other potential worktrees.' This is a distinct multi-turn correction beyond the basic caching ask."
+    },
+    {
+      "id": "goal_cache_invalidation_and_uncacheable_failure",
+      "goal": "Three properties hold: (1) there is a way to clear/reset the cached worktree path so a fresh resolution can be forced (e.g. for use across directory changes or in tests), and after clearing, a call with a broken git environment fails rather than returning a stale value; (2) the function does not cache (or serve) a result under an empty/invalid key when the current working directory cannot be determined — such a call is treated as uncacheable (re-resolved or surfaced as an error) instead of poisoning the cache with a stale path; (3) a genuine automated test is added to the package's test suite that proves the caching behavior — e.g. it resolves the path once, then makes the underlying git command unavailable/broken and asserts a subsequent call still succeeds with the same value (using the cache-clearing helper for isolation). None of these may be faked: the clear function must not be a no-op, and the added test must actually exercise the cache (not be deleted, skipped, emptied, or asserting trivially).",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 4 review feedback verbatim: 'If os.Getwd() fails, cwd is set to \"\" and the function can still populate/consult the cache under an empty key ... Consider skipping both cache read and cache write when Getwd fails' and 'add one [test] that proves the second call is served from cache ... use ClearWorktreePathCache for isolation.' Lower weight because it is the most defensive/edge-case slice of the request."
+    }
+  ],
+  "decomposition_notes": "Source session is a single-file Go change in entireio/cli with a clear multi-turn arc. Turn 0 asks for caching GetWorktreePath like RepoRoot/GetCommonDir (-> goal_cached_avoids_repeated_git, the dominant ask, weight 0.4). Turns 1-3 and 7 are process/analysis (commit, push, an OpenRepository internals question) and intentionally produce NO weighted goals. Turn 4 is review feedback with three findings: duplicate-cache removal by reusing paths.RepoRoot (-> goal_reuse_existing_root_cache, 0.3, a strong architectural correction the user emphasized), the empty-cwd-key staleness bug plus a request for a cache-proving test with a clearable cache (-> folded into goal_cache_invalidation_and_uncacheable_failure, 0.1, the most defensive edge). Turn 6 adds the worktree-root-vs-main-repo-root equivalence requirement (-> goal_worktree_root_resolution, 0.2), a genuinely new behavioral constraint. Weights rank by user-importance (Turn 0 core ask > duplicate-cache removal > worktree resolution > edge-case hardening) and deliberately differ from the F2P manifest's flat 0.25/0.25/0.2/0.15 split. paths.RepoRoot and ClearWorktreePathCache are referenced only because the user named RepoRoot verbatim and asked for a clear-cache helper; all goals are otherwise stated behaviorally to accept any equivalent implementation. Weighted goals sum to 1.0."
+}

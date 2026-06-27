@@ -1,0 +1,53 @@
+# Test manifest for no-magic-task-ce67d5
+# CI/CD source: .github/workflows/verify.yml (Mathews-Tom/no-magic)
+
+gates:
+  # -- P2P_REGRESSION gates (diagnostic/penalty only, no positive weight) --
+  - id: p2p_file_exists
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "01-foundations/microtokenizer.py must exist"
+
+  - id: p2p_not_trivial
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "File must have at least 80 lines (anti-stub)"
+
+  - id: p2p_anti_stub_ast
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "At least 3 functions with body depth > 3 statements"
+
+  # -- F2P gates (weighted, accumulate reward) --
+  # Behavioral: gate_executes(0.20) + gate_roundtrip(0.25) + gate_compression(0.20) + gate_training(0.15) = 0.80 (80%)
+  # Structural: gate_syntax(0.10) + gate_stdlib(0.10) = 0.20 (20%)
+
+  - id: gate_syntax
+    kind: F2P
+    weight: 0.10
+    description: "Python syntax check passes (py_compile)"
+
+  - id: gate_executes
+    kind: F2P
+    weight: 0.20
+    description: "Script runs with exit 0 within 120 seconds"
+
+  - id: gate_roundtrip
+    kind: F2P
+    weight: 0.25
+    description: "All 6 round-trip encode/decode tests show [PASS]"
+
+  - id: gate_compression
+    kind: F2P
+    weight: 0.20
+    description: "Compression ratio >= 1.5x"
+
+  - id: gate_training
+    kind: F2P
+    weight: 0.15
+    description: "Training output shows >= 8 merge progress lines"
+
+  - id: gate_stdlib
+    kind: F2P
+    weight: 0.10
+    description: "No imports outside Python stdlib"

@@ -1,0 +1,20 @@
+version = "1.0"
+[metadata]
+author_name = "Alex Li"
+author_email = "alex@example.com"
+difficulty = "easy"
+category = "bugfix"
+tags = ["cli", "go", "code-removal", "refactor"]
+expert_time_estimate_min = 5.0
+junior_time_estimate_min = 20.0
+[verifier]
+timeout_sec = 120.0
+[agent]
+timeout_sec = 3600.0
+[environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/cli-task-c4c7e9:9e15b6fc751f"
+build_timeout_sec = 600.0
+allow_internet = true
+cpus = 4
+memory = "4G"
+storage = "10G"

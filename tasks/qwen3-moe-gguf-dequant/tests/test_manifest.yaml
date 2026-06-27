@@ -1,0 +1,47 @@
+version: "1.0"
+turns:
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_upstream_iq3xxs_dequant
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: IQ3_XXS runtime dequant correctness
+  command: "cd /workspace && python3 -c \"\nimport numpy as np, torch, gguf, ctypes,\
+    \ sys\nsys.path.insert(0, '/workspace')\nfrom qwen3_moe_fused.quantize_gguf.dequant\
+    \ import dequantize\nclass P(ctypes.Structure):\n    _fields_ = [('s', ctypes.c_size_t),\
+    \ ('b', ctypes.c_void_p), ('n', ctypes.c_bool)]\nlib = ctypes.CDLL('/usr/local/lib/libggml-base.so')\n\
+    lib.ggml_quantize_chunk.restype = ctypes.c_size_t\nlib.ggml_quantize_chunk.argtypes\
+    \ = (ctypes.c_int, ctypes.POINTER(ctypes.c_float), ctypes.c_void_p, ctypes.c_int64,\
+    \ ctypes.c_int64, ctypes.c_int64, ctypes.POINTER(ctypes.c_float))\nlib.ggml_quantize_requires_imatrix.restype\
+    \ = ctypes.c_bool\nlib.ggml_quantize_requires_imatrix.argtypes = (ctypes.c_int,)\n\
+    if hasattr(lib, 'ggml_init'):\n    lib.ggml_init.argtypes = (P,)\n    lib.ggml_init(P(1048576,\
+    \ 0, False))\nfp = ctypes.POINTER(ctypes.c_float)\nqt = gguf.GGMLQuantizationType.IQ3_XXS\n\
+    bs, _ = gguf.GGML_QUANT_SIZES[qt]\nn = 16 * bs\nw = np.random.RandomState(42).uniform(-1,\
+    \ 1, n).astype(np.float32)\nq = np.zeros(gguf.quant_shape_to_byte_shape((n,),\
+    \ qt), dtype=np.uint8, order='C')\nlib.ggml_quantize_chunk(qt.value, w.ctypes.data_as(fp),\
+    \ q.ctypes.data_as(ctypes.c_void_p), 0, 1, n, ctypes.cast(0, fp))\nout = dequantize(torch.from_numpy(q),\
+    \ qt, (n,), torch.float32)\nref = torch.from_numpy(gguf.quants.dequantize(q.copy(),\
+    \ qt))\nassert torch.allclose(out.float(), ref.float(), rtol=2e-3, atol=2e-3),\
+    \ f'max_diff={float((out.float()-ref.float()).abs().max())}'\nprint('PASS')\n\""
+  description: IQ3_XXS dequant crashes on buggy base (alignment), passes after fix
+- id: f2p_upstream_iq_types_registered
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: All new IQ types registered in dequantize_functions
+  command: cd /workspace && python3 -c "import sys; sys.path.insert(0, '/workspace');
+    from qwen3_moe_fused.quantize_gguf.dequant import dequantize_functions; import
+    gguf; [exec('qt = getattr(gguf.GGMLQuantizationType, n); assert qt in dequantize_functions,
+    f\'{n} not registered\'') for n in ['IQ2_XXS','IQ2_S','IQ3_S','IQ1_S','IQ1_M']];
+    print('PASS')"
+  description: Checks that IQ2_XXS, IQ2_S, IQ3_S, IQ1_S, IQ1_M are registered
+- id: p2p_upstream_pycompile
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: py_compile dequant.py
+  command: cd /workspace && python3 -m py_compile qwen3_moe_fused/quantize_gguf/dequant.py
+  description: Syntax check on the changed file

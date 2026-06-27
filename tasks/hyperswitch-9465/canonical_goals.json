@@ -1,0 +1,74 @@
+{
+  "task_name": "hyperswitch-9465",
+  "tier": 2,
+  "rubric_version": "v3",
+  "memorization_risk": "HIGH — this is public PR juspay/hyperswitch#9466 closing issue #9465; full canonical diff reachable via `gh pr diff 9466` and the issue body is reproduced verbatim in instruction.md (it is the user ask). A model trained on post-2025-09 GitHub data may reproduce non-user-pinned internals (e.g. the specific enum name, the specific Rust crate names, the specific migration directory name, downstream propagation files such as the Kafka event structs) and a v2-style rubric that grepped for those internals over-rewarded recall and under-rewarded reasoning. v3 narrows positive-weight goals to what the USER asked for: three named columns on two named tables, with a typed-enough representation for `active_attempt_id_type` and a usable migration. Goals that depend on internal repo structure the user never named (Diesel module layout, Kafka event destructuring, exact crate boundaries) are demoted to bonus or removed; nothing outside the user ask carries positive weight.",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort / anti-gaming floor: the submission must demonstrate a non-trivial good-faith attempt at the split-payments schema change. (a) The diff must add at least one of the three USER-named columns (`active_attempts_group_id`, `active_attempt_id_type`, `attempts_group_id`) to a real source file in either Rust code or a SQL migration; (b) the diff must NOT be empty, comments-only, whitespace-only, formatter-only, README-only, or test-only changes; (c) the diff must NOT consist solely of adding the column name as a string literal, comment, or docstring with no structural effect (anti-gaming guard against grep-bait); (d) the diff must NOT be produced via git-ops exfiltration of the oracle/reference patch — i.e., the submission cannot consist of `git apply`/`git cherry-pick`/`git checkout <oracle-ref>` against a captured copy of the upstream fix commit, a vendored `reference_patch.json`, the gold PR's `gh pr diff 9466` output, or any other artifact copied from the canonical solution; (e) the diff must NOT be a zero-edit captured-tree artifact — i.e., a submission whose only effect is staging files already present in the working tree (e.g., `git add -A` of pre-existing untracked files dropped into the sandbox, or restoration of a previously-checkpointed tree) without the agent itself producing the edits in-session. Clauses (d) and (e) jointly close the two known exfiltration attack surfaces on this task: (d) blocks pulling the oracle diff from disk or GitHub; (e) blocks shipping a pre-staged tree as if it were agent work. Failing this floor zeros the rubric regardless of any other partial matches.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "gating": true,
+      "rationale": "Prevents reward leakage to (i) no-op or grep-bait submissions, (ii) oracle-patch exfiltration via git-ops, and (iii) zero-edit captured-tree artifacts. Does not contribute positive weight; hard pass/fail. If goal_0 fails, the weighted sum is overridden to 0.0."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Add an `attempts_group_id` column to the `PaymentAttempt` table/struct surface, and add `active_attempts_group_id` plus `active_attempt_id_type` columns to the `PaymentIntent` table/struct surface. All three columns must land on the table that the USER named for that column (group-id on PaymentAttempt; active-group-id and active-id-type on PaymentIntent) — placement on the WRONG table fails this goal. The columns must appear in whatever schema-definition surface the project uses (a Diesel `table!` block, a SQL CREATE/ALTER statement, an ORM model definition, or equivalent) such that they are part of the persisted schema, not just decorative comments.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Foundational ask. The three USER-named columns must exist on the two USER-named tables, with correct table assignment."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Make the three new columns reachable from the application's read/write data-access layer for the two named structs. Concretely: when the project's `PaymentAttempt` data-model type is constructed/serialized/deserialized, the `attempts_group_id` field must travel with it; when the project's `PaymentIntent` data-model type is constructed/serialized/deserialized, both `active_attempts_group_id` and `active_attempt_id_type` must travel with it. A solution that only edits a schema declaration but never threads the field onto the corresponding Rust struct(s) used for reading/inserting rows is incomplete. The exact split between read-struct and insert-struct, and the exact module layout, are not pinned — but if the project uses a separate insert/new variant, the new fields must be on both so an INSERT can carry them.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Schema columns are inert without application-layer struct fields. This goal does NOT name Rust-specific identifiers (PaymentAttemptNew, PaymentIntentUpdateInternal) — those are oracle structure. The behavioral signal is 'INSERT can carry the new fields'."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Represent `active_attempt_id_type` as a typed-enough value, not as a free-form string at every layer. The USER's text distinguishes two modes — a single-attempt-id mode (currently the default — 'currently a payment_intent can have only a single active_attempt') and a group-of-attempts mode for the split-payments case ('a payment_intent will have a group of active attempts'). A solution that materially honors this distinction — for example, a typed enum/sum type with the two modes, OR a clearly-documented two-value string discriminator the rest of the code branches on — satisfies this goal. A solution that wires the column as raw `Option<String>` everywhere with no distinguishing of the two modes does NOT satisfy this goal but ALSO does not zero the rubric: this is a weighted partial-credit goal, not gating.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Lowered from v2's 0.03 → 0.10 because the two-mode discriminator IS in the USER text (just not the identifier names). De-pinned from a specific enum identifier to address memorization risk: a model that defines its own enum or chooses a documented string discriminator should score the same as one that reproduces the oracle's identifier verbatim."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Provide a forward database migration that adds the three USER-named columns to the two USER-named tables in the operational database. The migration must add all three columns (one on payment_attempt, two on payment_intent) and live in whatever migration surface the project already uses for schema changes (a SQL migration directory, a migration framework's DSL, an Alembic-style script, etc.). The exact directory name is not pinned. A reversible migration (down/rollback) is preferred but not gating: the up direction is what makes the new columns operational.",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "DB schema changes are inert without a migration mechanism. The judge should accept whichever migration layout the project happens to use. The v2 rubric's f2p_upstream_migration_completeness gate already covers this behaviorally; v3 keeps the weight aligned at 0.15 but de-pins the directory."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Coverage / consistency: the new columns and fields use the SAME identifier name across the layers that the agent touched (schema declaration, struct field, migration). A submission that calls the column `attempts_group_id` in the schema, `attempts_grp_id` on the struct, and `attempt_grp` in the migration fails this goal — the layers must agree. Identifier names matching the USER text exactly (`attempts_group_id`, `active_attempts_group_id`, `active_attempt_id_type`) is the natural way to satisfy this, but any internally-consistent renaming the USER ask can refer to coherently also satisfies it.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Internal consistency is a real correctness property and is implied by the USER ask (the explanatory prose references the column names). Added in v3 to absorb weight that v2 gave to oracle-specific structure (Kafka destructuring) — this goal is structurally similar (catches partial coverage) but anchored on the USER text rather than the oracle's file layout."
+    }
+  ],
+  "bonus_goals": [
+    {
+      "id": "bonus_compilation",
+      "goal": "Bonus (zero positive weight): the project's full workspace compiles after the change in whichever feature/configuration mode is implied by the USER's environment (the instruction says `(v2)` in the bug title, suggesting v2 feature). A submission that leaves the workspace non-compiling under v2 may still receive full positive credit on goals 1–5 if the structural changes are correct; this is recorded as a bonus signal for diagnostic comparison against the oracle.",
+      "tier": "bonus",
+      "weight": 0.0,
+      "rationale": "Demoted from v2's goal_3a/3b. The previous rubric gave 0.28 combined weight to 'full workspace compiles under v2' including exhaustive Kafka destructuring — neither concept appears in the USER ask. v3 makes compilation a diagnostic-only bonus so the judge can still record it without conflating it with the USER's question."
+    },
+    {
+      "id": "bonus_downstream_propagation",
+      "goal": "Bonus (zero positive weight): downstream callers/consumers of the touched types (whichever ones the project happens to have — domain models, event publishers, telemetry, etc.) are updated consistently with the new fields. This is recorded as a diagnostic for completeness comparison but does not contribute positive weight, since the USER did not name any specific downstream consumer in instruction.md.",
+      "tier": "bonus",
+      "weight": 0.0,
+      "rationale": "v2 weighted exhaustive Kafka struct-pattern destructuring at 0.14. That is project-internal structure the USER never named. Demoting to bonus removes the oracle-bias while preserving the diagnostic signal."
+    }
+  ],
+  "weight_check": {
+    "sum_of_positive_weights": 1.0,
+    "components": "0.35 + 0.30 + 0.10 + 0.15 + 0.10 = 1.00",
+    "bonus_weights_sum": 0.0,
+    "note": "These are rubric weights for the agentic judge's coverage scoring, NOT F2P gate weights in tests/test_manifest.yaml. F2P weights drive the deterministic verifier reward via the test-manifest weighted-replace formula and live in test.sh's WEIGHTS dict. The two systems intentionally diverge: v3 rubric weights are calibrated to the USER ask, while F2P weights are calibrated to verifier-script tractability (e.g. test.sh assigns 0.10 to schema-placement Gate 1 because that's a fast grep, not because it's only 10% of the user's intent). Do NOT sync v3 weights to F2P weights."
+  },
+  "decomposition_notes": "Tier-2 task (multi-layer DB-change request). v3 rewrite rationale: (a) v2's goal_3a (domain models) + goal_3b (Kafka destructuring) together carried 0.28 positive weight for project-internal structure the USER never named — pure memorization tax on models that solved the USER ask without exhaustively chasing the upstream diff. v3 demotes both to bonus_goals (weight 0). (b) v2's goal_5 mandated a specific enum identifier and derive stack — also oracle-specific. v3 reframes to 'typed-enough discriminator' at 0.10 with no identifier pinning. (c) v3 adds an explicit cross-layer identifier-consistency goal (0.10) that catches partial coverage but is anchored on the USER's prose (which references columns by name) rather than the oracle's file layout. (d) goal_0 adds anti-gaming clauses for comment-only / string-literal-bait submissions. (e) _user_pinned_terms metadata block makes provenance auditable — every positive-weight goal cites a USER phrase, and the oracle-only terms list is explicit."
+}

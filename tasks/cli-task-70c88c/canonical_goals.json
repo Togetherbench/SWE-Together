@@ -1,0 +1,34 @@
+{
+  "task_name": "cli-task-70c88c",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine code change to the explain command's argument-handling logic, not a gaming artifact. It must FAIL if the diff is empty/no-op, contains only comments or whitespace, only edits or deletes test files to make checks pass, hardcodes a specific test input rather than detecting the general 'positional arg + no qualifier flag' condition, leaves the new behavior only in an uncompiled/temporary/scratch location that the real command never executes, or consists solely of git-ops exfiltration (e.g. git checkout main, git reset --hard origin/...) or a captured-repo-tree banner diff. The change must make the real command behave differently at runtime. (Note: the user asked the agent to work on a fresh branch, so the change residing on a new, uncommitted-to-main feature branch is the EXPECTED workspace state and must NOT be treated as an 'unmerged/illegitimate location' failure.)",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor to reject stubs and gaming. Calibration is golden-only (no model patches in bundle); golden.patch edits real RunE logic in explain.go, so any submission that only touches tests or produces a no-op diff is illegitimate."
+    },
+    {
+      "id": "goal_detect_positional_without_qualifier",
+      "goal": "When the explain command is invoked with a positional argument (a parameter value) but none of the qualifier flags that select what to explain (the session / commit / checkpoint selectors) are set, the command detects this condition and short-circuits to displaying help instead of proceeding with its normal explain logic. The detection must genuinely evaluate BOTH that a positional argument is present AND that no qualifier selector flag is set; it must not trigger when a qualifier flag is supplied alongside the positional argument (so normal explain invocations still work), and it must not be satisfied by checking only for a positional argument while ignoring flag state, a stub, a hardcoded match on one literal input, a commented-out branch, or a parsed-but-ignored check.",
+      "tier": "core",
+      "weight": 0.5,
+      "rationale": "Turn 0 verbatim: 'need a little patch for entire explain that prints the help text if a parameter is passed without any qualifier flags'. This is the primary deliverable."
+    },
+    {
+      "id": "goal_help_text_shown",
+      "goal": "In that no-qualifier-flag-with-positional-arg case, the command actually emits its standard usage/help output by invoking or triggering the command's real help mechanism — any standard means of surfacing the framework's own usage text is acceptable (e.g. directly calling the help routine, or returning an error in a way that causes the CLI framework to print the command's usage). The genuine usage output already references the qualifier flags a user could supply to specify what to explain, so the agent need not author new help text. This must not be faked by printing a static hardcoded string in place of the command's actual usage text, nor by deleting the test that checks for help content.",
+      "tier": "important",
+      "weight": 0.3,
+      "rationale": "Turn 0 specifies 'prints the help text'. The help must be the genuine usage output and mention the qualifier flags so the user learns the correct invocation (F2P gates help_mentions_qualifier / positional_shows_help confirm this is the intended behavior)."
+    },
+    {
+      "id": "goal_hint_message",
+      "goal": "When the explain command is invoked this way, it prints a short hint/explanatory message indicating why help is being shown and pointing the user toward supplying a qualifier selector. The hint must be specific to this missing-flag condition: it appears only on this no-qualifier-flag path and must NOT be globally attached to the command's standard help output (i.e. it should not show up on an ordinary --help invocation). The hint must be a real emitted message produced by this code path, not hardcoded to only trigger on a specific test input, and not a commented-out line.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn 3 follow-up correction: 'let's do the hint if it's small'. The golden patch writes a 'Hint:' line to ErrOrStderr before calling Help(); this is a genuine multi-turn refinement the agent must cover beyond Turn 0."
+    }
+  ],
+  "decomposition_notes": "Task = add a small UX patch to the `entire explain` CLI command (Go/cobra). Turn-0 ask: when a positional parameter is given but no qualifier flag (session/commit/checkpoint selector) is set, show help instead of running explain. Turn-3 refinement: prepend a small hint message on stderr explaining why help is shown. Turn-2 ('cut a branch first') is a workflow directive, not a behavioral code deliverable, so it gets no weighted goal — there is no F2P/P2P gate checking git-branch state, and adding a 'committed to a new branch' goal would be a process/workflow goal that does not reflect a runtime behavior of the explain command. (The round-4 critic proposed adding such a branch goal; declined to keep goals behavioral. The legitimate underlying concern — that the anti-gaming floor was penalizing the branch state — is instead resolved inside goal_0, which now explicitly states a fresh feature branch is the EXPECTED workspace state rather than an illegitimate 'unmerged location'.) Weighting ranks by user importance: the Turn-0 detection logic is the heart of the request (0.5) and printing genuine help (0.3) is its visible effect; the Turn-3 hint is a real multi-turn correction but explicitly 'small' (0.2). Weights deliberately do NOT mirror test_manifest F2P weights (positional 0.2 / mentions 0.15 / hint 0.1 / existing 0.1) — they rank by user-stated importance instead. Goals are behavioral: no file/function/flag identifiers from the golden patch (the user said 'qualifier flags' generically; I describe selectors behaviorally rather than naming --session/--commit/--checkpoint or RunE/cmd.Help). Anti-gaming floor (goal_0) rejects test-only edits, no-op diffs, hardcoded-input fakes, and git-ops exfiltration."
+}

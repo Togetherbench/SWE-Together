@@ -1,0 +1,36 @@
+version: "1.0"
+turns:
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_upstream_auth_metrics_migration
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: Auth metrics migrated from merchant_id to AuthInfo
+  command: cd /workspace/hyperswitch && count=$(grep -rl 'auth\.set_filter_clause'
+    crates/analytics/src/auth_events/metrics/ 2>/dev/null | wc -l) && [ "$count" -ge
+    6 ]
+  description: At least 6 metric impl files use auth.set_filter_clause instead of
+    merchant_id filter
+- id: f2p_upstream_org_profile_endpoints
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: Org and profile auth_events endpoints registered
+  command: cd /workspace/hyperswitch && grep -q 'get_org_auth_event_metrics\|get_org_auth_event_sankey'
+    crates/router/src/analytics.rs && grep -q 'get_profile_auth_event_metrics\|get_profile_auth_event_sankey'
+    crates/router/src/analytics.rs
+  description: Router analytics.rs registers org-level and profile-level auth event
+    endpoint handlers
+- id: p2p_upstream_key_files_exist
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Key auth_events source files exist
+  command: cd /workspace/hyperswitch && test -f crates/analytics/src/auth_events/metrics.rs
+    && test -f crates/analytics/src/auth_events/core.rs && test -f crates/analytics/src/auth_events/filters.rs
+    && test -f crates/router/src/analytics.rs
+  description: Core auth_events source files and router analytics.rs exist in the
+    workspace

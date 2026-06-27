@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-tool-execution-write-error",
+  "n_oracle_turns_in": 3,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Write a minimal extension for testing, based on a simple write tool extension implementation.",
+      "verbatim_excerpt": "write a minimal extension so i can test this"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 3,
+      "intent_kind": "context",
+      "text": "Extension failed to load because pi.addTool is not a function.",
+      "verbatim_excerpt": "pi.addTool is not a function"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "correction",
+      "text": "Read @packages/coding-agent/docs/extensions.md in full without truncation and fix the extension.",
+      "verbatim_excerpt": "read @packages/coding-agent/docs/extensions.md in full, no truncation"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "Remove the test extension.",
+      "verbatim_excerpt": "remove the test extension"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 4,
+      "intent_kind": "workflow",
+      "text": "Commit and push the changes.",
+      "verbatim_excerpt": "commit and push"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 5.6
+}

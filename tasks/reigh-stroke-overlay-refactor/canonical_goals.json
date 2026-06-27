@@ -1,0 +1,41 @@
+{
+  "task_name": "reigh-stroke-overlay-refactor",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine refactor of the inpainting drawing system, not a gamed artifact. REJECT if: the diff is empty or a no-op; the only change is a captured-tree dump (a diff whose content is just a '=== repo/ ===' style directory banner with no real source edits); the diff exfiltrates or resets via git operations instead of editing files (e.g. `git checkout main`, `git reset --hard origin/...`, restoring deleted hooks from history); the change is comment-only or whitespace-only; or edits land only in temporary/unmerged/scratch locations rather than the actual MediaLightbox source tree. A legitimate submission moves real drawing-state logic into the overlay component, deletes now-redundant hook files, and updates the components that consumed the old API.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor calibrated against the lowest-reward real attempt (minimax, 0.77), which still made ~1900 lines of substantive edits across 10 files. Anything materially less than a real multi-file refactor — stubs, banner dumps, git-ops, comment-only diffs — is gaming and must be flagged."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The overlay component that renders strokes now owns its drawing/interaction state machine internally: the in-progress drawing state, the current stroke being drawn, and the shape drag/resize state are declared and mutated inside the overlay component (or a dedicated local hook the overlay itself owns and uses), and the pointer-event logic (press / move / release) that drives drawing and dragging lives inside the overlay rather than being received as pre-built handler functions from a parent. The previously-overlapping pointer-release listeners are consolidated (e.g. into a unified global listener, or a component-level release handler with an appropriate off-canvas fallback) so that end-of-stroke is governed coherently rather than by three competing mechanisms. This must be a real working state machine that produces and mutates strokes — not state that is declared but never updated, handlers that are stubbed out, or logic that is commented out.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Turn 1 plan, Step 2 (the explicitly-labelled 'main change'): 'StrokeOverlay should own its drawing state machine internally... it owns isDrawing, currentStroke, drag state, and the pointer event state machine internally' plus 'Single global pointerup listener (replacing 2 overlapping ones)'. This is the central deliverable the whole refactor is named after."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The overlay communicates with its parent through a data-in / events-out interface instead of having handler functions threaded into it: the parent supplies strokes as plain data and the overlay calls back to the parent when a stroke is completed, when the stroke set changes via a drag/resize mutation, and when the selection changes; it also surfaces an imperative handle (ref) exposing the stroke/selection-derived operations the parent needs (e.g. the action operations such as undo / clear / delete-selected and the means to query the current selection for delete-button placement). These callbacks and handle methods must be actually invoked / wired to real behavior, not merely declared in the props/handle type and left unused, or wired to no-op bodies.",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "Turn 1 plan, Steps 2 & 3: 'Parent components just pass in strokes (data) and receive callbacks when strokes change' with the named OUT callbacks (onStrokeComplete/onStrokesChange/onSelectionChange) and the new StrokeOverlayHandle methods (getSelectedShapeId, plus the Step-3 action methods undo/clear/deleteSelected/toggleFreeForm). Distinct from goal_1: that is internal ownership, this is the external contract."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The hooks made redundant by the refactor are removed and their no-longer-needed behavior is fully unwound: the dead 2D-canvas stroke-rendering hook, the standalone pointer-handler hook, the standalone drag-state hook, and the standalone action-handlers hook are deleted, and the now-meaningless redraw-strokes call/parameter (a no-op once rendering is reactive) is purged from the call sites that previously passed it. The orchestrating inpainting hook no longer imports or calls any of these deleted hooks. Deletion must be real removal that leaves the build coherent — not renaming/moving the file elsewhere, emptying it to a stub while keeping imports, or leaving the deleted hook's symbols dangling in consumers.",
+      "tier": "important",
+      "weight": 0.22,
+      "rationale": "Turn 1 plan Steps 1 & 3 ('Delete useStrokeRendering', 'delete useInpaintActions', delete usePointerHandlers/useDragState) AND Turn 3 'Can you send check this from top to bottom?' which drove completion of the remaining deletions. The user named these files verbatim in the instruction. Lower weight than goals 1/2 because the minimax 0.77 attempt deleted only 1 of 4 hooks yet still delivered the core behavioral change."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The cleanup is thorough end-to-end, leaving no residual dead wiring from the old design: the obsolete pointer-handler props, the drawing-state props (in-progress flag / current stroke), the hidden-canvas refs, and the redraw-strokes member are removed from the shared type definitions and from every layer of the component chain that used to thread them through; consumers and stubs (including the type interfaces and the sibling lightbox component that mirrors the overlay's prop shape) are migrated to the new data-plus-callbacks shape so no orphaned legacy symbols remain. This requires the legacy symbols to be genuinely gone from the types and prop chain — not merely commented out, aliased, or shadowed by the new ones while the old declarations linger.",
+      "tier": "important",
+      "weight": 0.18,
+      "rationale": "Turn 1 plan Step 4 ('Clean up prop threading' — remove handleKonvaPointer*, isDrawing, currentStroke, canvas refs from the ImageLightbox→LightboxLayout→MediaDisplayWithCanvas chain and types.ts) reinforced by Turn 5/7 'Is the code beautiful now?' / 'is it beautiful now?', which the user-sim records as repeating the quality check specifically because residual handler/redrawStrokes types still lingered. Captures the multi-turn correction that the refactor isn't done until the dead threading is fully purged."
+    }
+  ],
+  "decomposition_notes": "Scope is the 4-step refactor in instruction.md (Turn 1) plus the two in-scope follow-up quality checks (Turn 3 'check top to bottom', Turn 5/7 'is it beautiful now?'). Turns 12+ (variant main button, reposition button states, context merge) are excluded per user_simulation_prompt.md as out of instruction scope. Evidence tier: model_only (golden patch empty); calibrated against 4 real attempts (rewards 0.85/0.80/0.77/None). Weighting is by user-importance, deliberately NOT mirroring test_manifest F2P weights: the manifest splits credit fairly evenly across 7 mechanical gates, but the user's framing makes Step 2 (overlay owns the state machine) THE main change, so goal_1 carries the most weight (0.34), the external callback/ref contract next (goal_2, 0.26), then the deletions (goal_3, 0.22) and the end-to-end threading cleanup that the 'is it beautiful now?' turns drove (goal_4, 0.18). The minimax 0.77 attempt — which deleted only 1 of 4 hooks but fully delivered the overlay state machine and callback API — is the key calibration: deletions are necessary but secondary to the behavioral restructure, so goal_3 is weighted below goals 1/2. Goals are behavioral; symbol names appearing in goal text (overlay component, the named hooks, redraw-strokes call, the callbacks) are all named verbatim by the user in instruction.md, so referencing them does not over-pin. Internal helper names the user did NOT name (e.g. the extracted drawing hook, hit-test helper, clamp helper) are intentionally omitted so any behaviorally-equivalent internal structure passes. Weighted goals sum to 1.00."
+}

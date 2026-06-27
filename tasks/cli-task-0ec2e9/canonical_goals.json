@@ -1,0 +1,62 @@
+{
+  "task_name": "cli-task-0ec2e9",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort guard: the submission must not be padded with no-op churn intended to manufacture the appearance of work. Examples that should not earn credit: bulk renames or whitespace reflows across unrelated files; new helper functions that are never called; commented-out scaffolding or speculative TODOs; new test files that exercise only trivial getters; refactors that move code without changing behavior. The judge should down-weight or zero any submission whose diff is dominated by such churn while the reported customer symptom (a turn that modifies an already-tracked file produces no checkpoint) remains reproducible.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "The user's headline ask (Turn 1) is a behavioral outcome: the shadow-branch checkpoint must fire when the agent's session has in fact modified files. A diff that visibly touches many files but leaves this symptom intact is gaming, not progress. Carrying zero weight prevents this goal from being summed into a score, while its presence lets reviewers explicitly call out churn-dominated submissions."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Diagnose, in plain language to the user, why the reported logs show lifecycle events firing (turn-start / turn-end) without any checkpoint or shadow-branch entry. The diagnosis must identify the actual silent-skip path — that the checkpoint code only runs when the set of changed files reaching it is non-empty, and that the upstream source feeding that set (the parser of the underlying coding-agent transcript) can return an empty list for sessions where files were nevertheless modified. A response that only paraphrases the symptom or proposes diagnostic commands without naming the root cause does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "Turn 1 explicitly asks two things in one breath: 'what could go wrong, how can we check more what his issue might be?' The user is debugging a customer report and needs a causal explanation before any code change is justifiable. Subsequent user turns (the local-test verification in T2 and the 'why did the fallthrough not cover this' probe in T4) only make sense once the agent has correctly explained the silent-skip path; a session that skips straight to a code edit without articulating the root cause is failing the user's first question."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Extend the transcript-parsing layer so that file-modification events emitted by the upstream coding agent are recognized across the model/provider combinations the user explicitly raises (Turn 3 names 'codex' as one that worked locally; Turn 4 asks the agent to broaden coverage by inspecting the upstream agent's own source). Concretely, the parser must surface modified-file paths from sessions where the upstream tool uses a different tool name or a different state shape than the one the parser originally hard-coded — including a transcript shape where the path lives in a metadata-style field on the tool call rather than the call's input arguments. The fix should be behavior-driven (the parser yields the right file set for the new shape) and not depend on any specific tool-name string or struct-field name being preserved verbatim.",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "Turn 3 ('also used codex, also asked to update files') and Turn 4 ('different opencode <-> llm combinations') are the user-supplied evidence that the transcript parser is the failing layer for at least one real model. The canonical fix's transcript-parsing changes (new metadata access path + new recognized tool entry) collapse to this user-anchored requirement; an agent that only patches the lifecycle layer leaves the diagnosed parser bug intact for the customer's actual model. Identifier-free phrasing keeps the judge from rewarding exact name matches over correct behavior."
+    },
+    {
+      "id": "goal_3",
+      "goal": "At every lifecycle exit point that materializes a shadow-branch checkpoint, the set of paths handed to the checkpoint code must include working-tree-modified files derived from the version-control status, not only the paths returned by the transcript parser. This must hold for both the primary turn-end boundary (the customer's reported failure mode) and any structurally parallel boundary that produces the same kind of checkpoint (e.g., a delegated-subagent end-of-turn boundary). The judge should accept any structurally equivalent factoring — a shared helper, an inlined block at each call site, or an upstream change to the data-collection routine — so long as both boundaries end up consulting the working tree.",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "Turn 4's 'Why did the fallthrough not cover this then?' is the load-bearing user prompt for this goal: the user is asking why the existing safety net failed and pushing the agent to discover that the working-tree status is already being computed but is silently dropped on the modified-files axis. Turn 1's customer symptom (a session that modified an already-tracked file produced no checkpoint) is only resolved when this fallback path lights up at every checkpoint-producing boundary, not just the one the agent happens to read first."
+    },
+    {
+      "id": "goal_4",
+      "goal": "When two sources of file paths (the transcript-derived set and the working-tree-derived set) are combined at the checkpoint boundary, the combined list must not contain duplicate entries; both sources can legitimately mention the same file. The mechanism may be a small utility, a hashset pass, a sorted-merge, a stdlib call, or inline code — the goal is that no downstream consumer of the combined set sees the same path twice.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "The user does not raise deduplication as an explicit ask in any of the 6 turns. Retained at zero weight as a diagnostic/informational note for reviewers — a checkpoint that lists 'M layout.py, M layout.py' would be a self-inflicted regression worth flagging — but the weight is zero so the rubric strictly tracks user provenance and does not penalize agents who solve the customer symptom without explicit dedup."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The combine-and-deduplicate behavior used at the checkpoint boundary must be covered by automated tests in the project's existing test runner, exercising at least: a disjoint-input case, an overlapping-input case where at least one path appears on both sides, and at least one empty-input case (either side or both). A single happy-path assertion, or a test that only checks the helper's existence/signature, does not meet this goal. Equivalent coverage via table-driven, parameterized, or per-case tests is acceptable.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "No user turn explicitly asks for tests. Retained at zero weight as a diagnostic/informational note — the combine step is the load-bearing correctness primitive of goals 2 and 3, and uncovered behavior could regress silently — but the weight is zero so the rubric strictly tracks user provenance rather than oracle-mimicry."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Audit the opencode-related code files for stale references to the literal string \"patch\" — including in code comments — and remove or update any that are no longer accurate after the parser is broadened (goal_2). The user named the literal string explicitly: 'can you check the opencode related code files for any mention of \"patch\" there is at least one more in comments'. Acceptance: the judge should verify that any comment-resident occurrence of the string \"patch\" that referred to the older, narrower tool registry has been removed or rewritten. As a broader anti-leak alternative, the goal is also satisfied when the agent demonstrably audited the opencode-related files for stale references to the older, narrower set of recognized tool names and brought the inline documentation back into agreement with the broadened parser — even if the exact token \"patch\" does not appear in the audit, as long as the equivalent stale-tool-name reference was cleaned up. The judge should not require a specific line number or comment phrasing.",
+      "tier": "polish",
+      "weight": 0.12,
+      "rationale": "Turn 6 (oracle turn index 6) is the user's explicit ask and the user explicitly names the literal string \"patch\" in quotes. The string is user-pinned, so the rubric pins it: the primary acceptance form is removal/rewrite of comment-resident \"patch\" references. The OR alternative (broader anti-leak phrasing about 'the older, narrower set of recognized tool names') keeps the goal from rewarding exact comment-text matches when an agent has done equivalent cleanup; the user pinned the string, not the line number or the surrounding comment prose. Weight nudged up from 0.10 → 0.12 to reflect that this is the single most user-pinned goal in the rubric."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Make a positive statement to the user that the implemented fix is expected to cover the model/provider combinations the user surfaced in Turn 3 — specifically, that the agent has reasoned (whether by inspecting the upstream coding-agent's own source as the user requested, by enumerating its tool registry, or by some equivalent verification) about which model/tool pairings produce which transcript shapes, and that the parser and working-tree fallback together cover the union. A response that fixes the code but does not explain to the user why the fix is now general enough to cover 'different opencode <-> llm combinations' does not satisfy this goal.",
+      "tier": "polish",
+      "weight": 0.1,
+      "rationale": "Turn 4 frames a deliberately open-ended ask ('can you analyse if we need to consider more things'). The user is asking for an analysis, not just an edit — and the way the session unfolds (the agent inspects the upstream repo and then reports a tool-by-tool coverage table back to the user) confirms that the user expects a coverage explanation alongside the code. Without this goal, a submission that only fixes the immediate codex case but never tells the user it has reasoned about the general case would score the same as one that does the full analysis."
+    }
+  ],
+  "decomposition_notes": "Eight entries: 1 anti-gaming guard at weight 0, 3 cores at 0.26 each, 2 informational/diagnostic goals at weight 0.0 each (zero-weighted from 0.03 in v3-rev2 after the residual provenance flag — neither has a verbatim user ask), goal_6 (user-pinned string 'patch') at 0.12, and goal_7 (cross-model analysis) at 0.10. Positive weights sum to 1.00; goal_0, goal_4, and goal_5 act as separate diagnostic/down-weighting signals that never contribute to the score. The weights deliberately do NOT mirror the F2P gate weights in test_manifest.yaml (which split 0.25/0.25/0.25/0.25 across four mechanical gates focused on the mergeUnique helper, its call sites, its tests, and the working-tree fallback). The mechanical manifest scores helper-existence proxies; this rubric scores user-facing outcomes: diagnosis (g1), cross-model parser coverage (g2), checkpoint-boundary fallback (g3), well-formed combined set (g4, zero-weighted — diagnostic only), regression coverage (g5, zero-weighted — diagnostic only), patch-string comment audit (g6, user-pinned literal), and cross-model analysis communicated to the user (g7). The three cores are weighted equally because the user surfaces each in a separate distinct turn and each is independently necessary to resolve the customer's report — fixing only the lifecycle layer (g3) leaves codex sessions still broken; fixing only the parser (g2) leaves any other unrecognized-tool case still broken; fixing without diagnosis (g1) means the agent never demonstrably understood the customer's report. Goal_6 is up-weighted relative to goal_7 because the user pinned a literal string; goal_7 ties to an open-ended analytical ask. The two informational goals (g4 dedup, g5 tests) carry zero weight because the user never raised either as an explicit ask — they remain in the rubric as reviewer diagnostics only, never as scoring drivers."
+}

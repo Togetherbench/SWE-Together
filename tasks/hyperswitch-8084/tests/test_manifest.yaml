@@ -1,0 +1,49 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: hyperswitch-8084
+turns:
+- turn: 1
+  user_message: Add api-key auth for all routing APIs by removing the feature-flag-based distinction; refactor auth so all
+    routing endpoints use (api-key + JWT) for both default and release builds.
+  deliverable: 'Remove #[cfg(not(feature = "release"))] / #[cfg(feature = "release")] diagnostic around routing endpoint auth
+    in crates/router/src/routes/routing.rs and keep the unified auth::auth_type(ApiKeyAuth, JWTAuth, headers) call.'
+  skipped: false
+gates:
+- id: p2p_file_present
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: routing.rs file exists and is syntactically intact
+- id: t1_f2p_not_release_cfg_eliminated
+  turn: 1
+  kind: F2P
+  weight: 0.3
+  description: 'All #[cfg(not(feature = "release"))] attributes guarding routing auth are removed from routing.rs'
+- id: t1_f2p_release_cfg_eliminated
+  turn: 1
+  kind: F2P
+  weight: 0.25
+  description: 'All #[cfg(feature = "release")] attributes guarding routing auth are removed from routing.rs'
+- id: t1_f2p_no_jwt_only_handler_auth
+  turn: 1
+  kind: F2P
+  weight: 0.25
+  description: No bare &auth::JWTAuth* used as the handler-level auth argument (i.e., release branch removed, not the api-key
+    branch)
+- id: t1_f2p_api_key_path_preserved
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: api-key auth path (auth::auth_type with ApiKeyAuth/V2ApiKeyAuth + JWT) preserved on every handler call site
+- id: p2p_upstream_7a8254b6
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): cargo_metadata_workspace @ 344dcd6'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
+- id: p2p_upstream_d59414f2
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): rust_files_nonempty @ 344dcd6'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

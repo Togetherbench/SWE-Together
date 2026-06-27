@@ -1,0 +1,34 @@
+{
+  "task_name": "cli-task-2026-0",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine code change to the telemetry detached-subprocess source that materially alters how the subprocess's stdout/stderr are handled. It is NOT a no-op or gaming artifact. Specifically reject: (a) a zero-edit / empty diff, or a diff whose only content is a captured-tree artifact such as a '=== repo/ ===' banner; (b) git-ops exfiltration in lieu of a real edit (e.g. `git checkout main`, `git reset --hard origin/...`); (c) a comment-only or whitespace-only change that leaves the actual stdout/stderr assignments untouched; (d) edits confined to temporary, scratch, or unmerged locations rather than the real source file the agent must modify. The original buggy assignment of the stream fields to nil must actually be replaced with working code, not merely re-commented or described.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor guard. Golden patch is a 4-line real edit replacing `cmd.Stdout = nil` / `cmd.Stderr = nil` with a discard sink; no model patches exist (evidence_tier golden_only), so calibrate against the buggy baseline which scores 0.0. Anything that leaves the nil assignments in place, or substitutes git ops / banners for an edit, is gaming."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The telemetry subprocess's standard output is no longer left to inherit the parent CLI's descriptor. After the change, when the analytics/telemetry subprocess is launched, its stdout is explicitly directed to a real discard sink (a writer that throws output away, or an opened handle to the null device) so that stray writes or panics from the subprocess cannot surface on the main CLI's terminal. The fix must take effect at runtime — not satisfied by a commented-out assignment, a parsed-but-unused variable, a stub that is never wired into the command, or merely editing the explanatory comment while leaving the field set to its inheriting (nil) value.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Turn 0 verbatim: 'setting cmd.Stdout and cmd.Stderr to nil actually inherits the parent's descriptors ... these should be explicitly redirected to a discard sink'. Stdout leak is half the reported bug."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The telemetry subprocess's standard error is likewise no longer left to inherit the parent CLI's descriptor. After the change, the subprocess's stderr is explicitly directed to a real discard sink (a discarding writer or an opened null-device handle), so panics and stray error output from the subprocess cannot leak to the user's terminal. As with stdout, this must be a live runtime redirection — not a comment edit, a dead variable, or a stub left unwired.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Turn 0 verbatim names BOTH streams: 'cmd.Stdout and cmd.Stderr to nil ... any unexpected output (including panics) ... could still appear in the user's terminal'. Stderr (panic channel) is the other half of the bug and explicitly called out."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The final, converged implementation uses the language's standard-library discarding writer (the idiomatic 'discard' sink provided by the standard library) as the redirection target for BOTH subprocess streams (stdout and stderr) — reflecting the cleaner alternative the user asked about and then agreed to adopt over the initial ad-hoc approach. To satisfy THIS goal specifically, the standard-library discard writer must be the actual mechanism wired into the subprocess command, with its required import/dependency present so the code compiles and runs; it must not be referenced only in a comment, sit behind a disabled branch, or be imported but unused. An ad-hoc opened null-device file handle, while behaviorally adequate for the underlying bug (and credited by the stdout/stderr goals above), does NOT satisfy this convergence goal because it is not the standard-library discard sink the user agreed to switch to.",
+      "tier": "important",
+      "weight": 0.3,
+      "rationale": "Turn 1 'what do io.Discard does?' then Turn 2 'yes please' — the user explicitly asks about and then agrees to adopt the standard-library discard writer as the cleaner final form. This is the multi-turn convergence, distinct from merely 'not nil'. Because the user agreed to switch to the library discard sink, an ad-hoc /dev/null handle does NOT satisfy this specific goal (though it is credited by goals 1 and 2 as a valid underlying-bug fix). Phrased as 'the language's standard-library discarding writer' rather than a literal identifier so an equivalent library writer (e.g. ioutil.Discard) is accepted without over-pinning."
+    }
+  ],
+  "decomposition_notes": "Task: fix a telemetry detached-subprocess stdout/stderr leak in a Go CLI. Three user turns. Turn 0 is a precise bug report naming BOTH cmd.Stdout and cmd.Stderr set to nil (which in Go's os/exec inherits parent descriptors rather than discarding), asking for explicit redirection to a discard sink. Turns 1-2 ('what do io.Discard does?' / 'yes please') converge the solution onto the standard-library discard writer. Goals 1 and 2 split the two streams (each independently part of the verbatim ask, each gives partial credit for a half-fix) and carry the bulk of the weight as core behavioral fixes. Goal 3 captures the multi-turn correction — adopting the idiomatic standard-library discard sink the user explicitly asked about and agreed to switch to. Because that agreement is the substance of Turns 1-2, an ad-hoc /dev/null handle does NOT satisfy goal 3 (it is, however, credited by goals 1-2 as a valid fix to the underlying leak, matching the test.sh which accepts io.Discard, ioutil.Discard, OR an opened /dev/null handle for the stream-discard gates). Goal 3 is phrased as 'the standard-library discarding writer' rather than a literal identifier, so any equivalent library writer (e.g. ioutil.Discard) is accepted without over-pinning. Weights are user-importance ranked (the two stream fixes dominate; the convergence-to-library-sink refinement is important but secondary), and deliberately do NOT mirror the manifest's 0.20/0.25/0.25/0.30 F2P split. No oracle identifiers appear in goal text except concepts the user named verbatim. Evidence tier: golden_only (golden patch present, zero real model patches), so anti-gaming is calibrated against the 0.0 buggy baseline. Weighted goals sum to 1.00."
+}

@@ -1,0 +1,36 @@
+gates:
+  - id: "merge_unique_func"
+    kind: "F2P"
+    weight: 0.25
+    command: "go run /tmp/check_merge_unique.go"
+    description: "mergeUnique function exists in state.go with correct signature ([]string, []string) []string and non-trivial body"
+
+  - id: "merge_unique_lifecycle"
+    kind: "F2P"
+    weight: 0.25
+    command: "go run /tmp/check_lifecycle.go"
+    description: "mergeUnique is called in both handleLifecycleTurnEnd and handleLifecycleSubagentEnd handlers"
+
+  - id: "merge_unique_tests"
+    kind: "F2P"
+    weight: 0.25
+    command: "go test ./cmd/entire/cli/... -run 'MergeUnique|mergeUnique|merge_unique' -count=1 -timeout 30s -v"
+    description: "mergeUnique has dedicated unit tests that compile and pass"
+
+  - id: "git_status_fallback"
+    kind: "F2P"
+    weight: 0.25
+    command: "go run /tmp/check_fallback.go"
+    description: "git-status modified files are merged as fallback via mergeUnique in lifecycle handlers"
+
+  - id: "P2P_existing_tests"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    command: "go test ./cmd/entire/cli/... -count=1 -timeout 120s"
+    description: "All existing unit tests still pass"
+
+  - id: "P2P_code_compiles"
+    kind: "P2P_REGRESSION"
+    weight: 0.0
+    command: "go build ./..."
+    description: "The entire project still compiles"

@@ -1,0 +1,53 @@
+gates:
+  - id: new_func_works
+    kind: F2P
+    weight: 0.30
+    description: >
+      ParseFromFileAtLine exists in transcript/parse.go, compiles, and correctly
+      parses JSONL files from disk. Verifies offset support, total line counting,
+      and malformed line skipping.
+    command: >
+      go run /tmp/verify_new_func.go
+
+  - id: old_exported_removed
+    kind: F2P
+    weight: 0.25
+    description: >
+      claudecode.ParseTranscript is no longer exported. A program importing it
+      must fail to compile (proving the duplicate was removed and callers updated).
+    command: >
+      go run /tmp/check_old_exported.go
+
+  - id: project_compiles
+    kind: F2P
+    weight: 0.25
+    description: >
+      Full project compiles successfully, confirming all callers across 8 files
+      were updated correctly after removing the 5 duplicate parsers.
+    command: >
+      go build ./...
+
+  - id: parse_bytes_works
+    kind: F2P
+    weight: 0.20
+    description: >
+      ParseFromBytes still works correctly as a regression check — this shared
+      function should not have been broken by the refactoring.
+    command: >
+      go run /tmp/verify_parse_bytes.go
+
+  - id: tests_pass
+    kind: P2P_REGRESSION
+    description: >
+      Existing transcript package tests must still pass after the refactoring.
+      This gates against broken behavior introduced by the consolidation.
+    command: >
+      go test -count=1 ./cmd/entire/cli/transcript/...
+
+  - id: no_stale_imports
+    kind: P2P_REGRESSION
+    description: >
+      go vet on the claudecode package must pass — catches unused imports
+      (bufio, bytes, os) left behind after deleting the duplicate parsers.
+    command: >
+      go vet ./cmd/entire/cli/agent/claudecode/...

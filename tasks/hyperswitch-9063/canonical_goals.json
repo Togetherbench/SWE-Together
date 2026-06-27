@@ -1,0 +1,34 @@
+{
+  "task_name": "hyperswitch-9063",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation that materially edits the payment-link locale handling, not a gaming artifact. It is NOT satisfied by: a zero-edit/empty diff; a diff whose only content is a captured-tree banner (e.g. a '=== repo/ ===' file-listing artifact); git-ops exfiltration of the solution (git checkout main, git reset --hard origin/..., or otherwise restoring upstream files instead of authoring the fix); a comment-only or whitespace-only diff; edits confined to temp/scratch/unmerged locations rather than the actual locale source; or deletion/weakening of tests to pass. The locale dictionary and language-resolution logic must be substantively changed in the repository's real source tree.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. With no model patches available (evidence_tier golden_only), this is calibrated against the smallest plausible real fix: the upstream PR touches one source file (locale.js) with ~10 substantive line changes, so a no-op, banner-only, or git-restore 'solution' is trivially distinguishable from a real edit. No weight (flagged, not scored)."
+    },
+    {
+      "id": "goal_locale_keys_hyphenated",
+      "goal": "The set of locale identifiers that previously used an underscore separator between a language subtag and a region/script subtag now use a hyphen separator instead, consistent with ISO-standard locale formatting. Every locale entry in the payment-link locale data that was keyed with an underscore-joined two-part identifier is reachable under its hyphen-joined form, and the underscore-joined form is no longer the canonical key. This must be a real data/key change in the locale source, not a hardcoded alias for one example, a commented-out old key, or a parsed-but-ignored mapping.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Traces to the sole substantive user ask (Turn 0, verbatim): 'Change Underscore(_) to hyphen(-) in payment link locale ... according to ISO standards.' The instruction's behavior table requires e.g. zh_hant (underscore) to NOT resolve while zh-hant (hyphen) does — i.e. the canonical locale keys must be hyphen-form. Behavioral, no oracle identifiers named."
+    },
+    {
+      "id": "goal_language_resolution_hyphen",
+      "goal": "Given a locale string from an incoming request, the language-resolution routine correctly parses and matches hyphen-separated locale strings to their corresponding multi-part locale entries. A request locale such as a hyphen-joined British-English or Traditional-Chinese tag must resolve to that specific localized entry rather than silently degrading to the bare language. Conversely, an underscore-separated tag (e.g. a Traditional-Chinese tag written with an underscore) is treated as unrecognized and falls back to the default language rather than resolving to the corresponding hyphenated entry. This must be implemented in the resolution logic itself, not faked by a stub that returns a constant, a hardcoded single-case branch, or a flag that is parsed but never used.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Traces to Turn-0 ask plus the instruction's explicit behavior table: 'zh-hant - should see traditional chinese' and the explicit NEGATIVE case 'zh_hant - english' (underscore form must NOT resolve to the entry, it falls back to default). The resolution must treat hyphen-form inputs as the canonical multi-part keys; on the buggy base it underscore-joins and either fails to match or accepts the wrong form."
+    },
+    {
+      "id": "goal_case_and_extra_subtag_handling",
+      "goal": "Locale resolution is robust to input casing and to extra trailing subtags as specified by the request behavior: a multi-part locale tag resolves to its specific entry regardless of the input's letter case, an unrecognized region/variant after a known language falls back to that bare language entry, and a tag with extra trailing subtags after a recognized multi-part locale still resolves to that recognized entry. This behavior must come from genuine normalization/lookup logic, not from enumerating each literal example string as a hardcoded special case.",
+      "tier": "important",
+      "weight": 0.25,
+      "rationale": "Traces to the instruction's behavior table acceptance cases: 'Zh - simplified chinese' and 'ZH-HANT - traditional chinese' (case-insensitive), 'zh-abcdef - simplified chinese' (unknown region -> bare language), 'zh-hant-abcdef - traditional chinese' (extra trailing subtag still matches). Captures the multi-turn-equivalent follow-on requirements beyond the bare rename."
+    }
+  ],
+  "decomposition_notes": "Evidence tier: golden_only (golden.patch present from gh_pr_diff; 0 real model patches; the post-Turn-0 'user turns' are autonomous-agent tool_result/system-reminder noise, not real user corrections). The single substantive user ask is Turn 0: change underscore to hyphen in payment-link locale per ISO standards, with an explicit behavior table (the curl test cases) defining acceptance. The golden patch is a pure JS-side change: (1) migrate locale dictionary keys from underscore to hyphen form, and (2) rewrite the language-resolution helper to hyphen-join its key. The test.sh F2P set additionally credits an optional Rust-side Accept-Language .replace('_','-') normalization, but test.sh and its comments explicitly note the upstream PR shipped NO Rust changes and award full credit for the JS-only canonical fix; therefore I deliberately did NOT make Rust normalization a weighted goal (it would over-pin against the canonical solution and reject the upstream fix). Weights rank by user-importance, not 1:1 with manifest F2P weights: the key migration (0.40) is the literal ask; hyphen-based resolution (0.35) makes the keys reachable; case/extra-subtag robustness (0.25) covers the behavior-table follow-on cases. No file/function/variable names or exact-string literals are used in goal bodies (the user named none verbatim except the locale-form concept itself); behaviors are described so any equivalent implementation (rewrite getLanguage, normalize input, or both) passes. Weighted goals sum to 1.00."
+}

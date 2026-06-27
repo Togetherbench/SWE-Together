@@ -1,0 +1,55 @@
+{
+  "task_name": "nunchaku-quantize-bugfix",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Do not regress the working parts of quantize.py that the user implicitly trusts: pack_svdq_qweight's tile/permute math, quantize_svdq_layer's SVD + residual pipeline and return tuple, and the overall main() driver structure (block iteration, SVDQ vs AWQ partition, norms copy, non-transformer pass-through, safetensors save). No deletion or rewrite of unrelated working functions, no churn of public function signatures or returned tuple arity, no introduction of new required CLI flags, environment variables, or third-party dependencies, and no wholesale reformat of the file. Changes should be scoped to the actual bugs and the requested simplification.",
+      "tier": "anti_effort",
+      "weight": 0.1,
+      "rationale": "Anti-effort floor. The user's asks (consistency check + 'any other issue' + simplify one loop) are localized; a high-quality response is surgical. Wholesale rewrites of the SVDQ packing path, signature churn, or 'while I'm here' refactors typically introduce regressions in code the user has not flagged and were not requested in any turn. This goal exists so that destroying working code while addressing the headline bugs cannot still score full marks."
+    },
+    {
+      "id": "goal_1",
+      "goal": "In response to the user's request to check whether the two pack functions are consistent with the repo's dequantization, the agent must produce an explicit, evidence-grounded judgment for BOTH pack_svdq_qweight AND pack_awq_qweight — grounded in artifacts the agent actually consulted (e.g., the AWQ dequantize kernel, the W4A4 GEMM kernel, the weight-packer reference, or equivalent) — and communicate that judgment to the user. A non-answer, a one-sided check (only one of the two functions), or a verdict not tied to any examined dequantization artifact does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Turn 0 is the user's opening ask and explicitly names BOTH pack functions. The user's information need is a comparison verdict, not silent bug-fixing. This goal is independent of any structural code edit and traces directly to the verbatim ask. It is rubric-only (no F2P gate enforces it), so it deliberately diverges from the test-manifest weights."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Repair the per-group absolute-maximum reduction path in the SVDQ residual-quantization function so the downstream scale/clamp/pack pipeline completes end-to-end and yields an int8 packed qweight plus per-group float scales of the contractually expected shape. The mechanism is unconstrained — extracting the tensor field from the reduction's return value, computing the per-group max via an equivalent reduction that returns a tensor directly, or any other approach that restores tensor-typed scales.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Turn 1 ('Is there any other issue in @quantize.py?') is an open-ended audit; the residual-scale reduction is one of the bugs that surfaces under that audit. Tested behaviorally: a sample input runs to completion and the output dtype/shape contract holds. Mechanism is intentionally not pinned to '.values' so equivalent rewrites score."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Repair the per-group min and max reductions in the AWQ-layer quantization function so the (max - min) scale and zero-point computation succeeds and the function returns its documented triple of int-packed qweight, float per-group scales, and float per-group zero points without crashing. The mechanism is unconstrained — extracting the tensor field from each reduction's return, recomputing the extrema via reductions that return tensors directly, or any equivalent approach.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Same Turn 1 trigger as goal_2, applied symmetrically to the AWQ path's twin min/max reductions. Tested behaviorally on a sample tensor across multiple shapes."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Repair the tensor-key construction in the AWQ-layer loop of the driver/main routine so that per-layer weight and bias tensors are loaded from the source safetensors under their correct fully-qualified key names, of the form '<block_prefix><layer>.weight' and '<block_prefix><layer>.bias'. The mechanism is unconstrained — using string literals for the trailing field names rather than interpolating the same-named local variables, renaming the locals so they no longer shadow the intended literals, restructuring the loop to avoid the shadowing, or any equivalent fix that produces well-formed keys.",
+      "tier": "core",
+      "weight": 0.14,
+      "rationale": "Turn 1 audit-ask catches this driver-script bug: the f-strings interpolate locals that shadow the intended literal field names, producing malformed keys (KeyError or wrong tensor). Static inspection of the source for the absence of the shadowing pattern is one way to verify; a runtime probe with mocked safetensors is another. Mechanism is intentionally generic."
+    },
+    {
+      "id": "goal_5",
+      "goal": "In response to the user's simplification request, reduce the nesting of the AWQ-pack loop body to a single explicit Python for-loop (or no explicit Python loop at all, if fully vectorized) while preserving the existing bitwise-or accumulation semantics — the accumulator must be updated by in-place bitwise OR, not by a reduction operator (e.g., sum / torch.sum / .sum() / +=) whose signed-int32 overflow behavior differs from |. This goal is structural: it verifies the surface form of the simplification matches the user's Turn 3 correction.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Turn 2 asks for the simplification; Turn 3 explicitly corrects sum-style aggregation back to in-place bitwise-or because of signed-int32 overflow semantics, and tells the agent to simplify the indexing while preserving |=. This goal captures the user's explicit shape constraints on the rewrite without naming a specific loop index variable or shift formula."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The simplified AWQ-pack function must remain functionally correct: for an input of int codes in [0, 15] of shape (N, K), its output must produce a packed layout that round-trips through the canonical 4-bit AWQ unpack/dequantize path (or matches a canonical reference packer bit-for-bit, modulo a row-interleave permutation) on randomized inputs. A simplification that satisfies the surface-form constraint but breaks the consumed bit layout does not satisfy this goal.",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "Pairs with goal_5: the user's simplification request implicitly requires the rewrite to remain a drop-in for downstream consumers. Verified by behavioral roundtrip or bit-exact match against a canonical packer on randomized 4-bit inputs. This is an anti-gaming check: a model can satisfy goal_5 structurally (one loop, |= present) yet shuffle the bits incorrectly; goal_6 catches that."
+    }
+  ],
+  "decomposition_notes": "1 anti-effort (0.10) + 4 core (0.18 + 0.18 + 0.18 + 0.14 = 0.68) + 2 secondary (0.08 + 0.14 = 0.22). Sum = 1.00. Weights are an evaluator-side rubric distribution and intentionally diverge from tests/test_manifest.yaml's F2P weights — the rubric covers a broader surface (consistency-check articulation, anti-effort floor, functional roundtrip of the simplification) than the structural F2P gate set, and an ideal agent satisfying the rubric is not required to map 1:1 onto F2P gate ids. Goal phrasing avoids oracle-specific identifiers (no line numbers, no exact attribute strings, no exact loop index names, no exact shift formulas); mechanism hints are framed as 'e.g.' alternatives so equivalent implementations score."
+}

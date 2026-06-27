@@ -1,0 +1,54 @@
+gates:
+  - id: "build"
+    kind: "P2P_REGRESSION"
+    command: "cd /workspace/cli && go build ./..."
+    description: "Project must compile cleanly"
+
+  - id: "empty_repo_true"
+    kind: "F2P"
+    weight: 0.22
+    command: "cd /workspace/cli && python3 -c 'import subprocess,os,json; print(json.dumps({}))'"
+    description: "IsEmptyRepository returns true for repos with no commits"
+    category: "gold"
+
+  - id: "empty_repo_false"
+    kind: "F2P"
+    weight: 0.18
+    command: "cd /workspace/cli && python3 -c 'import subprocess,os,json; print(json.dumps({}))'"
+    description: "IsEmptyRepository returns false for repos with commits"
+    category: "gold"
+
+  - id: "init_session_err"
+    kind: "F2P"
+    weight: 0.22
+    command: "cd /workspace/cli && python3 -c 'import subprocess,os,json; print(json.dumps({}))'"
+    description: "InitializeSession returns ErrEmptyRepository on empty repos"
+    category: "gold"
+
+  - id: "strategy_tests_pass"
+    kind: "F2P"
+    weight: 0.18
+    command: "cd /workspace/cli && go test ./cmd/entire/cli/strategy/... -count=1 -timeout=120s"
+    description: "Existing strategy tests still pass (no regression)"
+    category: "silver"
+
+  - id: "sentinel_exists"
+    kind: "F2P"
+    weight: 0.10
+    command: "cd /workspace/cli && go doc github.com/entireio/cli/cmd/entire/cli/strategy ErrEmptyRepository | grep -q ErrEmptyRepository"
+    description: "ErrEmptyRepository sentinel error is defined in strategy package"
+    category: "bronze"
+
+  - id: "helper_func_exists"
+    kind: "F2P"
+    weight: 0.05
+    command: "cd /workspace/cli && go doc github.com/entireio/cli/cmd/entire/cli/strategy IsEmptyRepository | grep -q IsEmptyRepository"
+    description: "IsEmptyRepository helper function exists in strategy package"
+    category: "bronze"
+
+  - id: "error_check_in_strategy"
+    kind: "F2P"
+    weight: 0.05
+    command: "cd /workspace/cli && go doc github.com/entireio/cli/cmd/entire/cli/strategy ErrEmptyRepository | grep -q ErrEmptyRepository"
+    description: "Strategy package references plumbing.ErrReferenceNotFound in error checks"
+    category: "bronze"

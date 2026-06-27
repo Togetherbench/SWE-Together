@@ -1,0 +1,72 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+
+gates:
+  # --- Existing per-turn F2P gates (scaled from 1.0 to 0.60) ---
+  - id: f2p_response_type
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "New response type in api_models"
+    description: "Checks for PaymentListAttemptsResponse struct with payment_attempts Vec field"
+
+  - id: f2p_handler_wiring
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    label: "Handler function and wiring"
+    description: "Checks handler fn list_payment_attempts exists and calls core fn"
+
+  - id: f2p_core_fn
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    label: "Core list_payment_attempts function"
+    description: "Checks core fn queries attempts by intent and returns list response"
+
+  - id: f2p_route_registration
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "Route registration"
+    description: "Checks GET route /list_attempts or /attempts registered in app.rs"
+
+  - id: f2p_auxiliary_plumbing
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "Auxiliary plumbing"
+    description: "Checks Flow variant, lock_utils mapping, and ApiEventMetric impl"
+
+  - id: f2p_cargo_check_router_v2
+    kind: F2P
+    turn: 1
+    weight: 0.24
+    label: "cargo check -p router with v2 features"
+    description: "Full router crate compiles with v2,olap,oltp features"
+
+  # --- Upstream F2P gates (new, turn=null) ---
+  - id: f2p_upstream_openapi_route
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "OpenAPI route function for list_payment_attempts"
+    description: "Verifies list_payment_attempts openapi route fn is declared"
+
+  - id: f2p_upstream_openapi_v2_schema
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "PaymentListAttemptsResponse schema in openapi_v2"
+    description: "Verifies PaymentListAttemptsResponse schema registered in openapi_v2.rs"
+
+  # --- Upstream P2P gates (new, turn=null) ---
+  - id: p2p_upstream_cargo_metadata
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "Cargo workspace metadata valid"
+    description: "Verifies the Cargo workspace manifest parses correctly"

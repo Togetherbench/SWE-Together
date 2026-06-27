@@ -1,0 +1,25 @@
+# Updated 2026-05-17 oracle triage: manifest now mirrors the gate ids that
+# tests/test.sh actually emits to /logs/verifier/gates.json. Previously the
+# manifest declared 8 t*-prefixed F2P gates that the test never emitted, so
+# the unified F2P-coverage scorer treated all 8 as failed even though the
+# bash test.sh aggregated reward=1.0. We keep the original intent (cover the
+# SD/SDXL multi-res-dedup + _orig_mod fix) but via the 2 wiring gates the
+# test actually checks.
+version: '1.0'
+task: sd-scripts-sdxl-multires-dedup
+gates:
+- id: f2p_upstream_unwrap_multires
+  kind: F2P
+  turn: 1
+  weight: 0.5
+  description: unwrap_model_for_sampling is defined (module-level OR local inside sample_images_common) AND SdSdxlLatentsCachingStrategy overrides load_latents_from_disk.
+- id: f2p_upstream_skipdup_origmod
+  kind: F2P
+  turn: 1
+  weight: 0.5
+  description: DreamBoothDatasetParams has skip_duplicate_bucketed_images field AND sdxl_original_unet handles _orig_mod for the torch.compile-wrapped isinstance dispatch.
+- id: p2p_upstream_py_compile_all
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  description: All 4 changed files (strategy_sd, config_util, train_util, sdxl_original_unet) py_compile cleanly.

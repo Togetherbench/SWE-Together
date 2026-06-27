@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "comfyui-gemma3-sliding-window",
+  "n_oracle_turns_in": 3,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Are there any other functionality differences besides the softcap?",
+      "verbatim_excerpt": "any other difference between functionality apart from the softcap"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "question",
+      "text": "Check the HuggingFace Gemma-3-4b-it config and this repo's code; shouldn't the sliding window be 1024?",
+      "verbatim_excerpt": "Shouldn't the sliding window be 1024"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 5.3
+}

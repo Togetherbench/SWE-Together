@@ -1,0 +1,27 @@
+{
+  "task_name": "cli-task-c01017",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [
+    "TestParseTranscript_ArrayContent",
+    "TestParseTranscript_ArrayContentMultipleParts",
+    "TestParseTranscript_NullContent",
+    "TestExtractLastUserPrompt",
+    "TestExtractAllUserPrompts_ArrayContent",
+    "TestExtractModifiedFiles_ArrayContent",
+    "TestExtractModifiedFilesFromTranscript"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/geminicli/transcript.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/agent/geminicli/transcript_test.go",
+    "cmd/entire/cli/strategy/manual_commit_test.go"
+  ],
+  "commit_sha": "8f2614067379fd5a699a2e8dad1d78d98eaa96c0",
+  "commit_message_first_line": "fix: handle array content format in Gemini transcript parsing",
+  "agent_percentage": 100.0
+}

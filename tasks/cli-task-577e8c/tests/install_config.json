@@ -1,0 +1,16 @@
+{
+  "task_name": "cli-task-577e8c",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/app",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/opencode/opencode.go"
+  ],
+  "test_files": [],
+  "commit_sha": "4beb60c7f768fe53ca2abcff486a8d82fe19a6c6",
+  "commit_message_first_line": "Add warning log when extracting modified files from opencode session fails",
+  "agent_percentage": 50.0
+}

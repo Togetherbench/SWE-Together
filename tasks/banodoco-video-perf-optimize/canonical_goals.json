@@ -1,0 +1,65 @@
+{
+  "task_name": "banodoco-video-perf-optimize",
+  "schema_version": "3.0",
+  "notes": "v3 rubric. Every goal traces back to a concrete USER ask captured in the multi-turn session (initial instruction.md plus the user_simulation_prompt.md / oracle_intents.json trigger stream that the harness injects to reproduce the original user behavior). No goal cites oracle patch identifiers (file paths, hook names, helper functions, constant names, or specific numeric thresholds) — the rubric scores observable user-visible behavior. Per-goal `_provenance` arrays cite verbatim user excerpts so a grader can audit the chain. Weights deliberately do NOT mirror tests/test_manifest.yaml's two-gate 0.5/0.5 F2P split — the rubric scores user-intent fulfillment, the manifest scores narrow structural signals, and the canonical eval treats them as independent axes.",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must represent a genuine engineering attempt at the user's request: it must contain non-trivial source edits to the application code the user pointed at (the two components handling the heavy-load section and the animated chart), must not exceed a sane diff size budget (no checked-in build artifacts, lockfile churn unrelated to the task, vendored dist bundles, video/binary blobs, or sweeping mass-reformat noise), and must not revert the project to a pristine pre-session baseline (e.g., `git checkout main`, `git reset --hard`, deleting the working tree, or otherwise undoing the user's starting state without then re-implementing the requested behavior). Empty patches, near-empty patches that only touch unrelated files (README, .gitignore, build configs), patches dominated by >1MB of generated/binary content, and patches that just discard work all score 0.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "zeroes_reward": true,
+      "rationale": "Anti-effort guard. Independent of structural test signal: if the agent shipped no real work — or worse, undid the starting state — the rubric refuses to award partial credit no matter how many narrow regexes happen to match strings already present in the unmodified buggy baseline. The scorer should inspect the captured final patch's stats (changed lines in application source vs. total bytes, presence of binary chunks, whether the diff is dominated by `delete-all` hunks over the seeded buggy state) before honoring any goal_1..goal_N evidence."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Reduce the page's video-loading load on the heavy generations section so that only a small visible window of video rows is actively mounted/loaded at any one time, with off-screen rows releasing their media as the user scrolls. The user's framing is roughly four rows at a time, with previously-viewed rows released and upcoming rows loaded as scrolling progresses. Implementation technique is unconstrained — windowing libraries, viewport-visibility observers, scroll-position math, manual chunked rendering, or any other mechanism that demonstrably keeps the active video count bounded while the user moves through the list all qualify.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "This is the headline performance ask of the session and is the first concrete request the user makes. Implementation is intentionally unconstrained; the rubric scores the behavior (bounded active media + release of off-screen rows), not the API choice. Holds the highest weight because the user re-engaged on this thread (mobile/well-structured follow-up) and it is the only ask whose impact is felt every time the page loads."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The animated 'rise and fall of models' chart must auto-start when its section becomes visible, AND must animate from an empty/zero starting state, progressively revealing data left-to-right rather than rendering with all data already present on first paint. First-load behavior must match subsequent-load behavior — a reload should not show everything immediately while a soft re-trigger animates. Mechanism (viewport-visibility trigger, animation index starting at 0 and advancing, or equivalent reveal pattern) is unconstrained; the rubric scores the observable behavior: does the chart start empty and grow, and does it auto-trigger on scroll-into-view.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Two tightly coupled user intents from the initial spec and follow-up corrections. The user surfaced both the auto-trigger requirement and the first-load asymmetry distinctly across multiple turns. Mechanism unconstrained — scored on what the user would see, not on which hook does it."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Stacked values in the animated chart must be normalized so that each time-period's model shares sum to approximately the full-share total (the user's framing was '100%') throughout the animation, AND the chart's value axis must use a fixed numeric domain spanning the full share range so the axis does not rescale as data points are revealed. The two requirements are coupled because normalization is only visually meaningful if the axis stops moving underneath it. Mechanism unconstrained — any normalization transform plus any fixed-domain axis configuration is acceptable; the rubric scores the user-visible invariants (values sum to the expected total, axis doesn't jump during animation).",
+      "tier": "core",
+      "weight": 0.15,
+      "rationale": "Two related data-correctness intents the user raised mid-session via diagnostic questions plus a follow-up confirmation that normalization was close but rounded slightly off. Coupled because the user's complaint about jumpiness is only resolvable when both are fixed."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The chart animation should use ease-out style timing — perceptibly faster at the start and decelerating toward the end — rather than constant/linear speed. The user expressed this as the animation 'starting fast and slowing down' and reinforced it after seeing a linear playback. Mechanism unconstrained: any easing function whose progress curve has a larger first-half delta than second-half delta qualifies.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Explicit user request in the initial spec, reinforced by a mid-session correction when the agent shipped linear timing. Secondary because it is polish on an already-working animation, not a load-bearing correctness property."
+    },
+    {
+      "id": "goal_5",
+      "goal": "When a new model first appears in the animated chart, surface that model's name as a visible white text label inside the chart area, positioned so the viewer can associate the label with the model's segment. The label should persist long enough to be readable (the user explicitly asked for it to last) and, if the segment moves horizontally as the animation progresses, the label should track it rather than remain pinned to the appearance position. Mechanism unconstrained — any approach that surfaces a readable, white-styled, segment-anchored, persistent name label is acceptable.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Explicit user request from the original spec and refined by three follow-up turns about placement and persistence. The label feature is presentation refinement layered onto the working animation, so secondary, but the user revisited it enough times to deserve real weight rather than the v2 token allocation."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The timeline / horizontal-axis labels in the animated chart should reveal progressively in sync with the data growth, rather than displaying the full set of time labels at first paint while the data lines crawl across an empty grid. The user surfaced this as a polish item after the play-from-left behavior landed.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Distinct user ask the v2 rubric collapsed into goal_2. Splitting it out because the user explicitly raised it as a follow-up correction once play-from-left was working, and a grader judging the chart could legitimately rate one as 'animation reveals' while missing the other."
+    },
+    {
+      "id": "goal_7",
+      "goal": "The shipped code must run without throwing initialization-order runtime errors on the modified pages (no 'Cannot access X before initialization' ReferenceErrors from variables used before their declaration), and the project's standard production build must succeed. A teammate pulling the branch tomorrow should be able to build and load the modified pages without console errors.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "The user reported initialization-order ReferenceErrors on TWO separate mid-session turns by pasting the browser console output, so this is a load-bearing user-observable property, not just a CI floor. Combined with a clean production build to ensure shipped code is actually shippable. Carried higher weight than v2's 0.05 because the user surfaced it twice and the bug class is one that narrow structural greps cannot detect."
+    }
+  ],
+  "decomposition_notes": "Weights: goal_0 is the zero-weight anti-effort gate that can zero the reward. Real-effort weights split as core(0.30 + 0.20 + 0.15 = 0.65) + secondary(0.10 + 0.10 + 0.05 + 0.10 = 0.35) = 1.00. Core ordering reflects how often the user revisited each thread during the original session: virtualization (the headline perf complaint and the only ask reinforced via a follow-up well-structured/mobile question), animation-from-zero (the user re-corrected first-load asymmetry three turns running), and normalization+fixed-axis (raised diagnostically with a follow-up rounding correction). Secondaries were rebalanced from v2: ease-out kept at 0.10 (still polish but user kept asking for 'more easing'), white-labels lifted to 0.10 because the user spent THREE follow-up turns on the label (white, on-segment, follow-center), progressive-timeline split out as its own 0.05 goal (was collapsed into goal_2 in v2), and runtime-errors-and-build raised to 0.10 because the user reported initialization-order errors on two separate occasions — that's a load-bearing user-visible defect, not just a CI floor. All goals carry explicit `_provenance` arrays with intent_ids and verbatim excerpts so a grader can audit that the rubric is scoring user-asked behavior and nothing else. No goal cites an oracle file path, hook name, helper-function identifier, or numeric constant from the captured patch; the only numeric the rubric mentions is the user's own framing ('100%', 'four rows', 'half the speed') which are verbatim quotes, not oracle-derived."
+}

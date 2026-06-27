@@ -1,0 +1,16 @@
+{
+  "task_name": "gemini-voyager-task-64c72f",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/app",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "src/pages/content/timeline/manager.ts"
+  ],
+  "test_files": [],
+  "commit_sha": "23a513c67c32c7eb0dda6df376dbdb88e077668c",
+  "commit_message_first_line": "fix(timeline): reuse dot elements during recalc to prevent hover twitching",
+  "agent_percentage": 100.0
+}

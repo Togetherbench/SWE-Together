@@ -1,0 +1,41 @@
+{
+  "task_name": "sd-scripts-multiresolution-compat",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must be a genuine implementation of the requested backward-compatibility behavior, not a gaming artifact. Reject (flag) if the diff is empty or a no-op; if it consists only of a captured repository-tree banner (e.g. a diff whose entire content is a '=== repo/ ===' style listing) with no real code change; if it only contains git-operation exfiltration such as 'git checkout main', 'git reset --hard origin/...', or restoring tracked files instead of editing them; if the only changes are comments, docstrings, or whitespace with no behavioral effect; or if changes live solely in temporary, throwaway, or unmerged locations (e.g. /tmp, a scratch file, a test-only helper) that the production caching code path never invokes. The legacy-fallback logic must be reachable from the strategy methods that production training actually calls when checking or loading cached latents.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor to ensure the judge scores a real fix. Baseline (no change) scores 0.10 on the legacy test.sh from incidental passes, so a stub or no-op must be caught here. Patterns calibrated to the kinds of artifacts seen in low-reward attempts; no model patches were available (evidence_tier=golden_only) so patterns are the standard anti-gaming set."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When the resolution-suffixed cached-latent entry is absent, the existence/validity check and the load path must fall back to the legacy entry that has no resolution suffix and accept it when its stored array dimensions match what the requested bucket resolution expects. The loaded latents and their associated metadata (such as original size and crop values) must come from that legacy entry and be returned with correct values. This fallback must be exercised by the actual caching-strategy methods that production code calls, not by a stub that always returns a fixed answer, a hardcoded shape, or commented-out code.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 verbatim: 'we first check the cached latent with the resolution suffix. If it's not found, we check the latent without the resolution suffix, and check its size.' This is the central deliverable — accept and load the legacy unsuffixed cache. Covers test gates t1_f2p_legacy_accepted and t1_f2p_legacy_load."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The size/shape validation of the legacy unsuffixed entry must read only the array's stored metadata header to obtain its dimensions, without decompressing or reading the full array body. Concretely, the number of bytes consumed from the latent array member during the existence check must be header-sized (orders of magnitude smaller than the full array), and a legacy file whose member carries a valid array header but a truncated/missing body must still yield a non-crashing, correct accept/reject decision. A solution that loads the whole array (e.g. fully materializing it) to read its shape does not satisfy this, even if it returns the right boolean. This must not be satisfied by a stub or hardcoded return that skips reading the file, nor by a commented-out or unreachable header-reading code path.",
+      "tier": "core",
+      "weight": 0.32,
+      "rationale": "Turn 0: 'we should only load the metadata rather than decompressing the whole latent data when checking the size', reinforced Turn 3: 'read the saved entry in the zip file as a stream and only decode the array header.' Most-weighted because it is the hardest, most-corrected requirement (user re-stated it across two turns) and carries the strongest behavioral test signal (t4_f2p_no_full_decompression, t4_f2p_truncated_body_ok)."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The new legacy-fallback behavior must be scoped so that it applies to the SD1/SDXL caching path and does NOT alter the behavior of other (non-SD) model strategies. If the fallback is implemented in a shared base class, it must be gated (e.g. opted into only by the SD1/SDXL path) so that strategies which did not previously perform this fallback continue to behave exactly as before. Other model strategies must not start silently accepting or loading legacy unsuffixed caches as a side effect of this change. This scoping must be functionally enforced by the code path actually taken at runtime, not satisfied by a comment, a parsed-but-ignored flag, or a stub.",
+      "tier": "important",
+      "weight": 0.14,
+      "rationale": "Turn 2 verbatim: 'We only need to add backward compatibility for SD1/SDXL. Or you can implement it in the base class if it's simpler and does not change the current behavior.' The user explicitly scoped the change to SD1/SDXL and required that other models' behavior be unaffected even if the code lives in the base class."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The validity check and load path must remain correct at the boundaries: (a) a legacy unsuffixed entry whose stored dimensions do NOT match the requested bucket resolution must be rejected, not silently loaded as if valid — acceptance must be conditioned on the metadata-derived shape actually matching the expectation; and (b) when BOTH a suffixed entry and a legacy unsuffixed entry are present, the suffixed entry must win (its values and metadata are loaded) and the legacy fallback is consulted only when the suffixed entry is absent, preserving the pre-existing suffixed-path behavior. This must not be satisfied by a hardcoded rejection, a blanket accept, or a parsed-but-ignored shape; the decision must follow from the actual entry contents.",
+      "tier": "important",
+      "weight": 0.24,
+      "rationale": "Turn 0: '...check its size' requires the size check to discriminate (reject wrong shapes), and the ordering 'we first check the cached latent with the resolution suffix. If it's not found...' establishes suffixed priority that must not regress. Covers t3_f2p_wrong_shape_rejected, t3_f2p_suffix_priority, and the p2p suffixed-path regression guard."
+    }
+  ],
+  "decomposition_notes": "Weighted goals sum to 0.30+0.32+0.14+0.24 = 1.00. Ranking is by user-importance, NOT a mirror of test_manifest F2P weights: the metadata-only header read (goal_2, 0.32) is ranked highest because the user corrected toward it across two separate turns (Turn 0 and Turn 3) and it is the conceptually hardest requirement, whereas the manifest splits its signal across two gates summing to 0.36. The legacy fallback accept+load (goal_1, 0.30) is the single largest user ask of Turn 0. goal_4 (0.24) bundles the two correctness guards (wrong-shape rejection + suffixed-path priority/no-regression). The SD1/SDXL scoping goal (goal_3, 0.14) is the Turn-2 ask but ranks lowest because it constrains where the fallback applies rather than being the headline capability. Multi-turn coverage: goal_1/goal_4 capture the Turn-0 fallback+size-check ask; goal_3 captures the Turn-2 'only SD1/SDXL, base class must not change current behavior' scoping correction; goal_2 captures both the Turn-0 metadata-only constraint and the Turn-3 'read the zip member as a stream and only decode the array header' correction. No oracle identifiers (method/class/file/param names like _get_npz_array_shape_from_metadata, strategy_sd.py, fallback_to_non_resolution_suffix) appear in goal text — all behavior is described abstractly so any equivalent implementation (base-class param, subclass override, helper function, or inline) passes. Turn-1 ('Read git diff HEAD~') is a process nudge with no deliverable and is intentionally not a goal."
+}

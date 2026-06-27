@@ -1,0 +1,63 @@
+{
+  "task_name": "agent-swarm-task-ea4bd8",
+  "rubric_version": "v3",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort guard: the captured patch must reflect substantive edits to the worker Docker image build (Dockerfile.worker and/or docker-entrypoint.sh, and optionally a UI file for Turn 4 item 2). Zero the entire rubric if the patch is empty, is a no-op such as `git checkout main`/`git revert` that wipes the agent's own work, is dominated by bulk-vendored noise (>~1 MB of unrelated content such as a `node_modules` dump or generated artifact bomb) with no targeted edits to the two worker files, or if the only changes to docker-entrypoint.sh are comment-outs (e.g., wrapping live blocks in `# ...` lines, `: <<'EOF'` heredoc fences, or `if false; then ... fi` dead-code guards) rather than actual deletions of the targeted runtime blocks.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Pre-credit gate. Trips on empty diffs, >~1 MB unrelated content, or revert-style no-ops that erase real work. When triggered, total rubric score is forced to 0 regardless of other goals."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Consolidate apt-get package installation in Dockerfile.worker so the number of RUN blocks containing `apt-get install` is reduced relative to the buggy baseline (which has 3). A single consolidated RUN block is canonical, but at most 2 RUN blocks (e.g., one bootstrap + one main install) is acceptable. The consolidation should fold what were previously separate NodeSource and GitHub CLI install layers into the main package install.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Behavioral check via RUN-block count (apt_install_blocks <= 2) rather than exact identifier match. Allows the bootstrap-then-install pattern the user's own example sketches; does not require the exact package list, exact ordering of NodeSource vs GitHub CLI, or specific `--no-install-recommends` flags."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Pin npm global package versions in Dockerfile.worker to explicit semver (e.g., `pkg@X.Y.Z`) instead of `@latest`. Must cover the two packages the user called out by name (`@desplega.ai/wts`, `@desplega.ai/qa-use`) and at least one more pinned entry on the same `npm install -g` block. Accept pins that differ from the oracle's exact versions (e.g., a later 0.2.x for wts) as long as they are concrete semver, not `@latest`.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Checks absence of `@latest` for the user-named packages plus pinned-entry count >= 3. Does not enforce specific version numbers (user explicitly invited upgrades via Turn 3). Anti-gaming: requires the wts/qa-use names to NOT carry @latest, so an agent cannot bypass by pinning unrelated packages while leaving the called-out ones at @latest."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Move the Claude marketplace plugin installation block (`claude plugin marketplace add` + `claude plugin install`) out of docker-entrypoint.sh runtime and into Dockerfile.worker build time, so plugins land in an image layer. The Dockerfile must contain both `claude plugin marketplace add` and `claude plugin install` invocations; the entrypoint must no longer contain that block. NOT satisfied by commented-out code or dead-code stubs: lines that still mention `claude plugin marketplace add` or `claude plugin install` in docker-entrypoint.sh — even when prefixed with `#`, wrapped in `: <<'EOF' ... EOF` heredocs, guarded by `if false; then ... fi`, or replaced with `echo`/`true` stubs — count as the block still being present. The block must be physically removed from the file.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Two-sided check (build-time presence AND entrypoint absence) prevents the agent from just adding the marketplace block to the Dockerfile while leaving the runtime block alive (which would defeat the cache rationale). Allows `|| true` tolerance per the user's own example."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Move static worker bootstrap (the wts config JSON file at `~/.wts/config.json` plus the static workspace directories such as `personal`, `shared/thoughts/...`, `personal/memory`, `shared/memory`) from docker-entrypoint.sh runtime to Dockerfile.worker build time. Leave only genuinely per-container or per-agent setup (e.g., `$AGENT_ID`-scoped thought dirs, conditional `todos.md`) in the entrypoint. NOT satisfied by commented-out code or dead-code stubs: the runtime `mkdir`/`echo`/`cat >` lines that wrote the wts config and static workspace dirs must be physically removed from docker-entrypoint.sh — not merely prefixed with `#`, fenced inside `: <<'EOF' ... EOF` heredocs, wrapped in `if false; then ... fi`, or replaced with `:`/`true` stubs. Equivalently, Dockerfile.worker must contain a build-time RUN that creates `~/.wts/config.json` AND a build-time RUN that creates the static workspace dirs.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Single bundled goal covering both 3b (wts) and 3c (static dirs) because the user introduced them as one Phase-3 move-static-to-build-time idea. Pass requires evidence of wts config in Dockerfile AND removal of the runtime wts/static-mkdir lines. Anti-gaming: must keep AGENT_ID-conditional dirs in the entrypoint — wholesale deletion of the entire workspace-init block should not pass."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Reduce the initial payload of the agent details page so tasks are not bundled into the agent-details API response. Either (a) pass a falsy `includeTasks`-equivalent argument to the agent fetch call in the `useAgent` hook (e.g., `fetchAgent(id, false)`), or (b) otherwise remove `?include=tasks` from the initial details fetch so the tasks tab loads its own tasks via the tasks endpoint filtered by agent ID.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Behavioral framing accepts the oracle's `fetchAgent(id, false)` pattern AND any equivalent that strips include=tasks from the initial GET. Does NOT require modifying `use-tasks.ts` or the tasks tab itself (that's a downstream side effect the user described but did not pin a specific implementation for)."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Add agentmail-mcp as an MCP server entry that is generated into `.mcp.json` only when the `AGENTMAIL_API_KEY` environment variable is present. The entry must invoke `npx` with the `agentmail-mcp` package and forward `AGENTMAIL_API_KEY` into the server's `env`, matching the structure the user pasted (`command: npx`, `args: [\"-y\", \"agentmail-mcp\"]`, `env: { AGENTMAIL_API_KEY: <value> }`).",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Pin three contracts the user literally typed: npx + agentmail-mcp package + AGENTMAIL_API_KEY conditional. Trial in scope (__y6EshAP) added agentmail unconditionally and used `@agentmail/mcp-server` instead of `agentmail-mcp` — should miss this goal. Behavioral framing: accept any shell control flow (`if [ -n $AGENTMAIL_API_KEY ]`, jq pipe, jq selector, etc.) as long as the entry only appears when the env var is set."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Optimize layer ordering in Dockerfile.worker so frequently-changing inputs (the compiled `agent-swarm` binary COPY from the builder stage, the plugin `commands`/`agents`/`skills` COPYs, and the entrypoint COPY) appear AFTER the slow/stable layers (apt packages, Bun install, npm globals, marketplace plugin RUN, static config RUN). The COPY of the built binary should not appear before the npm globals RUN.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Detectable structurally: line position of `COPY --from=builder` relative to the `npm install -g` RUN block in the final Dockerfile.worker. Does not require the exact 11-step ordering the user listed — only the load-bearing inversion the user explained (binary/plugin COPYs after package installs). Anti-gaming: cannot pass by reordering only the npm-globals layer; the binary COPY position is the discriminator."
+    }
+  ],
+  "decomposition_notes": "1 anti-gaming guard (weight 0) + 3 core scoring goals + 4 secondary scoring goals. v3 weights: cores 0.22/0.22/0.18 (sum 0.62), secondaries 0.10/0.10/0.10/0.08 (sum 0.38), total 1.00. Cores are the three Phase 1+2+3a structural changes the user gave concrete code blocks for. Secondaries cover Phase 3b/3c bundled (wts + static dirs as one move), Turn 4 lazy tasks, Turn 4 agentmail with the AGENTMAIL_API_KEY conditional reinstated from the user's verbatim ask, and Phase 4 layer reordering. Weights deliberately do NOT mirror the test_manifest F2P vector (0.25/0.20/0.25/0.15/0.15 over a different 5-gate subset) so the rubric is not a re-skin of the test.sh gates: e.g., MCP-jq is NOT a v3 goal at all (oracle invention; the user's Turn 1 Phase 3 plan did not mention jq), and the wts/static-dir move IS a v3 goal even though it is P2P-only in test.sh. Phase 4 layer ordering (also absent from test.sh) is included because the user explicitly listed it as Phase 4 in their plan."
+}

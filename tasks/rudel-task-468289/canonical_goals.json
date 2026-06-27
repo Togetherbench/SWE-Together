@@ -1,0 +1,76 @@
+{
+  "task_name": "rudel-task-468289",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort floor (weight 0.0, gating-only). Reject the submission entirely if it exhibits any of the standard non-work patterns: (a) zero source-file edits (the diff is empty or touches no .tsx/.ts/.js source under apps/web/src/components/charts/); (b) git-operation-only patches that do not alter source content (e.g. solutions that run `git checkout main`, `git reset --hard`, `git revert`, `git stash`, or merely commit an unchanged tree); (c) a 'large' patch where the only material change is whitespace, reformatting, import reordering, or comment additions/edits — i.e. the AST of the named chart files is unchanged; (d) comment-only diffs that add TODO/FIXME notes describing the work instead of doing it; (e) whitespace-only diffs; (f) test-file deletion, .skip / .only insertion, or weakening of existing test assertions to make the verifier pass without implementing the asks; (g) deleting or stubbing out the named chart components, removing the metric selector, removing the dimension split control, hiding the legend, throwing inside render, or short-circuiting the data hook so the chart no longer mounts — these turn the legend-ordering and color-stability asks into vacuous successes. This floor contributes no positive credit; its only effect is to zero out solutions matching the above patterns.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "True anti-effort floor with weight 0.0. The user's plan is framed as a refinement on top of working charts ('Chart legends on the right side have two problems...') and assumes the charts render and switch metrics. Per the Gemini audit, an anti-effort floor must NOT contribute positive credit — otherwise an unmodified repository that happens to render correctly would receive 0.1 points for doing nothing. The floor's job is gating: zero out submissions matching the enumerated cheating patterns. The 0.1 weight freed from this goal has been redistributed across the user-traced implementation goals (goal_1..goal_6) proportional to their existing weight, preserving the project-vs-developer balance the user signaled in instruction.md.",
+      "anti_gaming_notes": "Standard anti-effort patterns enumerated in the goal body. Judges should apply this as a gate: if any pattern matches, the rubric score is 0 regardless of other goal verdicts. Surface tokens are not a substitute for a working surface; an empty diff is not a substitute for implementation; comment-only diffs are not a substitute for code; test weakening is not a substitute for correctness."
+    },
+    {
+      "id": "goal_1",
+      "goal": "In apps/web/src/components/charts/ProjectTrendChart.tsx, color choices for each plotted series are pinned to series identity (the project) via the colorMap structure the user spelled out in the plan (a stable map keyed by project, populated from the existing sessions-ranked topProjects ordering), so that switching the active metric on the chart's metric selector reorders the legend but leaves the color assigned to each project unchanged across that switch. Reject if 'stability' is achieved by hard-coding a single color for all series, by removing the metric selector so no switch can happen, or by collapsing all series into one; color stability must be observable across at least two distinct metric selections the user-facing selector exposes",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Directly from instruction.md Turn 1 'Unstable colors' problem statement and '## Charts to change' subsection 1, which says color assignment must be 'already stable' for this chart and explicitly identity-keyed and gives the verbatim colorMap snippet keyed on topProjects. The user's verification step on this chart is 'switch back to Sessions → order reverts; colors remain the same across switches'. The colorMap name and file path are user-pinned in instruction.md, not oracle-leaked.",
+      "user_evidence_excerpt": "colorMap: Map<string, string> — computed from a stable ranking... topProjects.forEach((p, i) => map.set(p, PROJECT_COLORS[i % PROJECT_COLORS.length]))",
+      "anti_gaming_notes": "Reject if 'stability' is achieved by hard-coding a single color for all series, by removing the metric selector so no switch can happen, or by collapsing all series into one. Color stability must be observable across at least two distinct metric selections that the user-facing selector exposes. The user explicitly named colorMap; a solution that achieves the visual behavior via a totally different architecture should still be credited if the per-series color is genuinely stable across metric switches, but pure surface-token gaming (declaring a colorMap that is never read) must be rejected."
+    },
+    {
+      "id": "goal_2",
+      "goal": "In apps/web/src/components/charts/ProjectTrendChart.tsx, the legend rows are ordered from largest to smallest using totals computed under the currently active metric — the user named this construct sortedLegendPayload and described it as 'series sorted by current metric totals, colors pulled from colorMap, passed directly to ChartLegend instead of recharts' auto-generated payload' — so that selecting a different metric in the chart's metric selector causes the legend rows to reorder accordingly. Reject solutions that always show the same legend order regardless of metric (i.e. failing to actually re-rank), or that achieve 'reordering' by re-rendering with only one series; the reorder must be visible when the user toggles metrics, with all series present",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Headline ask in instruction.md Turn 1: 'Inconsistent sort order: ProjectTrendChart and DeveloperTrendChart always sort by sessions (even when tokens or hours is selected)' and the verbatim sortedLegendPayload code block in '## Charts to change' subsection 1. The user's verification step is 'select Tokens → legend reorders to highest-token project at top'. The sortedLegendPayload name is user-pinned, not oracle-leaked.",
+      "user_evidence_excerpt": "sortedLegendPayload — series sorted by current metric totals, colors pulled from colorMap. Passed directly to ChartLegend instead of recharts' auto-generated payload",
+      "anti_gaming_notes": "Reject solutions that always show the same legend order regardless of metric (i.e. failing to actually re-rank), or that achieve 'reordering' by re-rendering with only one series. The reorder must be visible when the user toggles metrics, with all series present. The user explicitly named sortedLegendPayload and said pass it 'directly to ChartLegend instead of recharts' auto-generated payload' — credit equivalent architectures only when the legend genuinely re-ranks under metric switches."
+    },
+    {
+      "id": "goal_3",
+      "goal": "In apps/web/src/components/charts/DeveloperTrendChart.tsx, color choices for each plotted series are pinned to series identity (the developer) via the same colorMap pattern the user spelled out for ProjectTrendChart — the plan says 'Identical pattern to ProjectTrendChart. colorMap based on topDevelopers (sessions rank).' — so that switching the active metric reorders the legend but leaves the color assigned to each developer unchanged. Reject if developer-chart stability is asserted only by code structure without the chart actually rendering with stable colors when the metric toggles, or by hard-coding a single color, removing the metric selector, or collapsing to one series",
+      "tier": "core",
+      "weight": 0.13,
+      "rationale": "instruction.md Turn 1 '## Charts to change' subsection 2 explicitly names this chart and says 'Identical pattern to ProjectTrendChart. colorMap based on topDevelopers (sessions rank). sortedLegendPayload sorted by current metric total.' Split from goal_1 so a partial implementation that covers only the project chart does not get full color-stability credit; the user's plan listed both charts and both verification steps implicitly demand parity. The colorMap name and topDevelopers reference are user-pinned.",
+      "user_evidence_excerpt": "DeveloperTrendChart. Identical pattern to ProjectTrendChart. colorMap based on topDevelopers (sessions rank)",
+      "anti_gaming_notes": "Same anti-gaming as goal_1, scoped to this chart. Reject if developer-chart stability is asserted only by code structure without the chart actually rendering with stable colors when the metric toggles."
+    },
+    {
+      "id": "goal_4",
+      "goal": "In apps/web/src/components/charts/DeveloperTrendChart.tsx, the legend rows are ordered from largest to smallest using totals computed under the currently active metric — the user named this sortedLegendPayload and explicitly wrote 'sortedLegendPayload sorted by current metric total' for this chart — so switching the active metric reorders the legend accordingly. Reject solutions that always show the same legend order regardless of metric, or that 'reorder' by rendering only one series; the reorder must be visible under metric toggles with all series present",
+      "tier": "core",
+      "weight": 0.12,
+      "rationale": "instruction.md Turn 1 '## Charts to change' subsection 2: 'sortedLegendPayload sorted by current metric total' for the developer chart. Split from goal_2 to avoid project-only solutions scoring the full sort credit. sortedLegendPayload is user-named in the plan.",
+      "user_evidence_excerpt": "sortedLegendPayload sorted by current metric total",
+      "anti_gaming_notes": "Same as goal_2, scoped to this chart."
+    },
+    {
+      "id": "goal_5",
+      "goal": "In apps/web/src/components/charts/ErrorTrendChart.tsx, color choices for each plotted series are pinned to a ranking that does NOT depend on the currently active error metric — the user spelled this out as a stableColorOrder ranked by total_errors (the primary summable metric, independent of active metric) feeding into a colorMap, with the legend's sortedLegendPayload still derived from the active-metric seriesKeys but mapped through colorMap for colors — so switching between the chart's error-metric options reorders the legend but leaves each series' color unchanged. Reject solutions where the rank source is itself the active metric (which would not solve the problem), or where colors are stabilized by hiding all but one series; the user explicitly distinguished 'color rank source' from 'legend ordering', credit only when those two are separated",
+      "tier": "core",
+      "weight": 0.15,
+      "rationale": "instruction.md Turn 1 '## Charts to change' subsection 3 calls this out as the most problematic case: 'switching metrics re-ranks series → colors shift. This is confusing because e.g. project-a might be blue on one metric and red on another.' and gives the verbatim stableColorOrder/colorMap snippet ranked by total_errors. The user's verification step is 'switch from Total Errors → Avg per Session → legend reorders but colors stay the same per project/user/model'. stableColorOrder, colorMap, and total_errors are user-pinned in the plan.",
+      "user_evidence_excerpt": "Stable colorMap — rank by total_errors (the primary summable metric, independent of active metric)... stableColorOrder.forEach((k, i) => map.set(k, COLORS[i % COLORS.length]))",
+      "anti_gaming_notes": "Reject solutions where the rank source is itself the active metric (which would not solve the problem), or where colors are stabilized by hiding all but one series. The user explicitly distinguished 'color rank source' from 'legend ordering' — credit only when those two are separated."
+    },
+    {
+      "id": "goal_6",
+      "goal": "In apps/web/src/components/charts/DimensionAnalysisChart.tsx, when the user picks a split-by dimension, the resulting split keys (the rawSplitKeys construct the user named) are ordered deterministically by their aggregated value in descending order — the user's explicit fix was 'sort by total raw metric value across all dimension values', summing split_values[key] across data items into a splitKeyTotals map and sorting rawSplitKeys by that map — so the displayed legend shows the largest split value at the top regardless of underlying Set iteration order. Reject solutions that achieve 'deterministic' ordering by hard-coding a single key list, by removing the split-by control, or by collapsing the data to one split value; sorting must respond to actual aggregated values",
+      "tier": "core",
+      "weight": 0.13,
+      "rationale": "instruction.md Turn 1 '## Charts to change' subsection 4 is exclusively about this fix: 'rawSplitKeys comes from Set iteration (insertion order = non-deterministic). Fix: sort by total raw metric value across all dimension values' and gives the verbatim splitKeyTotals snippet. The user's verification step is 'select a 2nd dimension → legend items appear sorted by highest split value at top'. rawSplitKeys, splitKeyTotals, and split_values are user-pinned names in the plan.",
+      "user_evidence_excerpt": "rawSplitKeys comes from Set iteration (insertion order = non-deterministic). Fix: sort by total raw metric value across all dimension values",
+      "anti_gaming_notes": "Reject solutions that achieve 'deterministic' ordering by hard-coding a single key list, by removing the split-by control, or by collapsing the data to one split value. Sorting must respond to actual aggregated values."
+    },
+    {
+      "id": "goal_7",
+      "goal": "After the implementation work is complete the agent attempts the workflow the user requested at the end of the session: runs the project's verification step (the user's plan and PR checklist both name 'bun run verify'), commits the changes, and opens (or genuinely attempts to open) a pull request following the PR creation checklist the user invoked in Turn 3. Do NOT credit solutions that fabricate a PR URL, claim success without producing a commit, or skip the verify step that the checklist explicitly required",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Two of the three user messages in this session are dedicated to this workflow: Turn 2 'seems to work please commit changes and open PR' and Turn 3 the PR creation checklist text that begins with the 'Run Verification' section. Excluding it would understate user-asked scope. Kept secondary because the implementation goals 1–6 are the substantive deliverable; PR creation is the wrap-up.",
+      "user_evidence_excerpt": "seems to work please commit changes and open PR; Follow these steps in order when creating a pull request",
+      "anti_gaming_notes": "Credit a genuine commit + PR-open attempt or a clearly-explained equivalent (e.g. running verify and producing a commit + push the user could have used). Do NOT credit solutions that fabricate a PR URL, claim success without producing a commit, or skip the verify step that the checklist explicitly required."
+    }
+  ]
+}

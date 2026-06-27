@@ -1,0 +1,37 @@
+version: '1.0'
+gates:
+- id: build_succeeds
+  kind: P2P
+  command: cd /workspace/cli && go build ./...
+  weight: 0
+  description: cd /workspace/cli && go build ./...
+- id: flags_intact
+  kind: P2P
+  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_FlagsExist$' -count=1
+  weight: 0
+  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_FlagsExist$' -count=1
+- id: help_flag_works
+  kind: P2P
+  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpFlagWorks$' -count=1
+  weight: 0
+  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpFlagWorks$' -count=1
+- id: positional_shows_help
+  kind: F2P
+  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_PosShowsHelp$' -count=1
+  weight: 0.2
+  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_PosShowsHelp$' -count=1
+- id: help_mentions_qualifier
+  kind: F2P
+  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpMentionsFlags$' -count=1
+  weight: 0.15
+  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpMentionsFlags$' -count=1
+- id: stderr_hint
+  kind: F2P
+  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_StderrHint$' -count=1
+  weight: 0.1
+  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_StderrHint$' -count=1
+- id: existing_tests_pass
+  kind: F2P
+  command: cd /workspace/cli && go test ./cmd/entire/cli/ -count=1
+  weight: 0.1
+  description: cd /workspace/cli && go test ./cmd/entire/cli/ -count=1

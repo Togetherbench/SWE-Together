@@ -1,0 +1,112 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: reigh-timeline-multiselect
+turns:
+- turn: 1
+  user_message: 'Implement the following plan: # Timeline Multi-Select Implementation Plan ...'
+  deliverable: Implement multi-select hook, multi-item drag bundling (5 frames apart), tap-to-move, TimelineItem visuals,
+    and SelectionActionBar integration in TimelineContainer.
+  skipped: false
+- turn: 2
+  user_message: Hey so here's some feedback um the first tap on an item should just select it similar to how it does in the
+    shot images editor unless unless it's a drag in which case you should just drag that specific item can you see why um
+    it doesn't um and it should also highlight orange in the same kind of orange the way it does in the shot images editor
+    as wel
+  deliverable: Make tap-to-select work like ShotImagesEditor (orange highlight, distinguish drag vs click).
+  skipped: false
+- turn: 3
+  user_message: A single tap still doesn't seem to be select. Can you look at how we're doing it in the Shot Images Editor?
+  deliverable: Fix single-tap selection by mirroring ShotImagesEditor pattern.
+  skipped: false
+- turn: 4
+  user_message: Nice! Why does the 'Create a new shot with the selected images' thing not show on the multi-select thing that
+    appears on timeline?
+  deliverable: Thread onNewShotFromSelection through to SelectionActionBar in TimelineContainer.
+  skipped: false
+- turn: 5
+  user_message: When I create a new shot using that button in the timeline mode the selector disappears afterwards but in
+    the batch mode it shows success date can you make it work like works in the batch mode it should show success date
+  deliverable: Show success state in SelectionActionBar after new-shot creation.
+  skipped: true
+  skip_reason: Covered indirectly by jump-to-shot/new-shot wiring gates in turns 4 and 6; specific success-state UI is implementation-detail
+    and not reliably testable without rendering.
+- turn: 6
+  user_message: Could you make the success state a -> jump to shot button that when clicked jumps to the shot
+  deliverable: Add jump-to-shot button (icon) wired through SelectionActionBar.
+  skipped: false
+- turn: 7
+  user_message: That jumped to shot button doesn't work. And can you make it just show an icon, not the whole text?
+  deliverable: Replace jump-to-shot text with an icon.
+  skipped: true
+  skip_reason: Visual-only requirement; covered by turn 6's onJumpToShot wiring gate.
+- turn: 8
+  user_message: And can you see when I select an item on the timeline, it seems like there's something showing in the top
+    right corner like maybe a number or something when I select two. Can you remove that?
+  deliverable: Remove the multi-select count badge overlay from TimelineItem.
+  skipped: true
+  skip_reason: Negative UI requirement on optional badge; not all correct implementations ever added one.
+- turn: 9
+  user_message: Can you also remove the selected check mark thing that appears?
+  deliverable: Remove the check mark indicator from selected TimelineItem.
+  skipped: true
+  skip_reason: Negative UI requirement; same rationale as turn 8.
+gates:
+- id: p2p_instruction_unmodified
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: instruction.md must not be modified by agent
+- id: t1_f2p_selection_hook_runtime_toggle
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: useTimelineSelection hook, when bundled and run, supports toggle/clear behavior on selectedIds
+- id: t1_f2p_bundle_multi_5frames_runtime
+  turn: 1
+  kind: F2P
+  weight: 0.25
+  description: applyFluidTimelineMulti (or equivalent) bundles selected items 5 frames apart at target frame when executed
+- id: t1_f2p_drag_hook_uses_selectedIds
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: useTimelineDrag accepts selectedIds and uses it in multi-select branch
+- id: t2_f2p_orange_selection_color
+  turn: 2
+  kind: F2P
+  weight: 0.1
+  description: TimelineItem renders orange selection styling when isSelected
+- id: t3_f2p_TimelineContainer_wires_selection
+  turn: 3
+  kind: F2P
+  weight: 0.1
+  description: TimelineContainer imports useTimelineSelection AND passes selectedIds into useTimelineDrag/useTapToMove call
+    sites
+- id: t4_f2p_action_bar_with_selectedCount
+  turn: 4
+  kind: F2P
+  weight: 0.15
+  description: TimelineContainer renders SelectionActionBar with selectedCount bound to selectedIds.length AND onDelete/onDeselect
+    wired
+- id: t4_f2p_onNewShot_threaded
+  turn: 4
+  kind: F2P
+  weight: 0.05
+  description: onNewShotFromSelection prop is threaded from Timeline through to SelectionActionBar onNewShot
+- id: t6_f2p_jump_to_shot_wired
+  turn: 6
+  kind: F2P
+  weight: 0.05
+  description: SelectionActionBar receives an onJumpToShot (or onShotChange) prop wired from TimelineContainer
+- id: p2p_upstream_523760b1
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): tsc_noemit @ 3ad26d6'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
+- id: p2p_upstream_cdf050a5
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_run_build @ 3ad26d6'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

@@ -1,0 +1,42 @@
+{
+  "task_name": "arr-monitor-merge-and-document",
+  "rubric_version": "v3",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The deliverable is a genuine implementation of what the user asked for, not a stub, no-op, or diff-padding edit. Specifically: (a) the monitoring entrypoint script remains valid, executable Python (parses without SyntaxError and runs `--help` without crashing); (b) any pre-existing membership of the file-extension ignore set is preserved (entries are not deleted to inflate the diff or replaced wholesale rather than extended); (c) if a new command-line flag is registered in the argument parser, it is also wired into the runtime path it is supposed to influence — a flag that is parsed and then ignored does not satisfy this guard; (d) the changes are present in the workspace tree the verifier inspects, not only in temporary directories or unmerged feature branches that were never integrated into the working source.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Sanity guard against the failure modes observed in low-quality attempts: argparse entries that never reach the monitoring loop (help-only stub), edits made inside throwaway clones rather than the live workspace, IGNORE_EXTENSIONS being rewritten from scratch and silently dropping prior members, and broken scripts that no longer compile. Zero-weighted; goal_0 is flagged in the verdict but does not contribute to the summed score."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The set of file extensions that the monitor treats as 'ignored' (the file-extension exclusion list defined near the top of the monitoring script) is extended to include Windows executable and installer extensions — i.e. the two extensions associated with native Windows executables and MSI installer packages. Entries already present in that set before the change must still be present after the change.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "The user's opening instruction asks the agent to merge all open PRs. One of those open PRs is the branch that extends the ignore list to cover Windows executable/installer artefacts. Merging that PR — by any mechanism (gh pr merge, cherry-pick, manual edit reproducing the same content) — must result in the workspace tree containing those two extensions in the ignore set, with prior membership preserved."
+    },
+    {
+      "id": "goal_2",
+      "goal": "A CLI flag that toggles 'keep watching for newly spawned target processes during a monitoring run' is present in the workspace's monitoring script end-to-end: (i) it is registered in the argument parser; (ii) it appears in the program's --help output with an accompanying help string; (iii) the value of that flag flows from the entrypoint into the long-running monitoring loop (e.g. as a parameter, attribute, or other equivalent channel); (iv) when the flag is active, the loop actually invokes the existing process-discovery routine and grows its working list of monitored process IDs with any newly discovered ones. A flag that is declared and parsed but is never consulted inside the monitoring loop, or a function-signature change that is not accompanied by a matching call-site update, does NOT satisfy this goal — the help-text-only stub failure mode must be caught here.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "The user's opening instruction asks the agent to merge all open PRs. The largest of those PRs introduces precisely this flag together with the runtime rescan logic; merging that PR is meaningless unless the resulting workspace tree contains both the surface (argparse + help text) and the substance (the loop actually using the flag to extend the PID list). The user's later turn explicitly re-grounds the surface side by asking that the new flag be documented in --help, but documenting the flag without the runtime plumbing leaves the user's original 'merge that PR' ask only half-honoured."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Invoking the program with the new add-new-processes-style flag but without the all-processes-style flag must not silently succeed. It must exit with a non-zero status and surface an error message that mentions the all-processes flag, making clear that the two are required together.",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "The new flag is only meaningful when the program is in all-processes mode (otherwise the rescan logic has nothing to extend). The PR the user asks to merge contains this validation check at the entrypoint; therefore the user's 'merge all open PRs' ask transitively asks for this behaviour to be present in the workspace tree."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Both the new add-new-processes-style flag and the all-processes flag have short-option aliases registered in the argument parser. The user explicitly named their preferred letters in a follow-up turn — capital-A for the add-new-processes flag and lowercase-a for the all-processes flag — and those exact letters should be considered the canonical match. Other consistent letter choices are acceptable ONLY if the agent had already committed to short options before the user named the letters; once the user has stated their preference, the implementation should adopt those letters and the help epilog/examples (if updated) should be consistent with whatever short letters were chosen.",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "The user first asks for a short option in a generic turn, then in the next turn names the exact letters. Both turns are direct user asks; this goal is graded against the resulting state of the argument parser."
+    }
+  ],
+  "decomposition_notes": "One anti-gaming guard (goal_0, weight 0) plus 2 cores plus 2 secondaries. Real-weight sum: 0.35 + 0.35 + 0.15 + 0.15 = 1.00. Weights are intentionally NOT a mirror of the test.sh F2P manifest (which splits 0.50/0.50 between two surface-level upstream gates — help-text grep and ignore-set membership). The rubric rebalances toward end-to-end behaviour: goal_2 absorbs the runtime plumbing that grep-on-help-output cannot easily check, and goal_3/goal_4 carry the validation-and-short-option work that the upstream gates ignore entirely. Process steps the user mentioned (git push/pull, branch cleanup, commit-and-push-only-when-done, the goodbye/quit exchange, the 'you committed early' debrief) are not graded as code deliverables — they are session-flow artefacts that do not produce a workspace footprint the verifier can inspect, so they would either grade as no-ops or as impossible-to-verify. Mechanism citations in goals and rationales are deliberately written without referencing oracle-specific identifiers (no NEW_PROCESS_SCAN_INTERVAL, no specific function names other than where the user named them, no exact line ranges); the goal text describes WHAT must end up true of the workspace tree, not HOW it was achieved."
+}

@@ -1,0 +1,20 @@
+{
+  "task_name": "cli-task-70c88c",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/workspace/cli",
+  "FAIL_TO_PASS": [
+    "TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/explain.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/explain_test.go"
+  ],
+  "commit_sha": "4993e6e3e42ea033dc1fcad041481d1cca4a929b",
+  "commit_message_first_line": "fix(explain): show help when positional arg passed without qualifier flag",
+  "agent_percentage": 100.0
+}

@@ -1,0 +1,49 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Existing turn-based F2P gates (from current_test.sh)
+  - id: gate1_easter_egg_artifact
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "Easter-egg artifact exists with kimi/opencode/daxnut tokens and substantial content (>1500 bytes with export)"
+  - id: gate2_powered_by_daxnuts
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "Rendered 'powered by daxnuts' brand string appears in non-comment code"
+  - id: gate3_trigger_predicate
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    description: "Trigger predicate checks opencode provider AND kimi-k2.5 model id in a real conditional"
+  - id: gate4_component_shape
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "Component implements render()+dispose()/handleInput()/invalidate() or uses extension UI hooks"
+  - id: gate5_wiring
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    description: "Trigger wired to UI via extension event or core InteractiveMode method"
+  - id: gate6_behavioral_predicate
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "Predicate returns true for opencode+kimi-k2.5, false for unrelated models"
+  # Upstream F2P gates
+  - id: f2p_upstream_vitest_daxnuts
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "vitest: imports DaxnutsComponent and verifies it implements Component interface"
+  - id: f2p_upstream_bun_daxnuts
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "bun: runtime import of DaxnutsComponent, validates render+handleInput methods"
+  # Upstream P2P gates

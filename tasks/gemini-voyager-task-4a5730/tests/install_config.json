@@ -1,0 +1,23 @@
+{
+  "task_name": "gemini-voyager-task-4a5730",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts > quote reply > preserves inline math LaTeX syntax in quoted text",
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts > quote reply > preserves block math LaTeX syntax in quoted text",
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts > quote reply > preserves standalone data-math elements without container"
+  ],
+  "apply_test_patch": "gold_test.patch",
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "src/pages/content/quoteReply/index.ts"
+  ],
+  "test_files": [
+    "src/pages/content/quoteReply/__tests__/quoteReply.test.ts"
+  ],
+  "commit_sha": "7f79ec282b315dddaf8186e23845a6c18e6cfdff",
+  "commit_message_first_line": "fix(quoteReply): preserve LaTeX syntax when quoting math equations",
+  "agent_percentage": 100.0
+}

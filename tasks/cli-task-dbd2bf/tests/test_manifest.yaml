@@ -1,0 +1,95 @@
+# Verifier manifest for cli-task-dbd2bf (defer external agent discovery).
+# See test.sh for the actual gate logic. Σ F2P weights = 1.00 → inner_weight = 0,
+# reward = sum(passed gate weights). No P2P_REGRESSION gates: this is a refactor
+# whose original session traces don't supply a clean regression signal that won't
+# false-positive on plausible alt-fixes.
+
+version: "1.0"
+task_id: cli-task-dbd2bf
+description: |
+  Verify that external agent discovery (DiscoverAndRegister) is deferred from
+  CLI startup to hooks-execution time, via a Cobra RunE-fallback on the hooks
+  command, with the inline RunE logic refactored into a reusable
+  executeAgentHook helper.
+
+gates:
+  # ── F2P behavioral gates (Σ = 1.00) ─────────────────────────────────────
+
+  - id: g1_no_eager_discovery
+    kind: F2P
+    weight: 0.25
+    description: |
+      In hooks_cmd.go's newHooksCmd function, DiscoverAndRegister is no longer
+      called at the function-body top level. The base commit (febf309b) calls
+      it directly during command-tree construction (every CLI invocation pays
+      PATH-scan + process-spawn cost). The patch moves this call inside a RunE
+      closure, OR removes it entirely from this function.
+    command: |
+      # Implemented as Python brace-walker in test.sh — we extract the body of
+      # newHooksCmd and verify any DiscoverAndRegister call appears at depth ≥ 1
+      # (i.e. nested inside RunE/anonymous func) rather than at the function's
+      # top level.
+
+  - id: g2_hooks_runE
+    kind: F2P
+    weight: 0.20
+    description: |
+      The hooks command in hooks_cmd.go declares both `Args: cobra.ArbitraryArgs`
+      and a `RunE: func(...)` handler on the cobra.Command literal. This is the
+      Cobra fallback mechanism that intercepts unrecognized subcommands (so
+      external agent hooks can be lazily resolved when actually invoked).
+    command: |
+      # Python regex inside the newHooksCmd body — see test.sh.
+
+  - id: g3_executeAgentHook_extracted
+    kind: F2P
+    weight: 0.20
+    description: |
+      A function named executeAgentHook (or a name containing that substring)
+      is defined at top level in hook_registry.go and contains the core hook
+      execution logic. Anti-stub: the body must reference at least 3 of
+      {WorktreeRoot, IsEnabled, ParseHookEvent, DispatchLifecycleEvent,
+      currentHookAgentName} so a 1-line placeholder doesn't earn credit.
+    command: |
+      # Python: locate the function via regex, brace-walk to find its body,
+      # count required marker-symbol references and substantive statements.
+
+  - id: g4_thin_verb_runE
+    kind: F2P
+    weight: 0.10
+    description: |
+      In hook_registry.go's newAgentHookVerbCmdWithLogging, the RunE closure
+      is now thin (≤ 8 substantive lines, excluding comments and braces) and
+      delegates to a helper rather than containing all hook logic inline.
+      The base commit has ~60 substantive lines inline.
+    command: |
+      # Python: brace-walk to find the inner RunE body, count substantive lines.
+
+  - id: g5_setup_imports_external
+    kind: F2P
+    weight: 0.15
+    description: |
+      cmd/entire/cli/setup.go imports the agent/external package AND calls
+      external.DiscoverAndRegister somewhere in its body. The base commit
+      does neither — externals weren't discoverable during `entire enable`.
+    command: |
+      grep -qE '"github\.com/entireio/cli/cmd/entire/cli/agent/external"' cmd/entire/cli/setup.go
+      grep -qE '\bexternal\.DiscoverAndRegister\b' cmd/entire/cli/setup.go
+
+  - id: g6_limitedwriter_err_check
+    kind: F2P
+    weight: 0.10
+    description: |
+      In external.go, the limitedWriter.Write method propagates errors from
+      the inner buf.Write call (canonical: wraps with fmt.Errorf and returns
+      the error). The base commit does plain `return w.buf.Write(p)`.
+    command: |
+      # Python: locate limitedWriter.Write body, require buf.Write call AND
+      # an `err != nil` check AND a fmt.Errorf wrap.
+
+  # ── P2P_REGRESSION: none ─────────────────────────────────────────────────
+  # No regression gate is declared: the four touched files don't have unit
+  # tests in the buggy commit that would deterministically pass on the agent's
+  # alt-fix shapes (hook-registry tests in particular call newHooksCmd() and
+  # would need updating per the canonical-patch instruction). Rather than risk
+  # a false-zeroing P2P, we rely on the F2P gates to discriminate.

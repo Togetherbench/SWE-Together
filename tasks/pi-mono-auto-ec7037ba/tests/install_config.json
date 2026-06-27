@@ -1,0 +1,14 @@
+{
+  "task_name": "pi-mono-auto-ec7037ba",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "true",
+  "repo_dir": "/workspace/pi-mono",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "_upgraded_from_legacy": true,
+  "_verifier_kind": "behavioral_legacy_restored",
+  "_legacy_restored": true,
+  "_legacy_restored_date": "2026-05-14",
+  "_legacy_restored_reason": "tests/test_manifest.yaml restored from .legacy.bak (harbor health audit)"
+}

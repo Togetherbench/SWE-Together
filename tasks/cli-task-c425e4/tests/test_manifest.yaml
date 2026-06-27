@@ -1,0 +1,34 @@
+gates:
+  - id: p2p_file_exists
+    kind: P2P_REGRESSION
+    description: "The mise-tasks/lint/mise file must exist"
+  - id: p2p_agent_modified
+    kind: P2P_REGRESSION
+    description: "Agent must have modified mise-tasks/lint/mise (git diff shows changes)"
+  - id: p2p_valid_shell
+    kind: P2P_REGRESSION
+    description: "The lint script must be syntactically valid shell (sh -n passes)"
+  - id: g1_indented_detection
+    kind: F2P
+    weight: 0.20
+    description: "Detects indented multi-line run blocks (>3 lines) in triple-double-quote syntax"
+  - id: g2_short_no_fp
+    kind: F2P
+    weight: 0.075
+    description: "Does NOT flag NON-INDENTED short inline scripts (<=3 content lines, no false positives)"
+  - id: g2b_short_indented_no_fp
+    kind: F2P
+    weight: 0.075
+    description: "Does NOT flag INDENTED short inline scripts (<=3 content lines, no false positives) — closes coverage gap for rubric goal_4 'indented or not'"
+  - id: g3_single_quote_syntax
+    kind: F2P
+    weight: 0.15
+    description: "Handles single-quote triple syntax (''') with indentation"
+  - id: g4_non_indented_still_works
+    kind: F2P
+    weight: 0.10
+    description: "Regression: still detects non-indented multi-line blocks (>3 lines)"
+  - id: g5_line_count_excludes_delimiter
+    kind: F2P
+    weight: 0.10
+    description: "Closing delimiter is NOT counted in reported line count"

@@ -1,0 +1,55 @@
+{
+  "task_name": "comfyui-refactor-d3a759",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort floor: the submission shows substantive content edits to the diffusion path (more than whitespace/comments/imports). Concretely, the submitted diff modifies at least one Python file under comfy/ldm/ (whether comfy/ldm/newbie/* or comfy/ldm/lumina/*, depending on the agent's chosen mechanism) and/or comfy/model_base.py, and the net change comprises non-trivial code additions or deletions (not solely import-list reordering, not solely docstring/comment edits, not solely empty-file deletion). A submission with zero edits, a no-op formatting reflow, or a wholesale deletion of the NewBie module with nothing in its place fails this gate. All other goals are creditable only when this gate holds.",
+      "tier": "anti_effort",
+      "weight": 0.1,
+      "rationale": "Anti-gaming floor. Goals 3/4/5/6 are absence-based or location-flexible — an agent that deletes the NewBie module entirely (or never edits anything) could appear to satisfy them by vacuous absence. The instruction.md text 'Can we minimize this PR by reusing the Lumina architecture' is an explicit invitation to refactor, not to delete the architecture wholesale. Effort floor is not derived from any oracle artifact; it is the minimum standard implied by any USER ask that says 'rewrite the PR'."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The NewBie diffusion path is wired through Lumina's existing NextDiT transformer rather than carrying a from-scratch transformer reimplementation. Acceptable mechanisms (any one is enough): (a) a thin module/class for NewBie that inherits from / instantiates / delegates to Lumina's NextDiT and only adds NewBie-specific glue; (b) the NewBie capability merged into NextDiT itself via additional optional constructor parameters, with no separate heavy NewBie transformer class remaining; (c) Lumina2's existing model class is used directly for NewBie via detection/configuration. In whichever module the NewBie diffusion code ends up living, model layers must be constructed through the ComfyUI operations indirection the user named in T4 (operation_settings.get('operations').Linear / RMSNorm or equivalent operations.Linear / operations.RMSNorm pulled from the operations argument passed by the framework — anything that lets ComfyUI swap in its own quantized/weight-init-disabled variants). The constructor must NOT contain helpers that silently swallow caller kwargs (e.g. functions resembling _pop_unexpected_kwargs that delete unknown keys) nor helpers that substitute a hardcoded ops module when none is provided (e.g. functions resembling _fallback_operations that hand-roll a torch.nn fallback). The constructor must assume the caller supplies proper args — no hardcoded substitution of expected arguments. Creditable only when goal_0 holds.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Combines the instruction.md headline ('minimize this PR by reusing the Lumina architecture and the existing ops such as linear and RMSNorm in ComfyUI, follow all other ComfyUI conventions') with the verbatim T4 corrections ('use operation_settings.get(\"operations\").Linear', 'should not pop unexpected kwargs or set kwargs to hardcoded values', 'NewBieNextDiT should assume that the caller passes proper args'). Three acceptable mechanisms keep the goal mechanism-independent so v3 does not encode the oracle's specific shape (thin subclass) vs. the trial's shape (merge into Lumina2 + text-encoder scaffolding) — both are USER-aligned."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The NewBie path does not redeclare modules that Lumina already provides for the same functional role. In particular, any module in the diffusion path that performs the same role as Lumina's existing time_text_embed (a small SiLU + Linear stack that combines the timestep embedding with a pooled CLIP-text feature before adaln) is either reused directly from Lumina's NextDiT (e.g. NewBie subclasses NextDiT and does not redefine its own time_text_embed in the subclass __init__) or merged into the Lumina implementation so only one copy exists. A submission that keeps a duplicated, structurally-identical time_text_embed module on a NewBie class while NextDiT also defines one fails. Creditable only when goal_0 holds.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "T7 verbatim: 'In Lumina is there a module with the same functionality as NewBie\\'s time_text_embed?' This is a distinct user correction — it is the user pointing at a specific, named source of duplication and asking the agent to act on it. v1/v2 implicitly folded this into the headline reuse goal; v3 separates it because the user simulator treats it as its own trigger with its own cooldown and intent ID."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The NewBie diffusion module(s) do not perform nn.init.*-style weight initialization at construction time. There are no calls in any NewBie-related __init__ to functions of the form nn.init.<anything>_ (e.g. nn.init.xavier_uniform_, nn.init.normal_, nn.init.zeros_, nn.init.constant_, nn.init.kaiming_normal_) — neither directly nor via torch.nn.init.*. This applies to whichever module ends up hosting NewBie's diffusion code (dedicated NewBie file, the reused Lumina NextDiT, or a NewBie-aware text-encoder module if the merge was performed there). Creditable only when goal_0 holds.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "T5 (user question: 'Do we need to init the model parameters in NewBieNextDiT?') followed by T6 (user correction: 'there is no nn.init in Lumina. The model parameters will be loaded later in ComfyUI.'). This is an explicit two-turn user correction loop — the agent's adherence to it is exactly what the multi-turn benchmark measures."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The forward implementation that ends up being used for NewBie (whether on a dedicated class or on the shared Lumina NextDiT after a merge) does not wrap its core layer-iteration loop in a try/except construct. Specifically: there is no top-level try/except in the _forward (or forward) method whose body is the iteration over self.layers or the equivalent block sequence, and no broad except StopIteration / except Exception wrapping a layer loop, because such constructs prevent torch.compile from tracing through cleanly. Plain for-loops, while-loops, or explicit indexed iteration are fine. Creditable only when goal_0 holds.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "T8 verbatim: 'the try ... except ... may cause problem with torch.compile. Can we rewrite it without try ... except ...?' This is the user explicitly naming an anti-pattern in the agent-visible buggy code and asking for its removal. Phrased on the SEMANTIC of the forward path so the gate survives whether the agent kept a dedicated NewBie file or merged into Lumina."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The timestep handling and return sign in the NewBie forward path follow the convention the user named: the time embedding is computed from (1.0 - timesteps) rather than timesteps directly, and the final return is the negated image tensor (e.g. return -img) rather than the un-negated image. This applies wherever the NewBie forward path lives after refactor — on a dedicated NewBie class, on Lumina's NextDiT if NewBie was merged in, or on whatever class actually runs at NewBie inference. If the agent merged NewBie into Lumina2 and Lumina2 already uses (1.0 - timesteps, return -img), that satisfies the gate by reuse. Creditable only when goal_0 holds.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "T9 verbatim: 'why does it have t = timesteps and return img, while Lumina has t = 1.0 - timesteps and return -img? How do other models in ComfyUI handle this?' The user names BOTH specific bug-correction targets; v3 keeps them in a single gate because the user delivered them in a single trigger message."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The conditioning wiring for the pooled CLIP-text feature attached to NewBie uses the per-batch-vector conditioning type (e.g. CONDRegular in comfy.conds), not the cross-attention sequence type (e.g. CONDCrossAttn). Equivalently: whichever module-base subclass services NewBie (NewBieImage, Lumina2, or whatever class wires extra_conds) populates its extra_conds dict for the pooled-CLIP entry with a per-batch-vector conditioning class. Creditable only when goal_0 holds.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "T12 verbatim: 'Why does NewBie use CONDCrossAttn for c_crossattn, while Lumina2 uses CONDRegular? Where will c_crossattn be used?' The user explicitly names the wrong class (CONDCrossAttn) and the right class (CONDRegular) for the pooled-CLIP feature. Intent_12 ('Where are CONDRegular and CONDCrossAttn defined? What's the difference?') is a sub-question of the same correction and is rolled into this gate."
+    }
+  ],
+  "decomposition_notes": "7 goals: 1 anti-effort (goal_0, weight 0.10), 1 core (goal_1, weight 0.40), 5 secondaries (goal_2..goal_6, weight 0.10 each). Sum = 0.10 + 0.40 + 5*0.10 = 1.00. Differences from v2: (1) v2 goal_5 'no apply_model override' is REMOVED in v3 — does not trace to any user turn or trigger message. (2) v2 implicitly folded T7 (time_text_embed duplication) into the headline reuse goal; v3 promotes it to its own goal_2. (3) Goal text is mechanism-independent: each gate enumerates the acceptable shapes (subclass / merge-into-Lumina / use-Lumina2-directly) so v3 does not encode the oracle's chosen shape. (4) Anti-gaming inside goal text: goal_0 floor + each absence-based goal explicitly gated on goal_0 + goal_1 names two specific anti-patterns (silent kwargs-swallowing helpers, hardcoded-fallback ops helpers) using semantic descriptions in addition to the buggy-state names as 'e.g.' examples + goal_2 forbids 'duplicated, structurally-identical' modules rather than name-matching (which an agent could evade by renaming) + goal_4 names the SPECIFIC structural pattern (top-level try/except around the layer loop) not just 'no try/except anywhere' (which would forbid legitimate uses). (5) These rubric weights are intentionally NOT identical to the test_manifest.yaml F2P weights — they are decomposition rubric weights for the agentic judge; the verifier's F2P gates (test.sh) test partially overlapping but not identical structural facts (e.g. F2P-6 model_detection wiring is verifier-side only, not in the rubric because no user turn names model_detection). The rubric and the verifier are intentionally diagnostic-of-different-things per eval_design.md."
+}

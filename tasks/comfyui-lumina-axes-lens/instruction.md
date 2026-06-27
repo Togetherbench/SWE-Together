@@ -1,0 +1,1 @@
+Compare the implementation of Lumina 2 model in C:\ComfyUI and C:\diffusers . Assuming Diffusers is the source of truth, is there any problem in ComfyUI's implementation? You're running in PowerShell. Use PowerShell commands.

@@ -1,0 +1,53 @@
+{
+  "session_id": "51c52e91-3cd7-4ceb-be21-dadef3b26378",
+  "checkpoint_pk": null,
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "badlogic/pi-mono",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 17,
+  "total_deletions": 0,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "A\tkeybind-conflict-scope-test.ts\n",
+  "numstat": "17\t0\tkeybind-conflict-scope-test.ts\n",
+  "patch": "diff --git a/keybind-conflict-scope-test.ts b/keybind-conflict-scope-test.ts\nnew file mode 100644\nindex 0000000..8660a3b\n--- /dev/null\n+++ b/keybind-conflict-scope-test.ts\n@@ -0,0 +1,17 @@\n+import type { ExtensionAPI } from \"@mariozechner/pi-coding-agent\";\n+\n+export default function keybindConflictScopeTest(pi: ExtensionAPI) {\n+\tpi.registerShortcut(\"ctrl+b\", {\n+\t\tdescription: \"Test editor-scope conflict with cursorLeft\",\n+\t\thandler: async (ctx) => {\n+\t\t\tctx.ui.notify(\"Extension shortcut ctrl+b fired\", \"info\");\n+\t\t},\n+\t});\n+\n+\tpi.registerShortcut(\"ctrl+p\", {\n+\t\tdescription: \"Test non-editor conflict with toggleSessionPath\",\n+\t\thandler: async (ctx) => {\n+\t\t\tctx.ui.notify(\"Extension shortcut ctrl+p fired\", \"info\");\n+\t\t},\n+\t});\n+}\n",
+  "patch_truncated": false,
+  "agent_percentage": null,
+  "_source": "pi-mono",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "op[17].edit[0] packages/coding-agent/src/core/keybindings.ts: edit input has no old/new text (export likely stripped content)",
+    "op[49].edit[0] packages/coding-agent/src/core/extensions/runner.ts: edit input has no old/new text (export likely stripped content)",
+    "op[62].edit[0] packages/coding-agent/CHANGELOG.md: edit input has no old/new text (export likely stripped content)"
+  ],
+  "_base_commit": "8a8e2a8049fba194d999cf7f3ec4b247910657ee",
+  "_repo_url": "https://github.com/badlogic/pi-mono",
+  "_task_name": "pi-mono-keybinding-scope",
+  "_n_mutating_ops": 21,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "Three warnings all of subtype 'edit input has no old/new text (export likely stripped content)' \u2014 known tool_replay export artifact, NOT real lossiness. The patch adds a single new file keybind-conflict-scope-test.ts (17 additions, 0 deletions); 21 mutating ops on one new file is normal for iterative authoring. Base 8a8e2a8 resolves on earendil-works/pi (2026-03-18).",
+  "_extraction": {
+    "method": "tool_replay",
+    "source": "messages_replay against original_session.json",
+    "fidelity": "directional",
+    "verified": true,
+    "note": "Three warnings all of subtype 'edit input has no old/new text (export likely stripped content)' \u2014 known tool_replay export artifact, NOT real lossiness. The patch adds a single new file keybind-conflict-scope-test.ts (17 additions, 0 deletions); 21 mutating ops on one new file is normal for iterative authoring. Base 8a8e2a8 resolves on earendil-works/pi (2026-03-18).",
+    "dated": "2026-05-14"
+  },
+  "_canonical_source_path": "data-pipeline/artifacts_pi-mono/canonical_patches/51c52e91-3cd7-4ceb-be21-dadef3b26378.json",
+  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
+  "_review": {
+    "status": "FLAGGED",
+    "reviewer": "subagent-batch-ah",
+    "date": "2026-05-14",
+    "note": "Directional canonical: only a 17-line scratch test file (keybind-conflict-scope-test.ts at repo root). Session has 0 Edit ops in real keybind sources. Honest tag but weak reference.",
+    "checks_passed": [
+      "schema_intact",
+      "diff_coherent",
+      "fidelity_honest"
+    ]
+  }
+}

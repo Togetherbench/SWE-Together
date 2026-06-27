@@ -1,0 +1,103 @@
+gates:
+- id: f2p-tests
+  kind: F2P
+  weight: 0.2
+  command: 'cd /workspace/gemini-voyager
+
+    timeout 120 bun run test 2>&1 | tee /tmp/test-out.txt
+
+    grep -q "0 errors" /tmp/test-out.txt || grep -qE "Tests\s+\d+\s+passed" /tmp/test-out.txt
+
+    '
+  description: 'cd /workspace/gemini-voyager
+
+    timeout 120 bun run test 2>&1 | tee /tmp/test-out.txt
+
+    grep -q "0 errors" /tmp/test-out.txt || grep -qE "Tests\s+\d+\s+passed" /tmp/test-out.txt'
+- id: f2p-build
+  kind: F2P
+  weight: 0.15
+  command: 'cd /workspace/gemini-voyager
+
+    timeout 120 bun run build:chrome 2>&1 | tee /tmp/build-out.txt
+
+    grep -qi "built" /tmp/build-out.txt
+
+    '
+  description: 'cd /workspace/gemini-voyager
+
+    timeout 120 bun run build:chrome 2>&1 | tee /tmp/build-out.txt
+
+    grep -qi "built" /tmp/build-out.txt'
+- id: f2p-browser-functions
+  kind: F2P
+  weight: 0.2
+  command: "python3 -c \"\nimport re, json\nwith open('/workspace/gemini-voyager/src/core/utils/browser.ts') as f: c=f.read()\nok=re.search(r'export\\s+function\\s+isMac\\b',c) is not None\nok=ok and re.search(r'export\\s+function\\s+getModifierKey\\b',c) is not None\nif ok:\n    m=re.search(r'export\\s+function\\s+isMac\\b',c)\n    ok=ok and ('navigator' in c[m.end():m.end()+400])\n    m2=re.search(r'export\\s+function\\s+getModifierKey\\b',c)\n    ok=ok and ('isMac()' in c[m2.end():m2.end()+200])\nprint('PASS' if ok else 'FAIL')\nexit(0 if ok else 1)\n\"\n"
+  description: 'python3 -c "
+
+    import re, json
+
+    with open(''/workspace/gemini-voyager/src/core/utils/browser.ts'') as f: c=f.read()
+
+    ok=re.search(r''export\s+function\s+isMac\b'',c) is not None
+
+    ok=ok and re.search(r''expor...'
+- id: f2p-locales
+  kind: F2P
+  weight: 0.2
+  command: "python3 -c \"\nimport json, os\nr='/workspace/gemini-voyager'\ndirs=['en','ar','es','fr','ja','ko','pt','ru','zh','zh_TW']\nok=True\nfor d in dirs:\n    p=os.path.join(r,f'src/locales/{d}/messages.json')\n    if os.path.exists(p):\n        with open(p) as f: data=json.load(f)\n        ces=data.get('ctrlEnterSend',{}).get('message','')\n        ceh=data.get('ctrlEnterSendHint',{}).get('message','')\n        icsh=data.get('inputCollapseShortcutHint',{}).get('message','')\n        if '{modifier}' not in ces or '{modifier}' not in ceh or not icsh:\n            ok=False;break\n    else: ok=False;break\nprint('PASS' if ok else 'FAIL')\nexit(0 if ok else 1)\n\"\n"
+  description: "python3 -c \"\nimport json, os\nr='/workspace/gemini-voyager'\ndirs=['en','ar','es','fr','ja','ko','pt','ru','zh','zh_TW']\nok=True\nfor d in dirs:\n    p=os.path.join(r,f'src/locales/{d}/messages.json')\n..."
+- id: f2p-format-shortcut
+  kind: F2P
+  weight: 0.15
+  command: 'python3 -c "
+
+    import re
+
+    with open(''/workspace/gemini-voyager/src/core/services/KeyboardShortcutService.ts'') as f: c=f.read()
+
+    ok=''isMac()'' in c or re.search(r''import\s+\{[^}]*\bisMac\b[^}]*\}'',c)
+
+    print(''PASS'' if ok else ''FAIL'')
+
+    exit(0 if ok else 1)
+
+    "
+
+    '
+  description: 'python3 -c "
+
+    import re
+
+    with open(''/workspace/gemini-voyager/src/core/services/KeyboardShortcutService.ts'') as f: c=f.read()
+
+    ok=''isMac()'' in c or re.search(r''import\s+\{[^}]*\bisMac\b[^}]*\}'',c)
+
+    pri...'
+- id: f2p-popup
+  kind: F2P
+  weight: 0.1
+  command: 'python3 -c "
+
+    import re
+
+    with open(''/workspace/gemini-voyager/src/pages/popup/Popup.tsx'') as f: c=f.read()
+
+    ok=re.search(r''import\s+\{[^}]*getModifierKey[^}]*\}\s+from\s+.@/core/utils/browser'',c) is not None
+
+    ok=ok and re.search(r''\.replace\(.{0,5}\{modifier\}.{0,5},'',c) is not None
+
+    print(''PASS'' if ok else ''FAIL'')
+
+    exit(0 if ok else 1)
+
+    "
+
+    '
+  description: 'python3 -c "
+
+    import re
+
+    with open(''/workspace/gemini-voyager/src/pages/popup/Popup.tsx'') as f: c=f.read()
+
+    ok=re.search(r''import\s+\{[^}]*getModifierKey[^}]*\}\s+from\s+.@/core/utils/browser'',c) is n...'

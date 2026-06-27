@@ -1,0 +1,16 @@
+{
+  "task_name": "cli-task-4a9dde",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/opt/entire-cli",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/strategy/manual_commit_hooks.go"
+  ],
+  "test_files": [],
+  "commit_sha": "19cca30b5c12df6915d4ed90025a5183ae988a69",
+  "commit_message_first_line": "make sure we handle called by gemini as if no tty is available",
+  "agent_percentage": 100.0
+}

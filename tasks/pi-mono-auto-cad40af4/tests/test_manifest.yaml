@@ -1,0 +1,78 @@
+version: '1.0'
+turns:
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_behavioral_content_below
+  kind: F2P
+  turn: 1
+  weight: 0.12
+  label: 'behavioral: slash on line 0 with content below does not trigger'
+  description: 'behavioral: slash on line 0 with content below does not trigger'
+- id: f2p_behavioral_blank_continuation
+  kind: F2P
+  turn: 1
+  weight: 0.12
+  label: 'behavioral: slash on line 0 with later non-empty line does not trigger'
+  description: 'behavioral: slash on line 0 with later non-empty line does not trigger'
+- id: f2p_regression_empty_editor
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: 'regression: ''/'' on empty editor still triggers menu'
+  description: 'regression: ''/'' on empty editor still triggers menu'
+- id: f2p_regression_blank_below
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: 'regression: ''/'' with only-blank lines below still triggers'
+  description: 'regression: ''/'' with only-blank lines below still triggers'
+- id: f2p_regression_mid_content
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: 'regression: mid-line ''/'' does not trigger menu'
+  description: 'regression: mid-line ''/'' does not trigger menu'
+- id: f2p_regression_later_line
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: 'regression: ''/'' on later line with prior text does not trigger'
+  description: 'regression: ''/'' on later line with prior text does not trigger'
+- id: f2p_changelog
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: 'changelog: [Unreleased] ### Fixed entry referencing #904'
+  description: 'changelog: [Unreleased] ### Fixed entry referencing #904'
+- id: f2p_structural_diagnostic
+  kind: F2P
+  turn: 1
+  weight: 0.06
+  label: 'structure: diagnostic logic checks editor emptiness'
+  description: 'structure: diagnostic logic checks editor emptiness'
+- id: f2p_upstream_changelog_904
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: 'CHANGELOG [Unreleased] has ### Fixed entry for #904'
+  description: 'CHANGELOG [Unreleased] has ### Fixed entry for #904'
+- id: f2p_upstream_structural_emptiness
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: isAtStartOfMessage checks editor emptiness
+  description: isAtStartOfMessage checks editor emptiness
+- id: p2p_upstream_tsgo_tui
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: tsgo compilation for TUI package
+  description: tsgo compilation for TUI package
+- id: p2p_upstream_editor_tests
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: TUI editor test suite
+  description: TUI editor test suite

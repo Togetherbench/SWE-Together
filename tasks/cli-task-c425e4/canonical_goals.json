@@ -1,0 +1,82 @@
+{
+  "task_name": "cli-task-c425e4",
+  "trial_id": "cli-task-c425e4__E4DdkAE",
+  "rubric_version": "v3",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "traces_to_user_asks": [
+        "A.3",
+        "B.1",
+        "B.2"
+      ],
+      "goal": "The agent makes a real, substantive attempt at the user's awk-pattern bug report. Specifically, the agent does NOT (a) refuse to edit the linter or claim no change is needed, (b) merely describe the regex flaw in chat without applying a fix to the linter implementation that runs in the existing lint pipeline, (c) delete or rename the linter so the multi-line-block check no longer runs, (d) replace the multi-line-block check with an unrelated implementation that bypasses the awk patterns altogether without preserving the indented-delimiter detection behaviour (e.g. swapping in a no-op stub or rewriting in another language but dropping the detection logic), or (e) trivially relax the existing content-line threshold (e.g. raising it well above the user-described 3-line cutoff, or removing the threshold check) so that test fixtures pass without addressing the indentation issue.",
+      "rationale": "Anti-effort floor. The user's correction is a precise, actionable bug report; any of the above tactics defeats the point of the session. Carries weight 0 and is enforced by the P2P_REGRESSION gates already in tests/test.sh (p2p_file_exists, p2p_agent_modified, p2p_valid_shell). Listed here so the judge can directly verdict effort-avoidance even when tests happen to pass."
+    },
+    {
+      "id": "goal_1",
+      "tier": "core",
+      "weight": 0.45,
+      "traces_to_user_asks": [
+        "B.1",
+        "B.2"
+      ],
+      "goal": "After the agent's changes, the linter (the executable invoked by the existing mise lint pipeline) reports an error when run against a mise.toml whose multi-line run block uses triple-double-quote (\"\"\") delimiters and where the line introducing the run = \"\"\" and/or the closing \"\"\" line is preceded by leading whitespace (spaces or tabs). The detection must trigger when the block's content exceeds the existing threshold (more than 3 content lines). The fix must be implemented via the linter's matching logic itself — not by pre-processing the input file to strip indentation before invocation, nor by special-casing the test fixture content.",
+      "rationale": "Headline user ask B.1+B.2. The user explicitly diagnoses the column-1 anchoring as the bug. Goal text describes observable behaviour ('reports an error when ... leading whitespace') and forbids the two obvious gaming routes (input pre-processing, content-string special-casing) without naming any specific regex implementation."
+    },
+    {
+      "id": "goal_2",
+      "tier": "secondary",
+      "weight": 0.15,
+      "traces_to_user_asks": [
+        "B.1",
+        "B.2"
+      ],
+      "goal": "The same indentation-tolerance applies symmetrically when the multi-line run block uses triple-single-quote (''') delimiters. An indented run = ''' / closing ''' block whose content exceeds the existing threshold is reported by the linter. The fix must not be a copy that only handles \"\"\" while silently dropping ''' from the original linter's coverage.",
+      "rationale": "User says 'The awk patterns' (plural) and 'allowing leading whitespace for both the start (run =) and closing delimiter matches'. The existing linter handles both quote styles, so the indentation tolerance applies symmetrically. Goal text rules out the gaming route of fixing one quote style while regressing the other."
+    },
+    {
+      "id": "goal_3",
+      "tier": "secondary",
+      "weight": 0.1,
+      "traces_to_user_asks": [
+        "B.3"
+      ],
+      "goal": "After the agent's changes, the linter still reports an error for a non-indented multi-line run block (run = \"\"\" or run = ''' starting at column 1) whose content exceeds the existing threshold. The indentation-tolerance fix is additive: it must subsume the original column-1 case, not replace it.",
+      "rationale": "User ask B.3 is an implicit invariant — the user wanted to broaden detection, not narrow it. Catches the gaming route of writing a matcher that requires at least one whitespace character (which would silently regress the original behaviour)."
+    },
+    {
+      "id": "goal_4",
+      "tier": "secondary",
+      "weight": 0.1,
+      "traces_to_user_asks": [
+        "B.4"
+      ],
+      "goal": "After the agent's changes, the linter does NOT flag a short multi-line run block (3 or fewer content lines, indented or not, using either delimiter style). The existing >3-content-line threshold must remain operative, and the line-counting logic must not inflate counts in a way that pushes a 3-line block above the threshold.",
+      "rationale": "User ask B.4 is an implicit invariant: 'don't introduce false positives'. Catches the gaming route of dropping or weakening the threshold check (which would let an agent pass detection tests by flagging everything)."
+    },
+    {
+      "id": "goal_5",
+      "tier": "secondary",
+      "weight": 0.1,
+      "traces_to_user_asks": [
+        "B.5"
+      ],
+      "goal": "When the linter reports an error for an N-content-line block (with N > 3), the reported line count equals N — that is, the closing-delimiter line is not included in the count. The reported count must not be N+1. This must hold for both indented and non-indented blocks and for both \"\"\" and ''' delimiters.",
+      "rationale": "User ask B.5, marked '(optionally)' in the user's message. Kept as a scored secondary because the user did state it; weight kept below the regression goals. Goal text avoids prescribing the implementation (increment placement, branch structure, etc.)."
+    },
+    {
+      "id": "goal_6",
+      "tier": "secondary",
+      "weight": 0.1,
+      "traces_to_user_asks": [
+        "A.2"
+      ],
+      "goal": "Inline multi-line shell scripts originally embedded in mise.toml are extracted to separate files in the mise-tasks/ directory tree (or an equivalent path the project already uses for task scripts), and mise.toml is updated so the corresponding tasks point to or invoke those extracted files instead of carrying the multi-line run = \"\"\" / ''' bodies inline. Extraction must preserve task semantics: a task that previously ran an N-line inline script must, after extraction, still invoke equivalent script logic from the extracted file rather than (a) being silently deleted from mise.toml without replacement, (b) being replaced with an empty stub, or (c) being pointed at an extracted file whose contents do not match the original script logic. Partial credit is acceptable for partial extraction; the gaming routes in (a)-(c) are not.",
+      "rationale": "User ask A.2 from instruction.md: 'I'd like to extract them out'. Was missing from v2. Included because the bar is 'every goal traces to USER ask' (not 'every goal traces to oracle patch'). The reference patch in this task's harbor checkout only contains the linter fix because that was the second-turn correction the canonical session ended on, but the original instruction explicitly asked for extraction. Goal text bakes in the three obvious gaming routes (delete-without-replacement, empty stub, mismatched extraction) and allows partial credit so the judge can give credit proportional to how much of mise.toml's inline-script burden was actually moved out."
+    }
+  ],
+  "decomposition_notes": "1 anti-effort floor (goal_0, weight 0, enforced by existing P2P_REGRESSION gates) + 1 core (goal_1: the headline awk-indentation fix) + 5 secondaries (goal_2 ''' delimiter parity, goal_3 column-1 non-regression, goal_4 short-block no-false-positives, goal_5 line-count accuracy, goal_6 inline-script extraction). Weighted-replace target weights: core=0.45, secondaries 0.15+0.10+0.10+0.10+0.10=0.55. Sum of scored goals = 0.45 + 0.55 = 1.00 (goal_0 unweighted). Rationale for the 0.45/0.15/0.10×4 split: goal_1 is the headline fix the simulator's only correction message is about (deserves the largest share); goal_2 carries 0.15 because the user wrote 'both' in the correction and indented ''' blocks failing detection would be a visible bug; goals 3-5 are 0.10 each as invariant/optional behaviours the user mentioned or implied; goal_6 is 0.10 because it appears only in the initial seed and was not re-asserted by the simulator — secondary but real. Rubric weights are deliberately INDEPENDENT of tests/test_manifest.yaml F2P weights; see _provenance.weighting_independence above."
+}

@@ -1,0 +1,46 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # --- F2P gates exposed by test.sh inline (weights mirror test.sh add_reward calls) ---
+  - id: g1_migration
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    description: "Migration up.sql ADDs and down.sql DROPs billing_processor_id"
+  - id: g2_schema
+    kind: F2P
+    turn: 1
+    weight: 0.10
+    description: "schema.rs business_profile has billing_processor_id -> Nullable<Varchar>"
+  - id: g3_diesel_structs
+    kind: F2P
+    turn: 1
+    weight: 0.20
+    description: "diesel_models Profile, ProfileNew, ProfileUpdateInternal all have billing_processor_id"
+  - id: g4_apply_changeset
+    kind: F2P
+    turn: 1
+    weight: 0.20
+    description: "apply_changeset threads billing_processor_id through destructure and assignment"
+  - id: g5_domain_profile
+    kind: F2P
+    turn: 1
+    weight: 0.15
+    description: "domain_models Profile carries billing_processor_id of MerchantConnectorAccountId type"
+  - id: g6_events_threading
+    kind: F2P
+    turn: 1
+    weight: 0.10
+    description: "events.rs threads billing_processor_id in Profile construction"
+  - id: g7_completeness
+    kind: F2P
+    turn: 1
+    weight: 0.10
+    description: "At least 4/5 critical files mention billing_processor_id"
+  # NOTE: previously declared upstream gates (f2p_upstream_schema_billing_processor,
+  # f2p_upstream_migration_billing_processor) were never written by test.sh — the
+  # inline G1..G7 already cover those signals. Removed to align manifest with
+  # verifier reality. Weights mirror test.sh's add_reward calls; total = 1.00.

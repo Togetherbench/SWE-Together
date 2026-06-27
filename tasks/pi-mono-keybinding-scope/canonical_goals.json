@@ -1,0 +1,41 @@
+{
+  "task_name": "pi-mono-keybinding-scopes",
+  "completeness_goals": [
+    {
+      "id": "goal_1",
+      "goal": "Add scope metadata (e.g., 'editor', 'global', 'picker', 'session-picker', 'tree', etc.) to keybinding declarations in the keybindings definition files, with at least 4 scope-annotated entries, including both picker-like scopes and editor/global-like scopes",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "User turn T4 selects the scope approach; T6 demands implementation. F2P gate t6_f2p_keybindings_have_scope_tags (weight 0.30) requires >=4 scope declarations with both picker-ish and global/editor-ish values in the keybinding definition files (packages/coding-agent/src/core/keybindings.ts and/or packages/tui/src/keybindings.ts)."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Modify the extension runner's conflict detection logic to consult scope metadata when deciding whether to warn about or skip conflicting extension shortcuts, replacing or augmenting the hardcoded allowlist approach with scope-aware logic",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "User turns T4-T6 and T11-T13 demonstrate the desired behavior: only global/editor-scope keybindings should trigger conflict warnings for extensions, while picker/session/tree-scope keybindings should not. F2P gate t6_f2p_runner_consults_scope (weight 0.20) requires runner.ts to reference scope info in conflict checking logic (not just the old RESERVED_ACTIONS_FOR_EXTENSION_CONFLICTS list)."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Assign picker/selector/tree/session-like scope tags to multiple keybindings that are context-specific (session picker, tree navigation, selection), ensuring at least 3 such entries so the scope model is broadly applied",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "User turn T4 asks how many scopes are needed based on existing keymaps. F2P gate t11_f2p_picker_scope_keys_count (weight 0.20) requires >=3 picker-scope-tagged keybindings. Actions like toggleSessionPath, toggleSessionSort, renameSession, deleteSession, treeFoldOrUp, treeUnfoldOrDown, selectUp, selectDown etc. should be tagged with non-global scopes."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Assign global/editor scope tags to keybindings that should trigger extension conflict warnings (e.g., cursor movement, text editing, clipboard actions used in the main editor context)",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "F2P gate t11_f2p_global_editor_scope_keys_present (weight 0.15) requires at least some keys to be flagged as global/editor scope, ensuring the conflict detection still has a target set and doesn't just mark everything as picker-scope."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Ensure the in-repo extension-runner tests pass after the scope changes, updating test expectations as needed to reflect the new scope-aware conflict detection behavior",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "F2P gate t13_f2p_runner_tests_pass (weight 0.15) requires >=1 pass and 0 fails in packages/coding-agent/test/extensions-runner.test.ts. The base state has 2 failing tests; the agent must fix or update them to work with the new scope-aware logic."
+    }
+  ],
+  "decomposition_notes": "2 cores + 3 secondaries. Default ratio: 4/(4*2 + 1*3) = 4/11 ≈ 0.36 per core, 1/11 ≈ 0.09 per sec. Slightly adjusted to 0.35 per core and 0.10 per secondary for clean summing to 1.0. The oracle patch only contained a test extension file (keybind-conflict-scope-test.ts), meaning the actual scope implementation was not captured in the diff — this is a Mode B task where goals are derived from user_simulation_prompt.md turns + F2P test gates. The 5 F2P gates map cleanly: gate t6_keybindings_have_scope_tags → goal_1, gate t6_runner_consults_scope → goal_2, gate t11_picker_scope_keys_count → goal_3, gate t11_global_editor_scope_keys_present → goal_4, gate t13_runner_tests_pass → goal_5. User turns T17-T26 about PR preparation/commit messages/rebasing are workflow concerns, not behavioral goals."
+}

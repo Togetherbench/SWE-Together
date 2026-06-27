@@ -1,0 +1,41 @@
+{
+  "task_name": "pi-mono-auto-ec7037ba",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine, functional implementation of the requested changes (changelog audit additions AND the autocomplete directory-completion fix), NOT a gaming artifact. It must be REJECTED if it exhibits any of: (a) a zero-edit or near-empty diff, or a diff whose only real content is a captured-tree/banner artifact such as a line reading '=== repo/ ===' or '=== pi-mono/ ===' with no substantive source edits; (b) git-ops exfiltration or state resets such as `git checkout main`, `git reset --hard origin/...`, or reverting tracked files to upstream instead of editing them; (c) a comment-only, whitespace-only, or pure-reformatting diff that changes no behavior; (d) edits confined to test files (e.g., adding/altering test cases) or to temp/unmerged/scratch locations while leaving the actual CHANGELOG.md files and the autocomplete source unchanged; (e) deleting, weakening, or short-circuiting the project's existing tests to manufacture a pass. The changes must live in the real product source and changelog files and reflect actual work, not a stub or placeholder.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against the lowest-reward model patch (deepseek_v4_pro, reward 0.0), whose diff was a captured-tree artifact ('=== pi-mono/ ===' banner) that only added cases to packages/tui/test/autocomplete.test.ts and touched zero changelog or source files; and the rewardNone opus patch, which only reformatted an unrelated bedrock test. Neither did the user's work."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The directory case of the `@`-file autocomplete no longer appends a trailing space when an entry is selected, so the user can keep tab-completing deeper into subdirectories; selecting a non-directory (file) entry still inserts the usual trailing space. The behavior must be driven by real runtime logic that distinguishes a directory completion from a file completion (for example by detecting a trailing-slash entry or an is-directory flag) and conditionally suppresses the space; it must NOT be a hardcoded value, a parsed-but-ignored flag, a commented-out branch, or a change that only touches comments or tests.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 6 verbatim: 'i type @packages which completes to \"@packages/ \" (note the space) and the auto-complete file list disappears. isn't this supposed to not add a space ... why do we add a space if we select an entry with tab or enter?' This is the central debugged bug of the second phase; the agent iterated on it for the longest stretch of the session (495s gap before the user's approval at Turn 7), and the user explicitly approved the fix."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Missing changelog entries are added to the affected packages' [Unreleased] sections (covering the ai, tui, and coding-agent changelogs) so that commits since the last release that warrant a user-facing note are recorded, with at least two of the three package changelogs gaining new entries beyond the starting state. The additions must be real, substantive bullet lines in the actual CHANGELOG.md files describing changes that genuinely occurred in the affected commits — NOT hallucinated features, fabricated commits, placeholder/empty bullets, duplicated boilerplate, or changes confined to comments or unrelated files.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0 verbatim: 'Audit changelog entries for all commits since the last release ... Verify a changelog entry exists in the affected package(s) ... Add any missing entries directly.' This is the primary Turn-0 deliverable across the ai/tui/coding-agent packages."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The newly added changelog entries carry correct contributor attribution that resolves to real issues/PRs, following the project's canonical attribution format (a parenthetical linking the PR/issue number, plus a ` by [@user]` author link for external contributions). In particular, the external contribution the user flagged as missing — the PR credited to the contributor the user referred to as 'terrobe' (the GitHub user @terrorobe) — must be present and credited to @terrorobe, and all other external-contribution entries added to the changelogs must likewise carry correct author attribution. The attribution links must be genuine markdown links in the changelog bullets (PR/issue number link, plus a ` by [@user]` author link for external contributions), not stubbed, fabricated, or placeholder references.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 1: 'double check that all attributions are correct by locating the issues/prs via gh cli'; Turn 2: 'where's the terrobe pr?' (user caught a missing @terrorobe attribution); Turn 3: 'how many more cl entries did you fuck up?' (user demanded auditing remaining attribution errors). This multi-turn correction thread is about attribution correctness specifically."
+    },
+    {
+      "id": "goal_4",
+      "goal": "User-facing changes that originate in the lower-level packages (such as ai, tui, or agent) are also reflected in the user-facing `coding-agent` changelog, per the project's cross-package duplication rule, so a user reading only the top-level `coding-agent` changelog sees those changes. This duplication must be reflected as real entries in the `coding-agent` changelog, not omitted and not faked with empty placeholders.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 0 verbatim: 'Changes in ai, agent or tui that affect end users should be duplicated to coding-agent changelog, since coding-agent is the user-facing package that depends on them.' This is an explicit Turn-0 rule and the golden patch shows several cross-duplicated entries in the coding-agent changelog."
+    }
+  ],
+  "decomposition_notes": "This task has two distinct phases. Phase A (Turns 0-5): audit and fix the [Unreleased] changelog sections across packages/ai, packages/tui, packages/coding-agent — adding missing entries (goal_2), getting attribution right against real PRs/issues incl. the @terrorobe correction (goal_3), and applying the cross-package duplication rule into the user-facing aggregator (goal_4). Phase B (Turns 6-7): the user aborted the release after finding a real autocomplete bug — directory completions append a trailing space that breaks continued tab-completion into subdirectories — and the agent must fix it so dirs get no space while files still do (goal_1). Weights rank by user importance rather than mirroring the F2P manifest: the autocomplete fix (goal_1, 0.4) was the most debugged, longest-iterated, and explicitly-approved deliverable, so it is weighted above any single changelog gate; the manifest splits autocomplete into two F2P gates (0.3 + 0.2) and gives changelog two gates (0.25 + 0.25), which would over-weight the changelog phase relative to user emphasis. Attribution correctness (goal_3) is elevated to core because three consecutive user turns (T1/T2/T3) were corrections about it. Cross-package duplication (goal_4) is supporting — it is an explicit Turn-0 rule but received no follow-up correction. goal_0 is the unscored anti-gaming floor calibrated to the captured-tree/test-only artifacts seen in the real low-reward model patches. Commit/push/release-process turns (T4 'commit and push', T5 'then do a new patch release', T7 'ok commit and push') are deliberately excluded as process actions, not workspace-state deliverables. Weighted goals sum to 1.0 (0.4 + 0.25 + 0.25 + 0.1)."
+}

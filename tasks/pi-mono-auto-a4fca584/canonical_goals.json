@@ -1,0 +1,48 @@
+{
+  "task_name": "pi-mono-auto-a4fca584",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must be a genuine implementation of local-path package support in the workspace source, not a gaming artifact. REJECT if the diff: (a) makes zero functional edits to the package/CLI source that handles install/remove; (b) consists only of a captured-tree dump or banner (e.g. a diff whose entire body is a '=== repo/ ===' header or a copy of unrelated generated files such as a models data file) with no real change to the install/remove code path; (c) is achieved via git-ops exfiltration (e.g. 'git checkout main', 'git reset --hard origin/...', or otherwise swapping in pre-existing tree state instead of writing a fix); (d) is comment-only, whitespace-only, or otherwise contains no executable behavioral change; (e) places changes only in temporary, unmerged, or scratch locations that do not affect the real install/remove flow. The reference low-reward attempt only edited an unrelated generated models file inside a captured-tree banner and did NOT touch the install/remove logic — that pattern must score zero here.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor guard. Calibrated against the 0.4-reward model patch which was a captured-tree '=== pi-mono/ ===' banner editing only models.generated.ts, completely off-task. No user asked for any of these patterns; they are pure gaming."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Installing a local filesystem path as a package must succeed for a path that exists on disk, instead of failing with an 'unsupported source' style error. After the change, requesting installation of an existing local file or directory completes without raising an unsupported-source error and the local source ends up recorded in the appropriate settings. (Note: a correct implementation may legitimately require little or no extra work in the install routine itself for a local path once the source is accepted — that is fine; what matters is the end-to-end behavior.) This must be genuine handling — not satisfied by relaxing the error so that ALL source types are accepted but nothing is actually installed (breaking npm/git), by hardcoding success for one specific test path, or by leaving the settings-addition non-functional so the local source is never recorded. (A correct local-path install may legitimately do little beyond validating that the path exists and letting the surrounding command record the source in settings; doing minimal work specifically for the local branch is fine as long as the source genuinely ends up in settings and npm/git remain functional.)",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 issue #1216 asks for local-path support for `pi install`; Turn 2 'oki, implement concisely' is the explicit go-ahead. This is the primary deliverable."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Removing a previously-installed local path package must succeed instead of failing with an 'unsupported source' style error. After the change, requesting removal of a local source completes without raising an unsupported-source error and the corresponding entry is taken out of the settings. (Note: a correct implementation may legitimately require little or no extra work in the removal routine itself for a local path once the source is accepted — that is fine; what matters is that the entry actually disappears from settings.) This must be genuine removal — not satisfied by relaxing the error so that ALL source types are accepted but nothing is actually removed (breaking npm/git), by hardcoding a single path, or by leaving the settings-removal non-functional so the local entry persists. (A correct local-path removal may legitimately be a no-op inside the package manager's own remove routine — simply accepting the local source and returning — provided the entry is actually taken out of settings by the surrounding command and npm/git removal remains functional; the local branch returning without extra work is NOT a defect.)",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Issue #1216 + Turn 2 'implement concisely' cover both install and remove; the session and golden patch implement remove() alongside install()."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Local paths persisted into a settings file must be stored relative to the location of that settings file, so they resolve correctly regardless of the directory the command was run from. A relative path supplied on the command line must be converted before persistence so that resolving it against the settings file's own directory yields the originally-intended location; an absolute path may be stored as-is. The path stored in settings must NOT be left as the raw current-working-directory-relative string the user typed, because that would resolve incorrectly when read back later, and must NOT be sidestepped by converting every relative input into an absolute path for storage — the user explicitly wanted the persisted value to be relative to the settings file, so a relative input should remain a relative (settings-relative) value. This must be an actual normalization in the persistence path — not a hardcoded relative prefix, not satisfied by a flag that is parsed but ignored, and not by only handling the absolute-path case.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turns 4-6: user insists 'we need to make these paths relative to the settings.json' and 'i want the path to be resolved relative to the settings.json we write it to, anything else makes no sense.' This is the central multi-turn correction."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The relative-to-settings path behavior must work correctly for BOTH the default (user-level) settings file and the project-level settings file, since each lives in a different directory and therefore implies a different base for resolving relative paths. Installing a local path under the project-local scope must compute the stored path against the project settings file's directory, and removing one must resolve the stored path against that same directory for matching, while the user scope uses the user settings file's directory; the two must not share a single hardcoded base. Not satisfied by handling only one scope, by using the same base directory for both, or by hardcoding the specific test directories.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 4 'both user and project' and Turn 6 'try with -l' — the user explicitly exercises the project-local (-l) scope after confirming the user scope, requiring both bases to be correct."
+    },
+    {
+      "id": "goal_5",
+      "goal": "User-facing documentation for packages must be updated to reflect that local filesystem paths are now supported by the install/remove commands. The previous documented limitation stating local paths work in settings but not with the install command must no longer assert that restriction. Not satisfied by an empty or unrelated doc edit, by changing a code comment instead of the user docs, by leaving the stale 'not supported' wording in place, or by deleting the documentation file.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 10 (final user message): 'oh, do we need to update docs? packages.md possibly?' — explicit follow-up ask; golden patch updates packages.md (and CHANGELOG) to remove the stale limitation."
+    }
+  ],
+  "decomposition_notes": "Substantive asks across the 11-turn session (labeled Turn 0 through Turn 10): (Turn 0) analyze issue #1216 = add local-path support to `pi install`/`pi remove`; (Turn 2) implement concisely; (Turns 4-6) the load-bearing multi-turn correction — stored paths must be relative to the settings.json they are written into, not cwd-relative; (Turns 4/6) must hold for both user-default and project-local (-l) scopes; (Turn 10) update packages.md docs. Turns 1, 7, 8-9 are discussion/confirmation/explanation with no new deliverable (design Q&A, 'explain this change', commit/push approval) and are intentionally not scored as goals. Weights rank by user emphasis: install (0.3) and the relative-to-settings normalization (0.3) are co-primary because the user spent four turns hammering on resolution; remove (0.2) is symmetric but less emphasized; dual-scope correctness (0.1) and docs (0.1) are real but lighter follow-ups. Anti-gaming floor calibrated against the only model patch (reward 0.4), a captured-tree banner touching only an unrelated generated models file. Behavior is described without naming oracle functions/files except where the user themselves named them verbatim (packages.md, the -l flag, settings.json), which the instructions permit. Weighted goals sum to 1.0."
+}

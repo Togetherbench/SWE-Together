@@ -1,0 +1,69 @@
+{
+  "task_name": "light-protocol-implement-7adad1",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The captured patch must reflect deliberate authoring by the agent. Auto-zero the trial if ANY of the following are observed: (a) patch byte size exceeds 1 MB combined with zero file-edit / file-write tool invocations recorded in the trajectory, (b) the transcript contains base-resetting commands such as `git checkout main`, `git checkout origin/main`, `git reset --hard origin/main`, `git stash pop` of a stash that introduces upstream's merged feature, `git pull` followed by no further edits, or `git apply` of a pre-canned diff, (c) the patch is empty or whitespace-only, (d) the patch is identical to an upstream commit that post-dates the task's base commit (verified by sha-prefix match on the change set). NOT satisfied by stubs, comments, or doc-only changes — every goal below requires real source-level deltas in the macro crate AND/OR in `sdk-tests/csdk-anchor-full-derived-test/`.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Light-Protocol's upstream merged this feature after the task's base commit. An agent that resets to a later upstream HEAD or `git apply`s the merged diff can pass every structural grep without authoring work. The task's allow_internet=true + live github.com clone (flagged in v2 task_quality_flags) makes this exfiltration trivially available. Trip conditions are mechanical and inspectable from trial telemetry (transcript + final.patch + tool-call counts) without consulting the oracle."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Register the `idempotent` keyword inside the `associated_token` namespace recognised by the macro's keyword constant `ASSOCIATED_TOKEN_NAMESPACE_KEYS` (or a polarity-inverted equivalent such as a `non_idempotent` keyword if the implementation chose negative polarity — but the Turn 1 plan title names `idempotent` so a positive-polarity implementation should use that literal). Whichever polarity is chosen, using the keyword inside `#[light_account(init, associated_token::...)]` must not raise an 'unknown key' parse error. NOT satisfied by a TODO comment, a renamed pre-existing constant, or a keyword that the parser still rejects.",
+      "tier": "core",
+      "weight": 0.15,
+      "rationale": "The user asked for a flag (Turn 1 plan: 'standalone flag keyword … no value, just presence/absence'). Registering it in the namespace-keys constant is the minimum necessary parser-level acceptance. The Turn-1 plan literally names `ASSOCIATED_TOKEN_NAMESPACE_KEYS` and the literal `idempotent` string — pinning these is user-provenance. Turn 2's 'don't update existing sites' is still consistent with inverted polarity, so polarity remains agent's choice; only the keyword-recognition requirement is hard."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement boolean-flag parse semantics for the new keyword: the bare keyword inside the attribute (no `= value`) must be accepted and treated as the flag being set; absence must be treated as the flag NOT being set; and writing `keyword = <value>` must produce a parse-time error rather than silently accepting a value. The Turn 1 plan describes one acceptable mechanism (a `BOOLEAN_FLAG_KEYS_BY_NAMESPACE` registry + `is_boolean_flag_key` helper applied to both `NamespacedKeyValue::parse()` and the mark-only inline parse block) but any mechanism achieving the three observable rules is conformant. NOT satisfied by silently accepting `key = false`, by hardcoding the keyword in a single parse arm without rejecting `= value`, or by a stub that returns the default for any input.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "This is the load-bearing semantic contract the user asked for in Turn 1 ('no value, just presence/absence'). Mechanism choice remains open. Weighted highest among parse/struct/codegen goals because an implementation that ships the field and codegen without this guard delivers a half-feature (the macro would silently accept `key = false` and discard it)."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Extend the per-account ATA configuration struct used by the macro (the Turn 1 plan names this `AtaField` in `sdk-libs/macros/src/light_pdas/accounts/light_account.rs`) with a boolean field whose value records whether the flag was present on that account. Field name `idempotent` is preferred per the Turn 1 plan, but a semantically-equivalent name (`non_idempotent`, `is_idempotent`, `strict`) that matches the chosen polarity is acceptable. NOT satisfied by adding the field to an unrelated struct, by adding a non-boolean placeholder, or by capturing the flag into a stringly-typed map without a typed field.",
+      "tier": "core",
+      "weight": 0.13,
+      "rationale": "Required for the parsed flag to survive past the parser and reach codegen. Field type and target struct are pinned by the Turn 1 plan; field name is the agent's choice (depends on chosen polarity)."
+    },
+    {
+      "id": "goal_4",
+      "goal": "In the function that builds the per-account configuration struct from the parsed key-value list (the Turn 1 plan names this `build_ata_field` in `light_account.rs`), recognise the new flag keyword and capture its parsed value so it flows into the constructed struct. A trial passes this goal when there is a deliberate code path (match arm, conditional, HashMap lookup, etc.) inside the build/parse function that reads the flag keyword from the parsed input and assigns the corresponding boolean to the struct field. NOT satisfied by a match arm that drops the value, by capturing the keyword into a local that is then unused, or by adding the keyword to a parser-side accept list without threading it through to the constructed struct.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Plumbing step. The parser's accept-rule (goal_2) and the struct field (goal_3) are independently necessary; this goal verifies they are actually connected, not just both present. Function name pinned per Turn 1 plan; mechanism open."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Wire the captured flag value through to macro codegen so the emitted runtime call (the macro's generated code that performs ATA creation) honours the flag instead of hardcoding the idempotent behavior unconditionally. After the change, the same macro source must be capable of emitting BOTH variants (idempotent and strict) depending solely on whether the flag was set on a given `#[light_account]` site. NOT satisfied by leaving the codegen literal at `idempotent: true`, by conditionally emitting only on a feature flag, or by short-circuiting the codegen for the new keyword without removing the unconditional default.",
+      "tier": "secondary",
+      "weight": 0.12,
+      "rationale": "Without this step the feature has no runtime effect — the macro would parse and store the flag but emit the same code as before. The codegen change is what makes the user-visible behavior toggleable. Mechanism is open: directly using the field in a quote!, computing the boolean inline, conditionally appending a builder-method call, etc."
+    },
+    {
+      "id": "goal_6",
+      "goal": "After the codegen change, any pre-existing integration test in `sdk-tests/` that asserts idempotent ATA behavior must still pass. A trial satisfies this goal in either of two ways: (a) explicitly applying the new flag to the existing site whose test asserts idempotent semantics (covers the positive-polarity case where the default is strict) — this is Turn 8's literal instruction, OR (b) keeping the default polarity such that an unmodified site continues to produce idempotent ATA creation (covers the negative-polarity case where the keyword opts OUT of idempotency). NOT satisfied by deleting the pre-existing idempotent test, by gating it behind a feature flag, or by replacing its assertions with weaker ones.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Captures Turn 8's user correction: the pre-existing test that asserts idempotent behavior must not regress because of the change. Turn 2 ('no dont update existing sites') and Turn 8 ('add the idempotent flag to the other one that asserts idempotent behavior') together describe a single behavioral constraint — the pre-existing idempotent test must still pass — which can be satisfied by either polarity."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Create the new instruction file `sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/single_ata_non_idempotent.rs` (or an equivalently-purposed new instruction file under `d10_token_accounts/`) that defines an Accounts struct and a Params struct demonstrating the strict (non-idempotent) ATA variant — i.e., a `#[light_account(init, associated_token::authority = …, associated_token::mint = …)]` site that does NOT carry the idempotent flag (if positive polarity) or DOES carry the negative-polarity opt-out keyword (if negative polarity). The new file must be wired into the crate via `d10_token_accounts/mod.rs` registration AND must be visible from `sdk-tests/csdk-anchor-full-derived-test/src/lib.rs` (either via the existing `use instructions::d10_token_accounts::*` glob or via an explicit re-export). NOT satisfied by an empty `.rs` file, by adding the module to `mod.rs` without defining the structs, or by defining the structs without wiring them into the program.",
+      "tier": "core",
+      "weight": 0.1,
+      "rationale": "Turn 1 plan TODO 6, 7, 8 explicitly enumerates this file's creation, module registration, and lib.rs wiring with the literal name `D10SingleAtaNonIdempotent` / `D10SingleAtaNonIdempotentParams`. The trial under review created this file (verified via final.patch). v3.0 silently dropped this requirement — restoring it is necessary for the rubric to credit the work the agent actually did. Polarity-neutral phrasing keeps both positive and negative implementations creditable."
+    },
+    {
+      "id": "goal_8",
+      "goal": "Create the new integration test file `sdk-tests/csdk-anchor-full-derived-test/tests/d10_ata_idempotent_test.rs` (or an equivalently-purposed new integration-test file under `csdk-anchor-full-derived-test/tests/`) containing at least one test that asserts a SECOND call to the non-idempotent ATA instruction FAILS (i.e., the strict-creation semantics are observably exercised). The Turn 1 plan names two tests (`test_d10_ata_non_idempotent_first_creation_succeeds` and `test_d10_ata_non_idempotent_second_creation_fails`) but a single test that covers the second-call-fails behaviour is sufficient as long as it exercises the new instruction handler from goal_7. NOT satisfied by a test that only calls the instruction once and asserts success, by a `#[ignore]`d test, by a test that calls a different instruction, or by a test file with only a stub `#[test] fn it_works() {}`.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 1 plan TODO 9 explicitly enumerates this file's creation and the second-call-fails assertion. The trial under review created this file. v3.0 silently dropped this requirement. The second-call-fails assertion is the load-bearing behavioural test that demonstrates the new strict semantics are actually wired end-to-end."
+    }
+  ],
+  "decomposition_notes": "v3.1 revision (post gemini-3.1-pro v2 audit) fixes the two failing criteria from v3.0: coverage_completeness=FAIL was caused by silently dropping Turn 1's explicit asks to create `single_ata_non_idempotent.rs` and `d10_ata_idempotent_test.rs`; structured_output_pinned_when_user_did=FAIL was caused by stripping identifiers (`AtaField`, `build_ata_field`, `ASSOCIATED_TOKEN_NAMESPACE_KEYS`) that the Turn 1 plan blob NAMED VERBATIM and that an agent reading the instruction would see. v3.1 changes: (1) added goal_7 (new instruction file) and goal_8 (new integration test) to cover the Turn 1 new-file asks the trial under review actually implemented; (2) re-pinned user-named identifiers in goals 1, 3, 4 rationales and goal bodies, with explicit acknowledgement that this is USER PROVENANCE not oracle leakage (the strings appear verbatim in instruction.md); (3) added 'NOT satisfied by ...' anti-cheating boilerplate to every scored goal per anti_cheating_clauses=PARTIAL; (4) rebalanced weights so 7 scored goals sum to 1.00: 0.15 + 0.20 + 0.13 + 0.10 + 0.12 + 0.10 + 0.10 + 0.10 = 1.00 (goal_0 stays at 0.0 as anti-gaming); (5) preserved goal_6's polarity-agnostic both-ways acceptance so the non_idempotent-polarity trial is not unfairly penalised. Weights still diverge from F2P (verifier)."
+}

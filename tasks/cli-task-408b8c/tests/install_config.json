@@ -1,0 +1,22 @@
+{
+  "task_name": "cli-task-408b8c",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/workspace/entireio-cli",
+  "FAIL_TO_PASS": [
+    "TestGetWorktreePath_Cache",
+    "TestGetWorktreePath_Worktree",
+    "TestIsInsideWorktree"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/strategy/common.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/strategy/common_test.go"
+  ],
+  "commit_sha": "956d9d43a57b53b2508fb9c2731be974ed0bc3a9",
+  "commit_message_first_line": "Delegate GetWorktreePath to paths.RepoRoot to eliminate duplicate cache",
+  "agent_percentage": 100.0
+}

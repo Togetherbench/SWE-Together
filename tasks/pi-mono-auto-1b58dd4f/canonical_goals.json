@@ -1,0 +1,41 @@
+{
+  "task_name": "pi-mono-auto-1b58dd4f",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine code change to the agent's extension/UI wiring, not a gaming artifact. It must FAIL if the diff is empty, is only a captured-tree banner (e.g. a diff whose sole content is a '=== repo/ ===' header), consists solely of comments/whitespace/reformatting with no behavioral change, deletes or weakens existing tests, performs git-ops exfiltration instead of editing source (e.g. 'git checkout main', 'git reset --hard origin/...'), or makes changes only in temporary/unmerged/scratch locations. It must also FAIL if the only edits are to unrelated areas (such as a model-registry / pricing data file) that have nothing to do with how extensions and their UI context are wired up after a reload.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against the lowest-reward model patch (deepseek_v4_flash, reward 0.0) and the minimax patch, both of which only edited an unrelated model-registry/pricing data file and made zero changes to extension/UI binding wiring."
+    },
+    {
+      "id": "goal_1",
+      "goal": "After a reload of the session, extension UI operations (such as an extension calling a notify-style UI method) actually take effect, even when the session was started with no user extensions present and an extension was first introduced and loaded only via the reload. The fix must address the real root cause — that the UI/extension bindings were skipped at startup when no extension was initially present — and must not be a stub, a hardcoded success value, commented-out code, or a flag that is parsed but ignored.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 0: 'the /test command got registered, but running it did not show the ui notification. can you figure out why that is?' and Turn 2: 'i have no user extensions loaded ... howe can we fix that?' — the central behavioral deliverable is that extension UI works after reload even when starting with zero extensions."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The same fix is applied consistently across all the session's run modes, not just the interactive UI mode. The non-interactive modes (the RPC/JSON-emitting mode and the print/non-UI mode) must also end up with correct extension/UI binding behavior so the no-initial-extensions-then-reload outcome holds there too, rather than the fix being limited to a single mode. Must be a real behavioral change that corrects the execution of each affected mode (whether by editing those modes directly or via a shared/centralized path that all modes exercise), not a no-op or comment.",
+      "tier": "important",
+      "weight": 0.2,
+      "rationale": "Turn 3: 'i suppose we need to do the same in prc and print(json mode?' — the user explicitly asks that the fix also cover the rpc and print/json modes, not just interactive."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The extension/UI re-wiring on reload is handled centrally as part of the session's own reload flow, rather than each run mode having to redundantly re-apply extension and UI bindings after reload. A correct submission may consolidate the re-binding logic into the session/reload path so modes don't each repeat it; an equivalent solution that achieves consistent, centralized re-wiring without duplicating it per mode is acceptable. Crucially, the bindings must be (re-)applied BEFORE session-start events are emitted on reload, so that any extension performing UI work during session start has its UI context already available. Not satisfied by duplicating the reload re-wiring logic across the individual mode files, by a stub, or by applying bindings after session-start has already fired.",
+      "tier": "important",
+      "weight": 0.3,
+      "rationale": "Turn 4: 'agent-session.ts reload() would handle the rewiring of extensions and contexts ... what concise solution would make it so agent-session.ts handles all of that?' and Turn 5: 'because if we registered the ui context after session.reload(), extensions might already have been run, specifically session_start events could have been emitted ... no?' — user wants centralization AND ordering before session_start."
+    },
+    {
+      "id": "goal_4",
+      "goal": "A changelog entry is added documenting the fix (e.g., that extension UI broke after reload and is now fixed). Any wording that conveys this fix is acceptable; the entry must be real prose in the project's changelog, not a stub, placeholder, empty line, or commented-out text.",
+      "tier": "polish",
+      "weight": 0.1,
+      "rationale": "Turn 7: 'lgtm, commit and push, add a changelog entry' — the user explicitly asks for a changelog entry documenting the fix."
+    }
+  ],
+  "decomposition_notes": "Eight user turns; weighted goals trace to the substantive asks. goal_1 (core, 0.40) is the root-cause fix: extension UI works after reload even with zero initial extensions (Turns 0+2). goal_2 (0.20) covers the explicit multi-turn correction to also fix rpc and print/json modes (Turn 3). goal_3 (0.30) merges the two architectural corrections — centralize re-wiring in the session/reload flow (Turn 4) and order it before session_start emission (Turn 5) — since they describe one coherent implementation property. goal_4 (0.10) is the changelog entry the user explicitly requested in Turn 7. Turns 1 ('codex take over') and 6 ('implement concisely') are process/meta and not scored as goals; the commit/push part of Turn 7 is process and not scored. Weights rank by behavioral importance rather than mirroring the test_manifest F2P weights (which give the changelog 0.20 — intentionally heavier in the manifest than here). The golden patch demonstrates a valid implementation that fixes the three mode entry points directly (making the startup binding call unconditional in each), and goal_3's centralization clause targets the RELOAD re-wiring specifically — not the startup binding calls — so the golden patch satisfies goals 1-3. The rubric is written behaviorally so any approach achieving the same outcomes — whether by editing the mode files or by routing all modes through a single centralized re-binding path — passes goals 1-3 without pinning function/file/variable names. (Note: not every model patch labeled as touching agent-session.ts necessarily satisfies the zero-initial-extensions case; e.g. a centralization that never invokes the binding step at startup when there are no extensions can leave the stored bindings undefined and fail to re-wire on reload — goals 1 and 3 require the actual no-extensions-then-reload outcome to hold.)"
+}

@@ -1,0 +1,68 @@
+{
+  "task_name": "agent-swarm-task-4a881b",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort floor. The submitted patch must constitute a substantive attempt at the one-time-scheduled-tasks feature in this repository's existing scheduling subsystem. Score 0 on this goal if ALL of the following are true: (a) zero files under the existing scheduling code paths (any of: persistence/migration files for the scheduled-tasks table, scheduler runtime, schedule creation/list/update surfaces, schedule-related types) were modified or added; (b) the patch only touches release metadata (e.g. version-bump in a package manifest), only adds documentation/markdown, only adds files under tooling/plugin/skill scaffolding directories, only renames files, or only reformats. A patch that adds a markdown file named `implement-plan.md` or a 'skill' file describing what would be done, without actually doing it, fails this goal.",
+      "tier": "core",
+      "weight": 0.0,
+      "rationale": "Anti-gaming. The verifier (tests/test.sh + tests/install_config.json) has an empty FAIL_TO_PASS list and falls back to overall test pass-rate, which is ~1.0 at the base commit because the base codebase passes its own tests. The reviewed trial __Mxc2Stz scored reward=1.0 with a patch that only bumped package.json from 1.35.4 to 1.35.5 and added two markdown files under plugin/ (implement-plan.md and a skill.md describing the implementing skill) — zero feature code. Without goal_0 the judge has no anti-effort signal. Weight 0 because it gates rather than adds credit: failing it doesn't subtract from other goals' weights, but it must be reported in the judge verdict so downstream aggregation can flag the trial."
+    },
+    {
+      "id": "goal_1",
+      "goal": "After the patch is applied and migrations run on a fresh database, the persistence layer for scheduled tasks can store a schedule whose semantics are 'fires once' alongside the existing 'fires repeatedly' schedules in the same table or collection. The persistence layer must NOT require a cron expression or recurring-interval field for the one-shot type, and existing recurring schedules must still validate and execute. Identifier choices (column name, enum literal, migration filename) are free — what matters is that a one-shot row can be persisted and round-tripped without a cron/interval value.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Foundational. The slash-command argument `plans/2026-03-06-one-time-scheduled-tasks.md` names the feature; one-time schedules cannot exist as a first-class concept without storage that admits them. Anti-gaming: the wording rejects implementations that add a column but still enforce the old CHECK constraint (one-shot rows that fail to insert) and rejects stub migrations that don't actually run. Identifiers stripped: oracle's `scheduleType` column + `one_time` enum literal + `002_one_time_schedules.sql` filename are NOT required."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Along every code path that fires a schedule — normal due-time execution, missed-schedule recovery on startup, manual run-now, and the error/failure handler — a one-shot schedule must end in a terminal state after firing. Terminal means: no future execution will be scheduled for the same row, AND the recurring next-run advancement (whatever function or method computes the next cron tick / next interval) MUST NOT be invoked on a one-shot row. Equivalent terminal predicates are all accepted: setting enabled=false plus clearing next-run-at, setting a status field to 'completed', deleting the row, or any other observable terminal mechanism — provided it is consistent across all four execution paths.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Primary behavioral contract. The whole point of 'one-time' is that it fires once and stops. Anti-gaming: the wording requires consistency across all four paths so a patch that only auto-disables on the happy path (skipping recovery / run-now / error) does not get full credit. Identifiers stripped: oracle's `enabled=false` + `nextRunAt=null` + `calculateNextRun` are not pinned by name; any equivalent terminal mechanism qualifies."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The schedule-creation surface (MCP create-schedule tool — present in the repo at the base commit) accepts inputs that specify the first-and-only run of a one-shot schedule. Two timing flavors must both be supported: a relative delay from creation time, and an absolute target timestamp. The tool must reject mutually-incompatible mixtures: a recurring request with one-shot-only timing fields, a one-shot request with cron/interval fields, and a one-shot request that supplies BOTH timing flavors at once. After a one-shot is created, its persisted next-run-at must reflect the timing the caller specified.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Programmatic creation. Anti-gaming: requires both timing flavors (a patch that only adds 'delay' or only 'absolute timestamp' is incomplete) AND requires mutual-exclusion validation (a patch that silently accepts contradictory inputs is incomplete). Identifiers stripped: oracle's `delayMs` + `runAt` + `scheduleType` literal + Zod library are not required; `delay_ms`/`run_at`, `in_ms`/`at`, or any equivalent pair, plus any validation library, qualify."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The HTTP API (an HTTP layer for scheduled tasks exists at the base commit) exposes the same one-shot create/update semantics as the MCP tool, with the same mutual-exclusion validation. Additionally, the list endpoint for scheduled tasks supports two new query-style filters: filter-by-schedule-type (recurring vs one-shot), and a hide-already-fired-one-shots flag whose default behavior excludes terminal one-shot rows from the default listing. The exact route shape, file paths, and parameter names are free.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "HTTP-MCP parity. Anti-gaming: the default behavior of the hide-completed flag is pinned (excludes terminal rows by default) so a stub that adds the parameter but defaults to showing everything fails. Identifiers stripped: oracle's `/api/schedules` route, `hideCompleted` literal, and file paths in `src/http/` are not required."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The schedule-list surface in the MCP tool layer accepts a filter for schedule type AND a flag (default: on) that hides already-fired one-shot rows from the default response. The default-on semantics of hide-completed is essential — a stub that exposes the parameter but defaults to including completed one-shots is incomplete.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "List ergonomics. The default-on of hide-completed is the load-bearing behavioral fact — without it, users see a list that grows monotonically with every one-shot ever fired. Identifiers stripped: oracle's `scheduleType`/`hideCompleted` parameter names not required."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The schedule-update surface (both MCP and HTTP) rejects updates to a one-shot schedule that has already fired (is in a terminal state). Additionally, when a one-shot schedule is updated while still pending, the recurring next-run advancement (cron/interval) must NOT be applied to recompute its next-run-at — a one-shot row never has its next-run-at recomputed by the recurring math, regardless of the update payload.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Lifecycle integrity. Anti-gaming: the rejection of updates on terminal one-shots prevents resurrection bugs; the prohibition on cron-recompute prevents type-confusion bugs. Identifiers stripped: oracle's `disabled && lastRunAt` exact predicate is not required; any equivalent terminal check qualifies."
+    },
+    {
+      "id": "goal_7_process",
+      "goal": "The agent must perform (or demonstrate it has performed) manual end-to-end verification of the one-shot scheduling feature against a running instance — for example: starting the API server, hitting the create endpoint with a short-delay one-shot payload, observing the schedule fire, observing the row transition to terminal state, and observing it disappear from the default list view. Mere passing of unit tests does NOT satisfy this goal; the trial transcript must contain evidence of an actual end-to-end exercise. Equivalent evidence (a curl/HTTPie session, a scripted scenario, a UI screenshot/dump) qualifies.",
+      "tier": "core",
+      "weight": 0.06,
+      "rationale": "User T7: `did you perform manual e2es?` — this is the user's literal question and the user was demanding evidence, not a hypothetical. Process goals get smaller weight than feature goals because they're easier to fake, but they're real user asks and must appear. Anti-gaming: 'mere unit tests do NOT satisfy' — the agent in the original session was specifically called out for unit-test-only verification."
+    },
+    {
+      "id": "goal_8_process",
+      "goal": "After implementation, the agent (a) bumps the project version in the project's manifest file (the manifest exists at the base commit; any SemVer increment is acceptable), (b) creates at least one git commit that contains the feature changes (the commit may exclude already-unstaged workflow files — see negative pin below), and (c) attempts a git push. Negative pin: files under workflow-configuration directories (for example .github/workflows/) that were ALREADY unstaged at session start must NOT be included in the commit — the user explicitly excluded them.",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "User T8 verbatim: `ok, bump tha version, commit the changes and push (disregard the workflow unstaged files!)`. Three contractual finalization actions plus one negative pin. Process goal — moderately weighted because the user explicitly requested it and listed three concrete sub-actions. Anti-gaming: the negative pin protects against the easy mistake of `git add -A` sweeping in pre-existing unstaged workflow files."
+    }
+  ]
+}

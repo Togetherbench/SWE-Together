@@ -1,0 +1,48 @@
+{
+  "task_name": "gemini-voyager-task-c5c01d",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine, working implementation of the snow-effect feature, not a gaming artifact. It must FAIL if the diff is empty / a no-op, if it only adds comments or whitespace, if the new module is a stub or hardcoded placeholder that never actually renders or toggles anything, if the feature flag is parsed but ignored, if changes live only in a temp/untracked/unmerged location, if the only diff content is a captured-tree banner such as a '=== repo/ ===' dump, or if the change was produced by git exfiltration tricks (e.g. `git checkout main`, `git reset --hard origin/...`, restoring files from another ref instead of writing code). Real code that wires the toggle through storage to a live animation is required.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. No real model patches exist (evidence_tier=golden_only), so this calibrates against the lowest-effort cheat: an empty/stub diff or a captured-tree/git-ops artifact that satisfies file-existence regexes without delivering a functioning feature."
+    },
+    {
+      "id": "goal_1",
+      "goal": "A user-facing toggle for the snow effect is added to the popup settings UI and is persisted across the extension via synced browser storage, following the same enable/disable wiring as existing toggle settings. Flipping the toggle ON must cause the snow animation to appear and OFF must cause it to disappear, with the setting reloaded correctly when the popup is reopened. The toggle must display proper human-readable localized labels (label + hint/description) sourced from the extension's localization system across its supported locales, not raw translation-key strings or blank text. Not satisfied by a checkbox that is rendered but not bound to state, by writing a storage value that nothing reads, by a control whose handler is commented out or stubbed, or by a label that shows the untranslated key id.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 verbatim: 'Add a \"Snow Effect\" toggle in the popup settings... popup toggle -> chrome.storage.sync -> content script listens for changes -> enable/disable effect.' The end-to-end toggle-persists-and-controls-effect loop is the central deliverable."
+    },
+    {
+      "id": "goal_2",
+      "goal": "When the setting is enabled, a fullscreen animated snowfall is rendered over the page using an efficient drawing approach (e.g. a single overlay canvas) rather than many DOM nodes. The overlay must not block or intercept page interactions (clicks/scroll pass through), and the animation must be driven by a real per-frame render loop so snowflakes actually move and fall. The overlay must keep covering the full viewport when the browser window is resized (it adapts to the new dimensions rather than leaving uncovered gaps or staying a fixed stale size). Not satisfied by a static image, a single non-animating frame, an overlay that captures pointer events, an overlay whose size is fixed once and never reacts to window resizing, or a render function that is defined but never started.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0 verbatim: 'a fullscreen snow animation renders on the Gemini page... no impact on page interactions', design notes 'pointer-events: none... requestAnimationFrame loop renders snowflakes' and 'Canvas resizes on window.resize'. This is the core visible behavior plus the non-blocking and full-viewport-on-resize constraints."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The snow effect is treated as a Gemini-only feature: its user-facing control is exposed only on the Gemini surface (not surfaced on AI Studio / other platforms), and the implementation does not introduce continuous expensive detection (e.g. constant DOM polling or always-on mutation observers) that would keep working and cause lag on AI Studio or other platforms. Not satisfied by surfacing the toggle on every platform, nor by adding an unconditional heavy detection loop that runs everywhere regardless of the active platform.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn 0: 'Add UI toggle card... Gemini-only (!isAIStudio)'. Turn 2 verbatim: '这个功能是 Gemini Only 的吗？在 aistudio 和其他平台也会不断检测吗？好像上一个 commit 修复了在firefox上 aistudio 卡顿的问题，你参考一下' — the user wants the feature Gemini-scoped and is worried about continuous detection/lag on AI Studio. Framed around the actual asks (Gemini-only UI exposure + no cross-platform polling cost), matching how the feature is scoped, rather than mandating explicit URL-gating of the render loop."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The snowfall is visually varied and natural rather than uniform: snowflakes span a range of sizes that includes distinctly small flakes, vary in opacity/appearance, and fall at varied speeds (not a single uniform velocity), with gentle horizontal drift so motion looks natural. The overall quantity/density is balanced — visibly populated rather than sparse, but not so dense it overwhelms the page. Not satisfied by all flakes sharing one size, one opacity, or one fall speed, by a single hardcoded constant for these parameters, or by a count so low the effect looks empty.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 1: '雪花太大了，量太少了' (too big, too few) and Turn 4: '1. 缺少特别小的雪花 2. 雪花样式的丰富度不够 3. 飘落速度过于单一，缺乏真实感' — the user iterated twice demanding smaller flakes, more visual variety, and non-uniform fall speeds for realism."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The effect is performance-conscious so it imposes near-zero overhead on the page. At minimum, animation work must stop or pause when the tab/page is not visible (rather than rendering frames in the background), and particle count is kept bounded. Not satisfied by an unbounded particle count, a loop that keeps running full-speed while the tab is hidden, or a comment claiming optimization without an actual pause/teardown path.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 0: 'performance-conscious (no impact on page interactions)... When tab is hidden (visibilitychange), pause animation to save CPU... Limit particle count' and Turn 4 reiterates '注意性能开销：不要占用太大资源，尽量做到几乎没有性能影响'. Performance is a repeated, explicit constraint distinct from the non-blocking pointer-events requirement."
+    }
+  ],
+  "decomposition_notes": "Golden-only evidence (no model patches), so goals are derived from the verbatim multi-turn user asks plus the F2P tests. Weighted goals sum to 1.0 (0.3+0.25+0.2+0.15+0.1). Ranking is by user-importance, intentionally NOT mirroring test_manifest F2P weights: the end-to-end toggle loop (goal_1, 0.3) and the visible non-blocking animation (goal_2, 0.25) are the heart of Turn 0; Gemini-only scoping (goal_3, 0.2) is a hard Turn-2/3 correction the user pushed on explicitly; visual variety (goal_4) and performance/pause (goal_5) capture the Turn-1/Turn-4 aesthetic + perf follow-ups. Test_manifest splits credit across storage-key/module/registration/popup/lifecycle/tests structurally; this rubric instead bundles those into the behaviors a user would notice (toggle works, snow shows + doesn't block, scoped to Gemini, looks natural, stays cheap). Behavioral only — no file/function/variable names, no exact literals (e.g. 'gvSnowEffect', 'startSnowEffect', 'pointer-events:none' are NOT required wording; the storage key, canvas tag, and rAF are described as behaviors any equivalent implementation can satisfy). Tests-exist is deliberately omitted as a weighted goal: it is a process/verification artifact, not an end-user behavior. Multi-turn corrections (Turns 1-4) are all represented (goal_3, goal_4, goal_5)."
+}

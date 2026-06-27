@@ -1,0 +1,114 @@
+# Harbor verification manifest for rudel-task-8e0bd6
+# Feature: Add export/share buttons with watermark to dashboard charts
+
+gates:
+  # --- F2P Gates (positive weights, sum = 1.0) ---
+
+  - id: f2p_pkg_deps
+    kind: F2P
+    weight: 0.15
+    description: "package.json has html-to-image and sonner with version strings"
+    command: |
+      python3 -c "
+      import json, sys
+      pkg = json.load(open('/workspace/rudel/apps/web/package.json'))
+      deps = {**pkg.get('dependencies',{}), **pkg.get('devDependencies',{})}
+      for dep in ('html-to-image', 'sonner'):
+          if dep not in deps:
+              print(f'MISSING: {dep}'); sys.exit(1)
+          if not deps[dep] or deps[dep] == '*':
+              print(f'EMPTY_VERSION: {dep}'); sys.exit(1)
+      print('OK')
+      "
+
+  - id: f2p_screenshot_lib
+    kind: F2P
+    weight: 0.20
+    description: "screenshot.ts exports 4 non-stub functions (captureElement, copyToClipboard, downloadAsImage, shareToX)"
+    command: |
+      python3 -c "
+      import os, re, sys
+      path = '/workspace/rudel/apps/web/src/lib/screenshot.ts'
+      if not os.path.exists(path): print('MISSING'); sys.exit(1)
+      content = open(path).read()
+      for fn in ('captureElement', 'copyToClipboard', 'downloadAsImage', 'shareToX'):
+          if not re.search(rf'export\s+(?:async\s+)?function\s+{fn}|export\s+const\s+{fn}\s*=', content):
+              print(f'MISSING_EXPORT: {fn}'); sys.exit(1)
+      if 'html-to-image' not in content: print('MISSING_IMPORT'); sys.exit(1)
+      print('OK')
+      "
+
+  - id: f2p_chartcard_comp
+    kind: F2P
+    weight: 0.25
+    description: "ChartCard.tsx wraps AnalyticsCard, has shareable prop, watermark, export options"
+    command: |
+      python3 -c "
+      import os, re, sys
+      path = '/workspace/rudel/apps/web/src/components/analytics/ChartCard.tsx'
+      if not os.path.exists(path): print('MISSING'); sys.exit(1)
+      content = open(path).read()
+      checks = [
+          ('AnalyticsCard', r'<AnalyticsCard'),
+          ('export_share', r'export.*function.*ChartCard|export.*const.*ChartCard'),
+          ('shareable_prop', r'shareable'),
+          ('dropdown_menu', r'DropdownMenu'),
+          ('screenshot_import', r'screenshot'),
+          ('sonner_toast', r'sonner'),
+      ]
+      for name, pat in checks:
+          if not re.search(pat, content):
+              print(f'MISSING: {name}'); sys.exit(1)
+      # Anti-stub: component must have meaningful JSX (≥20 lines of content)
+      lines = [l for l in content.split('\n') if l.strip() and not l.strip().startswith('//') and not l.strip().startswith('import ')]
+      if len(lines) < 40: print(f'STUB: only {len(lines)} substantive lines'); sys.exit(1)
+      print('OK')
+      "
+
+  - id: f2p_page_usage
+    kind: F2P
+    weight: 0.20
+    description: "≥6 dashboard pages use <ChartCard> component"
+    command: |
+      python3 -c "
+      import os, re, sys
+      pages_dir = '/workspace/rudel/apps/web/src/pages/dashboard'
+      pages_with = []
+      for fname in sorted(os.listdir(pages_dir)):
+          if not fname.endswith('.tsx'): continue
+          content = open(os.path.join(pages_dir, fname)).read()
+          if re.search(r'<ChartCard\b', content):
+              pages_with.append(fname)
+      if len(pages_with) < 6:
+          print(f'FAILED: only {len(pages_with)} pages (<ChartCard): {pages_with}'); sys.exit(1)
+      print(f'OK: {len(pages_with)} pages')
+      "
+
+  - id: f2p_toaster
+    kind: F2P
+    weight: 0.20
+    description: "DashboardLayout renders <Toaster /> from sonner"
+    command: |
+      python3 -c "
+      import os, re, sys
+      path = '/workspace/rudel/apps/web/src/layouts/DashboardLayout.tsx'
+      if not os.path.exists(path): print('MISSING'); sys.exit(1)
+      content = open(path).read()
+      if 'sonner' not in content: print('MISSING: sonner import'); sys.exit(1)
+      if not re.search(r'<Toaster\b', content): print('MISSING: <Toaster'); sys.exit(1)
+      print('OK')
+      "
+
+  # --- P2P Regression Gates (zero on fail) ---
+
+  - id: p2p_analyticscard_kept
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "AnalyticsCard.tsx must still exist (used by StatCard/non-chart cards)"
+    command: "test -f /workspace/rudel/apps/web/src/components/analytics/AnalyticsCard.tsx"
+
+  - id: p2p_valid_pkg_json
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "package.json remains valid JSON"
+    command: "python3 -c \"import json; json.load(open('/workspace/rudel/apps/web/package.json')); print('OK')\""

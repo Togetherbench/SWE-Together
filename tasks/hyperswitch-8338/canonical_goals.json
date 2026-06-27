@@ -1,0 +1,41 @@
+{
+  "task_name": "hyperswitch-8338",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine source-code implementation of the requested multi-level auth-analytics refactor, not a scoring artifact. It must add real, compilable Rust changes to the analytics and router crates that a reviewer can read as the feature. It is NOT satisfied by: an empty or near-empty diff (e.g. a captured-tree header or directory-listing artifact with no hunks, like a patch that only emits a path banner yet is recorded with a passing reward); changes that exist only in a throwaway/temp directory, an unmerged branch, or a stash the verifier never inspects; git-state manipulation used to fake a result (e.g. `git checkout main`, `git reset --hard origin/...`, reverting to a pre-baked tree); or comment-only, whitespace-only, or renamed-but-unwired code. New endpoint handlers and trait/signature changes must be actually wired into the route table and call graph, not dead code.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against the opus46 cohort patch in model_patches/ which is 21 bytes (only the banner `=== hyperswitch/ ===`, zero hunks) yet carries reward 0.718 in its filename — a textbook empty-diff false positive. Also guards the git-ops exfiltration / temp-dir patterns documented project-wide. No user-source needed."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Auth-events analytics endpoints are exposed at organization and profile access levels in addition to the existing merchant level, so that an org-scoped and a profile-scoped caller can each request auth-event metrics on their own route. New route registrations for the auth-events metrics resource must be added under the org and profile API scopes and bound to handlers that actually execute the analytics query path. Not satisfied by: registering only the merchant route; adding a route that returns a hardcoded/stubbed/empty response or an unimplemented error; a handler that ignores the access level; or a route declared but never mounted in the scope tree.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "traces to: instruction.md \"Exposed the auth analytics under profile, merchant and org levels\" / \"Expose different endpoints for auth analytics sankey\", reinforced by the verbatim curls hitting `/analytics/v1/org/metrics/auth_events` and `/analytics/v1/profile/metrics/auth_events`. golden+model-patch evidence: org and profile metrics handlers are added and mounted under their scopes; all 3 non-empty model patches independently add org/profile metrics handlers. Behavior stated without oracle symbols."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The underlying auth-events query layer is generalized from a merchant-only filter to a level-aware scoping value, so that org-, merchant-, and profile-level requests each constrain results to the correct slice of data. The metric-loading and dimension-filter code paths must accept and apply a scope descriptor that can represent org/merchant/profile scope (rather than hardcoding a single merchant-id filter clause), and the per-metric implementations must apply that scope to their query instead of the old merchant-id-only clause. Not satisfied by: leaving the merchant-id-only filter in place while only adding routes; threading a scope value through the signatures but never applying it to the query (parsed-but-ignored); or applying it in only one metric while the rest still filter by merchant-id, such that org/profile callers would receive merchant-scoped data.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "traces to: instruction.md \"refactor auth analytics to support profile,org and merchant level auth\" — exposing org/profile endpoints is only correct if the query actually scopes by level. golden+model-patch evidence: the metric trait + per-metric impls + dimension filter switch from a merchant-id filter clause to a level-aware auth scope applied to the query builder; all 3 non-empty patches migrate the metric impls (verifier counts >=6 migrated). Described behaviorally; AuthInfo/set_filter_clause not named in goal text."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The auth-events sankey endpoint is also exposed at all three levels (org, merchant, profile), matching the metrics exposure, since the request explicitly calls out the sankey flow. Sankey route registrations must exist for the org and profile scopes and route to handlers that run the sankey computation with the correct level scope. Not satisfied by: exposing the metrics endpoints but omitting sankey at org/profile; or sankey handlers that return stubbed/empty data or ignore the access level.",
+      "tier": "core",
+      "weight": 0.24,
+      "rationale": "traces to: instruction.md \"Expose different endpoints for auth analytics sankey\" plus the three verbatim curls to `/{org,merchant,profile}/metrics/auth_events/sankey`. golden+model-patch evidence: golden adds get_org/profile_auth_event_sankey handlers + routes; glm51 model patch independently adds org/profile sankey handlers. Behavioral, no oracle symbols."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Each level's endpoints derive their scope from the authenticated caller and enforce the appropriate access boundary for that level, so an org-level route is authorized/scoped at org granularity, profile-level at profile granularity, and merchant-level at merchant granularity — the scope is taken from the caller's identity, not from attacker-controllable request body fields. Not satisfied by: every level collapsing to the same (e.g. merchant) scope; reading the scoping ids from the request payload instead of the authenticated context; or omitting access control so a lower-privileged caller can query a broader level.",
+      "tier": "secondary",
+      "weight": 0.12,
+      "rationale": "traces to: instruction.md \"to support profile,org and merchant level auth\" — the word \"auth\" makes per-level authorization/scoping part of the ask, not just URL shape. golden+model-patch evidence: handlers build the scope from the authenticated merchant_account/org/profile identity and gate each route with the level-appropriate analytics-read permission; model patches use distinct org/profile/merchant permission scopes. Behavioral; permission/AuthInfo identifiers not named in goal text."
+    }
+  ],
+  "decomposition_notes": "Single-turn task (user sim sends 0 follow-ups), so all weighted goals trace to the one Turn-0 instruction; multi-turn is covered by the fact that there are no later corrections to score (explicitly noted in user_simulation_prompt.md). Weights rank by end-to-end user value, NOT by F2P gate count: the F2P manifest splits ~0.6 across many small signature/per-file structural gates (trait sig, filters.rs, lib.rs, >=4 file count) plus 0.4 upstream (6-file migration + org/profile handler existence). I deliberately diverge: I fold all the signature-plumbing gates (trait, lib.rs, filters.rs, per-file counts) into one behavioral goal_2 'query layer is level-aware and actually applies the scope', because to the user those are one outcome (correct scoping), and weight it 0.30 rather than the verifier's fragmented ~0.35. The user's headline ask is exposure of the new org/profile endpoints, so goal_1 (metrics endpoints) is the largest at 0.34 even though the verifier spends more raw weight on the migration internals. Sankey (goal_3, 0.24) is its own core goal because the instruction names sankey explicitly and lists sankey curls — the verifier under-weights it. goal_4 (per-level auth scoping from authenticated identity, 0.12) is secondary and partly beyond what the structural verifier checks, but it is the security-correctness intent behind the word 'auth' and catches a route-shape-only solution that leaks cross-level data; it is intentionally not 1:1 with any F2P gate. core:secondary ratio is ~7:1 here (deviating from 4:1) because three of the four substantive goals are genuinely core/end-to-end and only the authorization-boundary nuance is secondary. No polish goal: cargo fmt/clippy and tests are process items excluded per spec. Weighted goals sum to 0.34+0.30+0.24+0.12 = 1.00."
+}

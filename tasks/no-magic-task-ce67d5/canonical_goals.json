@@ -1,0 +1,111 @@
+{
+  "task_name": "no-magic-task-ce67d5",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Do not stub, fake, or hard-code the BPE behavior. The submitted script must perform genuine iterative pair-frequency counting and greedy merging over a real text corpus — distinct merge events must reflect the corpus's actual pair statistics, the sequence length must shrink across training, and round-trip results must be produced by a working encode/decode round trip rather than a precomputed mapping. Any evidence that the round-trip / compression / progress signals were produced by literal constants, hard-coded mappings, or skipped training loops zeroes this goal.",
+      "tier": "core",
+      "weight": 0.17,
+      "rationale": "Anti-effort guardrail. Justified by structural risk: BPE is one of the most-memorized algorithms in pretraining data and the verifier surface (string matching on stdout) is trivially gameable. Without this goal, a model that prints fake '[PASS]' lines, a hard-coded 'ratio: 2.01x', and 8 synthetic 'merge N/M' lines could max out the rubric. Anchored to USER asks U_BPE_ALGO + U_ROUNDTRIP + U_COMPRESSION + U_TRAINING_PROGRESS — not an oracle-only constraint; the user explicitly described the algorithm to be implemented.",
+      "covers_user_asks": [
+        "U_BPE_ALGO",
+        "U_ROUNDTRIP",
+        "U_COMPRESSION",
+        "U_TRAINING_PROGRESS"
+      ]
+    },
+    {
+      "id": "goal_1",
+      "goal": "Deliver a self-contained Python script at 01-foundations/microtokenizer.py (the path the user named in the spec) with valid Python syntax that executes to completion without raising an unhandled exception and within a reasonable runtime budget (a couple of minutes on a small corpus). Any reasonable code organization is acceptable for THIS goal — one large function, several short functions, or a class-based decomposition all satisfy this script-executes contract; the user's specific function names are scored separately in goal_8.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Headline deliverable. Combines U_FILE_PATH + U_RUNS_CLEAN into a single behavioral contract: a working script at the named location. Deliberately decoupled from the oracle's specific function decomposition and the spec's 180-200 line cosmetic target. The 'reasonable runtime' phrasing tracks U_RUNS_CLEAN's <2 min budget without binding to the oracle's 12s.",
+      "covers_user_asks": [
+        "U_FILE_PATH",
+        "U_RUNS_CLEAN"
+      ]
+    },
+    {
+      "id": "goal_2",
+      "goal": "Implement encode and decode (under any name or as part of any structure) such that decode(encode(text)) == text holds for a diverse set of inputs covering at least: a common short alphabetic string, a string with internal punctuation or a hyphen, a string with an apostrophe, an empty string, and a single-character string (5+ distinct categories, 6+ total cases). All reported cases must pass. The user explicitly dictated the per-case status format in instruction.md (L93 'each shows [PASS/FAIL]' and L135 'All round-trip tests print [PASS]'): the script MUST report per-case status using the literal bracketed tokens '[PASS]' (and '[FAIL]' on failure) — the brackets are part of the user-named format. Alternative renderings such as bare 'PASS'/'FAIL' labels, checkmarks, X marks, emoji, or coloured-only output do NOT satisfy this goal; they were never named by the user. Test-input contents are described by category (not by oracle-specific strings) to avoid oracle-memorization advantage, but the output format token IS pinned because the user pinned it.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Fundamental correctness property of BPE — round-trip identity is the ground-truth behavioral test for tokenization. Tracks U_ROUNDTRIP. Per the structured_output_pinned_when_user_did bar, '[PASS/FAIL]' is a USER-dictated literal (instruction.md L93,L135) and must be scored as written, not generalized to 'checkmarks or equivalents'. Previously phrased format-tolerantly under the assumption '[PASS]' was an oracle quirk; gemini-3.1-pro-preview audit (2026-06-06) flagged this as over-correction — narrow-test critique from SWE-bench Verified applies to ORACLE identifiers, not USER-dictated output format. Test-input contents (the test_strings list) remain described by category to preserve the anti-memorization guarantee on a separate axis.",
+      "covers_user_asks": [
+        "U_ROUNDTRIP"
+      ]
+    },
+    {
+      "id": "goal_3",
+      "goal": "Train BPE merge rules on a real natural-language text corpus and achieve a compression ratio of at least 1.5x (original byte count divided by final token count >= 1.5). The script must report this ratio in clearly parseable output: any labeled numeric form is acceptable (e.g. 'ratio: 2.01x', 'Compression: 2.01x', 'compression_ratio = 2.01', 'BPE compression 2.0x', etc.) — the exact literal is not scored.",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "Proves the training loop discovers compressible structure rather than just running. Tracks U_COMPRESSION. Format intentionally broad to avoid the verifier's narrow 'ratio:\\s*<float>x' literal, which the canonical audit flagged as penalizing perfectly correct alternatives.",
+      "covers_user_asks": [
+        "U_COMPRESSION"
+      ]
+    },
+    {
+      "id": "goal_4",
+      "goal": "Demonstrate that the training loop ran a meaningful number of merge iterations by emitting periodic progress lines during training. The user explicitly enumerated the required progress fields in instruction.md L69 verbatim: 'Print progress every 32 steps: merge index, pair, frequency, sequence length'. Each periodic progress line MUST include all four user-named fields: (1) merge index, (2) pair (the pair being merged), (3) frequency (count of that pair), and (4) sequence length (current token sequence length after merge). Any reasonable line-formatting/separator choice is acceptable (e.g. 'merge 32/256 pair=(101,32) freq=4123 seqlen=98412' or comma/colon/tab variants), but a progress line missing one or more of the four user-named fields does NOT satisfy this goal. A bare tqdm progress bar, or progress lines that only report 'step K/N' without the pair/frequency/seqlen fields, fail this goal. Cadence: at least 8 such fully-fielded progress lines during training (instruction L69 says every 32 steps over 256 merges => 8 lines).",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Tracks U_TRAINING_PROGRESS. Per the structured_output_pinned_when_user_did bar, the user-named field set 'merge index, pair, frequency, sequence length' is a USER-dictated structured output (instruction.md L69) and must be scored as written. Previously broadened to 'tqdm bar OR final summary OR any progress format' under format-tolerance reasoning; gemini-3.1-pro-preview audit (2026-06-06) flagged this as under-pinning a literal user spec. Per-line separator format remains unscored (the user named the fields, not their layout); the field set itself is now pinned.",
+      "covers_user_asks": [
+        "U_TRAINING_PROGRESS"
+      ]
+    },
+    {
+      "id": "goal_5",
+      "goal": "Use only Python standard library modules. No pip-installed or third-party imports may appear in the script (typical stdlib modules such as os, math, random, collections, urllib, itertools, functools, re, typing, pathlib, etc. are all acceptable).",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Constraint stated by the user. Tracks U_STDLIB. Unambiguous and implementation-agnostic.",
+      "covers_user_asks": [
+        "U_STDLIB"
+      ]
+    },
+    {
+      "id": "goal_6",
+      "goal": "Train on a real natural-language corpus the user pointed at (the makemore names dataset) or an equivalent locally cached copy with comparable scale and statistical structure. Synthetic strings, repeated tokens, or trivially compressible filler chosen to game the ratio do not satisfy this.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Anti-gaming companion to goal_0 and goal_3. Without it, training on 'aaaaa...' would trivially yield high compression. Tracks U_CORPUS. The exact URL and filename are not scored — an offline-equivalent natural-text corpus of similar shape is acceptable, since the user's intent is 'real text', not 'this specific HTTP endpoint'.",
+      "covers_user_asks": [
+        "U_CORPUS"
+      ]
+    },
+    {
+      "id": "goal_7",
+      "goal": "If the agent observes the user's follow-up commit request (a single short message such as 'commit this'), it commits only the work product (the script it just wrote), avoiding sweeping in unrelated pre-existing repo modifications, and reports the commit succeeded. If the agent never reaches the commit phase because earlier goals failed, this goal is not blocked-on but also not awarded.",
+      "tier": "secondary",
+      "weight": 0.03,
+      "rationale": "Tracks the user's Turn-2 ask U_COMMIT. Weighted low because: (a) it depends on reaching a working-script state first; (b) the commit phase is a workflow step, not the substantive BPE deliverable; (c) per user_simulation_prompt.md, the user sends 'commit this' ONLY after the agent has demonstrated success — so this goal also indirectly signals end-to-end task success.",
+      "covers_user_asks": [
+        "U_COMMIT"
+      ]
+    },
+    {
+      "id": "goal_8",
+      "goal": "Honor the user's explicit Functions Summary table (instruction.md L107-114), which dictates 7 specific function names and their signatures: load_data(url, filename) -> bytes; get_pair_counts(token_ids) -> Counter; apply_merge(token_ids, pair, new_id) -> list[int]; train_bpe(token_ids, num_merges) -> ordered merge table; build_vocab(merges) -> dict[int, bytes]; encode(text, merges) -> list[int]; decode(token_ids, vocab) -> str. Credit is partial and proportional: a submission that defines at least 5 of the 7 named callables with reasonably matching argument arity earns this goal; defining all 7 with matching signatures earns it fully; defining 0-4 fails it. A single-function or class-based decomposition that ignores the user's explicit table does NOT satisfy this goal, even if behaviorally correct. Exact return-type annotations and parameter names are not scored — only function names and approximate signature shape.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "The user dictated a 7-row Functions Summary table with explicit names and signatures (instruction.md L107-114). Per the structured_output_pinned_when_user_did bar, when the user pins structured output the rubric must score it. v3 originally placed this in user_asks_not_scored citing the SWE-bench Verified narrow-test critique — but that critique applies to ORACLE-derived identifier scoring, not to USER-dictated identifier scoring. The user explicitly wrote the table in their own prompt, so following it is following the spec, not memorizing the oracle. Weighted moderately (0.07): meaningful enough to reward spec adherence without dominating behavioral correctness.",
+      "covers_user_asks": [
+        "U_EXACT_FUNCTION_NAMES"
+      ]
+    },
+    {
+      "id": "goal_floor",
+      "goal": "SYSTEM-LEVEL ANTI-EFFORT FLOOR (zero-weight gate that zeroes the entire rubric score). The submission must represent genuine implementation work performed in the agent's working tree. If any of the following are observed, the ENTIRE rubric score is set to 0.0 regardless of any other goal's verdict: (a) the agent produced a zero-edit or empty patch (no real file was written at 01-foundations/microtokenizer.py); (b) the agent exfiltrated, copied, or `git checkout`'d a reference implementation from another branch, another repo, or a cached/oracle source rather than authoring it; (c) the script at the target path is a thin wrapper that shells out to, imports from, or fetches from an external location to obtain the BPE behavior; (d) the script's body is a hard-coded transcript of pre-recorded stdout designed to satisfy string-matching gates without performing the algorithm. This is a binary kill-switch, not a scored goal — it carries weight 0.0 and contributes nothing to the positive score, but a confirmed violation zeroes the total.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "True system-level anti-effort floor distinct from goal_0's task-specific anti-stub (which only zeroes its own 0.18 weight). Per the v3 anti_effort_floor bar: a rubric needs a hard zero on the TOTAL score for cheats like git-ops exfiltration, empty-patch submissions, and stdout fabrication — independent of how well the surface output satisfies behavioral goals. Without this, a hardcoded transcript that prints fake '[PASS]' lines and a fake ratio could still earn up to ~0.82 from goals 1-7. Anchored to U_BPE_ALGO (real algorithm) + U_FILE_PATH (real authored file). Weight 0.0 so it does not perturb the positive-score budget; its only effect is the kill-switch zero on confirmed violations.",
+      "covers_user_asks": [
+        "U_BPE_ALGO",
+        "U_FILE_PATH"
+      ]
+    }
+  ],
+  "decomposition_notes": "10 goals total: 1 task-specific anti-stub (goal_0) + 3 cores (goal_1/2/3) + 5 secondaries (goal_4/5/6/7/8) + 1 system-level anti-effort floor (goal_floor at weight 0.0, kill-switch). Positive weights sum to 1.00 across goal_0..goal_8; goal_floor carries no positive weight and only zeroes the total on violation. Cores cluster at 0.16-0.20 each, secondaries at 0.03-0.07 each. Anti-effort goal_0 is the in-rubric defense against BPE memorization + stdout-string verifier surface; goal_floor is the orthogonal defense against system-level cheats (exfiltration, fabrication) that goal_0's 0.17 weight cannot fully neutralize. Each goal carries an explicit covers_user_asks list mapping it back to indexed user asks in _provenance.user_asks_indexed; coverage is complete (all 10 indexed asks covered by at least one goal). Goal_8 scores the user-dictated Functions Summary table — this is USER spec adherence, not oracle-identifier scoring. Other oracle-only details (line counts, comment density, exact print-format literals, test-string contents, example word choices) remain intentionally NOT scored, per the no-oracle-identifiers bar."
+}

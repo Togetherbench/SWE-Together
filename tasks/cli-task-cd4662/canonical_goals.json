@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-cd4662",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine source-code change that actually alters how checkpoint IDs are computed for consecutive commits, not a gaming artifact. It is NOT satisfied by: a zero-edit or empty diff; a diff whose only content is a captured working-tree banner (e.g. a '=== repo/ ===' tree dump) or other non-code padding; git-operations exfiltration that fakes a result (e.g. 'git checkout main', 'git reset --hard origin/...'); a comment-only or whitespace-only change; changes confined to temporary, scratch, or unmerged locations; or deletion/disabling of existing tests to force a green run. The duplicate-ID behavior must be addressed in the real commit-message preparation logic.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor to reject non-solutions. No model patches were available to calibrate against (evidence_tier=golden_only), so the bad patterns are the standard zero-edit / captured-tree / git-ops / comment-only / test-deletion set. The user explicitly wanted a real fix to a real bug: 'two manual commits after each other had the same checkpoint id ... this shouldn't be a thing, right?' (Turn 0)."
+    },
+    {
+      "id": "goal_consecutive_unique_ids",
+      "goal": "After the change, two manual commits made one after another within the same active CLI session each receive a distinct checkpoint identifier, instead of sharing the same identifier. The fix must take effect in the real commit-message preparation flow exercised by the git hook; it is NOT satisfied by hardcoding a particular ID value, by a stub that always returns a constant or 'unique-looking' literal, by a parsed-but-ignored flag, or by commented-out code. Behaviorally-equivalent solutions are acceptable regardless of how uniqueness is achieved (e.g. always deriving a fresh identifier for new commit content rather than carrying over an identifier left over from a prior commit's post-commit processing).",
+      "tier": "core",
+      "weight": 0.55,
+      "rationale": "This is the central user ask: 'when using the cli I just noticed an issue that two manual commits after each other had the same checkpoint id, can you check how this can happen, this shouldn't be a thing' (Turn 0), confirmed 'yes' (Turn 1). The whole task exists to make consecutive commits get unique checkpoint IDs."
+    },
+    {
+      "id": "goal_no_stale_id_reuse",
+      "goal": "The fix eliminates the actual root cause: an identifier left over from a previous commit's post-commit / deferred condensation step must no longer be reused as the checkpoint identifier when preparing a new commit that has fresh content. Whether achieved by modifying the preparation paths (both the interactive editor path and the non-interactive / agent-driven path) to ignore the stale identifier, or by clearing the leftover pending identifier from the session state once it has been consumed, the system must no longer carry over a stale prior identifier into a new commit and must instead produce an identifier appropriate to the new commit. All commit paths that could exhibit the duplicate-ID symptom must be covered, not just one. This must be a real logic change, not a comment, a no-op guard, or a value parsed but still unused.",
+      "tier": "core",
+      "weight": 0.27,
+      "rationale": "Turn 1 'yes' confirmed the agent's root-cause analysis that a pending identifier from a prior commit was being reused. The user wanted the cause fixed, not the symptom masked. The golden patch removes the stale-ID reuse in BOTH the new-content path and the agent-commit path, so a correct fix must cover all such paths, not just one."
+    },
+    {
+      "id": "goal_preserve_hook_rerun_idempotency",
+      "goal": "Legitimate idempotency for repeated hook invocations on the SAME commit is preserved: re-running the commit-message preparation on a commit that already carries a checkpoint trailer must not append a second or different identifier (the existing identifier on that commit is left intact). In other words, the change must distinguish 'a brand-new commit' (which gets its own fresh identifier) from 're-processing one already-prepared commit' (which keeps its existing identifier) — it must not regress this behavior while fixing the duplicate-ID bug. This must be achieved through genuine logic (such as checking whether the commit already carries a checkpoint trailer), not by a stub, a hardcoded return value, a parsed-but-ignored flag, or commented-out code.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "The golden patch and its comments make explicit that re-run idempotency moves to the trailer-existence check ('Idempotency for hook re-runs is handled by the trailer existence check above'). A naive fix that always regenerates could break re-run behavior; the manifest's amend/strategy regression gates (TestPrepareCommitMsg_Amend, strategy package) exist to guard this. Maps to the user trusting the agent to fix without introducing regressions (Turn 1 'yes')."
+    },
+    {
+      "id": "goal_regression_test_added",
+      "goal": "An automated test is added (or an existing test is repurposed) that asserts the user-visible fixed behavior: consecutive commits in an active session produce distinct checkpoint identifiers, so the test fails on the old buggy behavior and passes on the fix. The test must genuinely exercise the commit-preparation flow and assert non-equality of the two identifiers (or equivalent uniqueness assertion); it must not be a vacuous always-pass test, must not assert on implementation-internal details (which the user questioned as something that maybe \"shouldn't be there\" and agreed to avoid in favor of testing the scenario), and must not be satisfied by deleting/weakening prior tests.",
+      "tier": "important",
+      "weight": 0.08,
+      "rationale": "Turns 2-3 are explicit follow-ups: 'is it worth to add new tests for this? that make the intent clear?' and 'we should definetly have one testing the scenario and making sure it's fixed ... let's check existing tests, I hope there isn't one since it should have failed'. The user wanted a regression test capturing the SCENARIO (unique IDs across consecutive commits), not implementation internals."
+    }
+  ],
+  "decomposition_notes": "Turn 0 (the verbatim instruction) drives the two core goals: consecutive commits must get unique checkpoint IDs (goal_consecutive_unique_ids) and the real root cause — reusing a stale pending identifier from a prior commit's post-commit step — must be removed across all preparation paths (goal_no_stale_id_reuse). Turn 1 ('yes') confirms the root-cause analysis. The golden patch touches two functions (the new-content path and the agent-commit path) but I deliberately describe this behaviorally ('every code path that prepares a checkpoint identifier for a new commit') rather than naming PrepareCommitMsg / addTrailerForAgentCommit / PendingCheckpointID, since the user never named them and a behaviorally-equivalent fix in different structure must pass. goal_preserve_hook_rerun_idempotency captures the non-regression constraint the golden patch is careful about (trailer-existence check replaces stale-ID reuse for re-run idempotency) and is backed by the manifest's amend/strategy regression gates. goal_regression_test_added traces to Turns 2-3 where the user explicitly asks about adding a test for the scenario and checking that no existing test already covered it. Weights rank by user-importance (the bug fix dominates at 0.82 across the two core goals; idempotency-preservation and the test are smaller but explicitly requested follow-ups), and are intentionally NOT a 1:1 mirror of the manifest F2P weights (which spread evenly across structural PendingCheckpointID checks). Anti-gaming floor (goal_0, weight 0) flags stub/no-op/captured-tree/git-ops/comment-only/test-deletion artifacts."
+}

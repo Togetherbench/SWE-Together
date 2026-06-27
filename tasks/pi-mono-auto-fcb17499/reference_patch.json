@@ -1,0 +1,73 @@
+{
+  "session_id": "fcb17499-fc42-4271-8505-b67d25b41b98",
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "badlogic/pi-mono",
+  "is_agent_author": true,
+  "files_changed_count": 6,
+  "total_additions": 41,
+  "total_deletions": 2,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tpackages/coding-agent/CHANGELOG.md\nM\tpackages/coding-agent/README.md\nM\tpackages/coding-agent/src/core/settings-manager.ts\nM\tpackages/coding-agent/src/modes/interactive/components/settings-selector.ts\nM\tpackages/coding-agent/src/modes/interactive/interactive-mode.ts\nM\tpackages/tui/README.md\n",
+  "numstat": [
+    "1\t0\tpackages/coding-agent/CHANGELOG.md",
+    "1\t0\tpackages/coding-agent/README.md",
+    "10\t0\tpackages/coding-agent/src/core/settings-manager.ts",
+    "15\t0\tpackages/coding-agent/src/modes/interactive/components/settings-selector.ts",
+    "7\t1\tpackages/coding-agent/src/modes/interactive/interactive-mode.ts",
+    "7\t1\tpackages/tui/README.md"
+  ],
+  "patch": "diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md\nindex 2b36e18..78e833a 100644\n--- a/packages/coding-agent/CHANGELOG.md\n+++ b/packages/coding-agent/CHANGELOG.md\n@@ -4,6 +4,7 @@\n \n ### Added\n \n+- Added `editorPaddingX` setting for horizontal padding in input editor (0-3, default: 0)\n - Added `shellCommandPrefix` setting to prepend commands to every bash execution, enabling alias expansion in non-interactive shells (e.g., `\"shellCommandPrefix\": \"shopt -s expand_aliases\"`) ([#790](https://github.com/badlogic/pi-mono/pull/790) by [@richardgill](https://github.com/richardgill))\n - Added bash-style argument slicing for prompt templates ([#770](https://github.com/badlogic/pi-mono/pull/770) by [@airtonix](https://github.com/airtonix))\n - Extension commands can provide argument auto-completions via `getArgumentCompletions` in `pi.registerCommand()` ([#775](https://github.com/badlogic/pi-mono/pull/775) by [@ribelo](https://github.com/ribelo))\ndiff --git a/packages/coding-agent/README.md b/packages/coding-agent/README.md\nindex 7ffa9f4..7bfbaf4 100644\n--- a/packages/coding-agent/README.md\n+++ b/packages/coding-agent/README.md\n@@ -804,6 +804,7 @@ Global `~/.pi/agent/settings.json` stores persistent preferences:\n | `images.autoResize` | Auto-resize images to 2000x2000 max for better model compatibility | `true` |\n | `images.blockImages` | Prevent images from being sent to LLM providers | `false` |\n | `doubleEscapeAction` | Action for double-escape with empty editor: `tree` or `branch` | `tree` |\n+| `editorPaddingX` | Horizontal padding for input editor (0-3) | `0` |\n | `extensions` | Additional extension file paths | `[]` |\n \n ---\ndiff --git a/packages/coding-agent/src/core/settings-manager.ts b/packages/coding-agent/src/core/settings-manager.ts\nindex 773a380..cc247c1 100644\n--- a/packages/coding-agent/src/core/settings-manager.ts\n+++ b/packages/coding-agent/src/core/settings-manager.ts\n@@ -70,6 +70,7 @@ export interface Settings {\n \tenabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)\n \tdoubleEscapeAction?: \"fork\" | \"tree\"; // Action for double-escape with empty editor (default: \"tree\")\n \tthinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels\n+\teditorPaddingX?: number; // Horizontal padding for input editor (default: 0)\n }\n \n /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */\n@@ -480,4 +481,13 @@ export class SettingsManager {\n \t\tthis.globalSettings.doubleEscapeAction = action;\n \t\tthis.save();\n \t}\n+\n+\tgetEditorPaddingX(): number {\n+\t\treturn this.settings.editorPaddingX ?? 0;\n+\t}\n+\n+\tsetEditorPaddingX(padding: number): void {\n+\t\tthis.globalSettings.editorPaddingX = Math.max(0, Math.min(3, Math.floor(padding)));\n+\t\tthis.save();\n+\t}\n }\ndiff --git a/packages/coding-agent/src/modes/interactive/components/settings-selector.ts b/packages/coding-agent/src/modes/interactive/components/settings-selector.ts\nindex e27eef4..2ac563e 100644\n--- a/packages/coding-agent/src/modes/interactive/components/settings-selector.ts\n+++ b/packages/coding-agent/src/modes/interactive/components/settings-selector.ts\n@@ -36,6 +36,7 @@ export interface SettingsConfig {\n \thideThinkingBlock: boolean;\n \tcollapseChangelog: boolean;\n \tdoubleEscapeAction: \"fork\" | \"tree\";\n+\teditorPaddingX: number;\n }\n \n export interface SettingsCallbacks {\n@@ -52,6 +53,7 @@ export interface SettingsCallbacks {\n \tonHideThinkingBlockChange: (hidden: boolean) => void;\n \tonCollapseChangelogChange: (collapsed: boolean) => void;\n \tonDoubleEscapeActionChange: (action: \"fork\" | \"tree\") => void;\n+\tonEditorPaddingXChange: (padding: number) => void;\n \tonCancel: () => void;\n }\n \n@@ -267,6 +269,16 @@ export class SettingsSelectorComponent extends Container {\n \t\t\tvalues: [\"true\", \"false\"],\n \t\t});\n \n+\t\t// Editor padding toggle (insert after skill-commands)\n+\t\tconst skillCommandsIndex = items.findIndex((item) => item.id === \"skill-commands\");\n+\t\titems.splice(skillCommandsIndex + 1, 0, {\n+\t\t\tid: \"editor-padding\",\n+\t\t\tlabel: \"Editor padding\",\n+\t\t\tdescription: \"Horizontal padding for input editor (0-3)\",\n+\t\t\tcurrentValue: String(config.editorPaddingX),\n+\t\t\tvalues: [\"0\", \"1\", \"2\", \"3\"],\n+\t\t});\n+\n \t\t// Add borders\n \t\tthis.addChild(new DynamicBorder());\n \n@@ -306,6 +318,9 @@ export class SettingsSelectorComponent extends Container {\n \t\t\t\t\tcase \"double-escape-action\":\n \t\t\t\t\t\tcallbacks.onDoubleEscapeActionChange(newValue as \"fork\" | \"tree\");\n \t\t\t\t\t\tbreak;\n+\t\t\t\t\tcase \"editor-padding\":\n+\t\t\t\t\t\tcallbacks.onEditorPaddingXChange(parseInt(newValue, 10));\n+\t\t\t\t\t\tbreak;\n \t\t\t\t}\n \t\t\t},\n \t\t\tcallbacks.onCancel,\ndiff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts\nindex 1758772..5012d90 100644\n--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts\n+++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts\n@@ -241,7 +241,8 @@ export class InteractiveMode {\n \t\tthis.statusContainer = new Container();\n \t\tthis.widgetContainer = new Container();\n \t\tthis.keybindings = KeybindingsManager.create();\n-\t\tthis.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings);\n+\t\tconst editorPaddingX = this.settingsManager.getEditorPaddingX();\n+\t\tthis.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, { paddingX: editorPaddingX });\n \t\tthis.editor = this.defaultEditor;\n \t\tthis.editorContainer = new Container();\n \t\tthis.editorContainer.addChild(this.editor as Component);\n@@ -2516,6 +2517,7 @@ export class InteractiveMode {\n \t\t\t\t\thideThinkingBlock: this.hideThinkingBlock,\n \t\t\t\t\tcollapseChangelog: this.settingsManager.getCollapseChangelog(),\n \t\t\t\t\tdoubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),\n+\t\t\t\t\teditorPaddingX: this.settingsManager.getEditorPaddingX(),\n \t\t\t\t},\n \t\t\t\t{\n \t\t\t\t\tonAutoCompactChange: (enabled) => {\n@@ -2583,6 +2585,10 @@ export class InteractiveMode {\n \t\t\t\t\tonDoubleEscapeActionChange: (action) => {\n \t\t\t\t\t\tthis.settingsManager.setDoubleEscapeAction(action);\n \t\t\t\t\t},\n+\t\t\t\t\tonEditorPaddingXChange: (padding) => {\n+\t\t\t\t\t\tthis.settingsManager.setEditorPaddingX(padding);\n+\t\t\t\t\t\tthis.defaultEditor.setPaddingX(padding);\n+\t\t\t\t\t},\n \t\t\t\t\tonCancel: () => {\n \t\t\t\t\t\tdone();\n \t\t\t\t\t\tthis.ui.requestRender();\ndiff --git a/packages/tui/README.md b/packages/tui/README.md\nindex 1bc9df4..f943250 100644\n--- a/packages/tui/README.md\n+++ b/packages/tui/README.md\n@@ -220,12 +220,18 @@ interface EditorTheme {\n   selectList: SelectListTheme;\n }\n \n-const editor = new Editor(tui, theme);  // tui is required for height-aware scrolling\n+interface EditorOptions {\n+  paddingX?: number;  // Horizontal padding (default: 0)\n+}\n+\n+const editor = new Editor(tui, theme, options?);  // tui is required for height-aware scrolling\n editor.onSubmit = (text) => console.log(text);\n editor.onChange = (text) => console.log(\"Changed:\", text);\n editor.disableSubmit = true; // Disable submit temporarily\n editor.setAutocompleteProvider(provider);\n editor.borderColor = (s) => chalk.blue(s); // Change border dynamically\n+editor.setPaddingX(1); // Update horizontal padding dynamically\n+editor.getPaddingX();  // Get current padding\n ```\n \n **Features:**\n",
+  "_source": "pi-mono",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "directional",
+  "_reconstruction_warnings": [
+    "op[20] edit: old text not found in packages/coding-agent/CHANGELOG.md",
+    "op[29] edit: old text not found in packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+    "op[31] edit: old text not found in packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+    "op[34] edit: old text not found in packages/coding-agent/CHANGELOG.md",
+    "op[80] edit: old text not found in packages/tui/src/components/editor.ts",
+    "op[89] edit: old text not found in packages/tui/CHANGELOG.md"
+  ],
+  "_base_commit": "5c59caee4e2906e467081cb7c48c212b77e59707",
+  "_repo_url": "https://github.com/badlogic/pi-mono",
+  "_task_name": "pi-mono-auto-fcb17499",
+  "_n_mutating_ops": 25,
+  "_fidelity_verified": true,
+  "_fidelity_verified_date": "2026-05-14",
+  "_verification_note": "Six warnings all of kind 'edit: old text not found' across CHANGELOG.md (x2), interactive-mode.ts (x2), editor.ts, and tui/CHANGELOG.md. 25 mutating ops on 6 files (mut/file=4.2, warn/mut=0.24) \u2014 within expected range for a multi-file iterative session where formatters ran between edits. No file-not-found warnings; all warnings target files that ARE in files_changed. Base 5c59cae resolves upstream.",
+  "_canonical_source_path": "data-pipeline/artifacts_pi-mono/canonical_patches/fcb17499-fc42-4271-8505-b67d25b41b98.json",
+  "_sync_note": "Auto-synced from canonical source by sync_reference_patches.py. Edit the source file (see _canonical_source_path), not this copy. Re-run sync_reference_patches.py after any source edit.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ag",
+    "date": "2026-05-14",
+    "note": "_fidelity=directional + _fidelity_verified=true (prior triage). Patches settings-manager/selector + interactive-mode + docs. Test also probes editor.ts as P2P regression guard (lives in repo base).",
+    "checks_passed": [
+      "schema",
+      "files_match_meta",
+      "test_alignment",
+      "fidelity_verified_prior"
+    ]
+  },
+  "_triple_check": {
+    "status": "AGREE",
+    "reviewer": "triple-check-set2",
+    "date": "2026-05-15",
+    "check_performed": "warnings formatter-noise (reviewer count slightly off)",
+    "evidence": "6 anchor warnings: 4 target files in canonical (CHANGELOG.md x2, interactive-mode.ts x2); 2 target files NOT in canonical (editor.ts, tui/CHANGELOG.md). 0 file_not_found.",
+    "note": "Reviewer claim \"all target files in canonical\" is INACCURATE \u2014 2 target dropped files. Overall directional fidelity sound but framing imprecise."
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ag",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "Diff coherent: 6 hdrs/+41/-2 match; 6 anchor warnings (4 on files in canonical, 2 on dropped files \u2014 formatter noise across multi-file session); fidelity_verified=true from prior triage."
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false,
+  "_re_extracted_round4": "rebased against actual sandbox HEAD via session replay (round-4) \u2014 FLAGGED",
+  "_re_extracted_round5": "rebased against task's declared _base_commit after THICK-child Dockerfile rewrite (round-5)",
+  "_canonical_anchor_commit": "5c59caee4e2906e467081cb7c48c212b77e59707"
+}

@@ -1,0 +1,57 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Existing per-turn F2P gates (scaled 0.6x to make room for upstream)
+  - id: f2p_locale_js_behavioral
+    kind: F2P
+    turn: 1
+    weight: 0.27
+    label: "locale.js behavioral getLanguage checks"
+    description: "8 sub-checks on getLanguage and dict keys in locale.js"
+  - id: f2p_rust_locale_normalization
+    kind: F2P
+    turn: 1
+    weight: 0.18
+    label: "Rust locale normalization"
+    description: "Checks ACCEPT_LANGUAGE .replace('_','-') in transformers.rs and hyphenated keys in context.rs"
+  - id: f2p_locale_js_dict_keys
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    label: "locale.js dict key migration"
+    description: "Dict keys are hyphenated, not underscored"
+  - id: f2p_getlanguage_hyphen
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    label: "getLanguage hyphen-based"
+    description: "getLanguage function uses hyphen-based key construction"
+  # Upstream F2P gates
+  - id: f2p_upstream_locale_js_getlang
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "Upstream: locale.js getLanguage behavioral"
+    description: "getLanguage returns hyphenated keys and dict uses hyphens"
+  - id: f2p_upstream_locale_js_roundtrip
+    kind: F2P
+    turn: null
+    weight: 0.20
+    label: "Upstream: locale.js getTranslations roundtrip"
+    description: "getTranslations('zh-hant') returns Traditional Chinese"
+  # Upstream P2P gates
+  - id: p2p_upstream_node_check_locale
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "Upstream: node --check locale.js"
+    description: "locale.js passes node syntax check"
+  - id: p2p_upstream_files_exist
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "Upstream: changed files exist"
+    description: "All 3 changed files exist (locale.js, context.rs, transformers.rs)"

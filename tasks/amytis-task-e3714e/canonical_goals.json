@@ -1,0 +1,90 @@
+{
+  "task_name": "amytis-task-e3714e",
+  "schema_version": "v3",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort / anti-gaming hard zero: the submitted cumulative diff (relative to the workspace's known starting state) must reflect a genuine attempt to fix the reported bug, NOT a degenerate submission. Zero out the entire score (multiplicative, not deducted) when ANY of the following hold: (a) the cumulative diff contains zero textual edits to TypeScript/TSX/JS source files under the application source tree (e.g., 0 lines added AND 0 lines removed across `*.ts`/`*.tsx` files outside the test tree) — a bug cannot be fixed without touching code; (b) the cumulative patch payload exceeds roughly 1 MB or contains predominantly binary/generated-asset content (e.g., dumped image-hash manifests, vendored node_modules, .next/ build artifacts, lockfile rewrites unrelated to a dependency change) — these are noise that defeats structural greps; (c) the working tree was reset such that the original user-reported buggy expression (the `in` operator applied to the customPaths object) is still present unchanged in every code site where it was originally located AND no functionally equivalent prototype-safe check has been introduced anywhere in the source tree — i.e., the agent appears to have reverted its own work or never made the fix; (d) the patch demonstrably breaks the existing pre-fix test suite by deleting or commenting out test files / test cases that were present in the starting workspace (a credit-grab where the agent disables failing tests rather than fixing the bug).",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Multiplicative guard against degenerate submissions. Clause (a) follows from the basic premise that a bug-fix requires code edits. Clause (b) catches the empirically observed failure mode in the candidate trial under review, whose `final.patch` is dominated by a wholesale rewrite of `public/next-image-export-optimizer-hashes.json` and other generated assets — noise that should not coast on incidental gate matches. Clause (c) catches checkout/reset gaming. Clause (d) is directly motivated by the user's Turns 5 and 6, where they explicitly flagged regressions ('bun test failed', 'test:int failed') — disabling those tests instead of fixing the underlying issue is the opposite of what the user asked for.",
+      "anti_gaming_clauses_provenance": [
+        "Turn 5 ('bun test test failed') and Turn 6 ('test:int failed') establish that breaking existing tests is unacceptable to the user."
+      ]
+    },
+    {
+      "id": "goal_1",
+      "goal": "Fix the headline reported bug: when the site is configured with `autoPaths: true` and `customPaths` empty (or otherwise not containing the series slug in question), series auto-routing must actually take effect. The fix must be prototype-safe — i.e., series slugs whose names happen to coincide with names inherited from the base Object prototype (e.g., `toString`, `constructor`, `hasOwnProperty`, `valueOf`) must not be silently filtered out of auto-path routing. Any prototype-safe own-property mechanism qualifies (e.g., `Object.hasOwn(obj, key)`, `Object.prototype.hasOwnProperty.call(obj, key)`, an explicit `Object.keys(obj).includes(key)` membership check, or any equivalent that does not walk the prototype chain). The fix must be applied everywhere the buggy pattern occurs in the codebase, not just at one of several call sites, so that the empty-customPaths branch is reachable from every routing entry point that participates in series resolution. The goal is behavioral parity (auto-paths routing functions correctly with empty customPaths and with prototype-named slugs), NOT a specific API or identifier — any approach that achieves prototype-safe own-property checking at every relevant site is fully accepted.",
+      "tier": "core",
+      "weight": 0.4287,
+      "user_provenance": [
+        {
+          "turn": 1,
+          "excerpt": "There is a bug in the series URL: if 'customPaths' is empty, the 'autoPaths: true' configuration doesn't seem to work."
+        }
+      ],
+      "rationale": "Turn 1 is the entire reason the session exists. The fix is behavioral (the empty-customPaths branch must be reachable for any slug, including prototype-named ones); the goal explicitly accepts any prototype-safe mechanism so models are not penalised for choosing `hasOwnProperty.call` over `Object.hasOwn`. The 'apply everywhere' clause prevents the gaming pattern of fixing one site and leaving the others broken — the user reported the symptom (autoPaths doesn't work) and a partial fix would not resolve the symptom."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Fix the secondary reported bug: when `autoPaths` is enabled and the site uses series-prefixed URLs, posts whose slugs contain non-ASCII characters (the user's example: Chinese characters) must not cause a build-time / static-params 'missing parameter' error under the `output: 'export'` Next.js configuration. The same posts under the non-series posts route already work, so the fix must specifically target the series-path code path. Any approach that makes the static-params generator emit the necessary slug forms for the dev/build environment is acceptable — the goal is that the user's Chinese-slug post pages render under the series path without the reported error, NOT a specific encoding scheme or environment gate.",
+      "tier": "core",
+      "weight": 0.2551,
+      "user_provenance": [
+        {
+          "turn": 2,
+          "excerpt": "If 'autoPaths' is set to true and we use the series path, the Chinese URL of the post breaks. The error states that the page is missing a parameter in generateStaticParams(), which is required for the 'output: export' config. Notably, Chinese URLs for posts in the /posts path work fine."
+        }
+      ],
+      "rationale": "Turn 2 is an explicit second bug report. The user diagnosed it precisely (missing param in generateStaticParams, output:export, series-path-specific). The fix surface and gating strategy (e.g., dev-vs-prod, percent-encoded variant emission, alternative static-params shape) is left open because the user did not prescribe one — any solution that resolves the symptom under their stated configuration counts."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Engage substantively with the external code-review feedback that the user repeatedly directed the agent to consult (CodeRabbit on PR #46), and FIX the issues the reviewer raised that the user explicitly endorsed as real and worth fixing. Concretely: when the user said 'OK, fix it', 'if test coverage is valuable, why not fix?', and 'if that are real bugs, and worth fix, I think we need take them seriously and fix them', the agent's resulting submission must contain code changes that materially address the reviewer's identified issues — not just a written summary, not just a written acknowledgement, and not a no-op. Acceptable evidence is that the submission diff touches the files / call sites the reviewer flagged (whatever those turn out to be in the actual review thread the agent fetched) and is consistent with the design principle the user added in their final turn (see goal_5). Crucially this goal does NOT require any specific bug to be fixed — it requires that the agent actually acted on review feedback the user endorsed rather than ignoring it.",
+      "tier": "secondary",
+      "weight": 0.1224,
+      "user_provenance": [
+        {
+          "turn": 8,
+          "excerpt": "OK, fix it."
+        },
+        {
+          "turn": 11,
+          "excerpt": "if test coverage is valuable, why not fix?"
+        },
+        {
+          "turn": 17,
+          "excerpt": "if that are real bugs, and worth fix, I think we need take them seriously and fix them"
+        }
+      ],
+      "rationale": "Three distinct user turns explicitly authorise / push for action on review feedback. A submission that summarised the review but produced no corresponding edits would be a clear miss against the user's stated intent. The goal stays content-agnostic about which specific bugs the reviewer raised because the reviewer's exact findings depend on the agent's PR state at review time and are not the user's own asks."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Add automated test coverage that exercises the headline bug-fix scenario(s). At minimum: a test case that demonstrates auto-path series routing works when customPaths is empty, AND a test case that demonstrates a series slug whose name coincides with a base-object prototype name (e.g., `toString`, `constructor`) is now routed correctly rather than silently excluded. Additional coverage of the Chinese / non-ASCII slug scenario from goal_2 is welcomed but not strictly required. The tests must be runnable in the project's existing test framework, must actually execute (not be `.skip()`'d or commented out), and must be assertions over observable behaviour — adding empty `test(...)` bodies or `expect(true).toBe(true)` placeholders does not count.",
+      "tier": "secondary",
+      "weight": 0.1224,
+      "user_provenance": [
+        {
+          "turn": 11,
+          "excerpt": "if test coverage is valuable, why not fix?"
+        }
+      ],
+      "rationale": "Turn 11 is an explicit, direct push for test coverage in response to the agent acknowledging it was missing. The goal pins the minimum scenarios to the two facets of the headline bug (empty-customPaths reachability + prototype-name safety) because those are the user's reported symptoms — any test that doesn't exercise the actual bug fails to discharge 'is test coverage valuable'. Anti-stub clauses prevent the obvious gaming pattern (write a passing test that asserts nothing)."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Honour the user's stated design principle that conflicts / inconsistencies in site configuration should surface as build-time failures rather than as runtime errors. Concretely, where the agent introduces or modifies validation logic (for example, around series slug / route reservation / customPaths key-vs-value collisions, or any other place where two configured names could collide), that validation should fail loudly during the static-params or build step — for example by throwing with a clear message at static-params generation time — rather than silently producing a broken route that only manifests when a visitor hits the URL. This goal does NOT require introducing new validation that wasn't otherwise warranted; it requires that whatever validation the agent does write follows the build-time-fail principle.",
+      "tier": "secondary",
+      "weight": 0.0714,
+      "user_provenance": [
+        {
+          "turn": 18,
+          "excerpt": "If there are conflicts, it is better to fail at build time than at runtime."
+        }
+      ],
+      "rationale": "Turn 18 is the final user message of the session and adds a substantive design constraint — not coverage, not a bug report, but a principle that should colour subsequent fixes. v2 did not capture this turn at all, which is a coverage gap. Weight is modest because the principle is conditional ('where validation is added, do it this way') rather than a freestanding deliverable."
+    }
+  ],
+  "decomposition_notes": "6 entries total: 1 anti-gaming guard (weight 0, multiplicative) + 2 cores (0.42, 0.25) + 3 secondaries (0.12, 0.12, 0.07). Substantive weights sum to 0.98 — the 0.02 headroom is intentional slack so the rubric does not pretend to certainty it does not have. Distribution rationale: goal_1 carries the largest weight because Turn 1 is the headline ask and the bug whose fix gates everything downstream. goal_2 is a clear second-priority Turn-2 deliverable. goal_3 (act on review feedback) and goal_4 (add tests) are weighted equally because both are direct, explicit user pushes during the review-engagement phase. goal_5 is lighter because it is a conditional principle rather than a freestanding deliverable. Weight distribution intentionally does NOT mirror the F2P test_manifest.yaml gates (g1=0.25, g2=0.20, g3=0.20, g4=0.10, g5=0.05 summing to 0.80 plus an informational P2P) — the rubric is a judge-side semantic check, not a re-skin of the syntactic gates. No oracle file paths, line numbers, helper-function names (e.g., resolveSeriesSlug, customPathValues, validateSeriesAutoPaths) or specific API choices (e.g., Object.hasOwn vs hasOwnProperty.call) appear in any goal — only the user-visible behaviour, the user-quoted bug descriptions, and the user-endorsed design principles. Anti-gaming clauses live inside goal_0 (degenerate-submission detection) and inside each substantive goal where a tempting cheap-credit move exists (goal_1: 'apply everywhere'; goal_3: 'edits must materially address review, not just acknowledge'; goal_4: 'tests must actually execute and assert real behaviour')."
+}

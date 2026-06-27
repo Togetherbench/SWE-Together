@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Minimal install for mini-swe-agent. Upstream Harbor is in mid-transition
+# from .j2 templates to inline `install()` methods; mini-swe-agent.py still
+# references this path via `_install_agent_template_path`, but the upstream
+# template file was removed. We carry this minimal stub locally until
+# upstream finishes the migration.
+set -euo pipefail
+
+{% if version %}
+PKG_SPEC="mini-swe-agent=={{ version }}"
+{% else %}
+PKG_SPEC="mini-swe-agent"
+{% endif %}
+
+# Prefer `uv tool install` everywhere — it puts mini-swe-agent in an
+# isolated env at ~/.local/share/uv/tools/<pkg>, sidestepping the
+# venv-vs-system Python distinction entirely. Critical for venv-activated
+# images (comfyui-dev, sd-scripts-dev): pip-installed mini-swe-agent inside
+# a venv hits a default-config-path resolution bug
+# (ValueError: PosixPath('.') has an empty name) and dies at CLI startup.
+# When uv is missing, install it (single curl, no system dep) instead of
+# falling back to pip — pip-into-venv is the broken path we are explicitly
+# avoiding.
+if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh -s -- --no-modify-path
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+uv tool install --force "$PKG_SPEC"
+# uv installs the CLI shim into ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
+
+# Ensure mini-swe-agent on PATH for the rest of the trial
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.local/bin/env" 2>/dev/null || true
+export PATH="$HOME/.local/bin:$PATH"
+# v2 dropped `--version` flag and `--help` exits non-zero under pipefail
+# when piped. Just verify the binary is on PATH.
+command -v mini-swe-agent

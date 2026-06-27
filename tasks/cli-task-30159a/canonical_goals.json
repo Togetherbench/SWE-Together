@@ -1,0 +1,54 @@
+{
+  "task_name": "cli-task-30159a",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Changes stay scoped to the user's stated concerns (deterministic update-command test + username false-positive guard). The diff must not add unrelated files outside the version-check package, perform drive-by formatter/import sweeps on untouched code, change dependency manifests, edit unrelated test files, or introduce speculative features the user did not ask for.",
+      "tier": "core",
+      "weight": 0.1,
+      "rationale": "Anti-effort guard. The user is directive and brief (target 3-5 simulator messages, two 'yes'/'yeah' confirmations); they expect surgical edits. Off-scope churn inflates the diff, risks regressions in adjacent code paths, and dilutes the multi-turn signal. Traces to the user's communication style across all 7 turns (no broadening requests issued).",
+      "anti_gaming_clause": "A no-op diff (empty patch) does NOT satisfy this goal — goal_0 requires the diff to *exist and be scoped*, not to be absent. A diff is in-scope only if goals 1 and/or 2 also pass. If both goals 1 and 2 fail (i.e. no real fix was performed) this goal also fails, regardless of how 'minimal' the diff is."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The update-command test is no longer dependent on whoever runs it: it must inject controlled input paths and assert the expected upgrade-command string per case, rather than calling the production function once and accepting any of several outcomes. The test must exercise at least four distinct, deterministic input cases that together cover the homebrew detection branch, the mise detection branch, an unknown-path fallback branch, and an executable-resolution-failure branch.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 headline ask, verbatim: 'TestUpdateCommand I feel this test is wrong because it tests against the local setup of who ever runs the tests, right?'. Turn 1 'yes' confirms the agent's proposed deterministic-table approach. The behavioral requirement is determinism + branch coverage; any Go test idiom that achieves it qualifies (table-driven with t.Run, separate Test* functions per branch, or subtests via t.Run with closures all count).",
+      "anti_gaming_clause": "Asserting that updateCommand() returns one of N hard-coded strings without controlling the input (i.e. the legacy pattern with extra strings added to the allow-list) does NOT count as 'deterministic' — the assertion must depend on a path or resolver value supplied by the test, not on the host filesystem. A test that calls the production function with no injected input fails this goal even if it has 10 t.Run cases."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Path-based install detection in the update-command logic is tightened so that a bare username segment containing the literal substring 'mise' or 'homebrew' does not trigger a false-positive detection. Specifically: a path of shape '/home/<user>/bin/<tool>' where <user> is 'mise' must be classified as the curl fallback (not as a mise install), and the same path with <user> = 'homebrew' must be classified as the curl fallback (not as a homebrew install). Genuine install layouts (paths under a homebrew Cellar directory, an /opt/homebrew prefix, a linuxbrew prefix, or a mise installs directory) must continue to be detected as their respective install method.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 4 verbatim: 'can we guard against the user name is \"mise\" not do anything, just let me know how we could do' (options request, deferred). Turn 5 verbatim: 'yeah let's do 1 for both mise homebrew' (implementation request, both managers). The behavioral requirement is the false-positive class disappears while real detection survives; the specific tightened-substring set is an implementation choice and not pinned here.",
+      "anti_gaming_clause": "Removing the homebrew/mise detection branches entirely (so every path falls back to curl) would satisfy the username cases but breaks the genuine-install cases — this goal requires BOTH the negative behavior (usernames fall back) AND the positive behavior (real install layouts still detected) to hold. A solution that returns the curl fallback unconditionally fails."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The update-command branching logic is testable without depending on the real filesystem or the actual location of the running binary. The mechanism is left open: a pure helper that takes the resolved path as a parameter, a package-level overridable function variable mirroring the standard-library executable lookup, a constructor/struct that takes the resolver as a dependency, or any equivalent injection pattern are all acceptable. Whatever mechanism is chosen must be the one exercised by the deterministic test required by goal_1.",
+      "tier": "secondary",
+      "weight": 0.15,
+      "rationale": "Enables goal_1. Turn 1 'yes' confirms the agent's *proposed* mechanism (an overridable variable), but the underlying user requirement — phrased back in Turn 0 as the test being independent of 'the local setup of who ever runs the tests' — is satisfied by any deterministic injection mechanism. Pinning the rubric to one specific symbol or design would penalize valid alternative refactors that achieve the same testability.",
+      "anti_gaming_clause": "Calling the existing production function exactly as before and just wrapping it with an extra layer that still resolves via the live executable lookup does NOT satisfy this goal — the test required by goal_1 must drive its assertions through the injected mechanism, not through the live OS path."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The deterministic test suite from goal_1 includes at least one explicit negative case that exercises the username-false-positive class introduced in goal_2: at least one case whose input path has 'mise' as a bare path segment (not as part of a real mise install directory) and asserts the curl-fallback outcome, AND at least one analogous case for 'homebrew'. Without these the path tightening in goal_2 is not regression-protected.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 4 (options) and Turn 5 (implement) jointly establish that the username false-positive class is the bug being fixed. A behavioral test that only exercises the positive (real-install) branches would silently allow a future loosening of the path patterns to reintroduce the bug. Phrased as 'at least one' per false-positive class — the rubric does not require the exact subtest names or count chosen by the oracle.",
+      "anti_gaming_clause": "A negative case whose input path is identical to a positive case (e.g. just renaming the subtest without changing the path) does not count — the input path must contain the literal 'mise' or 'homebrew' substring in a *username* position."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Other tests in the version-check package continue to pass — the change introduces no regressions in adjacent test files, the existing release-parser tests, the version-comparison tests, or the cache/notification tests.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Standard no-regression requirement. The session is framed as a bugfix on a single test; breaking previously-passing tests in the same package would undo the value of the fix. The user never authorized broader test churn.",
+      "anti_gaming_clause": "Skipping or deleting previously-passing tests to make this goal pass does NOT count — the goal is preservation of the existing behavioral coverage, not numeric green-ness."
+    }
+  ],
+  "decomposition_notes": "1 anti-effort + 2 cores + 3 secondaries. Weights: 0.10 + 0.30 + 0.30 + 0.15 + 0.10 + 0.05 = 1.00. Goal_0 is the scope-creep guard (penalizes drive-by edits and is itself anti-gamed against the empty-diff loophole). Goals 1 and 2 carry the two headline behavioral asks (deterministic test, username false-positive fix). Goal 3 is the enabling testability mechanism, phrased to accept multiple implementations (pure-helper extraction, overridable var, constructor injection). Goal 4 protects goal_2 with explicit negative cases. Goal 5 covers no-regressions. All goals are behavioral and implementation-agnostic — no oracle-specific identifiers, file names, function names, variable names, subtest names, or token sets are prescribed. These weights are rubric goal weights and are entirely independent of the F2P gate weights in test_manifest.yaml — the manifest gates are one operationalization of these goals, not their definition. Trials may pass the manifest gates while missing a goal (e.g. by hard-coding tokens the gate happens to match) or pass the goals while missing manifest gates (e.g. by choosing a pure-helper instead of an overridable var, as the seed trial __7s5ryqq did — that trial fails goal_3 under v1 phrasing but PASSES under v3 phrasing). The rubric is the source of truth; the gates are a proxy."
+}

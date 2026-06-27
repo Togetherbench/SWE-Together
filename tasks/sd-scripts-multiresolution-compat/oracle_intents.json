@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task": "sd-scripts-multiresolution-compat",
+  "n_oracle_turns_in": 3,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Read the git diff of the last commit to understand recent changes.",
+      "verbatim_excerpt": "Read `git diff HEAD~` to see the last commit"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Add backward compatibility only for SD1/SDXL, or implement in base class if it doesn't change current behavior.",
+      "verbatim_excerpt": "add backward compatibility for SD1/SDXL"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "request",
+      "text": "Since npz is a zip, read the saved entry as a stream and only decode the array header instead of loading fully.",
+      "verbatim_excerpt": "read the saved entry in the zip file as a stream and only decode the array header"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 5.3
+}

@@ -1,0 +1,55 @@
+{
+  "task_name": "pi-mono-extensions-event-refactor",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Do not bypass the refactor by checking out a different branch, resetting to a commit that already contains the upstream fix, copying files from outside the working tree, or otherwise importing the solution wholesale rather than producing it through code edits. All changes must be authored as ordinary diffs against the buggy starting state.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "Critical anti-effort gate: the upstream repo contains the fix on main, and the buggy base diverges only by the revert, so 'git checkout main' (or any equivalent reset/cherry-pick) inherits a passing tree without any actual refactor work. This trial's diff is consistent with that bypass (the trial git-checkout-main'd, per task framing). Weight is zero — this is a gate, not a reward source — and it is enforced by the git-ops provenance check, not by inspecting code shape."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Route tool_result events through a dedicated chained-emission path instead of the generic emit() method. The dedicated path must run handlers in extension load order, expose each handler to the latest event state produced by prior handlers (pass-by-reference / in-place mutation rather than an accumulator that collects values across handlers), allow handlers to return partial patches whose omitted fields preserve the current value, and signal 'no handler modified anything' distinctly from a normal modified result. The call-site that previously emitted tool_result events must use this new path.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Direct trace to user T2 (accumulator → pass-by-reference), T7 (propose chaining design), T8 (implement as proposed). The pass-by-reference / not-accumulator phrasing is the user's literal framing in T2 and must appear in the goal because the user explicitly steered away from accumulators. Exact method name, file location, and merge implementation shape are unconstrained — the goal judges chained semantics with field-level merge, not symbol identity."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Restrict the generic emit() method so it cannot be called with event types that already have a dedicated emission method (e.g., tool_call, tool_result, user_bash, context, before_agent_start, resources_discover, input). The restriction must be enforced at compile time by the event parameter's type, not merely by runtime checks or convention.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Direct trace to T3 ('shouldn't the event type exclude the types for which we have special emitXXX methods?') and T4 (user insisted this be done before tool_result chaining). The exact type idiom — Exclude<>, a hand-written union, branded types, conditional types, etc. — is unconstrained; the judge checks whether a TypeScript caller would be rejected at compile time when passing one of the dedicated event types to emit()."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Tighten the session_before special-case block inside emit() so the cast (e.g., 'handlerResult as SessionBeforeCompactResult | SessionBeforeTreeResult') and the early-return-on-cancel logic are made type-safe, with a result-type surface that covers every session_before variant the codebase already declares (not just compact/tree). The refactor shape — whether via a discriminated-union helper, a conditional return type, a renamed guard, an extracted method, or another mechanism — is unconstrained; what must hold is that an unchecked cast is no longer needed to keep the cancel-short-circuit type-safe across the full session_before family.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Direct trace to T10 (which quotes the 'if (this.isSessionBeforeEvent(event.type) && handlerResult)' block verbatim and asks 'should we possibly clean this up as well?') and T13 (user repeats the same quoted block when the first attempt missed it, signaling importance). The goal text avoids prescribing the specific cleanup shape (e.g., does NOT require the guard to take an event object instead of a string, does NOT require conditional return types) because the user's ask was about the cast and cancel ergonomics, not a particular type-system idiom."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Update the extensions documentation to describe the new tool_result chaining behavior: handlers run in extension load order, each handler observes the result after prior handlers have applied their changes, and handlers may return partial patches whose omitted fields keep their current value.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Direct trace to T9 ('should we update @packages/coding-agent/docs/extensions.md as well?'). The docs must reflect the chaining semantics introduced by goal_1; exact wording, anchor location, and whether the addition is a fenced block or prose are unconstrained — the judge checks whether the load-order + partial-patch semantics are explained where a reader looking up the tool_result event would find them."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Adjust test.sh so Kimi-related coding API keys are unset before tests run, alongside any other coding-API keys the agent surfaces by inspecting the environment (the user explicitly defers the exact key name to env inspection). Goal is satisfied when running test.sh in an environment that exports a Kimi coding-API key no longer leaks that key into the test run.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Direct trace to T16 ('need to adjust test.sh to also exclude kimi for coding api keys. not sure what the key name is. do env and see') and T17 (user follow-up checking test outcome). The goal names 'Kimi' because the user named it; it deliberately does NOT name any other specific key (e.g., HF_TOKEN) because the user did not name one — the user said 'do env and see', so the judge accepts whatever coding-API key set the agent identifies in good faith, as long as Kimi is covered."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Keep edits scoped to the files the user is actually asking about (the runner / wrapper modules and their immediate companions like docs and the test script); do not stage or commit changes to unrelated files (e.g., package manifests, lockfiles, source files outside the extensions area being refactored). If the agent has touched out-of-scope files, the final commit must not include them.",
+      "tier": "secondary",
+      "weight": 0.06,
+      "rationale": "Direct trace to T6 verbatim: 'i mean the changes you made, don't touch the other files, another agent is doing shit'. This is a correction the user issues mid-session because the agent's commit picked up files outside the refactor scope; honoring it is part of the work, not a free pass. Behavioral: the judge inspects what landed in the final tree, not which intermediate edits the agent attempted."
+    }
+  ],
+  "decomposition_notes": "Six scoring goals + one anti-effort gate. Weight allocation: 2 core × 0.34 + 4 secondary (0.10 + 0.08 + 0.08 + 0.06) = 0.68 + 0.32 = 1.00. goal_3 is bumped slightly above the other secondaries (0.10 vs 0.08/0.08/0.06) because the user asked about it twice (T10 and T13) and explicitly re-quoted the same code block — that repetition is signal. goal_6 is the smallest secondary (0.06) because while the user did issue the correction, it is a scope-discipline correction rather than a feature, and the agent can succeed on goals_1-5 without it. Weights are deliberately distinct from test.sh F2P inner weights (which are 0.25/0.20/0.20/0.20/0.15 over five different gates focused on the chained-emission method's existence, callability, emit() cleanliness, wrapper.js call-site, and wrapper.ts call-site) — the rubric is judge-side and measures user-ask coverage, while the F2P gates are runtime/structural assertions. The two scoring schemes intentionally do not align."
+}

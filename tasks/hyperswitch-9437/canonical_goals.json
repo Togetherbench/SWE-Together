@@ -1,0 +1,46 @@
+{
+  "task_name": "checkout-l2-l3-payment-data",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort guard: a solution must not pass merely by surface-matching the verifier. Disqualifying patterns include — (a) defining typed containers for the L2/L3 sections but never referencing them from the production payment-request construction path, (b) hardcoding empty/None values for processing and items even when the upstream request supplied L2/L3 data, (c) emitting field names only inside comments or string literals to satisfy grep-style gates, (d) adding the new request-body fields but failing to source any value from the upstream L2/L3 input, and (e) routing values into fields whose JSON names do not match the connector mapping the user supplied (e.g., mapping `merchant_order_reference_id` into something other than the outgoing `processing.order_id`). Real success requires types AND wiring AND upstream-driven values AND outgoing JSON keys matching the user's connector mapping.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "Anti-gaming guard called out by the rubric spec. The verifier mixes structural greps + cargo-check; without this guard a low-effort patch could plausibly score partial credit by sprinkling field names into dead code or returning hardcoded None payloads. The user's connector-mapping JSON is the ground-truth contract — failing to honour it is failure even when types exist.",
+      "trace_to_user_ask": "instruction.md L51-116 (Request JSON specifying L2/L3 input fields) and L313-380 (connector mapping JSON specifying outgoing field names). The connector mapping makes the JSON-key shape part of the user ask, not implementation detail."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Define typed containers (e.g., Rust structs or equivalent) for the OUTGOING L2/L3 payload sections shown in the user's connector-mapping JSON: (i) an order-level / processing section whose serialized JSON exposes the keys `order_id`, `tax_amount`, `discount_amount`, `duty_amount`, `shipping_amount`, and `shipping_tax_amount`, and (ii) a line-item section whose serialized JSON exposes the per-item keys `commodity_code`, `discount_amount`, `name`, `quantity`, `reference`, `tax_amount`, `unit_of_measure`, and `unit_price`. The containers must round-trip the user-supplied connector-mapping shape under the connector's existing JSON-serialization conventions (Option/skip-if-None acceptable).",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Structural foundation: without these containers, the outgoing request body cannot carry the L2/L3 sections the user's connector-mapping JSON explicitly shows. Each field listed here appears verbatim in the user-supplied connector mapping; none are oracle inventions. The grouping into 'processing' vs 'items' is also user-supplied (instruction.md L344, L357 of the connector-mapping JSON).",
+      "trace_to_user_ask": "instruction.md L344-353 (the `processing` object in the connector mapping) and L357-378 (the `items` array in the connector mapping). These are USER-authored — they describe the contract with checkout.com that the user expects the connector to produce."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Extend the connector's outgoing payment-request type so the serialized body gains the new top-level sections shown in the user's connector mapping (`customer`, `processing`, `shipping`, `items`), and populate them in the request-construction conversion by reading from the upstream request's L2/L3 data carrier. When the upstream request supplies any of the user-named L2/L3 inputs (merchant_order_reference_id, customer_id, order_tax_amount, shipping_cost, discount_amount, duty_amount, shipping_amount_tax, order_details[...]), the corresponding outgoing keys must appear in the body with values derived from those inputs — not hardcoded, not absent.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Integration core. Defining containers (goal_1) is necessary but not sufficient — the user's example exchange (Request JSON → connector mapping JSON) only makes sense if the inputs flow through to the outgoing body. The user shows `\"order_tax_amount\": 10000` on the input side and `\"tax_amount\": 10000` inside `processing` on the connector-mapping side; that mapping is the contract.",
+      "trace_to_user_ask": "instruction.md L82-115 (Request JSON with L2/L3 inputs) plus L313-380 (connector mapping showing exactly which input becomes which outgoing key). The pair-up is explicit: customer_id→customer.name, order_tax_amount→processing.tax_amount, shipping_cost→processing.shipping_amount, shipping_amount_tax→processing.shipping_tax_amount, merchant_order_reference_id→processing.order_id, order_details[]→items[]."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Honor the field-name re-mapping the user's connector mapping specifies, not just the field presence. Concretely: the upstream `customer_id` value must appear inside the outgoing body under `customer.name` (the user's mapping renames it); the upstream `merchant_order_reference_id` must appear under `processing.order_id`; the upstream `order_tax_amount` must appear under `processing.tax_amount`; the upstream `shipping_cost` must appear under `processing.shipping_amount`; the upstream `shipping_amount_tax` must appear under `processing.shipping_tax_amount`; the per-line-item upstream `product_name` must appear under `items[].name`, `product_id` under `items[].reference`, `unit_discount_amount` under `items[].discount_amount`, `total_tax_amount` under `items[].tax_amount`, and `amount` under `items[].unit_price`. A solution that passes the inputs through under their original names would silently break the contract with checkout.com.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Behavioral correctness beyond struct definition. The user spent effort writing the connector-mapping JSON explicitly because the renames are not obvious from the input JSON alone. A solution that defines containers with the right OUTGOING names but wires the wrong INPUT into them would compile and pass shallow grep gates while breaking the user's actual contract. This goal makes the cross-name mapping explicit.",
+      "trace_to_user_ask": "instruction.md L82 (`customer_id`) ↔ L343 (`customer.name`); L83 (`merchant_order_reference_id`) ↔ L347 (`processing.order_id`); L84 (`order_tax_amount`) ↔ L348 (`processing.tax_amount`); L85 (`shipping_cost`) ↔ L351 (`processing.shipping_amount`); L88 (`shipping_amount_tax`) ↔ L352 (`processing.shipping_tax_amount`); L93/103 (`product_name`) ↔ L361/371 (`items[].name`); L96/106 (`product_id`) ↔ L363/372 (`items[].reference`); L91/103 (`unit_discount_amount`) ↔ L360/370 (`items[].discount_amount`); L97/108 (`total_tax_amount`) ↔ L364/374 (`items[].tax_amount`); L98/109 (`amount`) ↔ — note: connector mapping L366/376 ties `items[].unit_price` to the input `amount`, NOT the input `unit_price`, which is a behavioral detail the user encoded."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Preserve the connector's existing outgoing payment-request fields and keep the modified crate building cleanly. The pre-existing fields the user's connector mapping still shows (e.g., `processing_channel_id`, `3ds`/`three_ds`, success/failure URLs, source, amount, currency, reference, capture, payment_type, merchant_initiated) must continue to serialize as before; no regression in their JSON keys, no removed fields. The crate must still compile.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Regression safety. The user's connector-mapping JSON includes both the new sections AND the pre-existing fields — explicitly indicating they should coexist, not be replaced. The cargo-check + P2P_REGRESSION verifier gates encode this mechanically; this goal makes it visible at the rubric level.",
+      "trace_to_user_ask": "instruction.md L319-345 of the connector-mapping JSON shows the pre-existing fields (processing_channel_id, 3ds, success_url, failure_url, capture, reference, payment_type, merchant_initiated) coexisting with the new L2/L3 sections. The user is signalling 'add, do not replace'."
+    }
+  ],
+  "decomposition_notes": "1 anti_effort (weight 0.0; not budgeted) + 2 cores (0.40 each) + 2 secondaries (0.10 each). Σ over scored goals = 1.00. sum_mult = 2*4 + 2*1 = 10 ⇒ core = 4/10 = 0.40, secondary = 1/10 = 0.10. Single-turn task (no follow-up user turns; SILENCE simulator). Rubric weights are intentionally DECOUPLED from F2P verifier gate weights — F2P weights encode what cargo-check + greps can mechanically validate, while rubric weights encode what a benchmark-design human reading the user's instruction cares about (structural definition vs. integration wiring vs. cross-name mapping correctness vs. regression safety). The two cores split the feature into its load-bearing halves: define the outgoing JSON shape (goal_1) and wire it from the upstream input (goal_2). The first secondary (goal_3) catches the silent cross-name-mapping failure mode that grep gates miss but the user explicitly documented. The second secondary (goal_4) makes regression-safety visible."
+}

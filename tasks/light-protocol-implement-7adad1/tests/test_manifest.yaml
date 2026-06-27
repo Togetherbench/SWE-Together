@@ -1,0 +1,73 @@
+# Harbor test manifest — light-protocol-implement-7adad1
+# See test.sh for the weighted-replace reward formula implementation.
+#
+# Gate summary:
+#   F2P (fail-to-pass): 8 gates, Σ weights = 1.0
+#   P2P_REGRESSION: none
+#
+# 2026-05-17: aligned gate IDs with what tests/test.sh actually emits
+# (g1..g6 source-grep gates). Prior version listed unrelated IDs
+# (atafield-idempotent, etc.) that test.sh never recorded → canonical
+# scoring saw 0/6 even though test.sh's own reward was 1.0.
+#
+# 2026-06-06 (sonnet v3 review): re-balanced weights and added g7/g8 to
+# cover rubric v3.1 goals 7 and 8 (new instruction file + new integration
+# test). g1 and g6 made polarity-neutral (accept positive `idempotent` OR
+# negative `non_idempotent` polarity). Weight changes:
+#   g1: 0.20 → 0.15  (polarity-neutralisation; was oracle-biased)
+#   g2: 0.20 → 0.18
+#   g3: 0.20 → 0.18
+#   g4: 0.15 → 0.13
+#   g5: 0.15 → 0.13
+#   g6: 0.10 → 0.08  (polarity-neutralisation; was oracle-biased)
+#   g7: NEW   0.08   (rubric goal_7 was uncovered)
+#   g8: NEW   0.07   (rubric goal_8 was uncovered)
+# Σ = 1.00 (verified: 0.15+0.18+0.18+0.13+0.13+0.08+0.08+0.07 = 1.00).
+gates:
+  - id: "g1_idempotent_in_namespace_keys"
+    kind: "F2P"
+    weight: 0.15
+    description: "ASSOCIATED_TOKEN_NAMESPACE_KEYS array contains \"idempotent\" OR \"non_idempotent\" (polarity-neutral per rubric goal_1)"
+    command: "grep on sdk-libs/macros/src/light_pdas/light_account_keywords.rs"
+
+  - id: "g2_boolean_flag_mechanism"
+    kind: "F2P"
+    weight: 0.18
+    description: "BOOLEAN_FLAG_KEYS_BY_NAMESPACE constant or is_boolean_flag_key fn present"
+    command: "grep on light_account_keywords.rs"
+
+  - id: "g3_ata_field_idempotent_type"
+    kind: "F2P"
+    weight: 0.18
+    description: "AtaField struct gains idempotent: bool field (or polarity-equivalent boolean field)"
+    command: "grep on accounts/light_account.rs"
+
+  - id: "g4_build_ata_field_parses_flag"
+    kind: "F2P"
+    weight: 0.13
+    description: "build_ata_field parses the idempotent key"
+    command: "grep on accounts/light_account.rs"
+
+  - id: "g5_field_value_stored"
+    kind: "F2P"
+    weight: 0.13
+    description: "parsed flag value stored on AtaField (constructor or codegen)"
+    command: "grep across sdk-libs/macros/src"
+
+  - id: "g6_existing_sites_carry_flag"
+    kind: "F2P"
+    weight: 0.08
+    description: "Pre-existing idempotent ATA semantics preserved (polarity-neutral: positive adds `associated_token::idempotent`; negative leaves sites unmodified at idempotent default)"
+    command: "grep across sdk-tests/ AND keyword namespace check"
+
+  - id: "g7_new_instruction_file"
+    kind: "F2P"
+    weight: 0.08
+    description: "New instruction file under d10_token_accounts/ (canonical `single_ata_non_idempotent.rs` or equivalent) demonstrating the strict-creation ATA variant + mod.rs registration + lib.rs visibility"
+    command: "filesystem + grep on sdk-tests/csdk-anchor-full-derived-test/src/instructions/d10_token_accounts/"
+
+  - id: "g8_new_integration_test_second_call_fails"
+    kind: "F2P"
+    weight: 0.07
+    description: "New integration test under csdk-anchor-full-derived-test/tests/ referencing the new instruction AND asserting second-call failure (is_err / unwrap_err / `Err(` / 'already exists')"
+    command: "filesystem + grep on sdk-tests/csdk-anchor-full-derived-test/tests/"

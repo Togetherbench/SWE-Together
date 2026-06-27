@@ -1,0 +1,69 @@
+{
+  "task_name": "desloppify-zone-classification",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Produce a non-trivial, non-regressive response that materially advances the zone-classification work the user requested. The response must NOT: (a) return an empty patch or whitespace-only diff; (b) delete or stub out existing zone-related scaffolding that was already in place; (c) substitute a meta-explanation, refusal, or 'how I would do this' narrative for actual code changes; (d) make changes outside the zone-classification scope only (e.g. unrelated refactors) while leaving the requested zone work undone.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "Floor against trivial/empty/regressive responses. Contributes zero positive reward; failing this gate means the rest of the rubric does not apply — a judge that finds goal_0 violated should report all downstream goals as unmet regardless of partial appearances."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Replace raw substring zone-pattern matching with a precision-aware matcher (the user's plan names this helper `_match_pattern` — that exact name is preferred, but any equivalently-named helper with the same behavior is acceptable) that distinguishes pattern shapes — at minimum: directory patterns (e.g. tokens delimited by path separators) must match only when the directory component is present as a path segment, basename-prefix patterns (e.g. ending in '_') must require the file's basename to START with the token, basename-suffix patterns (e.g. starting with '.') must require the basename to END with the token, and exact-basename patterns (no path separator, has extension) must require basename equality. Concretely, the resulting classifier MUST reject all of these substring traps: a path like 'src/contests/foo.py' MUST NOT classify as test under a '/tests/' rule; 'src/contest_results.py' MUST NOT classify as test under a 'test_' rule; 'src/my_test_helpers.py' MUST NOT classify as test under a 'test_' rule; 'src/my_config.py' MUST NOT classify as config under a 'config.py' rule; 'src/config.python.py' MUST NOT classify as config under a 'config.py' rule. The corresponding positive cases (e.g. 'src/tests/test_foo.py' → test; 'config.py' at any depth → config; 'tests/test_foo.py' → test) MUST still classify correctly.",
+      "tier": "core",
+      "weight": 0.19,
+      "rationale": "Turn 1 plan item #1 explicitly calls out substring false positives as the bug to fix. This is the load-bearing behavioral goal — without it, every downstream zone-aware behavior is built on a broken classifier. Anti-gaming baked in via the explicit trap list (substring traps the base impl fails, positive cases it must still pass)."
+    },
+    {
+      "id": "goal_2",
+      "goal": "Provide a shared set of universal zone rules (the user's plan names this `COMMON_ZONE_RULES` — that exact name is preferred, but any equivalently-named constant/collection with the same semantics is acceptable) at minimum covering vendor, generated, and test zones; ideally also script, plus per-language rule sets for Python and TypeScript that extend or compose with the shared rules. The Python rule set must include at least one pattern that catches Python test files by basename convention (e.g. files whose basename begins with 'test_'). The TypeScript rule set must include at least one pattern that catches TS/JS test or spec files by basename convention (e.g. '.test.', '.spec.', or a '__tests__' directory). The per-language rules must take priority over the shared rules when both could apply (first-match-wins or equivalent).",
+      "tier": "core",
+      "weight": 0.19,
+      "rationale": "Turn 1 plan item #2 directly asks for shared common rules with per-language extension. Behavioral specification covers what the rule SET must produce, not how it's named or stored. Anti-gaming via 'at minimum' coverage requirements and concrete pattern conventions."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Provide a way to correct the potentials denominator so that phase runners count only production-zone files (or, equivalently, subtract non-production files) when reporting how many files were eligible for a check (the user's plan names this helper `adjust_potential` — that exact name is preferred, but any equivalently-named helper with the same behavior is acceptable). The mechanism must behave as follows: given a zone classification and a list of files, the adjusted count equals the number of files whose zone is the production zone; given an absent or None zone classification, the mechanism must be a no-op returning the original count (or equivalent unmodified denominator); given an empty file list, the result must be zero. This adjustment must be APPLIED by at least one file-based phase runner per language (Python and TypeScript) — not just defined as a helper that nothing calls.",
+      "tier": "core",
+      "weight": 0.19,
+      "rationale": "Turn 1 plan item #3 is the 'potentials denominator mismatch' bug. Behavioral contract is fully specified (no-op for None, zero for empty, prod-only count otherwise). Anti-gaming via the explicit 'must be applied by at least one runner per language' rider — a definition-only patch that never calls the helper does not count."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Enforce the existing skip-detector policy so that detectors which are configured to skip a zone do not emit findings for files in that zone, while keeping the underlying dependency graph or scan input complete (i.e. filter findings, not inputs — so e.g. a production file imported only by a test file is not falsely flagged as orphaned because the test edge is preserved in the graph). The user's plan names the per-detector skip predicate `should_skip_finding` — that exact name is preferred, but any equivalently-named helper with the same behavior is acceptable. At minimum, finding emission from graph-based or coupling-style detectors must be filtered by a per-detector zone-skip check.",
+      "tier": "core",
+      "weight": 0.19,
+      "rationale": "Turn 1 plan item #4 explicitly names skip-detector enforcement as the second gap. The user's instruction.md goes further and specifies the 'filter findings, not inputs' design principle so the graph stays complete. v2 dropped this goal because no F2P gate tests it directly; v3 adds it back because (a) the user explicitly asked for it in the plan, and (b) the rubric is the only ground truth for a no_canonical task — F2P coverage is not the upper bound. Behavioral: filtered findings exist, graph stays complete."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Provide a user-correctable zone override mechanism so misclassifications (e.g. a production-purpose 'config.py') can be reclassified. The mechanism must (a) accept a mapping of file paths to zone names as input to the zone-classification construct, (b) cause the overridden path to report the overridden zone instead of the rule-based zone, (c) not affect classifications of paths NOT present in the override mapping, (d) be persistable as part of session state (e.g. in a state config dictionary) so overrides survive across scans, and (e) be operable from the command line via subcommands that can at minimum SHOW current zone assignments, SET an override for a path, and CLEAR an override for a path.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Turn 1 plan item #5 is the override mechanism + CLI surface. Combined into one goal because the user described them as one feature with one storage backend. Anti-gaming via the (c) 'unrelated paths unaffected' clause and the (d) persistence requirement (an in-memory override that disappears on rescan does not satisfy the user's 'storage in state' ask)."
+    },
+    {
+      "id": "goal_6",
+      "goal": "Make per-language zone rules and the resulting zone classification accessible to the pipeline at scan time through some form of indirection — a field on a language-configuration object, a registry keyed by language name, a method on a per-language module, an attribute looked up at scan time, or equivalent. The specific shape is implementation-flexible, but it must be possible for a scan/plan caller to obtain the correct rule set or zone classification for the language being scanned WITHOUT hard-coding a per-language conditional at the call site.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Turn 1 plan item #5 'Pipeline threading' subsection describes wiring zone_overrides and (implicitly) the zone classifier through plan.py and cmd_scan. Behavioral surface: caller can get language-correct rules without hard-coding. Identifier-agnostic so the rubric does not over-fit the oracle's specific attribute choice (the trial that prompted v2's softening used a build_zone_map(lang_name) function instead of a LangConfig.zone_rules field — both are valid satisfactions)."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Demonstrate that the implementation classifies correctly across BOTH Python and TypeScript codebases — i.e. running the Python language rules over a synthetic Python project produces zone assignments that respect the trap-list behavioral contract from goal_1 AND the rule coverage from goal_2, AND analogously the TypeScript rules over TS-style paths recognize TS test/spec conventions. Verifier should be able to instantiate both language rule sets and get correct end-to-end classifications without errors or import failures.",
+      "tier": "secondary",
+      "weight": 0.07,
+      "rationale": "Turn 2 verification ask ('Did you test it in react + python to see how it actually works?') is encoded behaviorally as cross-language coverage: the patch must work for BOTH languages, not just Python. An implementation that polishes Python and stubs TS would pass goal_1 + goal_2 individually but fail this integration goal. Anti-gaming via the explicit cross-language requirement."
+    },
+    {
+      "id": "goal_8",
+      "goal": "On first scan or when zone distribution changes, surface zone-awareness information to the user through BOTH of the user's two distinct visibility channels: (a) the structured scan-output artifact (Turn 1 plan item #5 explicitly: 'include it in query.json so the LLM can tell the user what was classified') — zone distribution counts must be present in the structured query/scan-result file the LLM consumes; AND (b) the narrative/output text path (Turn 1 plan item #6 explicitly names `desloppify/narrative.py`) — a human-readable reminder that names non-production zone counts and tells the user that misclassifications can be corrected (e.g. via the override CLI from goal_5). A silent zone classification that the user can never see or audit does not satisfy the user's expressed desire, and addressing only one of the two channels (e.g. structured output without narrative, or narrative without structured output) leaves half of the user's explicitly-listed visibility work undone — partial credit is acceptable for landing one channel cleanly, but full credit requires both.",
+      "tier": "polish",
+      "weight": 0.03,
+      "rationale": "Turn 1 plan items #5 (first-scan reporting in query.json) and #6 (narrative reminder in narrative.py) are TWO distinct visibility asks the user listed as separate plan items with separate file targets. v3-initial dropped these into one disjunctive 'OR' goal, which the Gemini v2 audit flagged (coverage_completeness PARTIAL) as allowing full credit for doing half the work. Fixed to a conjunctive 'BOTH' goal that requires structured-artifact reporting AND narrative reminder, with explicit partial-credit guidance for the judge so a one-channel implementation is not silently zeroed."
+    }
+  ],
+  "decomposition_notes": "1 anti-effort floor (goal_0, weight 0.0) + 4 cores (each 0.19, sum 0.76) + 3 secondaries (each 0.07, sum 0.21) + 1 polish (0.03). Total 1.00. Weight allocation rationale: the four cores are the four MOST load-bearing behavioral gaps the user explicitly named in the plan (substring traps, rule structure, potentials denominator, skip-detector enforcement). Secondaries cover user-facing/threading mechanisms (overrides + CLI, pipeline accessibility, cross-language coverage). Polish covers the visibility surface. Weights intentionally diverge from F2P weights in tests/test_manifest.yaml: the manifest is the harness's authoritative scoring path; this rubric is a parallel judge-coverage view. Notably v3 RAISES the relative weight of skip-detector enforcement (goal_4) compared to v2, which dropped it entirely, because the user explicitly named it as the second gap in the plan and a no_canonical task has no F2P-coverage upper bound — judges must score against the user's expressed asks, not against an oracle diff. Turn 3 ('beautifully and elegantly structured?') is intentionally NOT encoded as a behavioral goal because (a) it is a rhetorical quality question rather than a falsifiable behavioral ask, and (b) tying any reward to subjective elegance would invite gaming via cosmetic cleanups that don't advance the substantive plan. Cross-language verification (Turn 2) IS encoded (goal_7) because it has a falsifiable behavioral surface (TS rules instantiable + correctly classify TS paths)."
+}

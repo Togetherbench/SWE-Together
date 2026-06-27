@@ -1,0 +1,18 @@
+{
+  "task_name": "cli-task-30159a",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/workspace/cli",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/versioncheck/versioncheck.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/versioncheck/versioncheck_test.go"
+  ],
+  "commit_sha": "5233863ff39fd743cbf18da2327dca59ecf8fdec",
+  "commit_message_first_line": "improve tests to not dependend on local setup",
+  "agent_percentage": 100.0
+}

@@ -1,0 +1,48 @@
+{
+  "task_name": "unsloth-idefics3-fix",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must produce in-repo source changes that actually deliver the user's feature, not effort-only artefacts. Disqualifying patterns: (a) only research/planning/design documents with no functional code; (b) a new module containing only stubs, pass-bodies, or TODO comments; (c) monkey-patching an installed third-party package on disk (site-packages, /usr/lib) as the sole fix, without an in-repo source change that survives reinstall; (d) a new model class that is never wired into the library's own dispatch surface (not registered in the supported-VLM list and not re-exported from the package's public entry point), making it unreachable by the library's own loader; (e) deletions of existing supported-VLM entries, public exports, or unrelated source files that break the library on the unmodified base.",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "Guardrail derived from the instruction.md ask for a real implementation ('research, investigate AND lay out plan to implement') combined with intent_2 ('let's start with option A, I got the time') — the user committed to full implementation, not a doc. The monkey-patch ban traces to intent_18, where the user explicitly pushed back on the agent's local-workaround framing. Anti-effort gate only: cannot earn positive reward; may zero reward on egregious failures."
+    },
+    {
+      "id": "goal_1",
+      "goal": "A new in-repo source module is added under the library's models package that defines a real, substantive model class for the requested VLM family — a class with at least one method definition or non-trivial base-class inheritance, not an empty placeholder. The class is importable as a top-level symbol of the new module under a stable, conventional name (e.g. a FastIdefics3Model-shaped name following the library's existing FastXxxModel convention). The new module compiles cleanly under py_compile.",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "Primary deliverable. instruction.md asks the agent to 'lay out plan to implement' Unsloth support for the named VLM family, and intents 2/4 commit to executing that plan. Without a real class, no part of the feature exists. Mechanism left open (file path, exact class name, base-class choice) so different but valid designs are not penalized; the only firm constraint is that the class is substantive and importable."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The new VLM family is wired into the library's own dispatch and public-export surface so that the library can actually reach the new class: an identifier for the new VLM family is added to the library's supported-VLM list (whatever that list happens to be — the agent must locate it), AND the new class is re-exported from the models package's public entry point via a relative import from the new module, AND every pre-existing entry in that supported-VLM list and every pre-existing public export name in the package's public entry point is preserved unchanged.",
+      "tier": "core",
+      "weight": 0.26,
+      "rationale": "Without registration and export, the new class is dead code from the user's perspective. instruction.md asks for the feature to 'cover all the offering of Unsloth as much as possible' which presupposes the new family is reachable through Unsloth's normal API. The 'preserve existing entries' clause is the in-goal anti-gaming hedge: an agent that achieves the additive side by deleting siblings should not score. This is independent of (and not redundant with) the manifest's separate regression gate; the goal owns it because the user's intent — extending the supported surface, not shrinking it — demands both sides."
+    },
+    {
+      "id": "goal_3",
+      "goal": "A model-loading entry point on the new class connects to the appropriate Hugging Face conditional-generation / vision-to-seq class for this VLM family, so calling the loader actually instantiates a usable HF model. This can be satisfied by an explicit from_pretrained method body that references the right HF class, OR by inheriting from a shared library base class (a FastVisionModel/FastBaseModel-shaped base) that supplies the loader and dispatches via AutoModelForVision2Seq / AutoModelForImageTextToText, OR by delegation to an existing shared loader utility.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Essential for the feature to do anything at runtime: the user actively tested loading on Colab (intents 8-11, 14, 17-20 are all post-load tracebacks the user pasted, which only exist because the user got far enough to load the model). instruction.md's 'cover all the offering of Unsloth' implies the new class must integrate with the library's standard load path. Mechanism left explicitly open across the three accepted approaches so equivalent designs are not penalized."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The submission addresses the requires_grad pre-hook crash on empty-tuple inputs that this VLM family triggers during forward pass. The fix lives in the project's own source tree (so it survives reinstall) and matches the architectural pattern that supported VLMs already follow — for example by ensuring the new class exposes a working get_input_embeddings so the existing post-hook path is taken (the same path the supported VLMs use), or by widening the library's own peft utilities to handle the empty-inputs case symmetrically with how the other VLMs route. A submission that only narrows the crashing pre-hook ('return early on empty tuple') WITHOUT investigating why the supported VLMs never reach that branch — i.e. without surfacing the pre-hook vs post-hook routing — counts as a workaround, not a proper fix, and is partial credit at best.",
+      "tier": "secondary",
+      "weight": 0.16,
+      "rationale": "The session's central debugging arc — 10+ turns of user-pasted tracebacks (intents 13, 14, 15, 20) — culminates in the user's explicit correction (intent_18) that the supported VLMs must already handle this, and the user's explicit question (intent_16) about widening the library to support the new architecture rather than working around it. The 'must match the supported-VLM pattern, not narrowly silence the error' clause is the in-goal anti-gaming hedge: the user explicitly rejected the narrow-silence framing in-session."
+    },
+    {
+      "id": "goal_5",
+      "goal": "LoRA target-module configuration appropriate for this VLM family is present in the new module — either an explicit list of projection-layer target names (q_proj / k_proj / v_proj / o_proj and the MLP projections gate_proj / up_proj / down_proj or an equivalent subset), or a target_modules keyword wired into a get_peft_model-shaped call, or delegation to an existing shared LoRA-config helper in the library. The configuration must be reachable from the new class (referenced, returned, or otherwise resolvable), not a dangling unused constant.",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "instruction.md is explicit that the deliverable must 'cover all the offering of Unsloth as much as possible (like SFT, DPO, GRPO, etc.)'. All three named offerings depend on PEFT-style fine-tuning, which is meaningless without target-module configuration. Without LoRA targets the class compiles but is unusable for the workflows the user named. Mechanism left open."
+    }
+  ],
+  "decomposition_notes": "Five positively-weighted goals (goal_1..goal_5) sum to 1.00 (0.26 + 0.26 + 0.18 + 0.16 + 0.14). goal_0 is an anti-effort guardrail at weight 0.0. Weights are an INDEPENDENT, intent-salience judgment and are deliberately NOT mirrored from test_manifest.yaml's F2P gate weights (the manifest mixes inner-test and upstream-build gates under a weighted-replace algebra; the rubric measures user-intent coverage). The two core wiring goals (1+2) take the largest share because they are the load-bearing pair without which 'investigate feasibility / implement option A' (instruction.md, intent_1, intent_2) produces nothing reachable; goal_3 is core-but-smaller because it often comes free with the right inheritance choice; goal_4 sits in secondary at elevated weight because it is the user's longest-debated point but it is also the one most plausibly delivered in a partial form; goal_5 is the smallest positive weight because it is the most mechanical of the asks while still being directly anchored in instruction.md."
+}

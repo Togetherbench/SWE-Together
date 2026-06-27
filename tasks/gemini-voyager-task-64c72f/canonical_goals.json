@@ -1,0 +1,55 @@
+{
+  "task_name": "gemini-voyager-task-64c72f",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine source-code change to the timeline rendering logic that materially alters how dot/node elements are managed across re-renders. It must NOT be a sham: reject a zero-edit diff, a diff whose only content is a captured directory tree or a '=== repo/ ===' banner artifact, git-operation exfiltration (e.g. `git checkout main`, `git reset --hard origin/...`), a comment-only or whitespace-only change, deletion or weakening of existing tests/typecheck to force a pass, or edits confined to temp/scratch/unmerged locations rather than the actual timeline module. A real fix touches the live rendering path that creates and tears down the hovered nodes.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. evidence_tier=golden_only with zero real model patches, so this is calibrated against the golden diff (a substantive logic refactor of the dot lifecycle) rather than a lowest-reward attempt. Guards the model-agnostic LLM judge against stub/no-op/exfiltration passes."
+    },
+    {
+      "id": "goal_eliminate_twitch",
+      "goal": "When the user hovers (and keeps the cursor over) a timeline node, that node no longer twitches/jitters continuously. The observed cause is that the rendering path replaces the node's DOM element under the cursor on every recalculation; the fix must make a hovered node stay visually stable. Any genuine approach that achieves this qualifies — e.g. preserving/reusing the existing element across re-renders, or fixing the upstream reactivity so unnecessary re-renders don't fire while the node is hovered. Reject fixes that merely hide the symptom without resolving the churn: a hardcoded special-case for hover, a commented-out render call, throttling/debouncing that just masks the jitter, or a parsed-but-ignored flag.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 0 verbatim: '现在鼠标放在这个时间线上的节点的时候，这个节点会一直抽搐，这是为什么呢？' (when I put the mouse on a node on this timeline, the node keeps twitching). The primary reported symptom and the dominant user concern."
+    },
+    {
+      "id": "goal_reliable_click",
+      "goal": "Clicking a timeline node reliably triggers its action every time, with no intermittent failures where a click does nothing. The flakiness stems from the same render churn replacing the element mid-interaction so the click lands on a stale/removed element; it must be resolved so clicks register reliably. Any genuine approach that achieves this qualifies — e.g. preserving the element a user is interacting with across re-renders, fixing the upstream re-renders so the element isn't replaced mid-interaction, or attaching robust event delegation on a stable parent container. Reject solutions that only paper over the symptom without addressing the churn (e.g. blind retries, or swallowing/re-dispatching events without making interaction land reliably).",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0 verbatim: '它有概率在点击之后是不会触发的，很奇怪' (it has a probability that after clicking it won't fire, very strange). The second reported symptom, same underlying cause — both must be fixed for the bug report to be resolved."
+    },
+    {
+      "id": "goal_no_stale_or_orphaned_nodes",
+      "goal": "After the rendering change, the set of visible timeline nodes stays correct across re-renders: nodes that should exist are present/shown, and nodes that should no longer exist are removed or otherwise safely retired (e.g. hidden/recycled in a managed pool) so that no unmanaged leftover/orphaned/duplicate dots accumulate in the DOM. Whatever approach is taken to stabilize the nodes, the fix must not introduce stale visible elements, duplicates, or dangling references. This correctness must be real, not faked by disabling re-rendering or hardcoding the node count.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Necessary non-regression constraint of the Turn-0 fix ('现在鼠标放在这个时间线上的节点的时候，这个节点会一直抽搐...' — when I put the mouse on a node on this timeline, the node keeps twitching). A stabilization fix that stops tearing down nodes but leaks, duplicates, or strands them would reintroduce visible breakage, so node-set correctness across re-renders is part of actually solving the reported bug. Kept approach-agnostic: only the no-leak outcome is required, not any specific range-handling optimization."
+    },
+    {
+      "id": "goal_preserve_accessibility_tooltip",
+      "goal": "Each node's per-node display state must stay in sync with that node's current content rather than going stale after the fix. If the solution keeps and reuses an element across re-renders, it must refresh ALL of that element's dynamic, content-derived properties for the current turn — not only its accessible label/tooltip text, but also its position and any visual state that depends on the turn (e.g. styling/classes and layout that reflect the node's data). Reject a fix that reuses elements but leaves any of these properties pointing at outdated turn data (a stale label, a node rendered at the wrong position, or stale visual state), or that hardcodes a placeholder instead of the real current value.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "rationale": "Necessary non-regression constraint of the Turn-0 fix ('现在鼠标放在这个时间线上的节点的时候，这个节点会一直抽搐...'): any approach that stops tearing nodes down by reusing elements risks leaving the reused element's content-derived state stale — not just its tooltip label but its position and turn-dependent visual state — so keeping the full per-node display state in sync is required for the stabilization fix not to silently introduce a visual/labeling regression. Kept broad (all dynamic state, not just the label) so it does not mirror the narrow aria-label F2P check. Weighted low since the user did not explicitly mention these properties."
+    },
+    {
+      "id": "goal_explain_fix_in_chinese",
+      "goal": "After completing the fix, the agent provides a clear Chinese-language explanation, in a message to the user, of what it actually changed and why — naming the root cause it actually identified and fixed (e.g. the re-render logic tearing down and recreating the node elements, or the unnecessary re-render triggers firing during interaction — whichever its fix addressed) and the concrete behavioral change it made. Reject a vacuous or non-Chinese reply, a generic 'I fixed the bug / 已修复' with no technical substance, or an explanation that describes changes the submission did not actually make (fabricated/inconsistent with the real diff).",
+      "tier": "secondary",
+      "weight": 0.12,
+      "rationale": "Turn 1 verbatim: '你做了什么修复这个问题？' (what did you do to fix this problem?). User asks in Chinese for an account of the fix; per the multi-turn benchmark thesis, correctly handling this follow-up is part of the measured capability. Behavioral: judged on substance + language + faithfulness to the actual change, not exact wording."
+    },
+    {
+      "id": "goal_identify_bug_introduction",
+      "goal": "In response to the user's question about when the bug originated, the agent investigates the repository history (e.g. via git archaeology) and identifies the point in time / change at which this rendering behavior was introduced, and reports this to the user in its reply, citing a real change from the repo rather than guessing. The agent's reply to the user is correct when the cited change is the one that introduced the offending behavior — the logic that tears down and recreates the timeline node elements on re-render (the blanket dot-removal-and-rebuild that the fix replaces), or the change that introduced the continuous re-render loop that exposed this flaw as the visible hover/click symptom. The judge works only from the agent's trajectory (it cannot access the repo itself), so the trajectory must contain evidence that grounds the answer — e.g. the agent ran git history/blame commands (git log, git show, git blame) whose output identifies the change that added the teardown/rebuild-on-re-render behavior. The agent need not paste the entire diff, but the surfaced evidence must connect the cited commit to that offending behavior rather than to an unrelated change. Reject a fabricated/hallucinated commit hash or date not grounded in the actual history, a confidently-cited but irrelevant commit unrelated to the teardown/re-render behavior, and a non-answer that simply declines to look.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Turn 5 verbatim: '这个是什么时候被引入的？' (when was this introduced?). A genuine follow-up asking the agent to trace the bug's origin in version history; covered as a multi-turn capability signal. Behavioral and approach-agnostic — any grounded method of locating the introducing change qualifies."
+    }
+  ],
+  "decomposition_notes": "Turn 0 carries the code deliverable: fix timeline nodes twitching on hover AND fix intermittent click non-triggering. Both stem from the same underlying render churn (the re-render path replacing dot DOM elements on every recalculation in the observed session), so they are split into two core goals (twitch primary, click secondary) reflecting the order/emphasis in the user's report; the goals stay outcome-focused (stable hovered node, reliable click) and accept any genuine fix — element reuse, suppressing the unnecessary re-renders, or robust event delegation — not only the golden patch's element-reuse approach. goal_no_stale_or_orphaned_nodes and goal_preserve_accessibility_tooltip capture correctness constraints entailed by any stabilization fix (no orphaned/duplicate nodes, and all per-node display state — label, position, turn-dependent visual state — kept in sync on reused elements) that the golden patch implements, kept behavioral and free of oracle identifiers since the user never named functions/files. The two later genuine turns are also covered as multi-turn capability signals: Turn 1 ('你做了什么修复这个问题？') → goal_explain_fix_in_chinese (a faithful Chinese-language account of the actual fix), and Turn 5 ('这个是什么时候被引入的？') → goal_identify_bug_introduction (grounded git-history archaeology of when the behavior originated). 'push' is a pure process action with no scoreable artifact and is excluded. Weights rank by user-stated importance (twitch > click > explain-fix > no-stale > identify-intro > tooltip), keeping the Turn-0 code fix dominant (0.75 combined) while crediting the follow-up turns; they deliberately do not mirror test_manifest.yaml's structural AST weights."
+}

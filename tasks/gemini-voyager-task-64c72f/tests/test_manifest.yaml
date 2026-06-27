@@ -1,0 +1,73 @@
+version: "1.0"
+description: |
+  Verifies that timeline dot twitching bug is fixed:
+  - recalculateAndRenderMarkers reuses existing dot elements instead of destroying all
+  - updateVirtualRangeAndRender range-reset path preserves in-range dots
+  - aria-label is updated on reused dots
+  - Existing test suite still passes
+  - TypeScript typecheck and ESLint pass
+
+gates:
+  # ── F2P: Behavioral correctness gates ───────────────────────────────
+  - id: dot_reuse_map
+    kind: F2P
+    weight: 0.15
+    description: |
+      recalculateAndRenderMarkers builds a Map<string, DotElement> from existing
+      markers to reuse dot elements by turn ID rather than setting dotElement: null.
+    command: "tsc AST analysis: check recalculateAndRenderMarkers builds oldDots Map from markers"
+
+  - id: orphan_cleanup
+    kind: F2P
+    weight: 0.10
+    description: |
+      After rebuilding markers, unreferenced (orphaned) dots are cleaned up
+      with a targeted removal loop (e.g., for (const dot of oldDots.values()) dot.remove()).
+    command: "tsc AST analysis: check orphan dot cleanup loop after marker construction"
+
+  - id: no_blanket_removal
+    kind: F2P
+    weight: 0.15
+    description: |
+      recalculateAndRenderMarkers does NOT contain the destructive
+      querySelectorAll('.timeline-dot').forEach((n) => n.remove()) pattern.
+    command: "tsc AST analysis: check no blanket querySelectorAll+remove in recalc"
+
+  - id: range_reset_preserves
+    kind: F2P
+    weight: 0.12
+    description: |
+      In updateVirtualRangeAndRender, when visibleRange is reset (else branch),
+      dots belonging to in-range markers are preserved rather than blanket-removed.
+      Uses a keep set, filter, or selective removal.
+    command: "tsc AST analysis: check range-reset else branch preserves in-range dots"
+
+  - id: aria_label_update
+    kind: F2P
+    weight: 0.08
+    description: |
+      When reusing existing dot elements, setAttribute('aria-label', marker.summary)
+      or equivalent is called to keep tooltip text in sync.
+    command: "tsc AST analysis: check aria-label updated on reused dot elements"
+
+  - id: existing_tests_pass
+    kind: F2P
+    weight: 0.15
+    description: |
+      The project's existing vitest test suite (bun test) passes with 0 failures.
+    command: "bun test 2>&1 | tail -5 | grep -q '0 failing'"
+
+  # ── P2P_REGRESSION: Gating-only, zero on failure ────────────────────
+  - id: typecheck_passes
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: |
+      TypeScript typecheck (bun run typecheck / tsc --noEmit) must succeed.
+    command: "bun run typecheck"
+
+  - id: lint_ok
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: |
+      ESLint (bun run lint) produces zero errors (warnings allowed).
+    command: "bun run lint 2>&1 | grep -c 'error' | xargs -I{} test {} -eq 0"

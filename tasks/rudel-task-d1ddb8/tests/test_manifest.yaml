@@ -1,0 +1,81 @@
+gates:
+  # --- F2P Structural gates (35% of total weight) ---
+  - id: f2p_no_home_path
+    kind: F2P
+    weight: 0.10
+    description: "getClaudeSettingsPath no longer hardcodes process.env.HOME for settings path"
+    command: "grep -A2 getClaudeSettingsPath FILE | grep -v process.env.HOME"
+
+  - id: f2p_find_claude_dir
+    kind: F2P
+    weight: 0.10
+    description: "findClaudeDir function exists in claude-settings.ts"
+    command: "grep -q 'function findClaudeDir' FILE"
+
+  - id: f2p_meaningful_body
+    kind: F2P
+    weight: 0.05
+    description: "findClaudeDir has >3 meaningful statements (anti-stub)"
+    command: "check function body has >3 non-trivial lines"
+
+  - id: f2p_execsync_import
+    kind: F2P
+    weight: 0.05
+    description: "execSync imported from node:child_process for git root fallback"
+    command: "grep -q 'execSync.*node:child_process' FILE"
+
+  - id: f2p_mkdir_in_write
+    kind: F2P
+    weight: 0.10
+    description: "mkdirSync called in writeClaudeSettings to ensure dir exists"
+    command: "grep -A5 'writeClaudeSettings' FILE | grep -q mkdirSync"
+
+  # --- F2P Behavioral gates (65% of total weight) ---
+  - id: f2p_walk_up
+    kind: F2P
+    weight: 0.25
+    description: "Walk up from subdirectory finds existing .claude/ at ancestor"
+    command: "bun run behavioral test: cd to subdir of git repo with .claude/, verify path"
+
+  - id: f2p_git_fallback
+    kind: F2P
+    weight: 0.25
+    description: "Fall back to git repo root when no .claude/ dir exists"
+    command: "bun run behavioral test: cd to git repo without .claude/, verify git root path"
+
+  - id: f2p_mkdir_created
+    kind: F2P
+    weight: 0.10
+    description: "writeClaudeSettings creates .claude/ directory and writes correct content"
+    command: "bun run behavioral test: call writeClaudeSettings in dir without .claude/, verify creation"
+
+  # --- P2P Regression gates (diagnostic-only, no positive weight) ---
+  - id: p2p_typescript_ok
+    kind: P2P_REGRESSION
+    description: "TypeScript compilation succeeds (bun run check-types)"
+    command: "bun run check-types in apps/cli"
+
+  - id: p2p_read_settings
+    kind: P2P_REGRESSION
+    description: "readClaudeSettings correctly reads JSON settings file"
+    command: "bun run test: import readClaudeSettings, verify known values"
+
+  - id: p2p_add_hook
+    kind: P2P_REGRESSION
+    description: "addHook adds rudel hook to SessionEnd and isHookEnabled returns true"
+    command: "bun run test: addHook then verify isHookEnabled and settings content"
+
+  - id: p2p_remove_hook
+    kind: P2P_REGRESSION
+    description: "removeHook removes only rudel hook, preserves other hooks"
+    command: "bun run test: removeHook then verify rudel gone, others preserved"
+
+  - id: p2p_cleanup_empty
+    kind: P2P_REGRESSION
+    description: "Empty hooks object is cleaned up after removing last hook"
+    command: "bun run test: remove only hook, verify hooks key deleted"
+
+  - id: p2p_preserve_hooks
+    kind: P2P_REGRESSION
+    description: "addHook preserves existing hooks in other categories"
+    command: "bun run test: addHook with existing SessionStart hook, verify both exist"

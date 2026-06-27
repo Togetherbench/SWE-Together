@@ -1,0 +1,23 @@
+{
+  "task_name": "cli-task-0ec2e9",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [
+    "TestMergeUnique"
+  ],
+  "VERIFIER_DEAD_BY_DESIGN": "Gold test TestMergeUnique targets private helper mergeUnique() in state.go \u2014 narrow implementation-specific test for the gold's git-status-fallback path. Across 5 cohorts (DS Flash, DS Pro, glm51, MM25, MM27): zero agents wrote mergeUnique (0 mentions in claude-code.txt logs); all took alternative solution paths via extractModifiedFiles in transcript.go files. Only one agent-added test name converged across 2 cohorts (TestExtractModifiedFiles_StrReplaceEditor in DS Flash + MM25); other agent-added tests were unique per cohort. Added 3 alt names so cohorts engaging with the bug behaviorally get partial credit (Flash 2/4, DS Pro 1/4, MM25 1/4, glm51/MM27 0/4). Real long-term fix: re-engineer instruction to anchor on git-status-fallback OR replace gold unit test with a behavioral integration test against the lifecycle event stream (the user's symptom).",
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/opencode/transcript.go",
+    "cmd/entire/cli/lifecycle.go",
+    "cmd/entire/cli/state.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/state_test.go"
+  ],
+  "commit_sha": "c941affb6709e0898f0d23eef9ab5fc9545d1119",
+  "commit_message_first_line": "make sure fallback using just git status works with opencode",
+  "agent_percentage": 100.0
+}

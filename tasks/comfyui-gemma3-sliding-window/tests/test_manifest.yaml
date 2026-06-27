@@ -1,0 +1,63 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # --- existing F2P gates from test.sh (scaled to 0.60 total) ---
+  - id: f2p_cleanup
+    kind: F2P
+    turn: 1
+    weight: 0.07
+    command: "see test.sh F2P1"
+    description: "Stale TODO/warning text removed"
+  - id: f2p_config_pattern_existing
+    kind: F2P
+    turn: 1
+    weight: 0.10
+    command: "see test.sh F2P2"
+    description: "Config sliding_attention pattern correct (existing)"
+  - id: f2p_layer_mapping
+    kind: F2P
+    turn: 1
+    weight: 0.10
+    command: "see test.sh F2P3"
+    description: "Per-layer index mapping correct"
+  - id: f2p_behavioral_mask
+    kind: F2P
+    turn: 1
+    weight: 0.17
+    command: "see test.sh F2P4"
+    description: "Sliding window mask actually applied at attention"
+  - id: f2p_mask_combine
+    kind: F2P
+    turn: 1
+    weight: 0.10
+    command: "see test.sh F2P5"
+    description: "Mask combines with existing attention_mask"
+  - id: f2p_rope_per_layer
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    command: "see test.sh F2P6"
+    description: "Local layer uses local RoPE, global uses global RoPE"
+  # --- upstream F2P gates (0.40 total) ---
+  - id: f2p_upstream_config_pattern
+    kind: F2P
+    turn: null
+    weight: 0.20
+    command: "cd /workspace/ComfyUI && python3 -c \"import ast, sys; tree = ast.parse(open('comfy/text_encoders/llama.py').read()); [sys.exit(0) for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and node.name == 'Gemma3_4B_Config' for item in node.body if isinstance(item, ast.Assign) for target in item.targets if isinstance(target, ast.Name) and target.id == 'sliding_attention' and isinstance(item.value, ast.List) and len(item.value.elts) == 6 and all(isinstance(getattr(e, 'value', None), int) and getattr(e, 'value', 0) > 0 for e in item.value.elts[:5]) and getattr(item.value.elts[5], 'value', None) is False]; sys.exit(1)\""
+    description: "Verifies Gemma3_4B_Config.sliding_attention pattern is correct"
+  - id: f2p_upstream_sliding_impl
+    kind: F2P
+    turn: null
+    weight: 0.20
+    command: "cd /workspace/ComfyUI && python3 -c \"import sys; src = open('comfy/text_encoders/llama.py').read(); sys.exit(1) if 'sliding attention not implemented' in src or 'TODO: implement' in src else None; sys.exit(1) if not any(kw in src for kw in ['sliding_mask', 'torch.where', 'positions.unsqueeze']) else sys.exit(0)\""
+    description: "Verifies sliding window mask is implemented, not just a TODO warning"
+  # --- upstream P2P gates ---
+  - id: p2p_upstream_ast_classes
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    command: "cd /workspace/ComfyUI && python3 -c \"import ast, sys; tree = ast.parse(open('comfy/text_encoders/llama.py').read()); needed = {'Gemma3_4B_Config', 'TransformerBlockGemma2', 'Llama2_', 'Gemma3_4B', 'Attention', 'MLP'}; found = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}; sys.exit(1) if needed - found else sys.exit(0)\""
+    description: "Verifies llama.py parses and contains all required model classes"

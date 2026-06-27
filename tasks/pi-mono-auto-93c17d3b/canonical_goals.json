@@ -1,0 +1,55 @@
+{
+  "task_name": "pi-mono-auto-93c17d3b",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine, working extension that implements the requested model-to-extension signaling behavior, not a sham. It MUST be rejected if it shows any of these gaming patterns: (a) a no-op / empty / zero-edit submission, or a diff whose only content is a captured-tree banner (e.g. a '=== repo/ ===' directory listing) rather than real source; (b) git-ops exfiltration of an answer (e.g. `git checkout main`, `git reset --hard origin/...`, or otherwise pulling in a pre-existing solution rather than authoring one); (c) a comment-only or whitespace-only change with no executable logic; (d) the extension file placed only in a temporary, untracked, or unmerged location (e.g. /tmp) where the runtime would never load it; (e) the signal-reaction logic stubbed out, hardcoded, commented out, or gated so it can never fire. A passing submission contains an actual extension module that registers an activation command and an assistant-message listener with real branching logic.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. The task is authorable (golden_only, no model patches to calibrate against), and the deliverable is a small new TS extension file, so the most likely cheats are empty/stub submissions, files dropped in the wrong (untracked/temp) location, or logic that is present in source but inert. Not tied to a user quote."
+    },
+    {
+      "id": "goal_1",
+      "goal": "An end-user-invokable activation command (a slash-style command, e.g. something like /start) exists that serves as the entry point that triggers the hidden-instruction injection. The command must be a real registered command with a handler containing live logic, not a parsed-but-ignored name, a stub that does nothing, or a hardcoded always-on flag.",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "Turn 1 (T2) verbatim: 'i want a slash command, something like /start which injects a hidden custom message in the session'. The user explicitly asked for a /start-style command as the activation entry point."
+    },
+    {
+      "id": "goal_2",
+      "goal": "On activation, the extension injects a hidden (non-displayed) message into the session whose content instructs the model to emit specific marker string(s) when it wants the extension to take an action or when it is done. The injected instructions must reference the concrete marker token(s) the extension will later match on. This must be a real injected message tied to activation, not static documentation, a commented-out template, or text that is never delivered into the session/system context.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Turn 1 (T2) verbatim: '/start which injects a hidden custom message in the session that instructs the model to output a specific string when it's done or when it wants to do a thing'. This hidden-instruction-injection is the heart of the requested mechanism."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The extension listens for assistant message content (e.g. via a message-completion event like message_end, or via streaming message_update) and, when the active assistant output contains a recognized marker string, manipulates actual UI state in response (e.g. showing or updating a UI widget/status panel, or tearing it down). The reaction must derive from actually scanning the assistant text for the marker(s) and must drive real UI state — the user spent later turns debugging UI opening, closing, and freezing, so a reaction that only logs or notifies without touching UI does not satisfy this. It must not be hardcoded to always fire, faked, or independent of message content.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Turn 1 (T2) verbatim: 'the extension can then listen for message_end and react accordingly, e.g. by showing ui, or closing ui, or whatever', reinforced by later UI-state debugging in Turns 5 ('now it says signal ui is open'), 7 ('open the ui... clos eit'), and 11 ('the ui kinda freezes'). The message-end listener that reacts to marker strings by driving UI is the second half of the core ask. The golden extension drives UI via setWidget/setStatus, but any real UI-state mechanism satisfies the goal."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The extension supports at least two distinct signal meanings with opposite/complementary effects, so that one marker triggers an open/start effect and a different marker triggers a close/stop effect, with the close path actually reversing or complementing the open path's UI effect (e.g., tearing down or clearing the UI panel/status that the open path created). Each signal kind must trigger its own correct branch; a single branch that reacts identically to every marker, or a close path that does not actually undo the open path's UI state, does not satisfy this.",
+      "tier": "important",
+      "weight": 0.2,
+      "rationale": "Turns 5-7 verbatim: 'now it says signal ui is open waiting for signal close ui' / 'now everthing is closed again.' plus the later 'in the first turn open the ui, in the last turn clos eit'. The user iterated on distinct open vs close signals and verified the UI returns to closed."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The extension file is placed in a directory from which the agent runtime actually loads extensions (such as a .pi/extensions directory in the working tree), so the user can reload and run it. The file must be the real, complete extension module in a loadable, tracked location — not left only in a temporary, scratch, or untracked path, and not an empty placeholder.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 2 (T3) verbatim: 'move that to cwd/.pi/extensions so i can relaod'. The user explicitly required the extension live in the runtime-loadable extensions directory so it can be reloaded."
+    },
+    {
+      "id": "goal_6",
+      "goal": "The extension's UI/reaction logic does not thrash or rebuild the interface on every incremental streaming update. The reaction must be driven in a way that stays responsive — for example by reacting on message completion rather than on each token, and/or by only updating the UI when the relevant marker/state actually changes (idempotent updates) rather than unconditionally re-rendering the widget on every partial-text event. A submission that re-creates or re-sets the UI on every streaming delta regardless of whether anything changed does not satisfy this.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 11 verbatim: 'when you output shit, the ui kinda freezes. i see markdown coming in, but i basically can't type. is the ui code int he message_end/update path foobar? do we recreate ui all the time?'. The user explicitly flagged UI jank from recreating the UI on every update as a problem to fix."
+    }
+  ],
+  "decomposition_notes": "Turn 0 is an ELI5 explanation request (no code deliverable) so it gets no weighted goal. The substantive build request lands in Turn 1 (T2) and is decomposed into the activation command (goal_1), the hidden protocol injection naming the marker tokens (goal_2), and the message-end listener that reacts to those markers (goal_3) — these three are the core mechanism and carry the most weight. Turns 5-8 are the user iterating on distinct open vs close signals and verifying the UI actually closes back, captured by goal_4 (important). goal_5 covers Turn 2 (T3) verbatim 'move that to cwd/.pi/extensions so i can relaod' — the file must live in a runtime-loadable extensions directory; the verifier accepts either the .pi/extensions runtime path or the examples path, so the goal is phrased behaviorally as 'a directory the runtime loads from' rather than pinning one exact path. An earlier draft included an 'inert before activation' gating goal; it was dropped because the user never asked for it and a stateless listener (which never reacts until the model is instructed to emit the secret markers post-/start) is a behaviorally-equivalent valid implementation — pinning statefulness would reject a correct alternative. The Turn 11 UI-jank correction ('the ui kinda freezes ... do we recreate ui all the time?') is captured behaviorally by goal_6 (important): the reaction logic must stay responsive and avoid rebuilding the UI on every streaming token / re-rendering when nothing changed. It is phrased as a behavioral responsiveness requirement (react on completion and/or only update on real state change) rather than pinning any specific debounce or event choice, since multiple implementations satisfy it. Weights are ranked by user-importance (injection + reaction highest), deliberately not mirroring the test_manifest F2P weights. Weighted goals sum to 1.00."
+}

@@ -1,0 +1,54 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # --- Existing F2P gates (scaled to 0.60 total) ---
+  - id: gate_a_processing_field
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "PaymentsRequest gains a new processing field"
+  - id: gate_b_l3_line_item_struct
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "L3 line-item struct with commodity_code, unit_of_measure, unit_price"
+  - id: gate_c_l2_order_struct
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "L2 order-level struct with tax/discount/duty/shipping fields"
+  - id: gate_d_l2l3_data_accessor
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    description: "Code references l2_l3 data accessor on router data"
+  - id: gate_e_processing_populated
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    description: "TryFrom populates processing from L2/L3 data"
+  - id: gate_f_cargo_check
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "hyperswitch_connectors crate compiles with new code"
+  # --- Upstream F2P gates (0.40 total) ---
+  - id: f2p_upstream_checkout_processing_struct
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "CheckoutProcessing struct exists in checkout transformers"
+  - id: f2p_upstream_l2l3_data_usage
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "l2_l3_data accessor / L2L3Data type referenced in checkout transformers (any of: get_optional_l2_l3_data, .l2_l3_data field, L2L3Data type)"
+  # --- P2P regression gates ---
+  - id: p2p_upstream_payments_request_regression
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "PaymentsRequest retains processing_channel_id and three_ds fields"

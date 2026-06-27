@@ -1,0 +1,42 @@
+version: "1.0"
+task: cli-task-30159a
+
+# F2P weights sum to 1.00 — inner_share is 0; no SWE-rebench fallback contributes.
+# P2P_REGRESSION gates are informational only (never zero the reward).
+gates:
+  - id: F2P_TEST_DETERMINISTIC
+    kind: F2P
+    weight: 0.25
+    description: "TestUpdateCommand passes deterministically with >= 4 subtests"
+    command: "go test -count=1 -v -run '^TestUpdateCommand$' ./cmd/entire/cli/versioncheck/"
+
+  - id: F2P_EXEC_INDIRECTION
+    kind: F2P
+    weight: 0.20
+    description: "Package-level function-typed variable mirrors os.Executable for test override"
+
+  - id: F2P_NO_DIRECT_OS_EXEC
+    kind: F2P
+    weight: 0.15
+    description: "updateCommand body no longer calls os.Executable() directly"
+
+  - id: F2P_PATH_SPECIFICITY
+    kind: F2P
+    weight: 0.15
+    description: "Path checks tightened (>=3 of /Cellar/, /opt/homebrew/, /linuxbrew/, /mise/installs/) and loose /homebrew/ + /mise/ removed"
+
+  - id: F2P_TEST_OVERRIDES
+    kind: F2P
+    weight: 0.15
+    description: "TestUpdateCommand assigns to the executablePath override variable"
+
+  - id: F2P_TABLE_DRIVEN
+    kind: F2P
+    weight: 0.10
+    description: "TestUpdateCommand uses table-driven subtests (t.Run with >=3 named cases)"
+
+  - id: P2P_SOURCE_FILES_EXIST
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "versioncheck source + test files still exist"
+    command: "test -f /workspace/cli/cmd/entire/cli/versioncheck/versioncheck.go && test -f /workspace/cli/cmd/entire/cli/versioncheck/versioncheck_test.go"

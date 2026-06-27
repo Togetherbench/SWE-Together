@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "task": "reigh-taskspane-lightbox-bug",
+  "n_oracle_turns_in": 21,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 3,
+      "intent_kind": "request",
+      "text": "When clicking a travel segment from TasksPane, open it within the context of its parent shot, enabling navigation to previous/next segments.",
+      "verbatim_excerpt": "I want it to open within the context of the shot it's a part of"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 4,
+      "intent_kind": "context",
+      "text": "Lightbox opens but lacks chevrons, buttons/links for contributant images don't work; it opens outside the shot context.",
+      "verbatim_excerpt": "doesn't show the chervon, the buttons/links ot the contribtuant images"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "Add debug logging to diagnose the lightbox context issue.",
+      "verbatim_excerpt": "Let's add debug logging"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 5,
+      "intent_kind": "context",
+      "text": "Providing debug logs showing segmentSlotsCount is 0 and shotId alternates between a value and undefined, asking agent to diagnose.",
+      "verbatim_excerpt": "segmentSlotsCount: 0, segmentSlotsSummary: Array(0), isLoading: false"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 6,
+      "intent_kind": "correction",
+      "text": "It works but briefly shows the empty segment form before switching to the proper media lightbox.",
+      "verbatim_excerpt": "first showed the empty form - the one that shows when there's no video"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 7,
+      "intent_kind": "question",
+      "text": "Can clicking a travel segment open the lightbox without also opening/navigating to the shot? Think it through, no code yet.",
+      "verbatim_excerpt": "any way to do it without opening the shot? Just think if through, no code yet"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 8,
+      "intent_kind": "question",
+      "text": "If the video exists but its segment/position was deleted from the shot, can we fall back to the old-school viewer?",
+      "verbatim_excerpt": "segment or position has been deleted? Can we fall back to the old-school viewer"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 9,
+      "intent_kind": "request",
+      "text": "Proceed with option A for the implementation.",
+      "verbatim_excerpt": "Let's do A"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 10,
+      "intent_kind": "correction",
+      "text": "Now it's showing the simple viewer for all segments instead of only orphaned ones.",
+      "verbatim_excerpt": "it seems to be showing simple for all"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 11,
+      "intent_kind": "context",
+      "text": "After opening a shot-context segment then a simple-lightbox segment, clicking back to the first one doesn't work until the lightbox is closed and reopened. Check the recording.",
+      "verbatim_excerpt": "try to click back the other one it just doesn't work"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 12,
+      "intent_kind": "workflow",
+      "text": "Push the current changes to GitHub.",
+      "verbatim_excerpt": "push to github"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 13,
+      "intent_kind": "question",
+      "text": "Is the current code well-structured?",
+      "verbatim_excerpt": "is this well-structured?"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 14,
+      "intent_kind": "request",
+      "text": "Proceed with the proposed refactoring/restructuring.",
+      "verbatim_excerpt": "Let's do it"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 16,
+      "intent_kind": "correction",
+      "text": "No need for a loading state; remove it.",
+      "verbatim_excerpt": "no need for a loating state though, it's fine"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 18,
+      "intent_kind": "question",
+      "text": "Why does clearing the prompt cause enhance prompt to be set to true?",
+      "verbatim_excerpt": "Why when I clear the prompt does enhance prompt get set to true?"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 19,
+      "intent_kind": "request",
+      "text": "Enhance prompt should always default to false and never be set to true, except when persisting the user's existing settings. Find and fix every instance.",
+      "verbatim_excerpt": "should always be set to false and nothing should ever set it to true"
+    },
+    {
+      "intent_id": 16,
+      "source_turn": 21,
+      "intent_kind": "correction",
+      "text": "Exception: the batch generator should default enhance prompt to true.",
+      "verbatim_excerpt": "Except on the batch generator, that's the one place you should default to true"
+    },
+    {
+      "intent_id": 17,
+      "source_turn": 21,
+      "intent_kind": "request",
+      "text": "Simplify the code so enhance prompt isn't redundantly set in many different places.",
+      "verbatim_excerpt": "tons of different places to set the same thing"
+    },
+    {
+      "intent_id": 18,
+      "source_turn": 22,
+      "intent_kind": "request",
+      "text": "Each functionality should have its own enhance prompt default, set in exactly one place per functionality, not a single global source of truth.",
+      "verbatim_excerpt": "should be set for each specific functionality"
+    },
+    {
+      "intent_id": 19,
+      "source_turn": 23,
+      "intent_kind": "request",
+      "text": "Create a plan for cleaning up the enhance prompt defaults and identify the fundamental problem.",
+      "verbatim_excerpt": "make a plan for cleaning ot up now? What's the fundamental problem"
+    },
+    {
+      "intent_id": 20,
+      "source_turn": 25,
+      "intent_kind": "request",
+      "text": "Write the cleanup plan as a .md document.",
+      "verbatim_excerpt": "make a .md doc"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 24.4
+}

@@ -1,0 +1,1 @@
+I want to run `python .\sdxl_train_network.py --config_file <HOST_PATH> See the TOML file for dataset config. I've defined multiple resolutions, but when preprocessing the dataset, it seems it did not rescale each image to multiple resolutions and save them to the cache respectively. How to write the dataset config or modify the code to achieve this?

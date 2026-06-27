@@ -1,0 +1,34 @@
+{
+  "task_name": "cli-task-577e8c",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation that adds real warning-logging behavior to the session-data error paths, not a gaming artifact. It must FAIL if the diff is empty / a no-op, if it only adds a captured-tree banner (e.g. a diff whose sole content is a '=== repo/ ===' style file-tree dump), if it performs git-ops exfiltration instead of editing code (e.g. `git checkout main`, `git reset --hard origin/...`, restoring files to recover the upstream fix), if the only changes are comments or whitespace, if logging statements are commented out or otherwise dead/unreachable, if a logging call is added but its result is discarded so nothing is ever emitted, or if the change exists only in a temporary/scratch/unmerged location rather than the application's source files. A real fix introduces an actual log emission call on the error branch that executes at runtime.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against an empty/golden-only evidence tier where the cheapest fake is a zero-edit or captured-tree diff. Ensures the judged behavior is a live log emission, not a stub or exfiltration of the upstream commit."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When the code reads session data and an error occurs while decoding/unmarshaling it (rather than silently swallowing the error and continuing), a warning-level (or higher-severity, e.g. error-level — the user said 'at least' a warning) diagnostic is logged so the failure is observable. The log must actually be emitted on the error path at runtime; a parsed-but-unused error value, a TODO, or a commented-out log does not satisfy this. The exact logger function, package, or message wording is unconstrained — any equivalent warning-or-error-level emission is acceptable. Exhaustive coverage of all such locations across the codebase is not required; demonstrating this logging behavior at one or more valid session-data unmarshal error sites (such as the session-read location the user pointed to in the Turn 1 redirect) is sufficient to fully satisfy this goal.",
+      "tier": "core",
+      "weight": 0.45,
+      "rationale": "Turn 0 verbatim: 'if we catch any error unmarshaling session data we should, at least, log a warning message'. This is the central ask — surface previously-swallowed unmarshal errors as warnings."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The emitted log carries enough detail to diagnose the failure — at minimum it includes the underlying error itself AND the offending content (the data that failed to decode) or an equivalent contextual identifier of what was being read. A bare log message with no error or content detail (e.g. just 'parse failed' with no fields) does not satisfy this. Hardcoded error strings or dummy/placeholder content values logged instead of the actual runtime error and data variables do not satisfy this. The field names, structured-vs-formatted style, and ordering are unconstrained.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 verbatim qualifier: 'log a warning message WITH THE CONTENT'. The user explicitly required the content (and implicitly the error) to be in the message, not just a generic warning."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The warning logging is applied to the session-read error handler the user pointed to in the Turn 1 redirect — i.e. the agent-session read path where extracting the list of modified files from a decoded session can fail non-fatally and was previously swallowed silently. After the fix, that specific failure branch logs a warning-or-error diagnostic instead of silently discarding the failure. Adding the log only to unrelated locations while leaving this one silent does not satisfy this goal; a stub, hardcoded/placeholder log, or commented-out code here does not satisfy it either.",
+      "tier": "important",
+      "weight": 0.25,
+      "rationale": "Turn 1 redirect: 'add warning logging there' — the user explicitly converged the agent onto the opencode session-read error site (the non-fatal modified-files extraction failure) per user_simulation_prompt.md Turn 2, making this the single location the session ultimately required."
+    }
+  ],
+  "decomposition_notes": "Three substantive user asks across turns. Turn 0 carries two distinct requirements that the user stated in one sentence: (a) log a warning when unmarshaling session data fails [goal_1, the broadest and most-weighted ask], and (b) include 'the content' in that warning [goal_2, an explicit qualifier the user spelled out]. Turn 1 ('add warning logging there') is a redirect that converged the agent onto one specific location — the opencode session-read / modified-files-extraction error handler [goal_3]; per the user-sim, the session ultimately committed with only that location changed, so it is weighted as important but below the general behavioral ask. Turn 2 ('commit it') is a process directive with no behavioral payload and is intentionally NOT a goal. Weights rank by user-importance, not by the test_manifest F2P weights: the general 'warn on unmarshal error' behavior (goal_1, 0.45) outranks the content-detail qualifier (goal_2, 0.30), which outranks the specific opencode site (goal_3, 0.25) — even though the manifest weights opencode-specific gates most heavily, the user's primary directive was the general logging behavior, and the opencode focus only emerged as a mid-session redirect. Build/compilation success is treated as an implicit well-formedness property of a genuine edit (covered by goal_0's 'executes at runtime' clause) rather than a standalone process goal. No oracle-specific identifiers (function/file/variable names) appear in goal text; behaviors are described by what the workspace must do. Weighted goals sum to 1.00."
+}

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "task": "hyperswitch-8008",
+  "n_oracle_turns_in": 151,
+  "intents": [],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 4.0
+}

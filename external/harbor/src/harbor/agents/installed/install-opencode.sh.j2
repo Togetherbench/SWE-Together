@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euo pipefail
+
+apt-get update
+apt-get install -y curl ca-certificates
+
+# Install Node.js 22 via NodeSource (deb.nodesource.com).
+#
+# We deliberately do NOT use nvm here: nvm's installer is fetched from
+# raw.githubusercontent.com and then clones github.com, both of which are
+# sinkholed to 127.0.0.1 by the PR #221 contamination defense (seal-dns.sh).
+# That made agent setup fail with `curl: (7) ... raw.githubusercontent.com`
+# on ~58% of trials. NodeSource's apt repo is not sinkholed, so node installs
+# cleanly while the github/raw sinkhole stays fully intact for the agent.
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+node -v
+npm -v
+
+{% if version %}
+npm i -g opencode-ai@{{ version }}
+{% else %}
+npm i -g opencode-ai@latest
+{% endif %}
+
+opencode --version

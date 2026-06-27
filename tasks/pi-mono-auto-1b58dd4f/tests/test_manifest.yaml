@@ -1,0 +1,35 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # F2P gates — match the upstream fix (commit 5dbeadae) which makes
+  # session.bindExtensions(...) eager in all three mode entry points so
+  # the UI context is registered before any /reload cycle.
+  - id: f2p_interactive_eager_bind
+    kind: F2P
+    turn: 1
+    weight: 0.30
+    description: "interactive-mode.ts initExtensions() calls bindExtensions before the extensionRunner early-return"
+  - id: f2p_print_mode_unconditional_bind
+    kind: F2P
+    turn: 1
+    weight: 0.25
+    description: "print-mode.ts runPrintMode calls session.bindExtensions unconditionally (no if-extensionRunner wrapper)"
+  - id: f2p_rpc_mode_unconditional_bind
+    kind: F2P
+    turn: 1
+    weight: 0.25
+    description: "rpc-mode.ts runRpcMode calls session.bindExtensions unconditionally (no if-extensionRunner wrapper)"
+  - id: f2p_changelog_entry
+    kind: F2P
+    turn: 1
+    weight: 0.20
+    description: "CHANGELOG documents the extension UI bindings + /reload fix"
+  # P2P regression: informational only (does not zero reward)
+  - id: p2p_tsgo
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "tsgo --noEmit clean on agent-changed .ts/.tsx files"

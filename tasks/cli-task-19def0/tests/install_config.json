@@ -1,0 +1,22 @@
+{
+  "task_name": "cli-task-19def0",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test ./cmd/entire/cli/session/ ./cmd/entire/cli/strategy/ -count=1 -timeout 90s 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/session/state.go",
+    "cmd/entire/cli/strategy/session_state.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/session/state_test.go",
+    "cmd/entire/cli/strategy/session_state_test.go"
+  ],
+  "commit_sha": "4fc9356037dc7f5d1552e416508ec59c24a783ac",
+  "commit_message_first_line": "Clean stale session files (#438)",
+  "agent_percentage": 100.0,
+  "verifier_kind": "source_grep",
+  "_note": "Switched from injected-gold-tests + go-test parser to source-grep (test.sh) on 2026-05-08. Original Dockerfile injected gold tests via COPY which invalidated E2B template aliases on every change. The test.sh now scans state.go + session_state.go for canonical fix landmarks (IsStale, StaleSessionThreshold, store.Load delegation). FAIL_TO_PASS is empty because reward is computed entirely by test.sh weighted gates."
+}

@@ -1,0 +1,273 @@
+#!/bin/bash
+# Mock GitHub CLI for arr-monitor-add-processes-flag Harbor task.
+#
+# Simulates the subset of `gh` used in the captured session:
+#   gh pr list [--json ...]
+#   gh pr view <N>
+#   gh pr merge <N> [--merge|--squash|--rebase] [--delete-branch] [--admin]
+#   gh pr close <N> [--delete-branch]
+#   gh auth status
+#   gh repo view
+#
+# Merges operate on the bare repo at /opt/origin.git so that the agent's
+# `git pull` from origin reflects the new main HEAD and test gates
+# (HEAD advanced, merge commit count, branches deleted, extensions present)
+# can evaluate honestly.
+
+set -e
+
+ORIGIN="/opt/origin.git"
+MAIN_BRANCH="main"
+
+# PR number -> branch mapping (PR #2/#3/#4 per Dockerfile & fix_summary.md).
+declare -A PR_BRANCH=(
+    [2]="feature-add-new-processes-flag"
+    [3]="ignore-nfo-and-dll-transfers"
+    [4]="fix-ignore-exe-extension"
+)
+declare -A PR_TITLE=(
+    [2]="Add --add-new-processes flag for dynamic monitoring"
+    [3]="Ignore .nfo/.dll transfers for both source and destination"
+    [4]="Add executable formats (.exe, .msi) to ignored extensions"
+)
+declare -A PR_STATE=(
+    [2]="OPEN"
+    [3]="OPEN"
+    [4]="OPEN"
+)
+
+state_dir="${HOME:-/tmp}/.mock-gh"
+mkdir -p "$state_dir"
+state_file="$state_dir/pr_state"
+
+# Load persisted PR_STATE overrides from prior invocations.
+if [[ -f "$state_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$state_file"
+fi
+
+save_state() {
+    {
+        for n in 2 3 4; do
+            echo "PR_STATE[$n]=\"${PR_STATE[$n]}\""
+        done
+    } > "$state_file"
+}
+
+pr_list_plain() {
+    for n in 2 3 4; do
+        if [[ "${PR_STATE[$n]}" == "OPEN" ]]; then
+            printf '%d\t%s\t%s\tOPEN\t2026-02-09T08:09:35Z\n' \
+                "$n" "${PR_TITLE[$n]}" "${PR_BRANCH[$n]}"
+        fi
+    done
+}
+
+pr_list_json() {
+    local first=1
+    printf '['
+    for n in 2 3 4; do
+        if [[ "${PR_STATE[$n]}" == "OPEN" ]]; then
+            [[ $first -eq 0 ]] && printf ','
+            first=0
+            printf '{"number":%d,"title":"%s","headRefName":"%s","state":"OPEN"}' \
+                "$n" "${PR_TITLE[$n]}" "${PR_BRANCH[$n]}"
+        fi
+    done
+    printf ']\n'
+}
+
+pr_view() {
+    local n="$1"
+    if [[ -z "${PR_BRANCH[$n]:-}" ]]; then
+        echo "GraphQL: Could not resolve to a PullRequest with the number $n." >&2
+        exit 1
+    fi
+    cat <<EOF
+number: $n
+title:  ${PR_TITLE[$n]}
+branch: ${PR_BRANCH[$n]}
+state:  ${PR_STATE[$n]}
+EOF
+}
+
+# Perform a real merge inside the bare origin repo so that subsequent
+# `git fetch`/`git pull` in /workspace picks up the advanced main HEAD.
+pr_merge() {
+    local n="$1"; shift
+    local branch="${PR_BRANCH[$n]:-}"
+    if [[ -z "$branch" ]]; then
+        echo "pull request #$n not found" >&2
+        exit 1
+    fi
+    if [[ "${PR_STATE[$n]}" != "OPEN" ]]; then
+        echo "pull request #$n is already ${PR_STATE[$n]}" >&2
+        exit 1
+    fi
+
+    local delete_branch=0
+    local mode="merge"
+    for arg in "$@"; do
+        case "$arg" in
+            --delete-branch) delete_branch=1 ;;
+            --merge) mode="merge" ;;
+            --squash) mode="squash" ;;
+            --rebase) mode="rebase" ;;
+        esac
+    done
+
+    # Clone the bare origin into a scratch dir, merge, push back.
+    local work
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    git clone --quiet "$ORIGIN" "$work/repo" >/dev/null
+    (
+        cd "$work/repo"
+        git config user.email "mock-gh@test"
+        git config user.name  "mock-gh"
+        git checkout --quiet "$MAIN_BRANCH"
+        case "$mode" in
+            squash)
+                git merge --squash "origin/$branch" >/dev/null
+                git commit --quiet -m "${PR_TITLE[$n]} (#$n)"
+                ;;
+            rebase)
+                # Emulate a rebase-merge as a fast-forward fallback.
+                git merge --ff-only "origin/$branch" >/dev/null 2>&1 || \
+                    git merge --no-ff -m "Merge pull request #$n from ${branch}" "origin/$branch"
+                ;;
+            *)
+                # Default: merge commit. --no-ff so the merge is recorded as a merge commit.
+                git merge --no-ff -m "Merge pull request #$n from ${branch}
+
+${PR_TITLE[$n]}" "origin/$branch"
+                ;;
+        esac
+        git push --quiet origin "$MAIN_BRANCH"
+        if [[ $delete_branch -eq 1 ]]; then
+            git push --quiet origin --delete "$branch" || true
+        fi
+    )
+    rm -rf "$work"
+    trap - EXIT
+
+    PR_STATE[$n]="MERGED"
+    save_state
+
+    echo "Merged pull request #$n (${PR_TITLE[$n]})"
+    if [[ $delete_branch -eq 1 ]]; then
+        echo "Deleted branch ${branch}"
+    fi
+}
+
+pr_close() {
+    local n="$1"; shift
+    if [[ -z "${PR_BRANCH[$n]:-}" ]]; then
+        echo "pull request #$n not found" >&2
+        exit 1
+    fi
+    local delete_branch=0
+    for arg in "$@"; do
+        case "$arg" in
+            --delete-branch) delete_branch=1 ;;
+        esac
+    done
+    PR_STATE[$n]="CLOSED"
+    save_state
+    if [[ $delete_branch -eq 1 ]]; then
+        local branch="${PR_BRANCH[$n]}"
+        (cd "$ORIGIN" && git branch -D "$branch" >/dev/null 2>&1 || true)
+    fi
+    echo "Closed pull request #$n"
+}
+
+# -------- command dispatch --------
+case "${1:-}" in
+    --version)
+        echo "gh version 2.55.0 (mock)"
+        ;;
+    auth)
+        case "${2:-}" in
+            status)
+                echo "github.com"
+                echo "  - Logged in to github.com as mock-agent (MOCK)"
+                echo "  - Token scopes: 'repo', 'workflow'"
+                ;;
+            *)  echo "mock gh auth: unsupported subcommand $2" >&2; exit 1 ;;
+        esac
+        ;;
+    repo)
+        case "${2:-}" in
+            view)
+                echo "name:   arr-monitor"
+                echo "owner:  segin"
+                echo "desc:   Mock repo view for Harbor task"
+                ;;
+            *)  echo "mock gh repo: unsupported subcommand $2" >&2; exit 1 ;;
+        esac
+        ;;
+    pr)
+        sub="${2:-}"; shift 2 || true
+        case "$sub" in
+            list)
+                # Support --json field[,field2...] by emitting a simple JSON array.
+                want_json=0
+                for a in "$@"; do
+                    case "$a" in
+                        --json|--json=*) want_json=1 ;;
+                    esac
+                done
+                if [[ $want_json -eq 1 ]]; then
+                    pr_list_json
+                else
+                    pr_list_plain
+                fi
+                ;;
+            view)
+                num="${1:-}"
+                if [[ -z "$num" ]]; then
+                    echo "mock gh pr view: PR number required" >&2; exit 1
+                fi
+                pr_view "$num"
+                ;;
+            merge)
+                num="${1:-}"; shift || true
+                if [[ -z "$num" ]]; then
+                    echo "mock gh pr merge: PR number required" >&2; exit 1
+                fi
+                pr_merge "$num" "$@"
+                ;;
+            close)
+                num="${1:-}"; shift || true
+                if [[ -z "$num" ]]; then
+                    echo "mock gh pr close: PR number required" >&2; exit 1
+                fi
+                pr_close "$num" "$@"
+                ;;
+            checkout|diff|status|create|edit|comment|review|ready|reopen)
+                echo "mock gh pr $sub: not implemented in mock; no-op" >&2
+                exit 0
+                ;;
+            *)
+                echo "mock gh pr: unsupported subcommand '$sub'" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    "" | help | --help | -h)
+        cat <<EOF
+Mock GitHub CLI (Harbor task stub). Supported:
+  gh --version
+  gh auth status
+  gh repo view
+  gh pr list [--json ...]
+  gh pr view <N>
+  gh pr merge <N> [--merge|--squash|--rebase] [--delete-branch]
+  gh pr close <N> [--delete-branch]
+EOF
+        ;;
+    *)
+        echo "mock gh: unsupported command '$1'" >&2
+        exit 1
+        ;;
+esac

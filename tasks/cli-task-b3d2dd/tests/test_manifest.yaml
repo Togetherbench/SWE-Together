@@ -1,0 +1,29 @@
+gates:
+  - id: F2P_FALLBACK_LATEST_NO_PROMPT
+    kind: F2P
+    weight: 0.30
+    description: "Falls back from latest session (no prompt.txt) to an earlier session that has prompt.txt — the headline bug fix"
+
+  - id: F2P_FALLBACK_THROUGH_MULTIPLE_EMPTY
+    kind: F2P
+    weight: 0.25
+    description: "Falls back through multiple consecutive empty sessions (confirms iterative loop, not a single fallback)"
+
+  - id: F2P_FALLBACK_EMPTY_PROMPT_FILE
+    kind: F2P
+    weight: 0.20
+    description: "Falls back when latest session has prompt.txt but content is empty (treats empty content like missing prompt)"
+
+  - id: F2P_REGRESSION_EXISTING
+    kind: F2P
+    weight: 0.10
+    description: "All 7 existing TestReadLatestSessionPromptFromCommittedTree subtests still pass (no regressions)"
+
+  - id: F2P_NOT_STUB
+    kind: F2P
+    weight: 0.15
+    description: "ReadLatestSessionPromptFromCommittedTree body is non-trivial (loop + index use + ≥8 non-blank lines)"
+
+  - id: P2P_GO_BUILD
+    kind: P2P_REGRESSION
+    description: "go build ./cmd/entire/... succeeds — informational only, never zeroes reward"

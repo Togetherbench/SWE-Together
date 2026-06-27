@@ -1,0 +1,45 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+
+gates:
+  # --- F2P upstream gates (sum of weights = 1.0) ---
+  # NOTE (2026-06-06 sonnet review): previous gates checked emitSessionBefore,
+  # which is a DIFFERENT later refactor not in this task's oracle patch. When a
+  # trial agent ran `git checkout main`, main happened to contain emitSessionBefore
+  # and the verifier rewarded the bypass. Gates rewritten to assert what the oracle
+  # patch ACTUALLY adds: emitToolResult method + wrapper.ts call-site rewire.
+  - id: f2p_upstream_emitToolResult_method
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "emitToolResult method exists in runner.ts"
+    command: "cd /workspace/pi-mono && grep -q 'async emitToolResult' packages/coding-agent/src/core/extensions/runner.ts"
+    description: "Verifies that the new emitToolResult method is defined in the ExtensionRunner class (the oracle's dedicated chained-emission path for tool_result events)"
+
+  - id: f2p_upstream_wrapper_uses_emitToolResult
+    kind: F2P
+    turn: null
+    weight: 0.50
+    label: "wrapper.ts calls emitToolResult instead of emit() for tool_result"
+    command: "cd /workspace/pi-mono && grep -q 'emitToolResult' packages/coding-agent/src/core/extensions/wrapper.ts"
+    description: "Verifies that wrapper.ts routes tool_result events through the dedicated emitToolResult method (not the generic emit() method)"
+
+  # --- P2P regression gates ---
+  - id: p2p_upstream_tsgo_build
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "tsgo compilation succeeds"
+    command: "cd /workspace/pi-mono/packages/coding-agent && npx tsgo -p tsconfig.build.json 2>&1; exit $?"
+    description: "TypeScript compilation of coding-agent package must succeed on both base and fix"
+
+  - id: p2p_upstream_vitest_runner
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    label: "vitest extensions-runner tests pass"
+    command: "cd /workspace/pi-mono/packages/coding-agent && npx vitest --run test/extensions-runner.test.ts 2>&1; exit $?"
+    description: "Extension runner test suite (27 tests) must pass on both base and fix"

@@ -1,0 +1,18 @@
+{
+  "task_name": "pi-mono-auto-95de1efe",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/pi-mono",
+  "FAIL_TO_PASS": [
+    "failed registerProvider does not persist invalid streamSimple config",
+    "failed registerProvider does not remove existing provider models",
+    "bindCore ignores invalid queued registrations and reports extension error"
+  ],
+  "PASS_TO_PASS": [],
+  "_upgraded_from_legacy": true,
+  "_curated": "f2p_populated_from_canonical_patch",
+  "_legacy_restored": true,
+  "_legacy_restored_date": "2026-05-14",
+  "_legacy_restored_reason": "tests/test_manifest.yaml restored from .legacy.bak (harbor health audit)"
+}

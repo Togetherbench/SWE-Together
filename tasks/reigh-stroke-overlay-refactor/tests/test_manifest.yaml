@@ -1,0 +1,61 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: reigh-stroke-overlay-refactor
+turns:
+- turn: 1
+  user_message: 'Implement the following plan: # Refactor: Move drawing state machine into StrokeOverlay ... (4-step refactor
+    plan)'
+  deliverable: 'Execute the 4-step refactor: delete useStrokeRendering, absorb pointer/drag state into StrokeOverlay, move
+    action handlers into the overlay ref, remove dead prop threading.'
+  skipped: false
+- turn: 2
+  user_message: Can you send check this from top to bottom?
+  deliverable: "Mid-refactor review request \u2014 drives completion of remaining deletions and cleanup."
+  skipped: false
+- turn: 3
+  user_message: Is the code beautiful now?
+  deliverable: "Quality check after structural changes complete \u2014 drives final cleanup of residual prop threading and\
+    \ dead types."
+  skipped: false
+gates:
+- id: t1_f2p_dead_hooks_deleted
+  turn: 1
+  kind: F2P
+  weight: 0.18
+  description: All four legacy hooks (useStrokeRendering, usePointerHandlers, useDragState, useInpaintActions) are deleted
+    from the inpainting hooks directory.
+- id: t1_f2p_overlay_owns_state_machine
+  turn: 1
+  kind: F2P
+  weight: 0.22
+  description: StrokeOverlay declares isDrawing/currentStroke/drag state internally AND wires them to pointer handlers AND
+    attaches a global pointerup listener.
+- id: t2_f2p_overlay_callback_api_invoked
+  turn: 2
+  kind: F2P
+  weight: 0.18
+  description: StrokeOverlay both declares and actually invokes onStrokeComplete, onStrokesChange, onSelectionChange callbacks
+    (not just typed in props).
+- id: t2_f2p_overlay_handle_methods
+  turn: 2
+  kind: F2P
+  weight: 0.12
+  description: StrokeOverlayHandle exposes the action methods (undo, clear, deleteSelected, toggleFreeForm) and getSelectedShapeId
+    via useImperativeHandle.
+- id: t3_f2p_useinpainting_purged
+  turn: 3
+  kind: F2P
+  weight: 0.15
+  description: useInpainting.ts no longer imports/calls useStrokeRendering/usePointerHandlers/useDragState/useInpaintActions
+    and exposes none of redrawStrokes/handleKonvaPointer*/isDrawing in its return.
+- id: t3_f2p_types_and_chain_cleaned
+  turn: 3
+  kind: F2P
+  weight: 0.15
+  description: types.ts and the prop chain (LightboxLayout / MediaDisplayWithCanvas / VideoLightbox stub) drop legacy handler/canvasRef/redrawStrokes
+    symbols and adopt the new callback shape.
+- id: p2p_src_unmodified
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: "(advisory only \u2014 not diagnostic since this task DOES modify source)"

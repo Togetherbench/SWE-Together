@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-b12319",
+  "n_oracle_turns_in": 1,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Implement the cursor agent using the new external type, keeping it in this repo.",
+      "verbatim_excerpt": "implement the cursor agent using the new external type"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 3.4
+}

@@ -1,0 +1,43 @@
+version: "1.0"
+task_id: cli-task-33e050
+
+gates:
+  - id: f2p_nonexistent_fast_return
+    kind: F2P
+    weight: 0.25
+    description: "waitForTranscriptFlush returns immediately (<500ms avg over 3 calls) when transcript file does not exist"
+
+  - id: f2p_recent_file_still_waits
+    kind: F2P
+    weight: 0.15
+    description: "waitForTranscriptFlush still waits ~3s for recent file without sentinel (no over-fix that breaks the poll loop)"
+
+  - id: f2p_early_return_err_not_nil
+    kind: F2P
+    weight: 0.15
+    description: "AST check: function has an early return path when os.Stat errors (file doesn't exist), positioned before the deadline/poll loop"
+
+  - id: f2p_stale_still_skips_behavioral
+    kind: F2P
+    weight: 0.15
+    description: "Stale file (>10 min old) still skips the poll loop and returns quickly (<500ms)"
+
+  - id: bronze_function_exists
+    kind: F2P
+    weight: 0.08
+    description: "waitForTranscriptFlush function exists with correct signature and >3 meaningful body statements (anti-stub)"
+
+  - id: bronze_test_updated
+    kind: F2P
+    weight: 0.05
+    description: "Test for nonexistent file exists and expects sub-second return (tight timeout, not 5s tolerance)"
+
+  - id: p2p_existing_tests_pass
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "All pre-existing tests in the claudecode package pass (no regressions introduced)"
+
+  - id: p2p_stale_still_skips
+    kind: P2P_REGRESSION
+    weight: 0.0
+    description: "Stale-file fast path still works — function returns quickly for files with old mtime"

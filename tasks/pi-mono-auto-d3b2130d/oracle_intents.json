@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-auto-d3b2130d",
+  "n_oracle_turns_in": 6,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Asking whether packages can be searched by keywords alone.",
+      "verbatim_excerpt": "so we can't search just by keywords?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Add a unique searchable keyword 'pi-package' to the packages.",
+      "verbatim_excerpt": "ensure that we have a unique keyword we can search for, how about pi-package?"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "correction",
+      "text": "Add the keyword to ../pi-doom/, ../pi-package-test/, and ../pi-gitlab-duo/ instead.",
+      "verbatim_excerpt": "add it to ../pi-doom/ ../pi-package-test/ and ../pi-gitlab-duo/"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "Publish new versions of those three packages.",
+      "verbatim_excerpt": "then publish new versions of these"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "request",
+      "text": "Document the 'pi-package' keyword in extensions.md, README.md, and any other relevant .md files.",
+      "verbatim_excerpt": "document this keyword in @packages/coding-agent/docs/extensions.md"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 7,
+      "intent_kind": "workflow",
+      "text": "Commit and push the changes in the working directory.",
+      "verbatim_excerpt": "commit an dpush the changes in the working dir"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 7.3
+}

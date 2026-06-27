@@ -1,0 +1,1 @@
+can you take a look at mise.toml, we have a few commands which are basically shell scripts, I'd like to extract them out, but first: is there a linter for mise.toml that we can run to prevent this happening in the future?

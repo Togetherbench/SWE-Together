@@ -1,0 +1,37 @@
+{
+  "task_name": "cli-task-e5813e",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/home/agent/cli",
+  "FAIL_TO_PASS": [
+    "TestParseHookEvent_TurnEnd_RequiresOpenCode",
+    "TestParseExportSession",
+    "TestParseExportSession_Empty",
+    "TestParseExportSession_InvalidJSON",
+    "TestBuildCondensedTranscriptFromBytes_OpenCodeInvalidJSON"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/agent/opencode/cli_commands.go",
+    "cmd/entire/cli/agent/opencode/entire_plugin.ts",
+    "cmd/entire/cli/agent/opencode/lifecycle.go",
+    "cmd/entire/cli/agent/opencode/opencode.go",
+    "cmd/entire/cli/agent/opencode/transcript.go",
+    "cmd/entire/cli/agent/opencode/types.go",
+    "cmd/entire/cli/integration_test/hooks.go",
+    "cmd/entire/cli/integration_test/testenv.go",
+    "cmd/entire/cli/lifecycle.go",
+    "cmd/entire/cli/state.go",
+    "cmd/entire/cli/summarize/summarize.go"
+  ],
+  "test_files": [
+    "cmd/entire/cli/agent/opencode/lifecycle_test.go",
+    "cmd/entire/cli/agent/opencode/transcript_test.go",
+    "cmd/entire/cli/integration_test/agent_test.go",
+    "cmd/entire/cli/summarize/summarize_test.go"
+  ],
+  "commit_sha": "cfd21966542330f017cf3c44df3818189776ffff",
+  "commit_message_first_line": "opencode refactor to use internal format and full logs",
+  "agent_percentage": 100.0
+}

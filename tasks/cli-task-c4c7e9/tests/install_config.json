@@ -1,0 +1,17 @@
+{
+  "task_name": "cli-task-c4c7e9",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/workspace/repo",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/strategy/manual_commit_hooks.go",
+    "cmd/entire/cli/summarize/trail_title.go"
+  ],
+  "test_files": [],
+  "commit_sha": "8b01d8e0315c2d38edd4916e69d268ecc2f9064d",
+  "commit_message_first_line": "Remove trail title generation",
+  "agent_percentage": 100.0
+}

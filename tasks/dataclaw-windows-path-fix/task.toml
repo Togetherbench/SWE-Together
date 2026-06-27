@@ -1,0 +1,27 @@
+version = "1.0"
+
+[metadata]
+author_name = "Alex Li"
+author_email = "alex@example.com"
+difficulty = "medium"
+category = "bugfix"
+tags = ["dataclaw", "python", "windows", "pathlib"]
+session_resolution = "cut_off"
+session_resolution_confidence = 0.70
+session_resolution_reasoning = "Final user message was a question about _build_project_name providers; assistant answered but no user acknowledgment or 'done' signal followed. Session simply ended."
+expert_time_estimate_min = 15.0
+junior_time_estimate_min = 60.0
+
+[verifier]
+timeout_sec = 120.0
+
+[agent]
+timeout_sec = 3600.0
+
+[environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/dataclaw-windows-path-fix:13923376d0ee"
+build_timeout_sec = 600.0
+cpus = 4
+memory = "4G"
+storage = "10G"
+allow_internet = true

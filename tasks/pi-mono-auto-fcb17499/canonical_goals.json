@@ -1,0 +1,41 @@
+{
+  "task_name": "pi-mono-auto-fcb17499",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must be a genuine source-code change that implements the requested editor-padding behavior, not a scoring artifact. Reject if the diff is empty/no-op, only adds comments or whitespace, only reformats, or comments out existing logic. Reject captured-tree artifacts whose only content is a directory-tree banner such as '=== pi-mono/ ===' (or any '=== <project>/ ===' header) with no real diff hunks. Reject git-ops exfiltration (e.g. a diff that only runs `git checkout main`, `git reset --hard origin/...`, or otherwise reverts/swaps the tree instead of editing files). Reject changes confined to temp/scratch/unmerged locations (e.g. /tmp, *.bak, stash) rather than the actual package source. Reject deletion or weakening of existing tests to force a pass. A valid submission edits the real TUI/coding-agent package source to add the padding control and its persistence.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against the two low-signal model patches, each a single tiny hunk wrapped in a '=== pi-mono/ ===' captured-tree banner (model_patches/0 and 1) that does not implement the full padding feature; such trivial or partial artifacts, as well as pure banner-only captures, must not score as complete."
+    },
+    {
+      "id": "goal_default_padding_zero",
+      "goal": "The input editor in the interactive coding-agent must default to zero horizontal padding instead of the previous default of one. With no user configuration present, a freshly constructed editor must render with no extra horizontal padding. This must be a real default-value change in the source, not merely a comment. If the configurable padding setting is also implemented, the zero must act as the true fallback default rather than an unconditional override that ignores a user-chosen value; a plain hardcoded default of zero is acceptable as a partial solution when no configuration setting is present.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 3 verbatim: 'i hate the default padding of 1 in coding agent. please fix that up to be 0'. The default end-state must be 0."
+    },
+    {
+      "id": "goal_padding_configurable_setting",
+      "goal": "Horizontal editor padding must be exposed as a user-configurable persistent setting, not just a constant. The setting must be selectable from the interactive settings UI and its value must be persisted to the agent's settings store so it survives across sessions. A parsed-but-ignored option, a setting that never reaches the editor, or a UI entry that does not actually change behavior does not satisfy this.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 5 verbatim: 'can we make it a setting?'. The user asked to promote the padding constant into a configurable, persisted setting wired into the settings UI."
+    },
+    {
+      "id": "goal_live_update_refocus_render",
+      "goal": "Changing the padding via the settings UI at runtime must leave the editor immediately usable: after the settings UI closes, the input editor must be focused and the screen must re-render so the user can type right away with the new padding applied. The existing editor instance must be updated in place (its padding mutated and the display invalidated / a render requested), which naturally keeps the editor usable without recreating it; an in-place update that preserves the typing surface satisfies this without requiring any specific explicit focus-restoration call. This must genuinely restore interactivity, not be a stubbed or commented-out handler.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 6 verbatim bug report: 'if i change the padding via the settings ui, i can no longer type after retuning ... the tui needs to set focus on the new editor component'. Turns 7-8 correct the approach: no overlay system, and 'expose a setter/getter on editor, which will invalidate it and force a re-render via tui.requestRender ... the whole recreateEditor shit is terrible' — so the fix updates the existing editor and requests a render rather than recreating it."
+    },
+    {
+      "id": "goal_docs_updated",
+      "goal": "User-facing documentation and the changelog must reflect the new padding setting. The relevant package changelog must record the addition, and the settings documentation (e.g. the settings reference/README) must list the new padding option with its default. A documentation-only stub that mislabels the default or omits the setting does not satisfy this.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 0 step 4/5 asks to verify and, if needed, add a changelog entry and update docs; Turn 10 verbatim: 'ok, docs are in order?' confirms documentation completeness is an explicit deliverable."
+    }
+  ],
+  "decomposition_notes": "Substantive workspace asks span Turn 0 and the multi-turn correction loop. Pure git-ops turns (T1 merge, T2 pull, T4/T9 commit/push/close-pr) and the ephemeral PR-review prose (T0) are process actions, not durable workspace end-states, so they are not weighted goals. The three core goals capture the actual feature evolution: (1) flip the default padding to 0 (T3), (2) make it a persisted, UI-selectable setting (T5), (3) make live changes via the settings UI immediately usable by refocusing the editor and requesting a render, updating the existing editor in place per the user's setter/getter correction (T6-T8). goal_docs_updated covers the changelog+docs requirement (T0 step 4/5, T10). Weights are ranked by user-importance with the three behavioral core asks equal at 0.3 and docs at 0.1; deliberately NOT mirroring the 0.5/0.5 F2P manifest split. Behavior is described without naming oracle-specific identifiers (no setPaddingX/editorPaddingX/showSelector) except where the user named a mechanism verbatim (setter/getter, requestRender), so behaviorally-equivalent implementations are accepted."
+}

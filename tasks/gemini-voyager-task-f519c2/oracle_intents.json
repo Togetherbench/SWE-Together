@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task": "gemini-voyager-task-f519c2",
+  "n_oracle_turns_in": 2,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 2,
+      "intent_kind": "correction",
+      "text": "Drag-and-drop doesn't place the item at the exact chosen position; it defaults to the last position in the folder.",
+      "verbatim_excerpt": "并不能准确拖到选择的那个位置"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 3,
+      "intent_kind": "workflow",
+      "text": "Commit the changes with message referencing Fixes $430.",
+      "verbatim_excerpt": "提交，Fixes $430"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 4.4
+}

@@ -1,0 +1,58 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: desloppify-treesitter-plugins
+turns:
+- turn: 1
+  user_message: 'Implement the following plan: Make Generic Language Plugins Fully Functional (5 steps: dynamic detector registration,
+    wire generic_lang() to register detectors, append shared phases to generic plugins, optional tool fixers, update langs
+    command).'
+  deliverable: Add register_detector/register_scoring_policy/refresh_detector_tools and wire generic_lang() to register detectors,
+    register scoring policies, refresh narrative, and append shared phases.
+  skipped: false
+gates:
+- id: p2p_base_imports
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: Base modules import successfully
+- id: t1_f2p_register_detector
+  turn: 1
+  kind: F2P
+  weight: 0.08
+  description: register_detector() adds DetectorMeta to DETECTORS at runtime
+- id: t1_f2p_register_scoring_policy
+  turn: 1
+  kind: F2P
+  weight: 0.12
+  description: register_scoring_policy() updates DETECTOR_SCORING_POLICIES and rebuilds derived dimension/file-based state
+- id: t1_f2p_refresh_detector_tools_inplace
+  turn: 1
+  kind: F2P
+  weight: 0.12
+  description: refresh_detector_tools() mutates DETECTOR_TOOLS in place (held reference sees update)
+- id: t1_f2p_generic_lang_registers_detector
+  turn: 1
+  kind: F2P
+  weight: 0.12
+  description: generic_lang() registers each tool's id in DETECTORS
+- id: t1_f2p_generic_lang_registers_scoring
+  turn: 1
+  kind: F2P
+  weight: 0.12
+  description: generic_lang() registers each tool's scoring policy and updates derived dimension state
+- id: t1_f2p_generic_lang_refreshes_narrative
+  turn: 1
+  kind: F2P
+  weight: 0.08
+  description: generic_lang() causes the registered tool to appear in DETECTOR_TOOLS (narrative)
+- id: t1_f2p_generic_lang_shared_phases
+  turn: 1
+  kind: F2P
+  weight: 0.16
+  description: generic_lang() appends shared phases (Security plus subjective/duplicates/boilerplate) to plugin phases
+- id: f2p_upstream_6d076581
+  turn: null
+  kind: F2P
+  weight: 0.2
+  description: 'upstream(F2P): py_compile_changed_generic @ 295d321'
+  notes: v043 F2P; reason=fail_on_buggy (rc_base=1) -> pass_on_fix

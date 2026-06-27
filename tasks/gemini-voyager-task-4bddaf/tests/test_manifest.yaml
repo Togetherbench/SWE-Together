@@ -1,0 +1,53 @@
+gates:
+- id: F2P_TYPECHECK
+  kind: F2P
+  weight: 0.1
+  command: 'cd /workspace/repo && bun run typecheck > /tmp/typecheck.log 2>&1
+
+    test $? -eq 0
+
+    '
+  description: 'cd /workspace/repo && bun run typecheck > /tmp/typecheck.log 2>&1
+
+    test $? -eq 0'
+- id: F2P_STORAGE_KEY
+  kind: F2P
+  weight: 0.15
+  command: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/core/types/common.ts') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTALL)\nmatches = re.findall(r\\\"(GV_\\w*(?:POPUP|SECTION|ORDER|REORDER)\\w*)\\s*:\\s*'\\\", cleaned)\nprint(len(matches))\n\" 2>/dev/null | grep -qv '^0$'\n"
+  description: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/core/types/common.ts') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTAL..."
+- id: F2P_SECTION_ARRAY
+  kind: F2P
+  weight: 0.15
+  command: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTALL)\narrays = re.findall(r\\\"const\\s+(\\w*(?:SECTION|POPUP|ORDER)\\w*)\\s*=\\s*\\[([^\\]]{50,})\\]\\\", cleaned, re.DOTALL)\nfound = any(len(re.findall(r\\\"'([^']+)'\\\", body)) >= 10 for _, body in arrays)\nprint(1 if found else 0)\n\" 2>/dev/null | grep -q '^1$'\n"
+  description: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTA..."
+- id: F2P_REORDER_UI
+  kind: F2P
+  weight: 0.2
+  command: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTALL)\ns = 0\nif re.search(r'<(?:button|div)[^>]*onClick.*?<svg.*?</svg>', cleaned, re.DOTALL) and re.search(r'<polyline[^>]*points=', cleaned):\n    s += 1\nif re.search(r'(?:aria-label|title)\\s*=\\s*\\{[^}]*?(?:move|Move|up|down|Up|Down|上|下)', cleaned):\n    s += 1\nprint(1 if s >= 2 else 0)\n\" 2>/dev/null | grep -q '^1$'\n"
+  description: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTA..."
+- id: F2P_MOVE_LOGIC
+  kind: F2P
+  weight: 0.2
+  command: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTALL)\ns = 0\nif re.search(r'\\.(?:indexOf|findIndex)\\s*\\(', cleaned):\n    s += 1\nif re.search(r'const\\s+\\w+\\s*=\\s*\\[\\.\\.\\.\\w+\\]', cleaned) or re.search(r'\\[\\w+\\]\\s*=\\s*\\[\\w+\\]\\s*,\\s*\\[\\w+\\]\\s*=\\s*\\[\\w+\\]', cleaned):\n    s += 1\nif re.search(r'set\\w*(?:Section|Order|Reorder)\\w*\\s*\\(', cleaned):\n    s += 1\nprint(1 if s >= 2 else 0)\n\" 2>/dev/null | grep -q '^1$'\n"
+  description: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTA..."
+- id: F2P_STORAGE_SAVE
+  kind: F2P
+  weight: 0.15
+  command: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTALL)\nfound = False\nfor m in re.finditer(r'(?:chrome\\.storage\\.sync\\.set|setSyncStorage)\\s*\\(', cleaned):\n    start = max(0, m.start() - 200)\n    end = min(len(cleaned), m.end() + 300)\n    window = cleaned[start:end]\n    if re.search(r'(?:SECTION|Section|section|ORDER|Order|order|REORDER|Reorder|reorder)', window):\n        found = True\n        break\nprint(1 if found else 0)\n\" 2>/dev/null | grep -q '^1$'\n"
+  description: "python3 -c \"\nimport re\nwith open('/workspace/repo/src/pages/popup/Popup.tsx') as f:\n    text = f.read()\ncleaned = re.sub(r'//.*', '', text)\ncleaned = re.sub(r'/\\*.*?\\*/', '', cleaned, flags=re.DOTA..."
+- id: F2P_I18N
+  kind: F2P
+  weight: 0.05
+  command: "python3 -c \"\nimport json\nwith open('/workspace/repo/src/locales/en/messages.json') as f:\n    data = json.load(f)\nup = data.get('moveSectionUp', {}).get('message', '')\ndown = data.get('moveSectionDown', {}).get('message', '')\nok = bool(up.strip()) and bool(down.strip())\nprint(1 if ok else 0)\n\" 2>/dev/null | grep -q '^1$'\n"
+  description: "python3 -c \"\nimport json\nwith open('/workspace/repo/src/locales/en/messages.json') as f:\n    data = json.load(f)\nup = data.get('moveSectionUp', {}).get('message', '')\ndown = data.get('moveSectionDo..."
+- id: P2P_REGRESSION_TESTS
+  kind: P2P_REGRESSION
+  weight: 0.0
+  command: 'cd /workspace/repo && bun run test > /tmp/vitest.log 2>&1
+
+    test $? -eq 0
+
+    '
+  description: 'cd /workspace/repo && bun run test > /tmp/vitest.log 2>&1
+
+    test $? -eq 0'

@@ -1,0 +1,48 @@
+{
+  "task_name": "cli-task-33e050",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine code change that actually alters the runtime behavior of the transcript-flush wait used during commit, not a gaming artifact. Reject if the diff is empty/no-op, only adds comments or whitespace, only reorders code without changing behavior, deletes or weakens the relevant tests instead of fixing the code, hardcodes a value purely to satisfy a single test, or consists of non-code artifacts (e.g. a captured directory-tree banner like '=== repo/ ==='). Also reject git-ops exfiltration that fakes work without implementing it (e.g. 'git checkout main', 'git reset --hard origin/...') or changes confined to temporary/unmerged scratch locations rather than the actual source tree.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. No model patches exist for calibration (evidence_tier=golden_only), so the floor must catch generic stub/no-op/diff-pad cheats while remaining behavioral. The accepted golden change touches real wait logic and tightens a test, so deleting tests or comment-only diffs must be flagged."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When the transcript file does not exist, the commit-time wait returns essentially immediately (well under one second) instead of blocking on a polling loop. This must hold for the actual runtime path, not merely be asserted by a comment or a deleted/loosened test; a solution that still spends multiple seconds polling for a file that is absent does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 0 ('committing ... is quite slow ... can you take a look?') plus the decisive Turn 9 ('if the file doesn't exists, we wait since it could be created? Is that really a thing when we commit? that there is nothing?') motivate the canonical fix: stop waiting on a nonexistent transcript during commit. This is the primary performance win the user asked for."
+    },
+    {
+      "id": "goal_2",
+      "goal": "A genuinely slow commit caused by waiting for the agent's transcript-flush sentinel is eliminated for the stale-session case: when the transcript file exists but has not been modified for a long time (stale, agent no longer running), the wait short-circuits and returns quickly rather than incurring the full poll-loop timeout. The fast-path must be driven by the file's actual staleness at runtime, not faked by a constant or a removed check.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 is a broad 'why is committing slow, take a look' request; the agent's accepted stale-file fast path is the mechanism that removes the per-stale-session timeout the user was hitting. This is behavior the user kept (only the threshold was revised), so it is a substantive, non-rejected ask."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The staleness cutoff used by the fast path is conservative rather than aggressive: a file modified only a few seconds ago is NOT treated as stale, so a short, very recent quiet gap does not cause the wait to be skipped while the agent may still be flushing. The threshold should be on the order of roughly two minutes (clearly larger than a few seconds), implemented as real elapsed-time logic, not a flag that is parsed but ignored or a value that is hardcoded only for the test.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 1: 'Can we make it more then 5s just to be safe? like I feel 120s is probably fine?' The user explicitly rejected the original ~5s threshold as too aggressive and asked for a much more conservative one. Behavioral, not a literal-constant requirement."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The change does not over-fix or regress the legitimate wait: when the transcript file exists and was modified very recently (agent could still be flushing) and the stop sentinel has not yet appeared, the function still performs its polling wait rather than returning instantly. The fast-paths from the other goals must be additive shortcuts for the absent/stale cases only, preserving correct behavior for active sessions; achieving speed by gutting the poll loop entirely does not satisfy this goal.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 1's '5s is too aggressive ... to be safe' and Turn 4's pushback ('moving them off active has the implications that ... the session wouldn't be picked up anymore') both show the user rejecting fixes that sacrifice correctness for speed. This guards against breaking the real wait for active sessions."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The test coverage for the absent-transcript case is kept truthful to the new behavior: the test that exercises a nonexistent transcript asserts a fast/sub-second return (a tight bound consistent with the immediate-return behavior), and any stale explanatory comment claiming the call 'still takes ~3s' (or otherwise describing the old poll-through-on-absence behavior) is corrected or removed so the test and its commentary match what the code now does. Merely fixing the comment while leaving a loose multi-second tolerance, or merely deleting the test, does not satisfy this goal.",
+      "tier": "important",
+      "weight": 0.05,
+      "rationale": "Turn 7: the user is scrutinizing the test and its comment, pointing out verbatim that the comment ('With the stale check, os.Stat fails so we fall through to the poll loop ... still takes ~3s') is misleading. Once the underlying behavior changes in Turn 9 (immediate return on absent file), that scrutiny implies the test and its commentary must be kept truthful — the old 5s tolerance and ~3s comment become obsolete."
+    }
+  ],
+  "decomposition_notes": "Evidence tier is golden_only (no model patches). The session is a long multi-turn debugging thread; only two code changes survived user scrutiny: (a) an early return when the transcript file is absent (Turns 8-9, the decisive insight) and (b) a stale-file fast path with a conservative ~2-minute threshold (Turn 0 investigation + Turn 1 threshold revision). goal_1 (nonexistent-file immediate return) is weighted highest because it is the user's culminating insight and the direct answer to the Turn-0 complaint about commit slowness. goal_2 captures the stale-file shortcut that removes per-session timeouts. goal_3 encodes the explicit Turn-1 correction (5s too aggressive, ~120s preferred) behaviorally. goal_4 encodes the user's repeated rejection of over-fixes (Turn 1 'to be safe', Turn 4 rejecting the 'move off active' approach) by requiring the legitimate recent-file wait to be preserved. goal_5 captures the Turn 7 scrutiny of the nonexistent-file test/comment, which (combined with the Turn 9 logic change) requires the test and its comment to be kept truthful to the new immediate-return behavior. Pure-explanation turns (Turn 2 PR comparison, Turn 3 'more issues', Turn 5 summary, Turn 6 IDLE question) are not deliverable behaviors and are intentionally not scored. Weights deliberately differ from the F2P manifest, which front-loads the nonexistent-file test at 0.25 and splits structural AST/bronze gates; here user-importance ranks the nonexistent-file return and the stale fast path highest. Sum of weighted goals = 0.40 + 0.30 + 0.15 + 0.10 + 0.05 = 1.00."
+}

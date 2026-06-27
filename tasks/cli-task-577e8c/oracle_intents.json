@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-577e8c",
+  "n_oracle_turns_in": 1,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Add warning-level logging at the indicated location.",
+      "verbatim_excerpt": "add warning logging there"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 11.5
+}

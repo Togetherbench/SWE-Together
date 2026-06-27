@@ -1,0 +1,33 @@
+{
+  "task_name": "gemini-voyager-task-16a5c7",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/opt/gemini-voyager",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "src/features/export/services/DeepResearchPDFPrintService.ts",
+    "src/features/export/services/ImageExportService.ts",
+    "src/features/export/services/MarkdownFormatter.ts",
+    "src/features/export/services/PDFPrintService.ts",
+    "src/locales/ar/messages.json",
+    "src/locales/en/messages.json",
+    "src/locales/es/messages.json",
+    "src/locales/fr/messages.json",
+    "src/locales/ja/messages.json",
+    "src/locales/ko/messages.json",
+    "src/locales/pt/messages.json",
+    "src/locales/ru/messages.json",
+    "src/locales/zh/messages.json",
+    "src/locales/zh_TW/messages.json",
+    "src/pages/content/deepResearch/formatter.ts",
+    "src/pages/content/prompt/index.ts"
+  ],
+  "test_files": [
+    "src/features/export/services/__tests__/MarkdownFormatter.test.ts"
+  ],
+  "commit_sha": "7107d3a659521acce8224271d0cf83bdd513fca7",
+  "commit_message_first_line": "chore: rename extension from \"Gemini Voyager\" to \"Voyager\"",
+  "agent_percentage": 100.0
+}

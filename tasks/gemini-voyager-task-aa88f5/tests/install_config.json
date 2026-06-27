@@ -1,0 +1,17 @@
+{
+  "task_name": "gemini-voyager-task-aa88f5",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/gemini-voyager",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "public/contentStyle.css",
+    "src/pages/content/folder/manager.ts"
+  ],
+  "test_files": [],
+  "commit_sha": "1735b7d7c5b0f0a4985613d4c21a8dea538b073f",
+  "commit_message_first_line": "fix(folder): fix import dialog light mode colors and menu icon alignment",
+  "agent_percentage": 100.0
+}

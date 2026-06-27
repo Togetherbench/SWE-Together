@@ -1,0 +1,48 @@
+{
+  "task_name": "cli-task-5a69ca",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation of the empty-repository handling described by the user, not a gaming artifact. REJECT if the diff is a no-op or zero-edit; if its only content is a captured working-tree banner such as a '=== repo/ ===' tree dump or other diff-padding with no real source change; if the apparent fix is produced by git-ops exfiltration (e.g. `git checkout main`, `git reset --hard origin/...`, restoring upstream files) rather than authored code; if changes are comment-only or whitespace-only; or if edits land only in temporary/unmerged/scratch locations that do not affect the actual command source tree. The detection and messaging behavior must be implemented in real, compiled source code that the production code paths exercise.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. The evidence tier is golden_only with zero real model patches, so this floor is calibrated against generic exfiltration/no-op patterns rather than a lowest-reward sample. Genuine source edits are required; banner-dump, git-reset, and comment-only diffs must not pass."
+    },
+    {
+      "id": "goal_detect_empty_repo",
+      "goal": "When the application attempts to operate in a repository that has no commits yet (a freshly initialized repo whose HEAD reference does not resolve) — whether the check lives at session initialization, at repository-opening, or another equivalent chokepoint — the code recognizes this specific situation instead of letting it surface as the opaque generic 'failed to get HEAD: reference not found' error. The empty-repository condition is distinguished from genuine unexpected HEAD failures, so that only the no-commits case is treated specially and other failures still propagate as before. This must be real branching logic on the actual no-commits condition, not a hardcoded constant, an always-true stub, or a flag that is parsed but ignored.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Turn 0 verbatim: 'In a freshly git init'd repo with no commits, repo.Head() returns plumbing.ErrReferenceNotFound. Both strategies fail during session initialization, producing a cryptic error... The fix: detect the empty-repo case early.' This is the behavioral heart of the whole task."
+    },
+    {
+      "id": "goal_unit_tests",
+      "goal": "The empty-repository detection behavior is covered by automated tests that exercise the real logic: a test asserting the detection reports an empty (commitless) repository as such and a non-empty repository as not-empty, and tests asserting that the distinct empty-repo error is surfaced when operating on a commitless repository (e.g. testing session initialization for both the manual-commit and auto-commit strategies, or testing the repository-opening / centralized check path, depending on where the implementation places the check). The tests must actually drive the production code paths against genuinely empty and non-empty repositories and assert the resulting behavior — not be skipped, hollow assertions, always-pass stubs, or deletions/weakenings of existing tests to force a green run.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 0 explicitly requests unit tests ('### 7. Unit tests') for the empty-repo detection on both strategies and the helper, naming three test files. Phrased behaviorally (cover the detection + the init error against empty vs non-empty repos) so any equivalent test placement satisfies it without pinning file/function names."
+    },
+    {
+      "id": "goal_clear_user_message",
+      "goal": "In the empty-repository case, the user receives a clear, actionable message that conveys session checkpoints are unavailable because the repo has no commits yet, and that creating an initial commit will enable them — instead of the cryptic 'reference not found' text. This friendlier guidance reaches the user both during the agent session-startup hook path and when the user runs the setup/enable command on a commitless repo. The message must be emitted CONDITIONALLY on the empty-repo path only: it must not be printed unconditionally on normal/successful runs, nor emitted on unrelated errors (like permission denied or other unexpected HEAD failures), against repositories that do have commits. It must be genuinely emitted (not dead code, not commented out, not gated behind a condition that never fires) and genuinely suppressed on the non-empty path.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0 asks to 'provide clear messaging, and degrade gracefully', with explicit hook-handler ('Note: Session checkpoints disabled...') and `entire enable` warning ('repository has no commits yet... checkpoints won't work until you create your first commit') requirements. User-facing clarity is the point of the fix."
+    },
+    {
+      "id": "goal_distinct_error_value",
+      "goal": "The empty-repository condition is represented by a distinct, recoverable error value that callers can reliably test for (e.g. via errors.Is-style matching), rather than only a free-form string. This lets the messaging layers branch on the empty-repo case specifically. A genuine distinguishable sentinel/wrapped error is required; matching on substring text of the generic message, or a value that is defined but never returned on the empty-repo path, does not satisfy this.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 0 specifies a sentinel ('Add ErrEmptyRepository sentinel') consumed via errors.Is in the hook handler. Phrased behaviorally as 'a distinct recoverable error callers can match' so any equivalent typed/wrapped-error approach is accepted, not just the named sentinel."
+    },
+    {
+      "id": "goal_gemini_handler_consistency",
+      "goal": "The same graceful empty-repository handling and friendly messaging applied to the primary agent's session-init hook is also applied to the analogous secondary agent CLI hook handler, so both agent entry points behave consistently on a commitless repo rather than one still emitting the cryptic warning. The friendly message must be emitted conditionally on the empty-repo path and genuinely suppressed on normal runs and on unrelated errors (like permission denied or other unexpected HEAD failures) against repositories that have commits — not printed unconditionally, and not merely noted in a comment. The consistent behavior must actually be present on the second handler's executed code path.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 7 verbatim follow-up: 'can you check hooks_geminicli_handers.go. perhaps this needs a change too' — and the golden patch applies the identical empty-repo branch to the Gemini handler. This is the key multi-turn correction beyond Turn 0; the user named the file, so referencing the Gemini handler behaviorally is faithful, not over-specific."
+    }
+  ],
+  "decomposition_notes": "Behavioral goals derive from Turn 0 (detect empty-repo early, friendly messaging in both the session-startup hook and the enable/setup command, degrade gracefully) and the substantive Turn 7 follow-up (apply the same fix to the second agent's CLI hook handler). Process/git-ops asks are intentionally excluded as non-workspace goals: Turn 1 (commit on rwr/ branch), Turn 4 (make a PR), Turn 5 (empty commit), Turn 6 (push). Turn 2 ('do we need to close the repository again?') and Turn 3 ('could we call IsEmptyRepository inside OpenRepository?') were answered as discussion — the agent explained why no change was warranted and the golden patch makes neither change — so they impose no workspace requirement and are not scored. Weights rank by user-importance (detection 0.35 and clear messaging 0.25 as the core fix the user opened with, the distinguishable error value 0.15 and unit tests 0.10 as enabling/verification mechanisms, and the Gemini-handler consistency 0.15 as the explicit multi-turn correction); this deliberately does not mirror the test_manifest F2P weights, which over-index on the helper/sentinel existence and unit-test passing. No oracle-specific identifiers appear in goal text: the gemini CLI handler the user named verbatim in Turn 7 is described behaviorally in goal_gemini_handler_consistency ('analogous secondary agent CLI hook handler'), with the literal filename confined to that goal's rationale."
+}

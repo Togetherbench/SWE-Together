@@ -1,0 +1,111 @@
+# Behavioral structural F2P gates for rudel chart-legend stability work.
+# upstream commit: 15dd493e88ab2aa0cc70adc11d43d1f140a3b1b0
+# base commit:     799c99ecc34c1448efb6fd860fb09dc683eff29b
+# rudel has no React component test infrastructure (apps/web has only App.test.tsx
+# which is unrelated), so structural gates are the only behavioral signal.
+gates:
+  # ── Weighted F2P gates ──
+  - id: F2P_CHARTTOOLTIP_FILE
+    kind: F2P
+    weight: 0.10
+    description: "ChartTooltip.tsx exists and exports a ChartTooltip component"
+    command: |-
+      python3 -c "
+      p = '/workspace/rudel/apps/web/src/components/charts/ChartTooltip.tsx'
+      import os
+      assert os.path.exists(p), 'ChartTooltip.tsx missing'
+      s = open(p).read()
+      assert 'export function ChartTooltip' in s or 'export const ChartTooltip' in s, 'ChartTooltip not exported'
+      print('PASS')
+      "
+    timeout_sec: 10
+
+  - id: F2P_COLOR_MAPS
+    kind: F2P
+    weight: 0.20
+    description: "ProjectTrendChart and DeveloperTrendChart define colorMap (useMemo) and consume colorMap.get(...)"
+    command: |-
+      python3 -c "
+      import os, re
+      score = 0
+      for chart in ['ProjectTrendChart', 'DeveloperTrendChart']:
+          p = f'/workspace/rudel/apps/web/src/components/charts/{chart}.tsx'
+          if not os.path.exists(p): continue
+          s = open(p).read()
+          if re.search(r'const\s+colorMap\s*=\s*useMemo', s) and 'colorMap.get(' in s:
+              score += 1
+      assert score >= 2, f'only {score}/2 charts use colorMap'
+      print('PASS')
+      "
+    timeout_sec: 10
+
+  - id: F2P_SORTED_LEGEND
+    kind: F2P
+    weight: 0.20
+    description: "ProjectTrendChart or DeveloperTrendChart wires a totals-sorted legend payload to <ChartLegend>"
+    command: |-
+      python3 -c "
+      import os, re
+      score = 0
+      for chart in ['ProjectTrendChart', 'DeveloperTrendChart']:
+          p = f'/workspace/rudel/apps/web/src/components/charts/{chart}.tsx'
+          if not os.path.exists(p): continue
+          s = open(p).read()
+          has_decl = 'sortedLegendPayload' in s
+          sorts_totals = bool(re.search(r'\.sort\([^)]*totals', s, re.DOTALL))
+          wires = bool(re.search(r'payload=\{sortedLegendPayload\}', s)) or (sorts_totals and 'ChartLegend' in s)
+          if (has_decl or sorts_totals) and wires:
+              score += 1
+      assert score >= 1, f'only {score}/2 charts wire sorted legend payload'
+      print('PASS')
+      "
+    timeout_sec: 10
+
+  - id: F2P_STABLE_COLORS
+    kind: F2P
+    weight: 0.20
+    description: "ErrorTrendChart defines a stable color rank (by total_errors) and consumes via colorMap.get(...)"
+    command: |-
+      python3 -c "
+      import re
+      p = '/workspace/rudel/apps/web/src/components/charts/ErrorTrendChart.tsx'
+      s = open(p).read()
+      stable = bool(re.search(r'stableColorOrder|stable_color_order|stableOrder|colorRank', s, re.IGNORECASE))
+      total_errors = 'total_errors' in s
+      cm_get = 'colorMap.get(' in s
+      cm_decl = bool(re.search(r'const\s+colorMap\s*=\s*useMemo', s))
+      assert stable and total_errors and cm_get and cm_decl, f'stable={stable} totalErrors={total_errors} cm.get={cm_get} cmDecl={cm_decl}'
+      print('PASS')
+      "
+    timeout_sec: 10
+
+  - id: F2P_DIMENSION_SORT
+    kind: F2P
+    weight: 0.10
+    description: "DimensionAnalysisChart sorts split keys by total raw value descending"
+    command: |-
+      python3 -c "
+      import re
+      p = '/workspace/rudel/apps/web/src/components/charts/DimensionAnalysisChart.tsx'
+      s = open(p).read()
+      assert re.search(r'rawSplitKeys\.sort|splitKeyTotals|splitKey.*\.sort', s), 'split keys not sorted'
+      print('PASS')
+      "
+    timeout_sec: 10
+
+  - id: F2P_TOOLTIP_MIGRATION
+    kind: F2P
+    weight: 0.20
+    description: "At least 2 of {LearningsTrendChart, ModelTokensChart, UsageTrendChart} import and use <ChartTooltip />"
+    command: |-
+      python3 -c "
+      score = 0
+      for chart in ['LearningsTrendChart', 'ModelTokensChart', 'UsageTrendChart']:
+          p = f'/workspace/rudel/apps/web/src/components/charts/{chart}.tsx'
+          s = open(p).read()
+          if 'import { ChartTooltip }' in s and '<ChartTooltip' in s:
+              score += 1
+      assert score >= 2, f'only {score}/3 charts migrated'
+      print('PASS')
+      "
+    timeout_sec: 10

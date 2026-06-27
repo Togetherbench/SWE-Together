@@ -1,0 +1,58 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: comfyui-triton-windows-amd-fix
+turns:
+- turn: 1
+  user_message: 'When I run Triton on Windows with AMD GPU, it shows: [LLVM error ''tt.load'' op operation destroyed but still
+    has uses at k_scale = tl.load(K_scale_ptr)]. What could be the cause?'
+  deliverable: Fix the Triton kernel so it compiles on AMD/Windows by remediating the K_scale load + chained multiplication
+    pattern in attn_qk_int8_per_block.py.
+  skipped: false
+- turn: 2
+  user_message: Why is this modification needed?
+  deliverable: "Conversational \u2014 explain the rationale."
+  skipped: true
+- turn: 3
+  user_message: This Triton kernel seems to work on Nvidia GPU, so it's either a bug about AMD GPU or about Windows. How to
+    fix it in this repo rather than in the Triton kernel?
+  deliverable: "Conversational \u2014 agent confirms fix is in-repo Python."
+  skipped: true
+- turn: 4
+  user_message: Why is this edit needed?
+  deliverable: "Conversational \u2014 explain the edit."
+  skipped: true
+gates:
+- id: p2p_structure_intact
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: Target file still parses and retains required functions with non-stub bodies.
+- id: t1_f2p_target_remediated
+  turn: 1
+  kind: F2P
+  weight: 0.35
+  description: 'Target file: K_scale load OR chained qk multiplication has been transformed (any of: arange-indexed load,
+    .to(tl.float32) cast on scale load, or split chained multiplication).'
+- id: t1_f2p_sparse_remediated
+  turn: 1
+  kind: F2P
+  weight: 0.25
+  description: Sparse companion file received the same class of remediation.
+- id: t1_f2p_no_buggy_pair
+  turn: 1
+  kind: F2P
+  weight: 0.25
+  description: Target no longer exhibits BOTH the bare-scalar K_scale load AND the chained `* q_scale * k_scale` qk expression
+    simultaneously (the precise pair the MLIR error names).
+- id: t1_f2p_scale_factor_preserved
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: After remediation, the qk expression in _attn_fwd_inner still numerically applies BOTH q_scale and k_scale
+    (transitive name-resolution; rejects deletion-style 'fixes').
+- id: p2p_upstream_518584f9
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): py_compile_changed_generic @ b06c7d2'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

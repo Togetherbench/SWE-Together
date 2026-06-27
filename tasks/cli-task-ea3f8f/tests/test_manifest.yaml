@@ -1,0 +1,41 @@
+# Test manifest for cli-task-ea3f8f
+# Defines gates that test.sh evaluates, then computes weighted reward.
+
+gates:
+  # --- P2P_REGRESSION (diagnostic/penalty only — all must pass, no reward weight) ---
+  - id: p2p_compiles
+    kind: P2P_REGRESSION
+    weight: 0
+    description: "Cursor agent package compiles without errors"
+    command: "go build ./cmd/entire/cli/agent/cursor/"
+
+  - id: p2p_existing_tests
+    kind: P2P_REGRESSION
+    weight: 0
+    description: "All pre-existing CursorAgent tests still pass"
+    command: "go test -run 'TestCursorAgent_' ./cmd/entire/cli/agent/cursor/"
+
+  # --- F2P (Fail-to-Pass — weighted gates, sum = 0.70) ---
+  - id: f2p_dir_only
+    kind: F2P
+    weight: 0.25
+    description: "Core fix: ResolveSessionFile returns nested path when directory exists but transcript file hasn't been flushed yet"
+    command: "go test -run 'TestVerify_ResolveSessionFile_DirOnly' ./cmd/entire/cli/agent/cursor/"
+
+  - id: f2p_nested_exists
+    kind: F2P
+    weight: 0.20
+    description: "Preserves behavior: ResolveSessionFile returns nested path when both directory and file exist"
+    command: "go test -run 'TestVerify_ResolveSessionFile_NestedExists' ./cmd/entire/cli/agent/cursor/"
+
+  - id: f2p_flat_fallback
+    kind: F2P
+    weight: 0.15
+    description: "Preserves behavior: ResolveSessionFile falls back to flat path when neither directory nor file exists"
+    command: "go test -run 'TestVerify_ResolveSessionFile_FlatFallback' ./cmd/entire/cli/agent/cursor/"
+
+  - id: f2p_new_test
+    kind: F2P
+    weight: 0.10
+    description: "Agent added a test function for the directory-only scenario in cursor_test.go"
+    command: "grep -E 'func Test.*(NestedDir|DirOnly|Nested.*Dir.*Only)' cmd/entire/cli/agent/cursor/cursor_test.go"

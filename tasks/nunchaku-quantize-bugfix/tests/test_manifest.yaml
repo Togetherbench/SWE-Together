@@ -1,0 +1,34 @@
+version: "1.0"
+turns:
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_upstream_quantize_residual
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: quantize_residual runtime check
+  command: cd /workspace && /workspace/venv/bin/python3 -c "import sys; sys.path.insert(0,
+    '/workspace'); import torch; from quantize import quantize_residual; torch.manual_seed(0);
+    r = torch.randn(128, 128, dtype=torch.float32); qw, ws = quantize_residual(r);
+    assert qw.dtype == torch.int8"
+  description: Runs quantize_residual on sample tensor; fails on base due to missing
+    .values on max()
+- id: f2p_upstream_quantize_awq
+  kind: F2P
+  turn: null
+  weight: 0.5
+  label: quantize_awq_layer runtime check
+  command: cd /workspace && /workspace/venv/bin/python3 -c "import sys; sys.path.insert(0,
+    '/workspace'); import torch; from quantize import quantize_awq_layer; torch.manual_seed(0);
+    w = torch.randn(4, 64, dtype=torch.bfloat16); qw, ws, wz = quantize_awq_layer(w)"
+  description: Runs quantize_awq_layer on sample tensor; fails on base due to missing
+    .values on min/max
+- id: p2p_upstream_py_compile
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: py_compile quantize.py
+  command: cd /workspace && /workspace/venv/bin/python3 -m py_compile /workspace/quantize.py
+  description: Verifies quantize.py has valid Python syntax

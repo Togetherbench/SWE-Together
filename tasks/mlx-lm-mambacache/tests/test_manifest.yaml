@@ -1,0 +1,78 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: mlx-lm-mambacache
+turns:
+- turn: 1
+  user_message: It seems MLX LM lib doesnt allow us to run the model Qwen3-Next-80B (currently using) with batch and prompt
+    caching. Can you deploy your subagent to verify this?
+  deliverable: Verify the MambaCache+batch_generate limitation.
+  skipped: true
+  skip_reason: "Verification/research turn \u2014 no code deliverable."
+- turn: 2
+  user_message: yes draft the PR and thoroughly test its performance, with clear documentation, and also test by directly
+    use the MLX model too
+  deliverable: Implement ArraysCache/CacheList batching support in cache.py, update _merge_caches in generate.py, write tests.
+  skipped: false
+- turn: 3
+  user_message: Does our PR the same as https://github.com/ml-explore/mlx-lm/pull/690?
+  deliverable: Compare PR scope (conversational).
+  skipped: true
+  skip_reason: Conversational scope-check, no code deliverable.
+- turn: 4
+  user_message: add the _lengths feature to our PR
+  deliverable: Add _lengths attribute support to ArraysCache for right-padding mask generation.
+  skipped: false
+- turn: 5
+  user_message: Wait test with actual model please
+  deliverable: Real-model integration test (impossible in Docker/Linux; conversational).
+  skipped: true
+  skip_reason: Cannot run MLX on Linux/Docker; agent should explain. No verifiable code deliverable.
+gates:
+- id: t2_f2p_merge_caches_arrayscache
+  turn: 2
+  kind: F2P
+  weight: 0.144
+  description: '_merge_caches handles ArraysCache: returns ArraysCache with batched leading dim, correct per-batch values.'
+- id: t2_f2p_merge_caches_cachelist_hybrid
+  turn: 2
+  kind: F2P
+  weight: 0.144
+  description: _merge_caches handles CacheList(MambaCache, KVCache); inner ArraysCache batched, inner KV cache batched (BatchKVCache
+    or KVCache with batch dim).
+- id: t2_f2p_arrayscache_merge_extract
+  turn: 2
+  kind: F2P
+  weight: 0.128
+  description: 'ArraysCache.merge classmethod and extract(idx) round-trip: extract recovers per-batch slice with correct values.'
+- id: t2_f2p_cachelist_merge_extract
+  turn: 2
+  kind: F2P
+  weight: 0.104
+  description: CacheList.merge and CacheList.extract recursively merge/slice sub-caches preserving order.
+- id: t2_f2p_test_file_present_passes
+  turn: 2
+  kind: F2P
+  weight: 0.08
+  description: "tests/test_mamba_cache_batching.py exists, references ArraysCache/MambaCache, and \u22651 pytest test passes."
+- id: t4_f2p_lengths_right_padding
+  turn: 4
+  kind: F2P
+  weight: 0.12
+  description: ArraysCache.prepare(right_padding=...) populates _lengths; finalize() clears it; left_padding alone does NOT
+    set _lengths.
+- id: t4_f2p_make_mask_lengths
+  turn: 4
+  kind: F2P
+  weight: 0.08
+  description: make_mask honors _lengths to mask right-padded positions (positions >= length must be False).
+- id: p2p_cache_module_loads
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: cache.py loads, ArraysCache/MambaCache/CacheList/KVCache present, _merge_caches importable from generate.py.
+- id: f2p_upstream_bd8a7d6f
+  turn: null
+  kind: F2P
+  weight: 0.2
+  description: 'upstream(F2P): py_compile_changed_generic @ 298b67c'
+  notes: v043 F2P; reason=fail_on_buggy (rc_base=1) -> pass_on_fix

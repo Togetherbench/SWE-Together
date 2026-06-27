@@ -1,0 +1,1 @@
+In this repo, when loading lora, is there some code to remove the prefix `base_model.model` from the key in the state dict? For example, `base_model.model.layers.0.attention.out.lora_A.weight` should become `layers.0.attention.out.lora_A.weight`

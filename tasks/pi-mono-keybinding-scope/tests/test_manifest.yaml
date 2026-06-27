@@ -1,0 +1,99 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: pi-mono-keybinding-scope
+turns:
+- turn: 1
+  user_message: look at previous sessions and find the session where we looked for handling false positive in keybinds overlap
+  deliverable: Agent explores codebase to understand the keybinding conflict false-positive problem
+  skipped: true
+- turn: 2
+  user_message: yes, read the session and summarize the proposed fix
+  deliverable: Summary of prior fix proposal
+  skipped: true
+- turn: 3
+  user_message: what are the other ways to implement this besides the allowlist ?
+  deliverable: Lists alternative approaches
+  skipped: true
+- turn: 4
+  user_message: i think i like the scope idea. sketch it and what it could look like.
+  deliverable: Sketches scope-based design
+  skipped: true
+- turn: 5
+  user_message: why is the override policy? ... let's keep things simple and maintainable
+  deliverable: Simplifies design
+  skipped: true
+- turn: 6
+  user_message: implement an actual first pass so i see what the code looks like
+  deliverable: First implementation of scope-based keybinding conflict detection
+  skipped: false
+- turn: 7
+  user_message: are keybinds always mapped to a single scope?
+  deliverable: Discusses scope model
+  skipped: true
+- turn: 8
+  user_message: for testing, create a temporary one file extension in ~/tmp/
+  deliverable: Creates test extension
+  skipped: true
+- turn: 11
+  user_message: '[Extension issues paste with scope-aware warnings]'
+  deliverable: Refines implementation based on test output
+  skipped: false
+- turn: 13
+  user_message: '[Working test output]'
+  deliverable: Final adjustments to scope logic
+  skipped: false
+gates:
+- id: t6_f2p_keybindings_have_scope_tags
+  turn: 6
+  kind: F2P
+  weight: 0.3
+  description: Keybinding declarations carry scope metadata distinguishing picker/selector from editor/global
+- id: t6_f2p_runner_consults_scope
+  turn: 6
+  kind: F2P
+  weight: 0.2
+  description: Runner conflict-check logic references scope/definition info, not just an allowlist
+- id: t11_f2p_picker_scope_keys_count
+  turn: 11
+  kind: F2P
+  weight: 0.2
+  description: At least several picker/selector-scope keys are tagged in default keybindings
+- id: t11_f2p_global_editor_scope_keys_present
+  turn: 11
+  kind: F2P
+  weight: 0.15
+  description: At least one global/editor-scope key is tagged so conflicts can still fire
+- id: t13_f2p_runner_tests_pass
+  turn: 13
+  kind: F2P
+  weight: 0.15
+  description: extensions-runner tests still pass after the refactor
+- id: p2p_src_files_exist
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: Informational — required source files still present. Per repo policy, P2P_REGRESSION never zeroes reward directly; if source files are missing the F2P keybinding/runner checks will naturally fail, zeroing reward via not-f2p_any_pass.
+- id: p2p_upstream_c09e61c3
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_tui @ 8a8e2a8'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
+- id: p2p_upstream_047e9a81
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_tui @ 8a8e2a8'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
+- id: p2p_upstream_e395cbc7
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): npm_typecheck_coding-agent @ 8a8e2a8'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
+- id: p2p_upstream_522628b0
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): vitest_session_manager_coding-agent @ 8a8e2a8'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

@@ -1,0 +1,49 @@
+{
+  "task_name": "gemini-voyager-task-72a86c",
+  "language": "ts_bun",
+  "log_parser": "parse_log_vitest",
+  "test_cmd": "bun x vitest run --reporter=verbose 2>&1",
+  "repo_dir": "/workspace/gemini-voyager",
+  "FAIL_TO_PASS": [
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns true for macOS platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns true for Mac ARM platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns false for Windows platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > returns false for Linux platform",
+    "src/core/utils/__tests__/browser.test.ts > isMac > falls back to userAgent when platform is empty",
+    "src/core/utils/__tests__/browser.test.ts > getModifierKey > returns \u2318 on macOS",
+    "src/core/utils/__tests__/browser.test.ts > getModifierKey > returns Ctrl on Windows",
+    "src/core/utils/__tests__/browser.test.ts > getModifierKey > returns Ctrl on Linux"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "docs/ar/guide/input-collapse.md",
+    "docs/en/guide/input-collapse.md",
+    "docs/es/guide/input-collapse.md",
+    "docs/fr/guide/input-collapse.md",
+    "docs/guide/input-collapse.md",
+    "docs/ja/guide/input-collapse.md",
+    "docs/ko/guide/input-collapse.md",
+    "docs/pt/guide/input-collapse.md",
+    "docs/ru/guide/input-collapse.md",
+    "docs/zh_TW/guide/input-collapse.md",
+    "src/core/services/KeyboardShortcutService.ts",
+    "src/core/utils/browser.ts",
+    "src/locales/ar/messages.json",
+    "src/locales/en/messages.json",
+    "src/locales/es/messages.json",
+    "src/locales/fr/messages.json",
+    "src/locales/ja/messages.json",
+    "src/locales/ko/messages.json",
+    "src/locales/pt/messages.json",
+    "src/locales/ru/messages.json",
+    "src/locales/zh/messages.json",
+    "src/locales/zh_TW/messages.json",
+    "src/pages/popup/Popup.tsx"
+  ],
+  "test_files": [
+    "src/core/utils/__tests__/browser.test.ts"
+  ],
+  "commit_sha": "7b5de7a7fa99c983896526830c4c24f5fe493e27",
+  "commit_message_first_line": "feat: show platform-appropriate modifier keys (\u2318 on macOS, Ctrl elsewhere)",
+  "agent_percentage": 99.03846153846155
+}

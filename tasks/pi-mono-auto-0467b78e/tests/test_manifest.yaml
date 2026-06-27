@@ -1,0 +1,24 @@
+version: '1.0'
+turns:
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_upstream_skill_loader_skip_dirs
+  kind: F2P
+  turn: null
+  weight: 0.2
+  label: Skill loader skips venv/__pycache__/site-packages
+  description: Skill loader skips venv/__pycache__/site-packages
+- id: p2p_upstream_vitest_skills
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: Vitest skills.test.ts passes
+  description: Vitest skills.test.ts passes
+- id: p2p_upstream_tsgo_typecheck
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: tsgo typecheck passes
+  description: tsgo typecheck passes

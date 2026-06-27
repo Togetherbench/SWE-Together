@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "task": "dataclaw-anonymizer-tests",
+  "n_oracle_turns_in": 4,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Review the current changes for any visible issues.",
+      "verbatim_excerpt": "Is there any visible issue in the changes?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Read the latest commit via `git show HEAD` and review it.",
+      "verbatim_excerpt": "Read `git show HEAD` for the new commit. Review it."
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "request",
+      "text": "Add tests in tests/test_anonymizer.py to cover the changes.",
+      "verbatim_excerpt": "Add tests in tests/test_anonymizer.py to cover the changes."
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "Compile the regexes in the anonymizer.",
+      "verbatim_excerpt": "Compile the regexes in the anonymizer."
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 4,
+      "intent_kind": "question",
+      "text": "Suggest other ways to speed up the anonymizer.",
+      "verbatim_excerpt": "How else can we speedup the anonymizer?"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 5.2
+}

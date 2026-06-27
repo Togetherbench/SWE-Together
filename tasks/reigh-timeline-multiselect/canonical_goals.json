@@ -1,0 +1,55 @@
+{
+  "task_name": "reigh-timeline-multiselect",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The change is a genuine, working implementation of multi-select for the timeline view, not a gamed or empty submission. REJECT if the diff is a no-op or only adds comments/whitespace/formatting; if it is a captured-tree artifact whose only content is a '=== repo/ ===' style banner or a dump of file listings rather than real code edits; if it contains git-operation exfiltration such as 'git checkout main', 'git reset --hard origin/...', or reverting to a pristine tree; if the substantive edits live only in temporary, scratch, backup, or unmerged locations (e.g. /tmp, *.bak, *.orig) rather than the actual timeline component source; or if selection/bundling logic is merely declared but hardcoded/stubbed so that it never actually computes results from the real selection state. A passing submission wires real selection state into the timeline UI and movement logic so the described behaviors actually function.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor gate. Calibrated against the lowest-reward real model patch (deepseek-v4-pro 0.4), which still made genuine multi-file edits wiring selection state, an orange highlight, and a SelectionActionBar — so a legitimate partial solution must clear this floor while empty/stub/exfiltration diffs are rejected."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Tapping or clicking a single timeline item toggles its selection state (selecting it if unselected, deselecting it if already selected), with no modifier key required, and selecting an item does not by itself change item positions. A plain click that is not a drag must register as a selection toggle, mirroring the existing image-editor selection behavior. Selection state must be real and observable — driven by a maintained set/list of selected item ids that updates on each toggle. NOT satisfied by a stub that always returns the same selection, by selection that requires a modifier key or double-tap, by logic that only fires on drag, or by a flag that is parsed but never updates the selection set.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 plan ('Click/Tap: Toggle selection ... No modifier keys required') plus the user's repeated correction in Turn 2 ('the first tap on an item should just select it ... unless it's a drag') and Turn 4 ('A single tap still doesn't seem to be select'). This was the single most-corrected behavior across the session, so it carries the top weight."
+    },
+    {
+      "id": "goal_2",
+      "goal": "When multiple items are selected and then moved/dragged to a target position, all selected items bundle together a fixed small gap apart (5 frames) starting at the target position, rather than keeping their original spacing or overlapping. The movement logic must consume the current multi-selection (not a single item) and must branch so that a single selected item still moves to the exact target while a multi-selection bundles. This must be computed from the actual selected ids and positions at runtime. NOT satisfied by a hardcoded result, by logic that ignores the selection and only ever moves one item, or by a constant that is never derived from the selected items.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0 plan 'Key Decision: Bundle Together (5 frames apart)' with the worked example 'Items at frames 0,30,60 selected → drag to frame 10 → become 10,15,20', and Phases 3-4 (multi-item drag and tap-to-move). The defining behavioral deliverable of the feature."
+    },
+    {
+      "id": "goal_3",
+      "goal": "A selected timeline item is visually highlighted in orange (matching the highlight color used in the existing image-editor selection), and the highlight is conditioned on the item's selected state — appearing only when the item is selected. The highlight must be tied to the real selection state, not always-on and not reusing only a pre-existing unrelated move-highlight. Additionally, the selected-item visual must NOT carry an extra count badge (a number overlay shown when multiple items are selected) or a check-mark/checkbox indicator overlay on the item — these auxiliary indicators must be absent, leaving only the orange highlight as the selection cue. NOT satisfied by an orange style that is never gated on selection, by a commented-out style, by a color applied to a different state, or by leaving a count badge or check-mark indicator visible on selected items.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 2 verbatim: 'it should also highlight orange in the same kind of orange the way it does in the shot images editor'. The negative cleanup follow-ups in Turn 30 ('there's something showing in the top right corner like maybe a number ... Can you remove that?') and Turn 31 ('remove the selected check mark thing that appears') are folded in here as the visual-cue requirement for a selected item: orange highlight present, badge/checkmark absent."
+    },
+    {
+      "id": "goal_4",
+      "goal": "When one or more timeline items are selected, the shared selection action bar appears in the timeline view showing the count of selected items (derived from the live selection, not a hardcoded number) and offering at least deselect-all and delete-selected actions wired to operate on the current selection. The bar's presence and count must reflect the real selection state. NOT satisfied by an always-visible bar, a bar with a static count, or action handlers that are present but not connected to the selection.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 0 Phase 5 ('Integrate SelectionActionBar ... selectedCount, onDeselect, onDelete'). The selection bar is how the user interacts with a multi-selection; required for the feature to be usable."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The selection action bar in the timeline view exposes a 'create new shot from the selected images' action, wired so that triggering it creates a shot from the current selection (the new-shot callback is threaded through from the timeline's parent to the action bar and invoked with the selected items). NOT satisfied by a button that is rendered but has no handler, a handler that ignores the selection, or a prop that is accepted but never passed down to the bar.",
+      "tier": "important",
+      "weight": 0.12,
+      "rationale": "Turn 10 verbatim: \"Why does the 'Create a new shot with the selected images' thing not show on the multi-select thing that appears on timeline?\" — a distinct follow-up correction the agent had to address."
+    },
+    {
+      "id": "goal_6",
+      "goal": "After a new shot is created from the timeline selection, the user is given a way to navigate to that newly created shot — i.e. a jump-to-shot affordance shown on success that, when activated, navigates to the created shot. The navigation must actually target the id of the shot just created (threaded through from the create step), and on success the affordance must be presented compactly as an icon rather than verbose text. NOT satisfied by a jump control that navigates nowhere, ignores the created shot id, or by success feedback that disappears immediately without offering navigation.",
+      "tier": "important",
+      "weight": 0.08,
+      "rationale": "Spans Turns 12-14: 'it should show success' (Turn 12), 'make the success state a -> jump to shot button that when clicked jumps to the shot' (Turn 13), and 'that jumped to shot button doesn't work. And can you make it just show an icon, not the whole text' (Turn 14). Captures the late multi-turn correction chain around post-create navigation."
+    }
+  ],
+  "decomposition_notes": "Evidence tier: model_only (golden.patch empty; 4 real model patches at rewards 0.55/0.55/0.4/None). Target derived from the Turn-0 implementation plan + the 8 substantive user-correction turns in user_simulation_prompt.md + original_user_session.md, cross-checked against the F2P runtime tests in test.sh. Goal_0 is the anti-gaming floor (weight 0.0, flagged) calibrated against the deepseek-v4-pro 0.4 patch, which is a genuine partial. Weights are ranked by user-importance and deliberately do NOT mirror test_manifest F2P weights: goal_1 (tap-to-select toggle) is the heaviest at 0.30 because it was the most-corrected behavior (Turns 2 and 4), even though the manifest splits selection-hook (0.20) and orange (0.10) separately; goal_2 (5-frame bundle, 0.25) matches the feature's defining decision; goal_4 (action bar, 0.15) and goal_5 (new-shot, 0.12) outrank the manifest's small onNewShot weight because the user explicitly chased the new-shot button across a turn; goal_6 (0.08) bundles the success/jump-to-shot/icon correction chain (manifest skipped turns 5/7 as untestable, but the rubric judges behavior so it is retained). Goals avoid oracle-specific identifiers: behaviors are described in terms of 'timeline items', 'selection set', 'selection action bar', 'jump-to-shot', and 'orange highlight' — the only literal the user named verbatim ('orange', '5 frames apart', 'create a new shot from selected') is kept because the user stated it. Weighted goals (goal_1..goal_6) sum to 1.00. The two manifest P2P_REGRESSION gates (tsc/build) and the instruction-unmodified gate are intentionally not represented as goals (process/regression, not user asks)."
+}

@@ -1,0 +1,62 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: hyperswitch-8389
+turns:
+- turn: 1
+  user_message: 'Bug: [FEATURE] Kv Redis feature for V2 models - Extend kv support for v2 models. Added Kv Redis support to
+    payment_intent V2, payment_attempt V2 models. Added enable Kv route for v2 merchant-account.'
+  deliverable: Add KV Redis support for v2 PaymentIntent/PaymentAttempt models and enable_kv route for v2 merchant-account
+  skipped: false
+gates:
+- id: t1_f2p_pi_apply_changeset_v2
+  turn: 1
+  kind: F2P
+  weight: 0.18
+  description: V2 PaymentIntentUpdateInternal::apply_changeset implemented (no todo!)
+- id: t1_f2p_pa_apply_changeset_v2
+  turn: 1
+  kind: F2P
+  weight: 0.18
+  description: V2 PaymentAttempt apply_changeset implemented (no todo!)
+- id: t1_f2p_unique_constraints_pa_v2
+  turn: 1
+  kind: F2P
+  weight: 0.14
+  description: V2 UniqueConstraints impl for PaymentAttempt added
+- id: t1_f2p_kv_imports_ungated
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: V2 storage_impl payment_intent KV imports ungated
+- id: t1_f2p_insert_pi_v2_kv_branch
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: V2 insert_payment_intent KV (RedisKv) branch implemented with kv_wrapper/PartitionKey
+- id: t1_f2p_update_pi_v2_kv_branch
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: V2 update_payment_intent KV branch implemented with kv_wrapper
+- id: t1_f2p_v2_kv_route_registered
+  turn: 1
+  kind: F2P
+  weight: 0.1
+  description: V2 merchant-accounts /:id/kv route registered under v2 scope
+- id: t1_f2p_global_payment_id_partition
+  turn: 1
+  kind: F2P
+  weight: 0.05
+  description: V2 PartitionKey variant for global payment id introduced (used by v2 KV)
+- id: p2p_upstream_7a8254b6
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): cargo_metadata_workspace @ c5c0e67'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states
+- id: p2p_upstream_27c5f56d
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: 'upstream(reg): rust_files_nonempty @ c5c0e67'
+  notes: v043 P2P_REGRESSION; reason=passes on both buggy and fixed states

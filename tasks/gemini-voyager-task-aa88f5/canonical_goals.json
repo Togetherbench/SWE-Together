@@ -1,0 +1,41 @@
+{
+  "task_name": "gemini-voyager-task-aa88f5",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine, working implementation of the requested UI fixes, not a gamed artifact. It must FAIL if the diff does no real work: a zero-edit / empty patch, a diff whose only content is a captured-repo-tree banner (e.g. lines like '=== repo/ ==='), a comment-only or whitespace-only change, git-operations exfiltration (git checkout main, git reset --hard origin/..., reverting to upstream instead of editing source), changes confined to temp/build/unmerged or otherwise non-source locations, or test/verifier edits that fake a pass. The extension's source code that the extension loads (e.g. the stylesheet and/or the menu-rendering logic) must be modified to produce the visual behaviors described in the other goals.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. No real model patches exist for this task (evidence_tier=golden_only), so this is calibrated against the golden, which makes substantive edits to the loaded stylesheet and the menu-item rendering source. A no-op, tree-banner, or git-revert submission produces none of the requested visual changes and must be flagged."
+    },
+    {
+      "id": "goal_1",
+      "goal": "In light mode, the text inside the folder-import dialog — the strategy labels, the merge/overwrite option labels, and the 'import folder configuration' text the user pointed at — is rendered in a dark, readable color instead of white. The fix must apply specifically in light mode while keeping dark mode's existing light-on-dark text intact (achieved by any equivalent CSS approach — adding light-theme overrides, changing the base color to the light-mode value and adding dark-theme overrides to preserve dark mode, or any equivalent styling approach). It must be a real style applied to the live dialog elements, not a stub, a commented-out rule, a hardcoded swap that breaks dark mode, or a value that is parsed but never affects rendering.",
+      "tier": "core",
+      "weight": 0.45,
+      "rationale": "Turn 2 verbatim: '导入策略：... 与现有文件夹合并 ... 覆盖现有文件夹 导入文件夹配置这里的这些字在 light mode 中也是白的，有问题' — the strategy/merge/overwrite/import-config labels are white in light mode and unreadable. This is the primary, most-emphasized ask covering multiple text elements, hence the dominant weight."
+    },
+    {
+      "id": "goal_2",
+      "goal": "In light mode, the remaining themed surfaces of the same import dialog — the dialog title, the radio option containers, the selected-file display area, and the primary/secondary dialog buttons (i.e. the dialog chrome beyond the strategy/merge/overwrite/import-config text labels covered separately) — also render with light-mode-appropriate colors and backgrounds rather than leaking the dark-mode appearance. As with the label fix, these elements must show light-mode-appropriate colors in light mode while preserving their dark mode appearance (by any equivalent styling approach), and must be genuine styles on the live elements (not stubs, dead rules, or dark-mode-breaking hardcodes).",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Same Turn 2 ask: the user reports the dialog's text being unreadable in light mode and stays silent while the agent works through the whole dialog. The user-sim notes the agent 'systematically adding light/dark theme overrides for the import dialog CSS (title, strategy labels, radio options, radio text, file name, buttons)' — these are the rest of the dialog the same complaint covers, but secondary to the explicitly-named labels."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The menu icons in the folder context menu are vertically aligned with their labels, fixing the misalignment / too-small icon spacing the user flagged via screenshot. The menu items must lay out their icon and text so they are centered together (rather than the icon sitting too high), and this must be a real layout change to the rendered menu, not a no-op, a comment, or a value that does not affect the displayed alignment.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Turn 5 verbatim '这里 icon 的 margin top 有点小' plus the screenshot at Turn 4/6: the menu icons are vertically misaligned. A multi-turn follow-up the user surfaced separately from the dialog-color complaint, so it is scored independently of Turn 0."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The empty placeholder region in the middle of the import dialog — the selected-file area that shows as a blank box before any file is chosen — is removed so it no longer takes up layout space when there is no file name to display, while still appearing once a file has actually been selected. This must be achieved by genuinely collapsing the empty element's layout box (e.g. via display:none in the empty state — not merely making it invisible while leaving the gap, and not by deleting the feature, hiding it permanently so a chosen filename never shows, or leaving a commented-out rule).",
+      "tier": "important",
+      "weight": 0.12,
+      "rationale": "Turn 3 verbatim '这里中间怎么有一个空的区域是不是可以去掉' — there's an empty region in the middle, can it be removed. The golden implements this by switching the file-name element to display:none and revealing it only via :not(:empty); the goal is stated behaviorally so any equivalent empty-state suppression passes."
+    }
+  ],
+  "decomposition_notes": "Five real user asks span the session. Turn 2 (the dominant, most-emphasized complaint) is split into goal_1 (the explicitly-named strategy/merge/overwrite/import-config text labels) and goal_2 (the rest of the same dialog's light-mode surfaces — title, radios, file area, buttons — which the user's silence implicitly endorsed and the agent worked through). goal_3 covers the Turn 4/5/6 screenshot follow-up about menu-icon vertical alignment. goal_4 covers the Turn 3 'empty region in the middle' ask. Weights rank by user emphasis: the named light-mode label complaint (0.45) dominates, the rest of the dialog (0.25) and the two distinct follow-ups (0.18 menu alignment, 0.12 empty region) follow. Weights are deliberately NOT a 1:1 mirror of test_manifest F2P weights (which split the dialog into six narrow CSS-selector gates and give menu-flex only 0.10); here goals are merged behaviorally and ranked by how central each was to the user. Goals are described by visual behavior (readable dark text in light mode, vertical icon centering, suppressed empty box) with no oracle CSS class names, selectors, oklch values, or property literals, so any behaviorally-equivalent implementation passes. Turns 1 (/clear), 7 (interrupt), 8 (继续/continue), 9 (提交/submit) are process/protocol turns with no independent deliverable and are excluded. Weighted goals (goal_1..goal_4) sum to 1.00."
+}

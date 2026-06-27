@@ -1,0 +1,18 @@
+{
+  "task_name": "rudel-task-491983",
+  "language": "ts_bun",
+  "log_parser": "parse_log_bun_test",
+  "test_cmd": "bun test 2>&1",
+  "repo_dir": "/workspace/rudel",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "apps/api/src/services/project.service.ts",
+    "apps/web/src/pages/dashboard/ProjectsListPage.tsx"
+  ],
+  "test_files": [],
+  "commit_sha": "d1854890724696774c308a867cb7ccdae22497c9",
+  "commit_message_first_line": "fix(api): resolve 500 errors on open-source project details",
+  "agent_percentage": 100.0,
+  "_legacy_restored": true
+}

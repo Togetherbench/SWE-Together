@@ -1,0 +1,48 @@
+{
+  "task_name": "cli-task-cf32cb",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine code change to the resume logic of the CLI, not a gaming artifact. It must FAIL if any of these apply: (a) the diff makes no functional change to the squash-merge resume behavior (no-op, stub, or comment/whitespace-only edit); (b) the diff's only content is a captured-tree or directory-listing artifact such as a banner like '=== repo/ ===' rather than real source edits; (c) the change is achieved by git-ops exfiltration or reset (e.g. `git checkout main`, `git reset --hard origin/...`) instead of editing the source; (d) the desired behavior is faked by deleting or emptying the relevant tests so they no longer exercise the resume path, or by commenting out the multi-checkpoint logic without replacing it; (e) edits live only in temporary/unmerged/scratch locations rather than the actual resume source and its tests. The real source files and their tests must be modified to produce the new behavior.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. The task is a behavior-changing refactor with no real model patches to calibrate against (golden_only tier), so the floor names concrete cheats: captured-tree banner diffs, git-ops exfiltration/reset, comment-only diffs, test-deletion to fake the new behavior, and temp-only edits."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When resuming from a commit that carries multiple checkpoint references (the squash-merge case), the workspace now resumes from only ONE checkpoint — the most recent one as determined by the checkpoints' creation timestamps — instead of restoring every checkpoint's session. The selection must be driven by actual creation-time metadata (newest wins), not by trailer/list position, a hardcoded index, or always taking the first/last element regardless of timestamps. This single-resume path must be the code actually executed for the multi-checkpoint case, not dead or commented-out code.",
+      "tier": "core",
+      "weight": 0.32,
+      "rationale": "Turn 0 core ask: 'We should only resume from the latest checkpoint — the one representing the final state of the branch.' The golden patch resolves the latest by CreatedAt and falls through to a single-resume path. This is the central behavioral deliverable."
+    },
+    {
+      "id": "goal_2",
+      "goal": "In the multi-checkpoint squash-merge case, the workspace surfaces a user-visible informational message indicating that older checkpoints were skipped and the resume is proceeding from the latest one (conveying how many checkpoints were found and how many older ones were skipped). The message must be emitted at runtime by the resume code path, and only when multiple checkpoints are actually found — driven by the actual dynamic counts of checkpoints, not printed unconditionally, not with hardcoded numbers, and not merely present as a string in a test fixture or comment.",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Turn 0 explicitly specifies an info message: 'Found N checkpoints ... resuming from the latest (N-1 older checkpoints skipped)'. The golden patch prints this to stderr. Behavioral phrasing (not the exact literal) keeps it model-agnostic."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Only a single resume command for the latest session is presented to the user in the squash-merge case; the older/stale sessions are no longer offered as resumable. Concretely, the output for a multi-checkpoint squash commit shows the resume command for the newest session and does NOT show resume commands for the older sessions. Correspondingly, the integration-level test that exercises the squash-merge-with-multiple-checkpoints scenario is updated to assert this new behavior: it checks for the skipped-checkpoints info message and asserts that only the latest session is resumable while the older session(s) do NOT appear — replacing the previous assertion that multiple sessions were restored. Both the live behavior and the test assertions must reflect the single-latest-resume outcome, and the test update must genuinely verify the new behavior rather than being faked by suppressing, weakening, or deleting the assertions that check it.",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Multi-turn correction (Turn 7): 'we shouldn't show two resume commands now, right?' plus Turn-0 Section 5 ('Rewrite the integration squash-merge test: assert only the latest session is restored, assert output contains older checkpoints skipped'), the focus of Turns 6-9. The golden integration test flips its assertions so the older session ID must NOT appear and only the latest is shown. This is a follow-on behavioral requirement beyond the Turn-0 core."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The now-obsolete multi-checkpoint restore-all logic and its associated session-deduplication helper are genuinely removed from the resume source — both their definitions and any call sites — rather than left behind as dead code, renamed shells, or commented-out blocks. The previously-existing unit tests that exercised the removed deduplication helper are likewise removed since the behavior they covered no longer exists, and a unit test is added (or the equivalent existing test is repurposed) that verifies the new latest-checkpoint selection returns the newest checkpoint regardless of input ordering. Removing tests must reflect genuinely-deleted functionality, not be a shortcut to hide failures of still-present code.",
+      "tier": "important",
+      "weight": 0.2,
+      "rationale": "Turn 0 sections 3-4: remove dead helpers (resumeMultipleCheckpoints, deduplicateSessions), drop the dedup subtests, and add/rewrite a test for the latest-checkpoint resolver. Combines the cleanup and unit-test-update asks; anti-cheat clause guards against test-deletion gaming."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The fallback that, on failure to resolve the latest checkpoint, silently fell back to a position-based 'last trailer' choice is removed; if the latest checkpoint cannot be resolved because no checkpoint metadata is available locally, the code does not invent a checkpoint to resume but instead surfaces that metadata is unavailable / attempts the remote-metadata path, consistent with there being nothing valid to resume. Additionally, the single-resume path consumes already-resolved checkpoint metadata (or the already-obtained metadata tree) rather than performing a redundant, local-only metadata re-lookup that would ignore remotely-fetched metadata. This must be a real change to the resume flow, not a commented-out or no-op edit.",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Two later corrections: Turn 5 questions the 'use last trailer' fallback ('why would we need this fallback? if resolveLatestCheckpoint fails it only can mean the checkpoint data isn't there') — golden removes it. Turns 10-12 (PR comment 1, user says 'yes' to fix): getMetadataTree returned a remote tree but resumeSession did a local-only lookup; golden passes the resolved metadata into resumeSession. Both are multi-turn follow-ups."
+    }
+  ],
+  "decomposition_notes": "Evidence tier golden_only (no model patches to calibrate alternatives), so behavioral phrasing leans on Turn-0 plan + later user corrections + golden patch shape. Turns 1-4 (git-merge hooks, GitHub-vs-git squash format detection) are explicitly retracted by the user in Turn 5 ('ignore the topic about merging checkpoints, back to the current implementation only') and are therefore NOT scored. Weighted goals map to: goal_1 the central squash-merge behavior change (Turn 0, highest user-importance); goal_2 the skip info message (Turn 0); goal_3 the single-resume-command follow-up (Turn 7 correction); goal_4 dead-code removal + unit-test update (Turn 0 sections 3-4); goal_5 two later corrections — removing the position-based fallback (Turn 5) and the redundant local-only metadata re-lookup / metadata reuse (PR comment 1, Turns 10-12). Weights rank by user-importance rather than mirroring the manifest's F2P split (which spreads 0.20/0.20/0.20/0.15/0.15/0.10 across structural greps); the rubric deliberately weights the runtime behavior change (goal_1) highest and folds the structural test-mechanics gates into behavioral goals. All goal text is behavioral; no oracle function/file/variable names appear except where the user named the message contents verbatim (rendered as behavior, not a literal). Weighted goals sum to 1.00."
+}

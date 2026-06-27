@@ -1,0 +1,38 @@
+version: "1.0"
+turns:
+- turn: 1
+  user_message: legacy
+  deliverable: see instruction.md
+gates:
+- id: f2p_upstream_lumina_class
+  kind: F2P
+  turn: null
+  weight: 0.20
+  label: Lumina rope/embed class defined (accepts canonical or Diffusers-convention names)
+  command: grep -qE 'class (LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)' /workspace/ComfyUI/comfy/ldm/lumina/model.py
+  description: Checks that a Lumina-specific rope embedder class (LuminaRopeEmbedder,
+    LuminaEmbedND, or Lumina2EmbedND) is defined in model.py
+- id: f2p_upstream_lumina_usage
+  kind: F2P
+  turn: null
+  weight: 0.20
+  label: Lumina rope/embed class used as rope_embedder
+  command: /workspace/venv/bin/python3 -c "import re, sys; c=open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read();
+    m=re.search(r'\bclass\s+(LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)\b', c);
+    sys.exit(1 if not m else (0 if f'rope_embedder = {m.group(1)}' in c else 1))"
+  description: Checks a Lumina rope class (LuminaRopeEmbedder|LuminaEmbedND|Lumina2EmbedND)
+    is defined and assigned as rope_embedder
+- id: p2p_upstream_ast_parse
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: model.py valid Python syntax
+  command: /workspace/venv/bin/python3 -c "import ast; ast.parse(open('/workspace/ComfyUI/comfy/ldm/lumina/model.py').read())"
+  description: Validates model.py parses as valid Python
+- id: p2p_upstream_nextdit
+  kind: P2P_REGRESSION
+  turn: null
+  weight: 0
+  label: NextDiT class exists
+  command: grep -q 'class NextDiT' /workspace/ComfyUI/comfy/ldm/lumina/model.py
+  description: Checks NextDiT class still exists in model.py

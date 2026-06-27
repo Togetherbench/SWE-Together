@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "task": "cli-task-c01017",
+  "n_oracle_turns_in": 19,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "workflow",
+      "text": "Commit changes, push, and open a draft PR.",
+      "verbatim_excerpt": "commit this, push and open a draft PR"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 3,
+      "intent_kind": "context",
+      "text": "Provide debug logs showing checkpointing is still failing for the gemini agent session.",
+      "verbatim_excerpt": "this one is still failing to checkpoint"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 4,
+      "intent_kind": "request",
+      "text": "Compare current changes to PR #343.",
+      "verbatim_excerpt": "compare to PR #343"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "What did Soph introduce in gemini tests and his fix? How do his e2e tests pass without fixing the root cause?",
+      "verbatim_excerpt": "how is it possible his e2e tests pass if he didn't fix the root cause"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 7,
+      "intent_kind": "question",
+      "text": "Check if bugbot's PR review comment is addressed by Soph's changes or needs fixing here.",
+      "verbatim_excerpt": "Does it get addressed by Soph's changes or do we need to fix here?"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 8,
+      "intent_kind": "context",
+      "text": "Providing the github-pr-review skill documentation for reference.",
+      "verbatim_excerpt": "Base directory for this skill: /Users/alex/.claude/skills/github-pr-review"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 9,
+      "intent_kind": "context",
+      "text": "Tests are broken.",
+      "verbatim_excerpt": "we broke tests"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 10,
+      "intent_kind": "question",
+      "text": "Figure out how to sequence PRs #343, #323, and #342.",
+      "verbatim_excerpt": "I'm trying to figure out how to sequence these"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 11,
+      "intent_kind": "context",
+      "text": "PR #343 just merged.",
+      "verbatim_excerpt": "whoop, 343 just went in"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 12,
+      "intent_kind": "request",
+      "text": "PR #323 is merged; rebase this branch.",
+      "verbatim_excerpt": "ok, 323 is in, let's rebase"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 14,
+      "intent_kind": "question",
+      "text": "Bugbot flagged something again — is this just a logging concern we can't do much about?",
+      "verbatim_excerpt": "this is more of a logging concern I reckon, we can't do much about that"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 15,
+      "intent_kind": "question",
+      "text": "What are the failure conditions for transcript extraction?",
+      "verbatim_excerpt": "what are the failure conditions for transcript extraction?"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 16,
+      "intent_kind": "request",
+      "text": "Reply to bugbot's review comment and dismiss it.",
+      "verbatim_excerpt": "reply to bugbot and dismiss it"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 17,
+      "intent_kind": "request",
+      "text": "Investigate the failed e2e test for subagent commit with Claude in e2e-artifacts directory; it's a regression.",
+      "verbatim_excerpt": "TestSingleSessionSubagentCommitInTurn-claude-code/"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 18,
+      "intent_kind": "request",
+      "text": "Revert the 'fix' commit that caused the regression.",
+      "verbatim_excerpt": "can we just revert that 'fix' commit?"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 18,
+      "intent_kind": "request",
+      "text": "Add this issue to KNOWN_LIMITATIONS.",
+      "verbatim_excerpt": "can we add this to KNOWN_LIMITATIONS?"
+    },
+    {
+      "intent_id": 16,
+      "source_turn": 19,
+      "intent_kind": "workflow",
+      "text": "Commit and push the changes.",
+      "verbatim_excerpt": "yes, commit and push"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 17.5
+}

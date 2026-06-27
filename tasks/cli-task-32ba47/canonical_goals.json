@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-32ba47",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine refactor of the workspace's Go source that actually consolidates the duplicate transcript parsers, not a fake or evasive diff. Reject if the diff is empty / a no-op, only contains a captured directory-tree banner (e.g. a synthetic '=== repo/ ===' artifact), is whitespace- or comment-only, deletes or weakens existing tests instead of moving them, or exfiltrates state via git operations (git checkout main, git reset --hard origin/..., reverting tracked files). Reject if the duplicate parser functions are merely commented out or renamed-but-kept rather than removed, or if call sites are left referencing the old per-package parsers behind dead conditionals. The end state must be real, compiling Go code in which the shared parsing logic genuinely replaces the duplicates.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. The task is a pure refactor with no new feature, so a no-op or test-deletion diff could superficially 'pass' narrow checks; this goal forces the judge to confirm a genuine consolidation happened."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The shared transcript package gains a single consolidated function that parses a JSONL transcript directly from a file path starting at a caller-supplied line offset, returning the parsed lines and the total line count. It must genuinely read and decode the file (honoring the start offset, skipping malformed lines without erroring, and counting all lines toward the total) — not a stub, a hardcoded return, or a wrapper that ignores the offset argument. This is the one canonical file-parsing entry point the other packages will call; no near-duplicate convenience wrappers around it.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Turn 0 Step 1: 'Add ParseFromFileAtLine to transcript/parse.go ... Move cli.parseTranscriptFromLine implementation here. One function, no convenience wrappers.' Signature given: ParseFromFileAtLine(path string, startLine int) ([]Line, int, error). This is the load-bearing new shared API."
+    },
+    {
+      "id": "goal_2",
+      "goal": "All of the previously duplicated JSONL transcript parsers living outside the shared package (the per-package file parsers and the per-package byte parsers in the cli and claudecode packages, including any associated buffer-size constant) are removed, and every call site across the codebase is rewired to call the shared package's parsing functions instead. No caller may still reference a now-deleted local parser, and the formerly package-exported byte parser must no longer be reachable from outside its old package. Achieving this by leaving the old functions in place as thin shims that forward to the shared package does not satisfy the goal — the duplicates themselves must be gone.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Turn 0 Step 2: 'Delete duplicates and update callers' — delete parseTranscript/parseTranscriptFromLine/parseTranscriptFromBytes from cli/transcript.go, delete ParseTranscript/parseTranscriptFromLine + scannerBufferSize from claudecode/transcript.go, and update the 8 named caller files. The core deliverable of the consolidation."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The consolidated file-parser reads transcript lines with no fixed buffer-size ceiling, so an individual JSONL line far larger than the old ~10MB scanner limit is parsed successfully rather than failing with a token-too-long error. The previous per-package implementations capped line size with a bounded scanner buffer; the consolidated behavior must remove that cap by streaming the file (reading line-by-line with a reader that grows to the line length, the bufio.Reader-style approach the user asked for) rather than imposing any fixed ceiling. Not satisfied by merely raising a fixed scanner buffer-size constant to a larger value (that still imposes a ceiling), nor by slurping the entire file into memory in one read to dodge the limit — the requirement is streaming with no per-line size cap.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Turn 0 Context names this verbatim: 'Consolidate into the shared transcript package using the bufio.Reader approach (no size limit).' This is a substantive behavioral property (oversized lines must parse), not just a stylistic choice — the old scannerBufferSize cap is being deliberately eliminated."
+    },
+    {
+      "id": "goal_4",
+      "goal": "After the consolidation the whole module still compiles cleanly and is free of leftover dead artifacts from the refactor: no unused imports remain in the touched packages, no orphaned helper functions or constants from the deleted parsers linger, and the tests that directly exercised the deleted local file-parser are carried over to the shared package (moved alongside the consolidated function) rather than simply dropped. Tests in other packages that referenced the deleted parsers, or whose call sites otherwise changed, are updated in place to call the shared functions — they need not be relocated. No test is deleted, commented out, gutted, or left broken; tests unrelated to parsing stay where they were.",
+      "tier": "important",
+      "weight": 0.14,
+      "rationale": "Turn 0 Step 3 ('Move TestParseTranscript_* and TestParseTranscriptFromLine_* to transcript/parse_test.go, keep extract/utility tests in place') + Step 4 ('Clean up imports') + the Turn 1 follow-up correction 'is not any more dead code?' where the user explicitly audits for residual dead code/unused imports."
+    }
+  ],
+  "decomposition_notes": "Pure Go refactor (entireio/cli) consolidating 5 duplicate JSONL transcript parsers across the cli and claudecode packages into the shared transcript package. golden_only evidence tier (no model patches), so goals are derived from the verbatim Turn-0 plan, the Turn-1 dead-code correction, and the F2P tests. Weighting by user-importance, not 1:1 with test_manifest.yaml: goal_1 (new shared parser exists + works) and goal_2 (duplicates deleted + all callers rewired) are the two load-bearing halves of the consolidation and carry the bulk of the weight (0.34 each); goal_3 captures the explicitly-stated no-size-limit behavioral correction (0.18); goal_4 folds Step-3 test-move + Step-4 import cleanup together with the Turn-1 'any more dead code?' follow-up (0.14). Weighted goals sum to 1.00. The shared package/function names appear because the user named them verbatim in the instruction, but goal bodies are phrased behaviorally (what must parse/be reachable/compile) so any behaviorally-equivalent placement or naming passes. Turns 2, 3, and 5 ('first commit the current changes', the latter a retry of the interrupted commit) are process/commit requests, excluded per the no-process-goals rule. No 'passes test.sh' goal."
+}

@@ -1,0 +1,68 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: sd-scripts-reg-image-dedup
+turns:
+- turn: 1
+  user_message: "Refactor it to remove duplicate code in reg imag balancing. Handle the edge case of zero reg images. Also\
+    \ fix the redundant double call to update_dataset_image_counts() in the DreamBooth filter override \u2014 the base class\
+    \ already calls it, so the override shouldn't call it again after rebalancing."
+  deliverable: Extract reg-image balancing helper, handle zero-reg edge, eliminate double update_dataset_image_counts call
+    in DB filter override.
+  skipped: false
+- turn: 2
+  user_message: Why do we need to call register_balanced_regularization_images at two places, then call rebalance_regularization_images
+    ? Can't we always register reg images after filtering?
+  deliverable: Conversational design question.
+  skipped: true
+- turn: 3
+  user_message: 'Ok I''ve did some cleanup. Now check another issue: In every dataset type, does every conditioning image
+    correctly match the main image after the filtering'
+  deliverable: Conversational scope-pivot to ControlNet.
+  skipped: true
+- turn: 4
+  user_message: In `ControlNetDataset.__init__`, why can we ignore missing conditioning images when the filter is enabled?
+    Do we really need to check missing images again in `ControlNetDataset.make_buckets`?
+  deliverable: Conversational design question.
+  skipped: true
+- turn: 5
+  user_message: Can we avoid calling `self.update_dataset_image_counts()` two times when reg image count needs updating?
+  deliverable: Already covered by instruction.md.
+  skipped: true
+- turn: 6
+  user_message: Do it
+  deliverable: Approval; no new deliverable.
+  skipped: true
+gates:
+- id: p2p_module_imports
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: library.train_util imports cleanly with DreamBoothDataset and BaseDataset present.
+- id: t1_f2p_helper_balances_repeats
+  turn: 1
+  kind: F2P
+  weight: 0.3
+  description: Reg-balancing helper, when called with non-empty reg_infos, makes total reg num_repeats >= num_train_images.
+- id: t1_f2p_helper_zero_reg_no_hang
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: With reg_infos=[] the balancing path returns within timeout and does not hang or raise (zero-reg edge).
+- id: t1_f2p_init_dedup_single_balance_loop
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: After refactor, the inline 'while n < num_train_images' balancing pattern appears at most once across train_util.py
+    (duplicate removed).
+- id: t1_f2p_base_filter_accepts_update_counts
+  turn: 1
+  kind: F2P
+  weight: 0.15
+  description: BaseDataset.filter_registered_images_by_orig_resolution accepts an update_counts parameter that, when False,
+    suppresses the count-update.
+- id: t1_f2p_db_override_no_double_update
+  turn: 1
+  kind: F2P
+  weight: 0.2
+  description: DreamBoothDataset.filter_registered_images_by_orig_resolution end-to-end invokes update_dataset_image_counts
+    exactly once (not twice).

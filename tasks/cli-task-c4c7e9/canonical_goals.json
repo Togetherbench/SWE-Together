@@ -1,0 +1,41 @@
+{
+  "task_name": "cli-task-c4c7e9",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must be a genuine source-code removal performed by editing the project's Go files in place, not a gaming artifact. Reject if the diff: makes zero substantive source edits; consists only of a captured-tree dump (e.g. a diff whose only content is a '=== repo/ ===' banner or a recursive listing of unchanged files); contains git-ops exfiltration such as `git checkout main`, `git reset --hard origin/...`, or branch-switching used to make the leftover code appear gone instead of actually deleting it; is comment-only or whitespace-only (e.g. the generation code merely commented out rather than deleted); deletes or weakens the verifier/tests instead of changing application code; or applies its changes only in temp/unmerged/scratch/copy locations rather than the real package files that the build compiles. A genuine attempt removes the trail-title generation code from the actual source files so that no live generation code path remains and the package still compiles.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. No model patches exist (golden_only tier), so calibration is against the golden deletion patch. The verifier checks absence of names via grep, which could in principle be satisfied by commenting-out, branch-switching, or scratch-file edits. Flags stub/no-op/captured-tree/git-ops/test-deletion/comment-only patterns so the judge does not award credit to a submission that fakes the 'gone' signal without genuinely removing the code."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The dedicated trail-title generation module — the standalone source file whose sole purpose was to auto-generate a trail's title and description by calling out to the agent's text-generation capability — must be deleted, or at minimum reduced to a trivial empty file (e.g. nothing more than a bare package declaration with no live generation code). After the change there is no live source that defines this generation routine; the public title-generation function it exported is gone and is not redefined anywhere under the command tree. This must be a real deletion, not satisfied by emptying the function to a stub/no-op, by commenting the body out, by leaving the exported function returning a hardcoded/placeholder value, or by moving the file to an untracked/scratch location while the original remains live.",
+      "tier": "core",
+      "weight": 0.45,
+      "rationale": "Turn 1 verbatim: 'Is there still trail \"generation\" code in this branch from the auto generation that we removed?' followed by Turn 2 'Let's remove all that.' The dedicated generation module (the file exporting the public GenerateTrailTitle routine in the golden patch) is the headline body of 'all that' — the largest and most central piece of the leftover generation code the user wants gone."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The wiring that invoked trail-title generation from the commit-hook flow must be fully unwound: the private helper that triggered title generation for an existing trail (its definition and its call site inside the commit/checkpoint handling code) is gone, and the hook file no longer imports the generation module's package. After the change, the commit-hook code path no longer references or calls into any trail-title generation routine. This is not satisfied by leaving the helper or call site commented out, by keeping the generation-package import while routing around it, by stubbing the helper to a no-op that is still called, or by leaving a dangling parsed-but-unused reference.",
+      "tier": "core",
+      "weight": 0.35,
+      "rationale": "Turn 2 'Let's remove all that' covers the call-side leftovers, not just the module. The golden patch removes the private generation helper, its call site in the checkpoint-condense path, and the generation-package import from the commit-hook file. Behavioral phrasing (the hook flow no longer invokes generation; the generation-package import is gone) captures the intent without pinning exact identifiers the user did not name."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The removal must be surgical: the surrounding trail subsystem that links checkpoints to trails (the trail store/metadata wiring used to attach a checkpoint to its existing trail) must remain intact and in use after the change — only the title/description GENERATION code is removed, not the broader trail-linking functionality. A submission that over-deletes — tearing out the trail package import or the checkpoint-to-trail linking entirely so unrelated trail wiring breaks — fails this goal even if the generation code is gone. The package must still compile and still perform its non-generation trail linking. This preservation requirement is not satisfied by commenting out the linking call, wrapping it in an unreachable/dead branch, or stubbing the trail store methods to no-ops so that linking silently stops happening.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Anti-overfit constraint implied by the scope of the Turn-2 'remove all THAT' (the generation code) vs. the rest of the trail system. The golden patch deliberately preserves the trail.Store linking (appendCheckpointToExistingTrail) and the trail package import; the user only removed generation, not trails. Catches the over-zealous failure mode of nuking the whole trail subsystem."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The completed removal must be recorded in the repository's git history as a commit — the change is not left only as uncommitted working-tree edits. The final workspace state shows the generation-code removal captured in a commit (with the working tree clean of the removed code), reflecting the user's explicit follow-up request to commit the work. This is not satisfied by leaving the deletions staged-but-uncommitted or only in the working tree, nor by committing an unrelated/empty change.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 3 verbatim: 'commit this.' A distinct multi-turn action — the user explicitly asked for the removal to be committed after confirming the deletions and that lint/tests pass. Observable in final workspace state (a commit recording the removal)."
+    }
+  ],
+  "decomposition_notes": "Three genuine user turns (numbered per user_simulation_prompt.md). Turn 1 is a diagnostic question ('Is there still trail \"generation\" code in this branch from the auto generation that we removed?') — reconnaissance, not a separate deliverable. Turn 2 ('Let's remove all that') is the actionable removal instruction and the source of instruction.md. Turn 3 ('commit this') adds the commit. goal_1 (0.45, core) is the headline: delete the dedicated generation module / exported generation routine. goal_2 (0.35, core) is the call-side unwind: remove the private helper, its call site, and the generation-package import from the commit-hook file — distinct from deleting the module itself and equally part of 'all that'. goal_3 (0.10, important) is the anti-overfit scope guard: keep the surrounding trail-linking subsystem intact. goal_4 (0.10, important) captures the Turn-3 commit follow-up. Weights rank by user importance rather than mirroring test_manifest F2P weights: the manifest splits 0.30/0.20/0.25/0.15/0.10 across five grep-counted gates (file-gone, import-gone, private-helper-gone, public-func-gone, trail-preserved), whereas the rubric merges file-deletion+public-func into one core goal, merges import+private-helper+call-site into a second core goal, and — critically — elevates the multi-turn commit (which the manifest does not measure at all) to material weight. Weighted goals sum to 1.0. Goals are behavioral and avoid oracle-specific identifiers (file/function/variable names, line numbers) since the user named none of them verbatim."
+}

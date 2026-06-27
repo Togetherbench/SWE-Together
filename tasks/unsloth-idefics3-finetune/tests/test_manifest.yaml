@@ -1,0 +1,69 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # --- existing F2P gates (from test.sh, scaled to fit total F2P = 1.0) ---
+  - id: f2p_vlm_registration
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "idefics3 registered in VLLM_SUPPORTED_VLM"
+  - id: f2p_init_import
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "FastIdefics3Model imported in __init__.py"
+  - id: f2p_class_defined
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "FastIdefics3Model class defined with methods"
+  - id: f2p_from_pretrained
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "from_pretrained references Idefics3 HF class or delegates"
+  - id: f2p_hook_fix
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "Hook compatibility fix present"
+  - id: f2p_lora_config
+    kind: F2P
+    turn: 1
+    weight: 0.06
+    description: "LoRA target_modules configuration present"
+  - id: f2p_symbol_resolvable
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "FastIdefics3Model symbol resolvable from new module"
+  # --- upstream F2P gates ---
+  - id: f2p_upstream_idefics_py_compile
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "idefics.py exists and compiles as valid Python"
+  - id: f2p_upstream_idefics3_registration
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "idefics3 in VLLM_SUPPORTED_VLM and FastIdefics3Model exported"
+  # --- P2P regression gates ---
+  - id: p2p_upstream_source_parse
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "vision.py and __init__.py remain parseable"
+  - id: p2p_upstream_vlm_entries
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Existing VLM entries preserved in VLLM_SUPPORTED_VLM"
+  - id: p2p_upstream_exports
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Existing model exports preserved in __init__.py"

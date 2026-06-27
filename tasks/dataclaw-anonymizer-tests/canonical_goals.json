@@ -1,0 +1,64 @@
+{
+  "task_name": "dataclaw-anonymizer-tests",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort / anti-docstring-transcription floor. This goal is a HARD GATE: if the trajectory exhibits any of the disqualifying anti-effort patterns below, the OVERALL rubric score is CAPPED AT 0.0 regardless of other goals' partial credit. Disqualifying anti-effort patterns: (i) zero-edit submission — final patch contains no functional source edits to dataclaw/anonymizer.py (whitespace-only / comment-only / docstring-only edits do not count); (ii) excessively large patch — final patch touches files outside {dataclaw/anonymizer.py, tests/test_anonymizer.py} in a way that is not a direct dependency of the fix (e.g., bulk reformatting unrelated modules, wholesale rewrites of unrelated files, vendored dependency churn); (iii) git-ops exfiltration / repository revert — using git checkout / git reset / git stash / git revert / branch-switching to obtain the post-fix state from the upstream history rather than authoring the fix, or otherwise reading the merged/upstream solution out of git rather than from session work; (iv) docstring transcription — the agent's 'issue list' is a one-to-one paraphrase of the six bullets in dataclaw/anonymizer.py's module docstring without any accompanying probe, test execution, or test-file read. To AVOID the cap, the trajectory must additionally evidence independent diagnosis via at least one of: (a) running the existing test suite (tests/test_anonymizer.py) AND either observing at least one test failure, OR explicitly citing a specific test's pass/fail outcome as the basis for a behavior claim in the diagnosis — a green run that is not referenced as evidence (i.e., a bare 'pytest ran without error' confirmation) does NOT satisfy this form; (b) constructing a probe / reproducer with the agent's own input strings and observing the output, (c) reading the existing test suite source to ground the diagnosis in expected behavior. A correct eventual patch does NOT, by itself, satisfy this goal if any disqualifying pattern is present.",
+      "tier": "core",
+      "weight": 0.12,
+      "user_ask_provenance": "T1 (review the diff) + T2 (is there any visible issue?). Both are open-ended review asks. The user does NOT name the bugs — therefore evidence of independent diagnosis is the load-bearing signal that the agent is doing the review-work the user requested rather than reading off the cheat-sheet baked into the file.",
+      "anti_gaming_notes": "Acts as a score cap (overall judge_score → 0.0) when any anti-effort pattern (zero edits, oversized patch, git-ops exfiltration, docstring transcription) is detected. Other goals' partial credit is overridden by this gate; this prevents trajectories that revert to upstream or paste docstring bullets from accumulating points on tangential goals."
+    },
+    {
+      "id": "goal_1",
+      "goal": "At least one previously-broken username-replacement behavior in the long-username path (len(username) >= 4) is fixed such that a username adjacent to non-whitespace, non-alphanumeric delimiter characters (e.g., underscore-flanked: 'config_<name>_settings'; leading-underscore: '_<name>'; trailing-underscore: '<name>_') is replaced by the hash token. The fix must NOT introduce false positives — the same name appearing as a contiguous substring of a longer alphanumeric run (e.g., '<name>is' or 'm<name>') must NOT be replaced. Mechanism (regex flavor, custom boundary scan, tokenizer) is unconstrained.",
+      "tier": "core",
+      "weight": 0.18,
+      "user_ask_provenance": "T2 'Is there any visible issue in the changes?' — the agent's job in T2 is to surface broken behavior. The underscore-adjacency failure is one of the observable misbehaviors on the windows-branch state."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The helper used for extra-username replacement (the path exercised by the stateful class when callers pass additional names) no longer corrupts longer words that contain a shorter name as a contiguous substring. Behaviorally: if 'short' is passed as an extra and the input contains 'shortish' or 'preshort', those longer tokens must remain intact. The same input/output contract must hold for at least one direct call path and for the stateful-class call path.",
+      "tier": "core",
+      "weight": 0.18,
+      "user_ask_provenance": "T2 (find issues) + T3 ('Read git show HEAD ... Review it') — T3 asks the agent to review its own commit; substring-corruption is the second observable misbehavior the review would surface if the fix from T2 was partial."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Short-username path handling (len(username) < 4) is extended beyond the POSIX-only forward-slash form. At minimum, the fix must (a) recognize the short username inside a path that uses an alternate separator convention (e.g., a Windows-style separator) AND (b) honor a caller-supplied custom home directory parameter so that a non-default home path is anonymized when explicitly passed. The two sub-behaviors are conjunctive: a patch that fixes only one of the two does not fully satisfy this goal.",
+      "tier": "core",
+      "weight": 0.16,
+      "user_ask_provenance": "T2 'Is there any visible issue?' + T3 'Review it' — short-path handling is one of the visible gaps on the windows branch. The two sub-behaviors are pulled directly from the buggy state's observable input/output behavior, not from the docstring's bullet phrasing."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Tests are added in tests/test_anonymizer.py exercising the fixed behaviors via the public API. To count as satisfying this goal, the added tests must (a) reside in tests/test_anonymizer.py (not in scratch files at the repo root or inside the package directory), (b) be runnable by pytest with no extra config, (c) cover at least three distinct behaviors among {underscore-adjacent fix, substring-safety fix, alternate-separator path fix, custom-home-dir fix, case-handling fix}, and (d) actually assert on outputs (not just call the function without asserting). The test framework style (parametrize vs. individual functions, monkeypatch vs. fixture) is unconstrained.",
+      "tier": "core",
+      "weight": 0.15,
+      "user_ask_provenance": "T4 verbatim: 'Add tests in tests/test_anonymizer.py to cover the changes.' This is the most directly testable user ask in the session — it specifies BOTH a file path AND the scope ('to cover the changes').",
+      "anti_gaming_notes": "Threshold of 'at least three distinct behaviors' prevents a single one-line test from claiming credit. The 'in tests/test_anonymizer.py' file constraint is verbatim from T4."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Regex pattern construction is amortized across repeated anonymization calls — pattern objects are not re-built proportionally to invocation count. Observable via: a single regex-construction operation is performed once per (username, [home]) signature regardless of how many times anonymize_text / the class method is called with the same inputs. Mechanism is unconstrained (memoization on a helper, module-level precompile, instance-attribute cache, etc.); the only constraint is the O(1)-in-call-count property.",
+      "tier": "core",
+      "weight": 0.12,
+      "user_ask_provenance": "T5 verbatim: 'Compile the regexes in the anonymizer.' This is a direct, mechanism-naming user ask. The rubric translates 'compile' into the observable behavior the user actually wanted (amortized construction across calls) rather than demanding a specific decorator name."
+    },
+    {
+      "id": "goal_6",
+      "goal": "At least one additional speed-up beyond pattern caching is applied or considered with justification. Acceptable forms: (a) a code change that introduces a measurable additional optimization (e.g., short-circuit when the username does not appear in the text, batching multiple extras into a single regex alternation, length filtering, precomputing lowercased forms for the no-match check, etc.), OR (b) an explicit written justification in the trajectory naming at least one concrete additional optimization that is reasoned-about (not a generic 'we could profile it' hand-wave). Implementation mechanism unconstrained; the goal is to evidence engagement with the open half of T5.",
+      "tier": "secondary",
+      "weight": 0.05,
+      "user_ask_provenance": "T5 second clause: 'How else can we speedup the anonymizer?' This is an open-ended brainstorm ask; partial credit shape (code OR justified suggestion) reflects that the user's phrasing invites either."
+    },
+    {
+      "id": "goal_7",
+      "goal": "Public API backward compatibility is preserved on the legacy happy path. Specifically: anonymize_text, anonymize_path, Anonymizer, _hash_username, and _replace_username remain importable from dataclaw.anonymizer; their call signatures accept the same positional/keyword arguments accepted by the pre-fix code; on inputs the buggy base already handled correctly (plain 'hello <name>' long-username replacement; '/Users/<short>/file' short-username POSIX path; hash determinism) the post-fix behavior is unchanged.",
+      "tier": "secondary",
+      "weight": 0.04,
+      "user_ask_provenance": "Implicit in T3 'Review it' — a reviewer is expected to verify the change does not regress existing callers. P2P_REGRESSION gates in tests/test_manifest.yaml encode this floor; the rubric records it as a holistic goal independent of test.sh's gate weights."
+    }
+  ],
+  "decomposition_notes": "Weights: goal_0 (anti-effort) 0.12 + four core fix-goals (goal_1, goal_2, goal_3, goal_5) summing to 0.64 + goal_4 (tests, T4 verbatim) 0.15 + two secondaries (goal_6, goal_7) summing to 0.09 = 1.00. Cores total 0.76, secondaries 0.24. goal_5 is core-tier because T5 is a direct mechanism ask (the user used the word 'compile') unlike T2's open-ended 'is there any visible issue?'. goal_4 sits between core and secondary in weight because T4 names a specific deliverable file but the verification of 'tests cover the changes' is necessarily looser than the behavioral fix gates. Weight vector intentionally diverges from tests/test_manifest.yaml's F2P gate weights (the manifest currently weights compile_caching, windows_backslash_short, underscore_adjacent, custom_home_short at 0.15 each; the rubric instead emphasizes behavioral correctness breadth and anti-effort over single-gate dominance)."
+}

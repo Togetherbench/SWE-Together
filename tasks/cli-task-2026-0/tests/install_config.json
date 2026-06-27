@@ -1,0 +1,16 @@
+{
+  "task_name": "cli-task-2026-0",
+  "language": "go",
+  "log_parser": "parse_log_gotest",
+  "test_cmd": "go test -v ./... 2>&1",
+  "repo_dir": "/repo",
+  "FAIL_TO_PASS": [],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    "cmd/entire/cli/telemetry/detached_unix.go"
+  ],
+  "test_files": [],
+  "commit_sha": "732e3424e639a8899c17b5f95294dc0e7c0e9fae",
+  "commit_message_first_line": "fix: point stdout to is.Discard",
+  "agent_percentage": 100.0
+}

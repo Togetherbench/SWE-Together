@@ -1,0 +1,34 @@
+{
+  "task_name": "pi-mono-tool-execution-write-error",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must be a genuine implementation that actually changes the rendering behavior of the failed write-tool path in the application's source, not a sham. Flag as gaming if the diff is empty/no-op, contains only comments or whitespace, only adds a doc/change-log line without touching the code that renders tool results, deletes or weakens existing tests to pass, hardcodes the verifier's expected token strings without wiring them into the render path, or consists solely of a captured-tree artifact (e.g. a diff whose only content is a '=== repo/ ===' banner or a directory listing) or git-ops exfiltration (git checkout main / git reset --hard origin/...). A reviewer must be able to point to real conditional logic that emits the error text when a write tool call fails.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor to reject stubs and artifacts. The task is golden_only (no model patches); the golden patch adds a real conditional branch in the tool-result renderer, so a passing solution must contain genuine render logic, not padding."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When a write tool invocation fails (its result is an error), the interactive UI must display the failure's error message/output to the user instead of swallowing it. After the change, a failed write must surface visible error text in the rendered tool result; before the change it showed nothing. The displayed text must be derived from the failed call's actual error output, not a hardcoded or placeholder string, a commented-out block, or a parsed-but-unused flag. Any implementation that genuinely makes the real write error visible is acceptable, regardless of which helper, property name, styling, or control structure it uses.",
+      "tier": "core",
+      "weight": 0.62,
+      "rationale": "Turn 0 + Turn 1: issue #856 is 'write tool not displaying errors in the UI when execution fails' and the user said 'fix it'. This is the central deliverable. Behavioral phrasing accepts any equivalent fix, not just the golden patch's specific helpers."
+    },
+    {
+      "id": "goal_2",
+      "goal": "When asked to provide a way to reproduce the failure, the submission must — at some point during the trajectory (e.g. after the Turn 3 correction and before the harness is removed in Turn 4) — include a working extension/harness that overrides the write tool so it deliberately fails, and that extension must load successfully under the project's actual extension API — i.e. it registers its tool via the project's documented extension interface rather than a nonexistent method, so it does not error out on load. Credit only a harness that would genuinely load and trigger the error path; a harness that crashes on load, or stub/empty scaffolding, does not count.",
+      "tier": "important",
+      "weight": 0.22,
+      "rationale": "Turn 2 ('write a minimal extension so i can test this') is a substantive user ask; Turn 3 ('Failed to load extension: pi.addTool is not a function ... read extensions.md in full') is an explicit correction that the harness must use the correct documented extension API. Behavioral: it requires a loadable extension via the real API without naming the specific method."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The final state of the work must be committed: the reproduction harness/test extension created earlier must be removed from the tree, and the remaining change containing the actual fix must be captured in a git commit. A submission that leaves the throwaway harness behind, or that never records the fix as a commit, is incomplete. Deleting the production fix itself to 'clean up' does not satisfy this. The user's request to 'push' is subsumed by the commit requirement, since remote pushing is typically mocked or unavailable in the sandbox and need not be separately verified.",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Turn 4 ('ok remove the test extension, commit and push') is an explicit final correction: clean up the transient scaffold and commit the fix. Captures the multi-turn cleanup-and-commit requirement."
+    }
+  ],
+  "decomposition_notes": "Task = fix issue #856 in pi-mono: a failed 'write' tool call swallows its error in the interactive UI. Turn flow: T0 analyze-only -> T1 'fix it' (the core render fix, goal_1) -> T2 'write a minimal extension so i can test this' (a loadable test extension that forces the write tool to fail, goal_2) -> T3 user reports the extension failed to load ('pi.addTool is not a function ... read extensions.md'), an explicit correction that the harness must use the project's real documented extension API (folded into goal_2) -> T4 'ok remove the test extension, commit and push' (remove the scaffold and commit the fix, goal_3). Weighted goals: goal_1 (0.62) is the headline error-visibility behavior and dominates by user importance; goal_2 (0.22) is the loadable reproduction harness with the API correction from Turn 3; goal_3 (0.16) is the final cleanup-and-commit. Weights sum to 1.0. Goals are behavioral: they avoid naming tool-execution.ts, isError, getTextOutput, the edit identifier, or pi.addTool/registerTool, describing observable behavior (visible error text; a harness that loads under the real API; scaffold removed and fix committed) so any behaviorally-equivalent implementation passes. Round 1 critic fixes applied: dropped the edit-tool-parity prescription from former goal_2 (over-specific, no direct user provenance) and folded error-source into goal_1; removed the 'automated test' goal (the user asked for a manual reproduction extension, not a test suite) and replaced it with the actual Turn-2/Turn-3 ask; replaced the CHANGELOG requirement with the explicit Turn-4 'remove the test extension, commit and push' requirement."
+}

@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "task": "amytis-task-e3714e",
+  "n_oracle_turns_in": 23,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "workflow",
+      "text": "Create a git commit for current changes.",
+      "verbatim_excerpt": "commit"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 3,
+      "intent_kind": "context",
+      "text": "Report bug: autoPaths with series path breaks Chinese URLs due to missing generateStaticParams parameter.",
+      "verbatim_excerpt": "If 'autoPaths' is set to true and we use the series path, the Chinese URL of the post breaks"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 4,
+      "intent_kind": "question",
+      "text": "Ask for the agent's opinion on the autoPaths/Chinese URL issue.",
+      "verbatim_excerpt": "what is your opinion?"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 6,
+      "intent_kind": "workflow",
+      "text": "Create a git commit for current changes.",
+      "verbatim_excerpt": "commit"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 8,
+      "intent_kind": "context",
+      "text": "Report unit test failures in static-params and urls tests related to autoPaths series routing.",
+      "verbatim_excerpt": "bun test test failed"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 9,
+      "intent_kind": "context",
+      "text": "Report integration test failures: multilingual-test post not found, returning null.",
+      "verbatim_excerpt": "test:int failed"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 10,
+      "intent_kind": "workflow",
+      "text": "Create a git commit for current changes.",
+      "verbatim_excerpt": "commit"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 12,
+      "intent_kind": "request",
+      "text": "Check code review comments by CodeRabbit on PR #46.",
+      "verbatim_excerpt": "check about code reviews by coderabbit, PR #46"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 13,
+      "intent_kind": "request",
+      "text": "Fix the issues identified in the CodeRabbit review.",
+      "verbatim_excerpt": "OK, fix it."
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 14,
+      "intent_kind": "workflow",
+      "text": "Create a git commit for current changes.",
+      "verbatim_excerpt": "commit"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 16,
+      "intent_kind": "request",
+      "text": "Check new code review comments by CodeRabbit on PR #46.",
+      "verbatim_excerpt": "check about the new code review comments by coderabbit, PR #46"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 17,
+      "intent_kind": "question",
+      "text": "Ask for the agent's opinion on the new CodeRabbit review comments.",
+      "verbatim_excerpt": "what is your opinion?"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 18,
+      "intent_kind": "request",
+      "text": "Fix the test coverage issues if they are valuable.",
+      "verbatim_excerpt": "if test coverage is valuable, why not fix?"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 22,
+      "intent_kind": "request",
+      "text": "Check recent new code review comments by CodeRabbit on PR #46.",
+      "verbatim_excerpt": "check about the recent new code review comments by coderabbit, PR #46"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 23,
+      "intent_kind": "question",
+      "text": "Ask for the agent's opinion on the latest CodeRabbit review comments.",
+      "verbatim_excerpt": "what is your opinion?"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 25,
+      "intent_kind": "question",
+      "text": "Check latest CodeRabbit comments on PR #46 and ask why reviews are increasingly critical.",
+      "verbatim_excerpt": "why reivew more and more, and more critical?"
+    },
+    {
+      "intent_id": 16,
+      "source_turn": 26,
+      "intent_kind": "request",
+      "text": "Fix real bugs identified by CodeRabbit reviews if they are worth fixing.",
+      "verbatim_excerpt": "if that are real bugs, and worth fix, I think we need take them seriously and fix them"
+    },
+    {
+      "intent_id": 17,
+      "source_turn": 27,
+      "intent_kind": "request",
+      "text": "Prefer build-time failures over runtime failures when there are conflicts.",
+      "verbatim_excerpt": "it is better to fail at build time than at runtime"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 18.2
+}

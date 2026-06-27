@@ -1,0 +1,37 @@
+{
+  "_task_name": "unsloth-idefics3-finetune",
+  "_status": "no_canonical",
+  "_category": "stripped_export",
+  "_reason": "tool_use inputs are bare strings; no diffable content survives",
+  "_extraction": {
+    "method": "none",
+    "source": "n/a",
+    "fidelity": "n/a",
+    "verified": false,
+    "note": "tool_use inputs are bare strings; no diffable content survives"
+  },
+  "_sync_note": "No canonical patch could be extracted for this task. See _reason. Stub written by sync_reference_patches.py for schema uniformity. If session content becomes available (re-export, hand curation), produce a canonical at data-pipeline/artifacts_<source>/canonical_patches/<sid>.json then re-run this sync.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ai",
+    "date": "2026-05-14",
+    "note": "Stub schema ok. 154 tool_uses all bare strings with no name field; stripped_export category confirmed.",
+    "checks_passed": [
+      "stub_schema_ok",
+      "category_confirmed",
+      "no_source_canonical"
+    ]
+  },
+  "_triple_check_round2": {
+    "status": "AGREE",
+    "reviewer": "round2-batch-ai",
+    "date": "2026-05-15",
+    "found_issues": [
+      "reviewer_phrase_imprecise: \"all bare strings with no name field\" \u2014 actually each tool_use IS a dict with `tool` field (name). What is bare-string is the `input` payload (e.g., `tool=Edit input=\"<long task description>\"`). Categorization stripped_export still correct: Edit/Write inputs lost all structure."
+    ],
+    "note": "154 tool_uses including 20 Edit + 22 Write + 7 WebFetch; all `input` fields collapsed to bare strings (sentinel of stripped Anthropic export). Cannot reconstruct canonical from this session. Stub legit."
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false,
+  "_instruction_command_args_extracted": true
+}

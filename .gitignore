@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Secrets (.env.example stays tracked)
+.env
+.env*.bak
+
+# Benchmark run outputs — regenerated, never source
+trials/
+trials-*/
+trials_*/
+
+# OS
+.DS_Store

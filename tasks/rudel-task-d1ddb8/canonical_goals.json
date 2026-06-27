@@ -1,0 +1,41 @@
+{
+  "task_name": "rudel-task-d1ddb8",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation that changes how the settings-file location is resolved and that wires that resolution into the enable flow. Reject any non-solution: a zero-edit diff; a diff whose only content is a captured-tree / repository-snapshot banner (e.g. a '=== repo/ ===' artifact) with no real source edit; a git-ops exfiltration diff (e.g. `git checkout main`, `git reset --hard origin/...`); a comment-only or whitespace-only / import-reordering-only diff; changes confined to temporary, scratch, or test-fixture locations rather than the tool's actual source. The path-resolution behavior must be exercised by the code that the `enable` command actually runs, not added as dead/unreachable code.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor gate. With no model patches available (evidence_tier golden_only), calibrate against the cheapest fake: the original session began with the user reporting `rudel enable` 'doesnt do anything', so a no-op or cosmetic diff that leaves resolution unchanged is the obvious gaming path and must score zero."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When the working directory (or a project ancestor) already contains a `.claude` directory, the resolved settings location points at that existing project-level `.claude` rather than the user's home/global directory. The resolution must search upward from the current working directory and stop at the nearest ancestor that already has a `.claude` directory. Bounding the upward search at the enclosing repository root to deliberately avoid latching onto the user's global home `.claude` is acceptable and encouraged. This must be real upward-search logic, not a hardcoded path, a value that is computed but then ignored, or a stub that always returns the same answer.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 2 verbatim: 'we should ALWAYS try to target the root of the current repository? or going up from the current directory until there is a `.claude` directory.' The walk-up-to-existing-`.claude` branch is the primary correction and the highest-importance behavior change."
+    },
+    {
+      "id": "goal_2",
+      "goal": "When no ancestor directory contains a `.claude` directory, the resolved settings location falls back to a `.claude` directory at the root of the current repository (e.g. the enclosing git repository's top level), NOT the user's global/home directory. This fallback must be derived dynamically from the current location and must resolve the enclosing repository's top level; a hardcoded path, a constant, or logic that quietly reverts to the home directory does not satisfy it. Simply returning the current working directory without resolving the actual repository root also does not satisfy it, because the command may be run from a subdirectory and the user explicitly asked for the root of the current repository.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 2 verbatim: 'and if there is none, the root of the current repository.' This is the explicit fallback the user specified, distinct from the walk-up case and equally required."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Running the enable command actually persists the rudel hook to the resolved project-level settings file end to end, including creating the resolved `.claude` directory and/or settings file when they do not yet exist, so a fresh project where nothing was set up before ends with the hook written to the project-level settings. It is not enough to only compute the new path; the write path must honor it and not silently no-op or fail when the target directory is missing. Not satisfied by code that resolves the path but never writes, by hardcoding a fake success, or by writing to the old global location.",
+      "tier": "important",
+      "weight": 0.2,
+      "rationale": "Turn 0 verbatim: 'call `rudel enable` it should add the rudel hooks to .claude/settings.json but it doesnt do anything.' The user's original complaint is that enable produces no visible effect; the fix must make enable observably write to the (now project-level) settings, which requires creating the directory in a clean project."
+    },
+    {
+      "id": "goal_4",
+      "goal": "Existing settings behavior is preserved through the change: reading existing settings, adding the hook without clobbering unrelated hooks or settings keys, and removing the hook while leaving other entries intact, all continue to work against the newly-resolved project-level location. The new resolution must not regress the surrounding settings read/modify/write operations or hardcode away their existing logic. Not satisfied by test deletion, stubs, or hardcoded returns.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 1 verbatim: 'can we remove it there and test again?' The user explicitly exercised remove-and-retest, and the original session relied on enable/remove round-tripping; the relocation must not break those existing operations."
+    }
+  ],
+  "decomposition_notes": "Three genuine user turns. Turn 0 is the surface complaint ('enable doesnt do anything') -> goal_3 (enable must observably persist the hook, creating the dir in a clean project). Turn 1 is diagnostic (remove and retest, confirm it was global-by-default) -> motivates goal_4 (don't regress read/add/remove round-tripping). Turn 2 is the actual feature request and is split into its two explicit branches: walk up to an existing `.claude` (goal_1, top weight as the primary correction) and fall back to the repo root when none exists (goal_2). Weights rank by user-importance (relocation behavior dominant), deliberately NOT mirroring the test_manifest F2P split which front-loads two equal 0.25 behavioral gates plus structural greps. No oracle identifiers (findClaudeDir, execSync, mkdirSync, getClaudeSettingsPath, file paths) appear in goal text since the user never named them; behavior is described instead. goal_0 is the anti-gaming floor calibrated to the no-op diff that the Turn-0 'doesnt do anything' framing invites."
+}

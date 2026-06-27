@@ -1,0 +1,55 @@
+{
+  "task_name": "gemini-voyager-task-72a86c",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine implementation of the requested macOS modifier-key display feature, not a gaming artifact. It must FAIL if the diff is empty/no-op, if it consists only of a captured repo-tree banner (e.g. a diff whose only content is a '=== repo/ ===' listing), if it only performs git-ops exfiltration (git checkout main / git reset --hard origin/...), if it only adds comments or whitespace, if changes exist only in temp/unmerged/scratch locations rather than the real source files, or if the user-facing behavior is faked by deleting/neutering existing tests instead of adding the platform-aware modifier logic. Real edits to the platform-detection utility, the shortcut-formatting service, the localization message files, and the popup UI must be present and consistent with each other.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. The task is authorable (golden_only tier, zero real model patches), so the floor guards against stub/no-op/captured-tree/git-exfil submissions that produce a passing-looking diff without implementing the macOS modifier feature the user asked for in Turn 0."
+    },
+    {
+      "id": "goal_platform_modifier_helper",
+      "goal": "The workspace gains a reusable way to detect whether the runtime platform is macOS and to derive the user-visible modifier-key label from that detection — macOS yields the Command symbol while other platforms yield the textual Ctrl label. The detection must read real platform/user-agent signals at runtime (not a hardcoded constant), and the label helper must be derived from that detection (not a fixed string), so the same code returns different labels on macOS vs non-macOS. A stub that always returns one value, a commented-out implementation, or a parsed-but-ignored platform check does not satisfy this.",
+      "tier": "core",
+      "weight": 0.25,
+      "rationale": "Turn 0 plan item 1: '新增 isMac() — 通过 navigator.userAgent / navigator.platform 检测 macOS; 新增 getModifierKey() — macOS 返回 ⌘，其他返回 Ctrl'. This is the foundation every other UI surface depends on."
+    },
+    {
+      "id": "goal_format_shortcut_symbols",
+      "goal": "The shortcut-formatting logic renders modifier keys as macOS glyphs (Command/Option/Control/Shift symbols) when running on macOS, while keeping textual modifier labels on non-macOS platforms (including presenting the platform-meta/super key with its non-macOS textual name rather than leaving it as the raw 'Meta' token). The behavior must be driven by the runtime platform detection, not hardcoded to always show symbols or always show text; any behaviorally-equivalent mapping of the modifier set to the macOS symbols is acceptable. Merely importing the platform helper without actually using it to change the rendered output does not satisfy this, and a hardcoded return string that ignores the shortcut's actual modifiers (always emitting the same label regardless of which modifiers the shortcut declares) does not satisfy this.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn 0 plan item 2: 'formatShortcut() 中，macOS 上将修饰键映射为符号: Meta→⌘, Alt→⌥, Ctrl→⌃, Shift→⇧; 非 macOS 保持文字显示'. Described behaviorally (symbol-vs-text by platform) rather than pinning the exact mapping table."
+    },
+    {
+      "id": "goal_localized_modifier_placeholder",
+      "goal": "Across all supported UI locales, the send-shortcut label and hint strings that previously hardcoded the Ctrl modifier now use a substitutable placeholder so the displayed modifier can vary by platform, AND a new localized hint string is added announcing the input-expand keyboard shortcut. The placeholder must be a real templated token consumed at render time (not the literal word Ctrl left in place, and not an empty/blank string), and the new shortcut-hint string must carry actual user-facing text in each locale rather than a placeholder-only or empty value. Coverage must span the full set of shipped locales, not just one or two.",
+      "tier": "core",
+      "weight": 0.2,
+      "rationale": "Turn 0 plan item 3: 'ctrlEnterSend / ctrlEnterSendHint 硬编码 Ctrl → {modifier}; 新增 inputCollapseShortcutHint 给 inputCollapse 增加快捷键提示文案' across the 10 listed locales (en/ar/es/fr/ja/ko/pt/ru/zh/zh_TW)."
+    },
+    {
+      "id": "goal_popup_modifier_and_discoverability",
+      "goal": "The popup settings UI renders the send-shortcut label and hint with the platform-appropriate modifier substituted in at runtime (consuming the localized placeholder via the platform helper), AND it surfaces the input-expand keyboard shortcut as a discoverable hint in the input-collapse section so users can see the shortcut from the settings panel. The substitution must actually replace the placeholder with the platform modifier at render time; leaving the raw placeholder visible, hardcoding a single modifier, or adding an unused import does not satisfy this. The discoverability hint must be wired to the localized shortcut string, not omitted.",
+      "tier": "core",
+      "weight": 0.15,
+      "rationale": "Turn 0 plan item 4 (Popup.tsx replace {modifier} with getModifierKey() for ctrlEnterSend/Hint and add inputCollapse shortcut hint) reinforced by Turn 1 follow-up 'ctrl i 是否应该加在 popup 里指示?' — the user explicitly asked for the Ctrl+I shortcut to be indicated in the popup."
+    },
+    {
+      "id": "goal_docs_shortcut",
+      "goal": "The user-facing documentation for the input-collapse feature mentions the keyboard shortcut for expanding the input, presented in a way that conveys both the macOS and non-macOS modifier so readers on either platform learn the shortcut. This must be added to the documentation that previously lacked it, across the documentation's localized variants rather than a single language. A doc edit that omits the shortcut, or only adds it to one locale while the feature ships in many, does not satisfy this. A doc edit that is commented out (e.g., via HTML comments) or otherwise hidden from the rendered output does not satisfy this.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 2 follow-up: '好，vitepress 文档里没有的话也加上' — the user asked to also document the expand shortcut in the VitePress docs if missing; the golden patch adds it to all input-collapse.md locale variants."
+    },
+    {
+      "id": "goal_platform_helper_tests",
+      "goal": "Automated unit tests are added that exercise the platform-detection and modifier-label logic, asserting the macOS branch yields the macOS modifier label and the non-macOS branch yields the textual modifier label by simulating different platform/user-agent signals. The tests must make real assertions on the helpers' return values across simulated platforms; a test that is skipped, always-passing, asserts nothing meaningful, or deletes/weakens existing coverage instead of adding new coverage does not satisfy this.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 0 plan item 5: '添加测试 — 为 isMac() 和 getModifierKey() 在 src/core/utils/__tests__/ 添加单元测试'. The golden patch adds vitest cases mocking navigator.platform/userAgent for both helpers; described behaviorally (assert each platform branch) without pinning file paths or test names."
+    }
+  ],
+  "decomposition_notes": "Evidence tier: golden_only (golden patch present via messages_replay, zero real model patches), so the rubric is authored from the Turn-0 plan + the 4 genuine user turns + the F2P manifest, cross-checked against the golden diff. Multi-turn coverage: Turn 0 -> goals platform_modifier_helper / format_shortcut_symbols / localized_modifier_placeholder / popup_modifier_and_discoverability / platform_helper_tests (plan items 1-5); Turn 1 (popup discoverability for Ctrl+I) folds into popup_modifier_and_discoverability; Turn 2 (VitePress docs) -> docs_shortcut; Turn 3 ('bun run format 然后提交') is a process/wrap-up ask with no durable workspace behavior, so it is intentionally NOT a goal. Weights rank by user-importance, not 1:1 with the manifest: the platform helper is the load-bearing foundation (0.25), weighted above the test_manifest's equal 0.2 buckets; localized strings (0.20) and format_shortcut symbols (0.20) carry the user-visible payload; popup wiring (0.15) is the follow-up discoverability surface (manifest gives popup only 0.1); docs (0.10) and the unit tests (0.10, Turn-0 plan item 5) are supporting follow-ups. Weighted goals sum to 1.00. Goals are behavioral: no function/file/variable names appear in goal text except where the user named the feature concepts; exact symbol tables and the {modifier} token literal are described by behavior (templated placeholder, macOS glyphs) so any behaviorally-equivalent implementation passes."
+}

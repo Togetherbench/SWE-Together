@@ -1,0 +1,27 @@
+{
+  "task_name": "agent-swarm-task-ea4bd8",
+  "language": "ts_bun",
+  "log_parser": "parse_log_bun_test",
+  "test_cmd": "true",
+  "repo_dir": "/workspace/agent-swarm",
+  "FAIL_TO_PASS": [
+    "dockerfile_apt_consolidation",
+    "dockerfile_npm_pinned",
+    "entrypoint_mcp_json_jq",
+    "dockerfile_marketplace_build_time",
+    "use_agents_lazy"
+  ],
+  "PASS_TO_PASS": [],
+  "source_files": [
+    ".gitignore",
+    "Dockerfile.worker",
+    "docker-entrypoint.sh",
+    "new-ui/src/api/hooks/use-agents.ts",
+    "package.json"
+  ],
+  "test_files": [],
+  "commit_sha": "c26a402303d469dbdbc96dcc9e10970aae319f3a",
+  "commit_message_first_line": "docker improvements",
+  "agent_percentage": 94.28571428571428,
+  "_note": "test.sh is a custom structural verifier for this Dockerfile/entrypoint refactor task. The repo's bun:test suite is unrelated to the changes; tests are scored by inspecting Dockerfile.worker, docker-entrypoint.sh, and use-agents.ts. FAIL_TO_PASS lists the structural gate IDs (also defined in tests/test_manifest.yaml). test_cmd is `true` because all logic lives in the embedded Python in test.sh."
+}

@@ -1,0 +1,61 @@
+# test_manifest.yaml — gemini-voyager-task-c5c01d
+# Verifier checks that the agent added the toggleable Snow Effect feature to
+# Nagi-ovo/gemini-voyager (canonical commit 495f0805 on parent 4e9d9169).
+# Gates declared here mirror the inline regex checks in tests/test.sh.
+version: "1.0"
+description: "Verify the Snow Effect feature (storage key + module + popup toggle + registration + lifecycle + tests) is implemented per the canonical patch."
+
+gates:
+  # ── F2P behavioral gates (weight sum: 1.00) ──────────────────────────────
+  - id: F2P_STORAGE_KEY
+    kind: F2P
+    weight: 0.15
+    description: >
+      src/core/types/common.ts adds a snow-effect entry to the StorageKeys
+      object — accepts either the canonical literal 'gvSnowEffect' or any
+      GV_SNOW_* key with a snow-flavored string value.
+
+  - id: F2P_MODULE_EXISTS
+    kind: F2P
+    weight: 0.25
+    description: >
+      src/pages/content/snowEffect/index.{ts,tsx} exists, exports
+      startSnowEffect, creates a <canvas> element, sets pointer-events:none
+      and position:fixed, runs a requestAnimationFrame loop, and reads the
+      snow-effect storage key via chrome.storage. Rejects empty/stub modules.
+
+  - id: F2P_REGISTRATION
+    kind: F2P
+    weight: 0.15
+    description: >
+      src/pages/content/index.tsx imports startSnowEffect from the
+      snowEffect module and invokes it inside the feature-init pipeline (any
+      call site outside the import line counts).
+
+  - id: F2P_POPUP_TOGGLE
+    kind: F2P
+    weight: 0.20
+    description: >
+      src/pages/popup/Popup.tsx wires the new toggle: a useState hook for a
+      snow-effect boolean, a payload mapping that writes gvSnowEffect to
+      chrome.storage, and a UI Switch/Checkbox bound to the new state.
+
+  - id: F2P_LIFECYCLE
+    kind: F2P
+    weight: 0.15
+    description: >
+      The snow module manages enable/disable cleanly: appendChild attaches
+      the canvas, .remove()/removeChild detaches it, cancelAnimationFrame
+      stops the rAF loop, and a chrome.storage.onChanged listener reacts to
+      toggle changes. Rejects half-implementations missing teardown.
+
+  - id: F2P_TESTS_EXIST
+    kind: F2P
+    weight: 0.10
+    description: >
+      Test file at src/pages/content/snowEffect/__tests__/ exists with at
+      least 2 it()/test() blocks, ≥3 expect() assertions, and references
+      both canvas (DOM-level assertion) and chrome.storage / gvSnowEffect
+      (the simulated-storage fixture pattern). Rejects empty stubs.
+
+# P2P_REGRESSION: none — feature is purely additive; no prior behavior to gate.

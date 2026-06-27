@@ -1,0 +1,32 @@
+version = "1.0"
+
+[metadata]
+author_name = "Alex Li"
+author_email = "alex@example.com"
+difficulty = "hard"
+category = "feature"
+tags = ["mlx-lm", "mamba", "cache", "batching", "ssm", "hybrid-models", "apple-mlx"]
+session_resolution = "resolved"
+session_resolution_confidence = 0.90
+session_resolution_reasoning = "Agent completed ArraysCache/MambaCache batching implementation, added _lengths feature, ran integration tests with actual model. User continued using the fork in data pipeline work. PR #739 was created and session moved on to other work."
+expert_time_estimate_min = 30.0
+junior_time_estimate_min = 120.0
+
+[verifier]
+timeout_sec = 120.0
+
+[agent]
+timeout_sec = 3600.0
+
+[environment]
+docker_image = "ghcr.io/togetherbench/multi-user-turn-codebench/mlx-lm-mambacache:3b821508ab77"
+build_timeout_sec = 600.0
+cpus = 4
+memory = "4G"
+storage = "10G"
+allow_internet = true
+# PR #212: gate WebFetch/WebSearch to prevent agent contamination via
+# the leaky URL in user_simulation_prompt.md. Harbor's claude-code adapter
+# translates this kwarg to `claude --disallowedTools WebFetch,WebSearch`.
+[agent.kwargs]
+disallowed_tools = "WebFetch,WebSearch"

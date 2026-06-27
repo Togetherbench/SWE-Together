@@ -1,0 +1,48 @@
+{
+  "task_name": "reigh-medialightbox-refactor",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine refactor of the live MediaLightbox component source, not a gamed artifact. It FAILS if any of these hold: the diff is empty / a no-op; the only content is a captured-tree or directory-listing artifact (e.g. a diff whose sole body is a '=== repo/ ===' style banner) rather than real source edits; it consists solely of git-ops exfiltration (git checkout main, git reset --hard origin/..., reverting to a pristine tree) instead of code changes; the changes are comment-only or whitespace-only; or the edits live only in temporary/scratch/unmerged locations rather than the component's actual source tree that the application imports. The work must reflect real code that moves and reorganizes existing logic.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor guarding against non-genuine submissions. Calibrated against the lowest-reward real attempt (minimax, 0.35) which still performed substantial real extraction (~600 removed lines from the main file), so anything below genuine source reorganization is gaming."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The oversized main component file is made substantially smaller and less complicated by moving existing logic out of it into separate modules, rather than by deleting functionality or merely adding comments. A meaningful portion of the code that previously lived inline in the main file now lives in newly created modules (in the same directory or nested subdirectories) that the main file (directly or transitively) pulls in, and the slimmed-down main file remains a valid, importable module that still defines and exports the lightbox component. Merely renaming, re-indenting, commenting out code, or shuffling lines within the same file does NOT satisfy this.",
+      "tier": "core",
+      "weight": 0.34,
+      "rationale": "Turn 1: 'try to understand why the main component is so large ... ways to restructure it in such a way that it's less complicated and importantly less large?' and Turn 8: 'identify additional opporunities to reduce the main file size?' This size-reduction-via-extraction is the central, repeated ask."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The extracted code is organized into multiple genuinely distinct, behaviorally meaningful modules (such as separate hooks, utility helpers, layout/presentational sub-components, or context providers) that are really wired into the working component via real import/usage — not dead files left unimported, not stubs, and not a single catch-all dump file. The extraction must span more than one kind of concern (i.e. it is not just one giant new file), reflecting the user's request for 'smart abstractions' and a 'holistic plan'.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "Turn 1 'smart abstractions', Turn 2 'make a more holistic plan', Turn 3 'Run through every phase in sequential order', Turn 9 'what about seperating the image and video branches' — the user wants diverse, well-separated abstractions actually integrated, not a single mechanical split."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Debug/development-only logging noise (stray console logging, debug banners, and similar scratch instrumentation that cluttered the original main file) is cleaned up as part of the refactor. This must be real removal of the logging code, not just suppressing the output, commenting it out, or hiding it behind an always-false flag.",
+      "tier": "important",
+      "weight": 0.14,
+      "rationale": "Turn 1 verbatim: 'less complicated and importantly less large' — removing the massive blocks of debug logging the original main file carried directly shrinks the file and de-clutters it, satisfying that ask. Turn 12 (user 'yes,please proceed' on the phased plan) is secondary confirmation that the cleanup is in scope, and Turn 39 'push to github' is what the user ships. (Note: the later Turn-31 'can you add logs?' is transient debugging of a specific click bug, not a directive to keep scratch instrumentation in the shipped component.)"
+    },
+    {
+      "id": "goal_4",
+      "goal": "All pre-existing user-facing functionality for BOTH the image path and the video path is preserved through the refactor — no capability that worked before is dropped or broken. Concretely this includes things the user flagged as regressions: correct styling/state of the pane-control indicator while the lightbox is open; the image-editing panel not bleeding over onto the video view; video tools being clickable and the video enhance/enhance-mode control remaining available (including when cloud mode is enabled); and image variant controls appearing in the entry paths where they previously did (e.g. opening from the timeline or shot-images editor). Feature parity must be genuine, not faked by leaving the old code path in place unused, nor by hardcoding UI states or stubbing functionality to paper over the specific regressions instead of fixing the underlying state wiring.",
+      "tier": "core",
+      "weight": 0.18,
+      "rationale": "Turns 20, 22, 23, 24, 28, 29: 'why is the number of the pane control tab not showing in the right colour', 'Why does the image edit panel thing show on top of the video media lightbox?', 'i can't click between the video tools and the video enhance tool is missing', 'Enhance mode still isn't showing when cloud mode is enabled', 'is there any functionality missing from either images or videos that it has before?', 'Why do images not have the variant thing when accessed via timeline or shot images editor?' — preserving parity and fixing refactor-introduced regressions is the dominant thread of the session."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Opening this media view behaves consistently and correctly across the different entry points the user exercises — not just the primary path. This covers reliably opening a video item that appears interleaved among images (e.g. from the shot-images editor) without flaky/inconsistent behavior, and avoiding the momentary disappearance of the dark backdrop when navigating between a video and a non-video item via the top/bottom jump controls (the same backdrop-preserving approach already used elsewhere should govern these transitions). Any fix must be a real code change to the relevant logic, not a hardcoded special-case that papers over one reproduction.",
+      "tier": "important",
+      "weight": 0.12,
+      "rationale": "Turns 30, 37, 41: 'clciking on the videos that show in between images seems to work inconsistently', 'What about other paths where i open this vview', 'the black thing in the backgroudn disappears for a second ... we implemented an approach to make sure the black thing never disappears while jumping, can you find that and implement the same approach here?' — the structural/cross-entry-path correctness asks. (Turn 40's mention of the SegmentRegenerateForm view is context-setting for the Turn-41 backdrop-flicker bug, not a request to hide the form, so the form's presence is intentionally not made a removal target.)"
+    }
+  ],
+  "decomposition_notes": "Evidence tier is model_only (golden.patch empty; 4 real model attempts, rewards 0.7/0.55/0.35/null). Target derived from instruction + 30-turn user-sim + F2P tests. The session splits cleanly into a refactor phase (Turns 1-16: shrink the oversized main file via smart, holistic, diverse abstractions, removing debug noise) and a long correction tail (Turns 20-43: fix regressions the refactor introduced and preserve image+video feature parity across all entry paths). goal_1 (size reduction via real extraction) is the highest weight because it is the central, repeated Turn-1/Turn-8 ask. goal_4 (feature parity / regression fixes) and goal_2 (diverse wired abstractions) are the other core asks; goal_4 is deliberately weighted high because the bulk of the session is the user catching dropped functionality. goal_3 (debug-noise cleanup) and goal_5 (cross-entry-path correctness) are important but secondary. Weights intentionally do NOT mirror the F2P manifest (which over-weights the mechanical dimension-util extraction and under-weights behavior parity, since the host tests only cover Turns 1/3/8). Oracle-specific identifiers from the tests (e.g. the resolutionToDimensions helper name) are deliberately omitted because the user never named any function/file/variable; goals describe behavior so any behaviorally-equivalent module organization passes — confirmed against the four model patches which split into hooks/utils/components-layouts/contexts in different ways. Weighted goals (1-5) sum to 1.00."
+}

@@ -1,0 +1,70 @@
+# [v042-ci-integrated] (sum of F2P weights remains 1.0)
+version: '1.0'
+task: sd-scripts-multiresolution-compat
+turns:
+- turn: 1
+  user_message: 'In the last commit, we enable multi-resolution dataset for SD1/SDXL. Now your task is to improve backward
+    compatibility: When checking the existance or reading the cached latent, we first check the cached latent with the resolution
+    suffix. If it''s not found, we check the latent without the resolution suffix, and check its size. Note that we should
+    only load the metadata rather than decompressing the whole latent data when checking the size. You may use private API
+    in numpy (e.g., `numpy.lib.format`).'
+  deliverable: Add legacy unsuffixed-npz fallback in is_disk_cached_latents_expected and load_latents_from_disk for SD1/SDXL,
+    using header-only metadata reads.
+  skipped: false
+- turn: 2
+  user_message: Read `git diff HEAD~` to see the last commit
+  deliverable: Conversational nudge to inspect the last commit.
+  skipped: true
+- turn: 3
+  user_message: We only need to add backward compatibility for SD1/SDXL. Or you can implement it in the base class if it's
+    simpler and does not change the current behavior.
+  deliverable: Scope the fallback to SD1/SDXL (or implement in the base class without changing other strategies).
+  skipped: false
+- turn: 4
+  user_message: Considering that npz file is a zip , you may read the saved entry in the zip file as a stream and only decode
+    the array header.
+  deliverable: Implement size check via zip stream + numpy.lib.format header read (no full decompression).
+  skipped: false
+gates:
+- id: t1_f2p_legacy_accepted
+  turn: 1
+  kind: F2P
+  weight: 0.12
+  description: is_disk_cached_latents_expected accepts legacy unsuffixed npz with correct shape
+- id: t1_f2p_legacy_load
+  turn: 1
+  kind: F2P
+  weight: 0.12
+  description: load_latents_from_disk reads legacy unsuffixed npz with correct values & metadata
+- id: t3_f2p_wrong_shape_rejected
+  turn: 3
+  kind: F2P
+  weight: 0.08
+  description: Wrong-shape legacy unsuffixed npz is rejected by is_disk_cached_latents_expected
+- id: t3_f2p_suffix_priority
+  turn: 3
+  kind: F2P
+  weight: 0.12
+  description: When both suffixed and unsuffixed keys present, suffixed value wins (priority order)
+- id: t4_f2p_no_full_decompression
+  turn: 4
+  kind: F2P
+  weight: 0.2
+  description: 'Metadata-only check: bytes read from latents.npy zip member during size check are header-sized only'
+- id: t4_f2p_truncated_body_ok
+  turn: 4
+  kind: F2P
+  weight: 0.16
+  description: 'Header-only reader: legacy npz with valid .npy header but truncated body still permits a non-crashing size
+    check'
+- id: p2p_suffixed_path_regression
+  turn: null
+  kind: P2P_REGRESSION
+  weight: 0.0
+  description: Suffixed-key (multi-resolution) path still works for is_disk_cached_latents_expected and load_latents_from_disk
+- id: f2p_upstream_1bfda384
+  turn: null
+  kind: F2P
+  weight: 0.2
+  description: 'upstream(F2P): py_compile_changed @ e21a773'
+  notes: v043 F2P; reason=fail_on_buggy (rc_base=1) -> pass_on_fix

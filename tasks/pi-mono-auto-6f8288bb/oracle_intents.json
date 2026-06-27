@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "task": "pi-mono-auto-6f8288bb",
+  "n_oracle_turns_in": 14,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "question",
+      "text": "Did the runtime test actually fail as the user reported?",
+      "verbatim_excerpt": "did it actually fail like the use rsaid?"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Use the API key from env to test the runtime.",
+      "verbatim_excerpt": "there's an api key in env, test it"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 3,
+      "intent_kind": "request",
+      "text": "Map 'none' reasoning effort to none; map any other effort to the model/provider default.",
+      "verbatim_excerpt": "none should map to none, any other pi-ai reasoning effort should map to default"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "question",
+      "text": "Can we reuse an existing OpenAI compatibility mechanism for this?",
+      "verbatim_excerpt": "don't we already have some openai compat thing we can use?"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "question",
+      "text": "Why can't we use a thinkingFormat approach (openai/zai/qwen)?",
+      "verbatim_excerpt": "thinkingFormat (openai|zai|qwen) why can't we do that?"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 6,
+      "intent_kind": "question",
+      "text": "How would reasoningEffortFormat work?",
+      "verbatim_excerpt": "how'd resaoningEffortFormat work?"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 7,
+      "intent_kind": "question",
+      "text": "Don't Groq models already work with our normal effort levels?",
+      "verbatim_excerpt": "we also have groq models that work with our normal effort level"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 8,
+      "intent_kind": "question",
+      "text": "Does compat.reasoningEffortFormat exist? If not, why not create a proper mapping from pi-ai effort levels to model/provider expectations?",
+      "verbatim_excerpt": "why can't we just make it into a proper mapping, from our pi-ai effort levels"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 9,
+      "intent_kind": "question",
+      "text": "If we don't have 'none', how do we disable thinking with completions?",
+      "verbatim_excerpt": "how do we disbale thinking with completions then?"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 10,
+      "intent_kind": "question",
+      "text": "What is that level called in the simple streaming options?",
+      "verbatim_excerpt": "how do we call that level in the simples treaming options?"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 11,
+      "intent_kind": "question",
+      "text": "Does ThinkingLevel have a 'none' or 'off' value?",
+      "verbatim_excerpt": "does ThinkinLevel have a none or off?"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 12,
+      "intent_kind": "question",
+      "text": "Since adding 'none' is a breaking change, the mapping only needs to handle non-none cases. Agree?",
+      "verbatim_excerpt": "the mapping just needs to handle the not-none cases. agree?"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 14,
+      "intent_kind": "request",
+      "text": "Update custom-provider.md documentation after current task is done.",
+      "verbatim_excerpt": "need to update @packages/coding-agent/docs/custom-provider.md"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 14,
+      "intent_kind": "verification",
+      "text": "Test that the changes work for Qwen models.",
+      "verbatim_excerpt": "also need to test it works for qwen"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 15,
+      "intent_kind": "request",
+      "text": "No changelog entries needed at this time.",
+      "verbatim_excerpt": "no changelog entries needed at the mmomment"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 15,
+      "intent_kind": "workflow",
+      "text": "Commit referencing the issue with 'closes #number' and push.",
+      "verbatim_excerpt": "commit refrecnign the issue with closes #number, push"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 14.8
+}

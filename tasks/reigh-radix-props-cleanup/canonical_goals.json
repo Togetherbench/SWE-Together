@@ -1,0 +1,55 @@
+{
+  "task_name": "reigh-radix-props-cleanup",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine source-code change to the application that meaningfully addresses the reported runtime warnings/errors, not an artifact of gaming the grader. It must FAIL if the diff is effectively a no-op or evades the task: a zero-edit submission; a diff whose only content is a captured-tree banner (e.g. a line like '=== repo/ ===' with no real hunks); comment-only or whitespace-only changes; deletions or weakening of test/verification files; git-state exfiltration instead of a fix (e.g. 'git checkout main', 'git reset --hard origin/...', restoring files from another ref); or changes confined to temporary, build-output, or unmerged scratch locations rather than the tracked application source. Leftover merge-conflict markers (<<<<<<<, =======, >>>>>>>) in source also fail this floor.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Floor calibrated against the single available model patch, which is wrapped in a '=== repo/ ===' captured-tree banner and in several files merely blanks the handler lines (replacing them with empty lines) rather than removing them cleanly. A real solution must produce a substantive, compiling source change."
+    },
+    {
+      "id": "goal_remove_stale_handler_props",
+      "goal": "The browser console warnings about unknown event-handler properties being passed to dialog/popover/tooltip components are resolved: the components that mount these UI primitives no longer pass the stale, now-ignored outside-interaction / auto-focus event-handler props that the underlying library does not recognize. The fix must remove or stop forwarding these props at the call sites so the warnings no longer fire; it must NOT be satisfied by merely commenting the props out, by silencing the console, or by declaring the props in a type only while still spreading them onto the DOM element.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 0 verbatim console output repeats 'Warning: Unknown event handler property `onOpenAutoFocus`/`onPointerDownOutside`/`onInteractOutside`. It will be ignored.' across multiple components — the primary reported defect to fix."
+    },
+    {
+      "id": "goal_preserve_dialog_behavior",
+      "goal": "When removing the stale outside-interaction / auto-focus handlers, the intended dialog behaviors that those handlers guarded are preserved rather than silently dropped. Where a removed handler conditionally prevented a modal from closing (for example a modal that should stay open while a nested modal is active, while a guided tour is running, or while the user is interacting with an input field), that conditional close behavior must still be achieved through a valid React mechanism (e.g., the component's open-change callback, or intercepting events via stopPropagation before they trigger a close). Deleting the handlers and thereby regressing the conditional-close behavior does not satisfy this goal; nor does leaving a parsed-but-ignored flag that no longer affects close behavior.",
+      "tier": "core",
+      "weight": 0.16,
+      "rationale": "The removed handlers carried real logic (isLoraModalOpen, isTourActive, input-protection guards in the call sites). The user's push to 'purge radix entirely' (Turns 1-2) must not come at the cost of breaking the modal close semantics those handlers implemented."
+    },
+    {
+      "id": "goal_fix_play_aborterror",
+      "goal": "The unhandled-promise AbortError reported at Turn 0 ('The play() request was interrupted by a call to pause()') is addressed: media playback start calls that can be interrupted by an immediate pause no longer surface an uncaught promise rejection. An acceptable fix defends the play attempts so the interruption is handled gracefully — for example by catching the rejection, awaiting with error handling, or routing playback through a shared helper that recognizes and swallows the abort case — across all affected playback call sites. It must genuinely handle the rejection at runtime, not merely add a comment or suppress all errors indiscriminately, and without breaking or removing the intended media playback/pause functionality (e.g., deleting the play() or pause() calls to dodge the interruption does not satisfy this goal).",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Turn 0 verbatim includes 'Uncaught (in promise) AbortError: The play() request was interrupted by a call to pause().' — a distinct second runtime defect surfaced alongside the prop warnings and part of the same Turn-0 ask."
+    },
+    {
+      "id": "goal_comprehensive_purge",
+      "goal": "The cleanup is comprehensive across the codebase, not limited to the few components named in the original console trace. After the change, a repository-wide search of the application source finds essentially no remaining stale outside-interaction / auto-focus handler props being passed to the migrated UI primitives, and no lingering source references that re-introduce the removed library's props. This addresses the user's explicit follow-up demand for a full purge; partial fixes that clean only the originally-warned files while leaving equivalent stale props elsewhere in source do not satisfy it. Type-only declarations or excluded type-definition files do not count as violations, but live spreads onto components do.",
+      "tier": "important",
+      "weight": 0.16,
+      "rationale": "Turns 1-3 verbatim: 'Did we not remove radix entirely?' / 'Have you purged radix entirely?' / 'sure there's nothing in https://base-ui.com/ for cmdk?' — the user repeatedly pushes from a surface fix to a complete, codebase-wide cleanup."
+    },
+    {
+      "id": "goal_remove_handler_source",
+      "goal": "The shared source that injected the stale handler props is itself cleaned, so the fix is structural rather than whack-a-mole at each call site. The shared modal-styling/props helper no longer returns or plants a stale outside-interaction / auto-focus handler that downstream components spread onto the UI primitive; consequently components either no longer spread that prop bag, or the spread bag is clean and no longer contains the stale handlers. Re-declaring the prop while still returning it, or hardcoding an equivalent stale handler elsewhere, does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.12,
+      "rationale": "The shared useModal hook returned a props bag containing onOpenAutoFocus that callers spread via {...modal.props}, re-contaminating Dialog receivers; addressing the source is what makes the Turn 1-2 'purged entirely?' answer truthfully yes rather than a per-file patch."
+    },
+    {
+      "id": "goal_preserve_cmdk",
+      "goal": "The existing command-menu (cmdk) component is left in place and working rather than ripped out and swapped for a different UI library's component. After the user explicitly questioned the value of replacing it, the correct outcome is to keep the command-menu functioning as-is; a submission that removes or rewrites the command-menu in favor of a Base UI (or other) replacement, thereby risking its behavior, does NOT satisfy this goal. Note that the command-menu may legitimately remain even though it transitively depends on the library being purged elsewhere — keeping a working dependency that the user agreed to keep is the intended result, not a failure of the purge.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turn 3 ('sure there's nothing in https://base-ui.com/ for cmdk?') and Turn 4 ('what benefit would it serve?') verbatim: the user probes a cmdk replacement and then questions its benefit, ultimately declining it — so the correct behavior is to NOT replace cmdk, a multi-turn negative constraint."
+    }
+  ],
+  "decomposition_notes": "Evidence tier is model_only (golden.patch empty, one model patch with null reward), so targets are derived from the verbatim Turn-0 console dump + the multi-turn user pushes + the F2P tests. Turn 0 carries TWO defects: (a) repeated 'Unknown event handler property' warnings for onOpenAutoFocus/onPointerDownOutside/onInteractOutside (stale Radix props on base-ui primitives) and (b) an uncaught play() AbortError. Turns 1-3 escalate from a surface fix to a full codebase-wide purge ('purged radix entirely?'). Turns 3-4 are a cmdk-replacement probe that the user ultimately declines ('what benefit would it serve?'), captured as a NEGATIVE constraint goal (goal_preserve_cmdk, 0.10): the correct behavior is to keep cmdk, NOT replace it. Turn 5 ('push everythig to github') is a process/VCS action, excluded as a process goal per instructions. Weights rank by user-importance: removing the stale handler props that fire the warnings is the headline ask (0.30); preserving the guarded close behavior, fixing the play() AbortError, and the comprehensive purge are each substantial (0.16); cleaning the shared source helper is structural correctness (0.12); keeping cmdk in place is the multi-turn negative constraint (0.10). Weights intentionally diverge from test_manifest F2P (which puts 0.5/0.5 on the two narrow useModal-props grep gates) because those gates capture only the source-helper slice, whereas the user's repeated language emphasizes the warnings being gone and the purge being complete. Behavioral phrasing avoids naming specific files/components/props as requirements except where the user's own console paste surfaced them; the model patch confirms multiple valid implementations (lift-to-onOpenChange, initialFocus={false}, shared safePlay helper) are all acceptable. Weighted goals (0.30+0.16+0.16+0.16+0.12+0.10) sum to 1.00."
+}

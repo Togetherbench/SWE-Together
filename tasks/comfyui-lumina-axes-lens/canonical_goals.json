@@ -1,0 +1,48 @@
+{
+  "task_name": "comfyui-fix-a3be2d",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "Anti-effort floor: the agent did real work to address the user's ask. Specifically: (a) comfy/ldm/lumina/model.py parses as valid Python and NextDiT remains instantiable with axes_lens; (b) the agent did NOT satisfy the ask by a no-op alias (e.g. `NewName = EmbedND` at module level), a stub that re-imports EmbedND, an unwired class that is defined but never assigned to NextDiT.rope_embedder, an early-return that silently retains EmbedND behavior, or a TODO/`raise NotImplementedError` body; (c) the rope_embedder attribute on NextDiT is bound to a class whose `forward` actually executes axes_lens-aware logic (i.e. control-flow reaches a path that consumes axes_lens beyond merely storing it as an attribute).",
+      "tier": "anti_effort",
+      "weight": 0.0,
+      "rationale": "Pure anti-gaming gate, weight=0. Distinct from goal_3 (which checks BEHAVIORAL respect for axes_lens values): goal_0 is the floor that catches mechanical evasion patterns where the diff 'looks like' a fix but degenerates to original EmbedND behavior. test.sh probe gates `p2p_upstream_ast_parse`, `p2p_upstream_nextdit`, and `not_embednd` jointly cover (a) and the alias-evasion half of (b); the judge additionally verifies (b)-unwired-class and (c)-control-flow-reaches-axes-lens before awarding any positive credit on goal_1..goal_5."
+    },
+    {
+      "id": "goal_1",
+      "goal": "Inside comfy/ldm/lumina/model.py, a new code path is introduced that takes axes_lens as input and is what NextDiT.rope_embedder resolves to at instantiation. This new code path is distinct from the original EmbedND in comfy/ldm/flux/layers.py (not a re-import, alias, or trivial `pass`-only subclass that delegates forward to super) and its constructor receives axes_lens (by positional argument, keyword argument, or by reading it from a config / model attribute) such that different axes_lens values lead to a different resulting embedder configuration. A new class is the user-hinted mechanism, but a new module-level callable / factory function / closure that satisfies the same interface (callable as `self.rope_embedder(ids)`) also qualifies.",
+      "tier": "core",
+      "weight": 0.5,
+      "rationale": "Direct read of User Turn 3 'Implement axes_lens in ComfyUI...you may create a new class to replace EmbedND in @comfy/ldm/lumina/model.py'. The 'may' is load-bearing — class is hinted, not required. The exclusion of trivial subclassing/aliasing is the anti-gaming clause demanded by 'Implement' (not 'rename')."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The new rope_embedder, when invoked with position ids whose values are within the configured axes_lens bounds (`0 <= ids[..., i] < axes_lens[i]`), returns a tensor whose shape matches what the original EmbedND-based path would have returned and whose values are numerically equivalent (within atol/rtol = 1e-3) to computing the existing `comfy.ldm.flux.math.rope()` helper per-axis on the raw integer positions and concatenating along the per-axis-dim axis. The output remains compatible with the existing downstream `apply_rope(xq, xk, freqs_cis)` consumer.",
+      "tier": "secondary",
+      "weight": 0.18,
+      "rationale": "User Turn 3 said 'Implement axes_lens' — implementation must not break the model. The original EmbedND path is the only behavioral spec the user-visible session anchors (user never asked to match Diffusers element-wise). 'Equivalent to rope() on raw ids' is the minimum invariant for the downstream apply_rope to keep working, which is what makes the fix non-regressive."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The configured axes_lens values OBSERVABLY change the rope_embedder's behavior or state: at least one of (a) constructing two NextDiT instances with different axes_lens produces rope_embedders that hold differently-sized internal state (buffer / parameter / tensor attribute) reflecting the configured axes_lens; (b) the rope_embedder explicitly raises or clamps when an id is at-or-beyond axes_lens[i]; (c) the rope_embedder's forward path measurably consults axes_lens (not merely stores it). Storing axes_lens as `self.axes_lens` without any code path consuming it does NOT satisfy this goal.",
+      "tier": "secondary",
+      "weight": 0.13,
+      "rationale": "User Turn 1 'Is axes_lens USED in the RoPE...?' — the user-identified defect is that axes_lens was stored but ignored. Fixing the bug means axes_lens must change observable behavior. The disjunction (a/b/c) keeps mechanism open: precomputed buffers, runtime clamp, or any other consumption pattern is fine."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The change is localized: the original EmbedND class in comfy/ldm/flux/layers.py is byte-identical before and after (so non-Lumina consumers — Flux, etc. — keep their original code path), and no file outside comfy/ldm/lumina/ is modified to make the fix work. Position-id arithmetic and other in-file edits to comfy/ldm/lumina/model.py beyond the new rope_embedder are acceptable IF they do not break P2P (NextDiT still instantiates, model.py still parses) and IF correctness (goal_2) still holds with them in place — i.e. an out-of-scope edit that breaks the model is not absolved by being 'in the right file'.",
+      "tier": "secondary",
+      "weight": 0.14,
+      "rationale": "User Turn 3 'To minimize the change to other models than Lumina2'. The clarifying half about 'other in-file edits' is anti-gaming the inverse direction: a model could 'minimize change' by also breaking model.py — that should not count."
+    },
+    {
+      "id": "goal_5",
+      "goal": "Standard PyTorch hygiene: the new rope_embedder is deterministic (two calls with the same input return identical tensors, atol=1e-6), does not mutate the input ids tensor in place, and operates correctly on batched inputs (batch dim > 1 with per-batch distinct position ids produces per-batch distinct outputs that each match the per-batch reference).",
+      "tier": "polish",
+      "weight": 0.05,
+      "rationale": "Implementation hygiene — not an explicit user ask but a baseline assumption for any nn.Module embedder. Polish weight kept low (0.05) per rubric guidance."
+    }
+  ],
+  "decomposition_notes": "v3 structure: 1 anti-effort gate (goal_0, weight=0) + 1 core (goal_1) + 3 secondaries (goal_2/3/4) + 1 polish (goal_5). Positive-credit weights sum to 1.00 (0.50 + 0.18 + 0.13 + 0.14 + 0.05). Weights deliberately do NOT mirror test.sh F2P/probe weight distribution: F2P+probe combined inner-reward weights are class=0.20, usage=0.20, not_embednd=0.06, accepts_axes_lens=0.09, forward_runs_finite=0.06, match_sequential=0.12, match_random_inrange=0.09, axes_lens_respected=0.09, deterministic_no_mutation=0.03, batched_correct=0.06 — a one-to-one rubric-to-F2P mapping would be a 10-goal flat decomposition. v3 instead groups by USER INTENT (one core + three secondaries + one polish), so weight per goal is set by intent importance, not by F2P contribution. Identifier hygiene: rubric NEVER names LuminaEmbedND (oracle's choice) or Lumina2EmbedND (Diffusers convention, the trial's choice) as the required class name. Anti-gaming is embedded INSIDE goal language: goal_0(b) lists evasion patterns; goal_1 excludes alias/trivial-subclass; goal_3 excludes 'stored but never consulted'; goal_4 excludes 'in-file edits that break the model'."
+}

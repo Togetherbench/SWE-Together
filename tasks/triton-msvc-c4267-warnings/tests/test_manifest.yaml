@@ -1,0 +1,70 @@
+version: "1.0"
+turns:
+  - turn: 1
+    user_message: "legacy"
+    deliverable: "see instruction.md"
+gates:
+  # Existing per-turn F2P gates (scaled from 1.0 total to 0.60 total)
+  - id: gate_a_barrier_arg
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    description: "lowerBarrier 3rd arg is clean under -Wconversion"
+  - id: gate_b_callop_arg
+    kind: F2P
+    turn: 1
+    weight: 0.12
+    description: "lowerCallOp 3rd arg is clean under -Wconversion"
+  - id: gate_e_getresult
+    kind: F2P
+    turn: 1
+    weight: 0.09
+    description: "getResult(i) unsigned narrowing fixed (the instruction.md WarpSpecializeUtility line-99 site)"
+  # Bonus gates — agent may proactively cast more sites, but the instruction
+  # only requires the two MSVC C4267 sites that the original session fixed
+  # (lambda capture for lowerBarrier/lowerCallOp dispatch + getResult cast).
+  # The four below are demoted from F2P to P2P_REGRESSION (informational only)
+  # so the unified F2P coverage doesn't penalize the canonical, which only
+  # touched the two sites the build error pointed at.
+  - id: gate_c_geparg
+    kind: P2P_REGRESSION
+    turn: 1
+    weight: 0
+    description: "BONUS: GEPArg(j) int32_t narrowing (not required by instruction)"
+  - id: gate_d_toerase
+    kind: P2P_REGRESSION
+    turn: 1
+    weight: 0
+    description: "BONUS: toErase.set(i) unsigned narrowing (not required by instruction)"
+  - id: gate_f_getargument
+    kind: P2P_REGRESSION
+    turn: 1
+    weight: 0
+    description: "BONUS: getArgument(i) unsigned narrowing (not required by instruction)"
+  # Upstream F2P gates — keep only the one matching the canonical
+  - id: f2p_upstream_narrowing_barrier_callop
+    kind: F2P
+    turn: null
+    weight: 0.20
+    description: "Compile probe: lowerBarrier/lowerCallOp idx narrowing check"
+  - id: f2p_upstream_narrowing_secondary
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "BONUS: Compile probe for toErase/getResult/getArgument/GEPArg (not required by instruction)"
+  # Upstream P2P regression gates
+  - id: p2p_upstream_file_exists
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "WarpSpecializeUtility.cpp exists and is non-empty"
+  - id: p2p_upstream_balanced_syntax
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Balanced braces and parens in WarpSpecializeUtility.cpp"
+  - id: p2p_upstream_required_symbols
+    kind: P2P_REGRESSION
+    turn: null
+    weight: 0
+    description: "Required function names present in WarpSpecializeUtility.cpp"

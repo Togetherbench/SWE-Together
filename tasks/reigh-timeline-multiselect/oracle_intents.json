@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "task": "reigh-timeline-multiselect",
+  "n_oracle_turns_in": 31,
+  "intents": [
+    {
+      "intent_id": 0,
+      "source_turn": 1,
+      "intent_kind": "request",
+      "text": "Implement the full timeline multi-select plan across 5 phases: selection hook, TimelineItem changes, multi-drag, tap-to-move, and SelectionActionBar integration.",
+      "verbatim_excerpt": "Timeline Multi-Select Implementation Plan"
+    },
+    {
+      "intent_id": 1,
+      "source_turn": 2,
+      "intent_kind": "correction",
+      "text": "First tap on a timeline item should select it (like Shot Images Editor), not drag. Dragging should just drag that item.",
+      "verbatim_excerpt": "the first tap on an item should just select it similar to how it does in the shot images editor"
+    },
+    {
+      "intent_id": 2,
+      "source_turn": 2,
+      "intent_kind": "request",
+      "text": "Selected timeline items should highlight orange, matching the Shot Images Editor style.",
+      "verbatim_excerpt": "highlight orange in the same kind of orange the way it does in the shot images editor"
+    },
+    {
+      "intent_id": 3,
+      "source_turn": 4,
+      "intent_kind": "correction",
+      "text": "Single tap to select still doesn't work. Look at how selection is done in the Shot Images Editor.",
+      "verbatim_excerpt": "A single tap still doesn't seem to be select. Can you look at how we're doing it in the Shot Images Editor?"
+    },
+    {
+      "intent_id": 4,
+      "source_turn": 5,
+      "intent_kind": "correction",
+      "text": "Tapping to select on desktop doesn't work at all anymore.",
+      "verbatim_excerpt": "tapping to select on desktop doesn't work at all any more"
+    },
+    {
+      "intent_id": 5,
+      "source_turn": 7,
+      "intent_kind": "context",
+      "text": "Pasting debug logs showing Position 0 item calculation and NonDraggableDebug onMouseDown events.",
+      "verbatim_excerpt": "[Position0Debug] 📍 POSITION 0 Item d6d49c2a position calculation"
+    },
+    {
+      "intent_id": 6,
+      "source_turn": 8,
+      "intent_kind": "request",
+      "text": "Use a common tag for debug logs.",
+      "verbatim_excerpt": "COMMON TAG"
+    },
+    {
+      "intent_id": 7,
+      "source_turn": 9,
+      "intent_kind": "context",
+      "text": "Pasting selection debug logs showing toggleSelection is blocked because isLocked is true.",
+      "verbatim_excerpt": "⚠️ BLOCKED: {isEnabled: true, isLocked: true}"
+    },
+    {
+      "intent_id": 8,
+      "source_turn": 10,
+      "intent_kind": "question",
+      "text": "Why doesn't the 'Create a new shot with selected images' option appear on the timeline multi-select bar?",
+      "verbatim_excerpt": "Why does the 'Create a new shot with the selected images' thing not show on the multi-select"
+    },
+    {
+      "intent_id": 9,
+      "source_turn": 12,
+      "intent_kind": "correction",
+      "text": "After creating a new shot from timeline selection, show a success state like batch mode does instead of just hiding the selector.",
+      "verbatim_excerpt": "in the batch mode it shows success date can you make it work like works in the batch mode"
+    },
+    {
+      "intent_id": 10,
+      "source_turn": 13,
+      "intent_kind": "request",
+      "text": "Make the success state a 'jump to shot' button that navigates to the newly created shot when clicked.",
+      "verbatim_excerpt": "make the success state a -> jump to shot button that when clicked jumps to the shot"
+    },
+    {
+      "intent_id": 11,
+      "source_turn": 14,
+      "intent_kind": "correction",
+      "text": "The jump to shot button doesn't work.",
+      "verbatim_excerpt": "That jumped to shot button doesn't work"
+    },
+    {
+      "intent_id": 12,
+      "source_turn": 14,
+      "intent_kind": "request",
+      "text": "Make the jump to shot button show only an icon, not the full text.",
+      "verbatim_excerpt": "can you make it just show an icon, not the whole text"
+    },
+    {
+      "intent_id": 13,
+      "source_turn": 15,
+      "intent_kind": "request",
+      "text": "Add debug logs with a consistent tag to understand why jump to shot doesn't work.",
+      "verbatim_excerpt": "Can you add logs to understand why the jump to shop with this and work. Give them a consistent tag"
+    },
+    {
+      "intent_id": 14,
+      "source_turn": 16,
+      "intent_kind": "context",
+      "text": "Reporting that jump to shot doesn't navigate, with log reference.",
+      "verbatim_excerpt": "It dosn't jump to the new shot: SelectionActionBar.tsx:50"
+    },
+    {
+      "intent_id": 15,
+      "source_turn": 18,
+      "intent_kind": "context",
+      "text": "Pasting JumpToShot debug logs showing the full flow from handleNewShot through to ShotEditor handleShotChange.",
+      "verbatim_excerpt": "[JumpToShot] 9️⃣ ShotEditor handleShotChange navigating to:"
+    },
+    {
+      "intent_id": 16,
+      "source_turn": 19,
+      "intent_kind": "context",
+      "text": "Pasting logs showing jump to shot flow completes but stays on the same shot.",
+      "verbatim_excerpt": "Stays on the same shot"
+    },
+    {
+      "intent_id": 17,
+      "source_turn": 20,
+      "intent_kind": "context",
+      "text": "Pasting logs showing clicking jump button does nothing — setCurrentShotId is called but reverts back to old shot ID.",
+      "verbatim_excerpt": "I click it and nothing happens"
+    },
+    {
+      "intent_id": 18,
+      "source_turn": 21,
+      "intent_kind": "context",
+      "text": "Pasting logs showing setCurrentShotId is set to new shot but immediately reverted to old shot, indicating a race condition.",
+      "verbatim_excerpt": "setCurrentShotId called with: 3e4e9f9e (prev: dabad8ec"
+    },
+    {
+      "intent_id": 19,
+      "source_turn": 22,
+      "intent_kind": "correction",
+      "text": "When navigating to a new shot, the first item is stuck at position zero. Items should be at positions 0, 50, 100, etc.",
+      "verbatim_excerpt": "when it navigates from new shot the first item is in that position zero"
+    },
+    {
+      "intent_id": 20,
+      "source_turn": 23,
+      "intent_kind": "request",
+      "text": "Set new shot item positions to 0, 50, 100, etc. Check this off from top to bottom.",
+      "verbatim_excerpt": "Make it 0,50,100, etc. Can you since check this off from top to bottom?"
+    },
+    {
+      "intent_id": 21,
+      "source_turn": 24,
+      "intent_kind": "question",
+      "text": "Is there any way to make the create-new-shot query faster, or is the current duration necessary?",
+      "verbatim_excerpt": "is there any way the query to create a new shot file here could be faster"
+    },
+    {
+      "intent_id": 22,
+      "source_turn": 25,
+      "intent_kind": "correction",
+      "text": "The new shot button doesn't seem to work anymore. Could a recent change have broken it?",
+      "verbatim_excerpt": "Now it seems to the new shot button doesn't seem to work"
+    },
+    {
+      "intent_id": 23,
+      "source_turn": 27,
+      "intent_kind": "correction",
+      "text": "The new shot button was broken before the last change, after the change before that.",
+      "verbatim_excerpt": "It was broken before that, after you made the change before that"
+    },
+    {
+      "intent_id": 24,
+      "source_turn": 29,
+      "intent_kind": "request",
+      "text": "Check for a possible race condition that could inconsistently break the jump-to-shot link.",
+      "verbatim_excerpt": "check there could be some kind of race condition or something that could be breaking the link"
+    },
+    {
+      "intent_id": 25,
+      "source_turn": 30,
+      "intent_kind": "request",
+      "text": "Remove the number/badge that appears in the top right corner when selecting timeline items.",
+      "verbatim_excerpt": "something showing in the top right corner like maybe a number or something when I select two"
+    },
+    {
+      "intent_id": 26,
+      "source_turn": 31,
+      "intent_kind": "request",
+      "text": "Remove the selected check mark that appears on timeline items.",
+      "verbatim_excerpt": "remove the selected check mark thing that appears"
+    },
+    {
+      "intent_id": 27,
+      "source_turn": 32,
+      "intent_kind": "workflow",
+      "text": "Push everything to GitHub.",
+      "verbatim_excerpt": "Push everything to GitHub"
+    },
+    {
+      "intent_id": 28,
+      "source_turn": 33,
+      "intent_kind": "correction",
+      "text": "Fix SegmentSettingsForm so toggling enhance prompt off persists after closing and reopening the modal. Respect user's explicit setting.",
+      "verbatim_excerpt": "I turn enhance prompt off and then close the model but then when I reopen it enhance prompt is turned back on"
+    },
+    {
+      "intent_id": 29,
+      "source_turn": 35,
+      "intent_kind": "question",
+      "text": "Is the enhance prompt setting shown in UX always the one actually used when generating the segment task?",
+      "verbatim_excerpt": "the one that's showing at UX is that always going to be the one that we're actually using"
+    },
+    {
+      "intent_id": 30,
+      "source_turn": 36,
+      "intent_kind": "context",
+      "text": "Build fails: missing timelineNormalization module imported by useEnhancedShotPositions.ts.",
+      "verbatim_excerpt": "Could not load /app/src/shared/lib/timelineNormalization"
+    },
+    {
+      "intent_id": 31,
+      "source_turn": 38,
+      "intent_kind": "request",
+      "text": "Reduce video output gallery items per row to one-third of current count; it shows way too many items per row.",
+      "verbatim_excerpt": "Could you make it show a third the number of items per row to how it does now"
+    },
+    {
+      "intent_id": 32,
+      "source_turn": 40,
+      "intent_kind": "correction",
+      "text": "The gallery items-per-row logic might not be respected/applied correctly.",
+      "verbatim_excerpt": "I think we might not be respecting that logic"
+    }
+  ],
+  "extractor_model": "anthropic/claude-opus-4-6",
+  "elapsed_sec": 41.2
+}

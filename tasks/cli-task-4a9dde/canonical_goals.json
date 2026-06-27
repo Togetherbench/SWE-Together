@@ -1,0 +1,55 @@
+{
+  "task_name": "cli-task-4a9dde",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission must not bypass the failing scenario rather than fix it: the failing end-to-end test cases the user was running must continue to be executed by the test command (not skipped, t.Skip'd, build-tag-excluded, renamed out of the run set, or moved behind a flag that defaults to off), the interactive-confirmation code paths in the commit-hook module must still exist and still compile (not deleted, no-op'd to always return a constant, or commented out), the agent-runner subprocess must still actually invoke the external CLI under test (not replaced with a hard-coded success stub, a mock that returns canned output, or an early return), and the non-failing sibling agent's runner must continue to work unchanged. A submission that hides the bug by removing the test or the code path scores zero on this goal regardless of its score on other goals.",
+      "tier": "anti_effort",
+      "weight": 0.08,
+      "rationale": "Catches the standard gaming strategies for a 'make the failing test pass' task: stub the runner, delete the hook, skip the test, hard-code success. The user ran the failing test repeatedly across turns 1, 9-15, 22-24 — bypassing it defeats the whole interaction. Bounded floor so partial credit elsewhere cannot recover a destructive submission."
+    },
+    {
+      "id": "goal_1",
+      "goal": "When the commit-hook code that would otherwise probe the terminal for interactive use is invoked, it must detect that the calling process tree is the specific CLI agent the user identified in the dialog and return a non-interactive verdict in that case — by any mechanism that doesn't require modifying the call sites (environment-variable probe, parent-process-name inspection, sentinel file, threaded-through flag), so long as the terminal-probe code path is not reached when the parent is that agent. The detection signal must be specific to that one agent so the change does not also suppress interactive behavior for a real human running the CLI directly.",
+      "tier": "core",
+      "weight": 0.28,
+      "rationale": "Root-cause production fix the user identified at turn 16 (the hung process was the prepare-commit-msg hook), generalized at turn 17, and explicitly approved at turn 20. Phrased so any equivalent detection mechanism — env-var probe, /proc/<ppid>/comm read, command-line threading — satisfies the rubric; the specific environment-variable name from the canonical fix is intentionally omitted."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The companion interactive-confirmation helper in the same hook module (the one that would otherwise present the user with a yes/no prompt and read the response from the controlling terminal) must apply the same agent-parent detection as the previous goal and short-circuit to its default-answer path when the detection fires, rather than blocking on a read from the terminal. Guarding only the terminal-probe helper without also guarding the confirmation helper leaves a residual hang and does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.22,
+      "rationale": "User turn 17 explicitly generalized beyond the single TTY-probe site: 'any command that it runs expecting an input would hang.' The confirmation helper is the second site reading from /dev/tty in the same module. Mirrors goal_1 phrasing so any equivalent detection mechanism applied at this second site qualifies."
+    },
+    {
+      "id": "goal_3",
+      "goal": "The end-to-end test harness's invocation of the failing CLI agent must stop relying on a per-command exact-match tool allowlist as its approval mechanism, because exact-match against fully-parameterized shell command lines cannot cover arguments the test prompt will produce at runtime (e.g., a path or message argument). Any replacement that removes the exact-match dependency satisfies this — switching the approval-mode flag to a permissive value the CLI documents for unattended runs, dropping the allowlist mechanism entirely, or any equivalent reshape — provided the runner stops sending an allowlist whose entries cannot match the actual runtime shell command lines.",
+      "tier": "secondary",
+      "weight": 0.16,
+      "rationale": "Turns 5-7 are where the user reverse-engineered the correct --allowed-tools syntax from the docs and then turn 8's 'it works, so what's the issue then' established the looser invocation form as the user-blessed shape. The specific flag value used in the canonical fix is not pinned because the user dialog never named it — only the requirement that the brittle exact-match config be displaced."
+    },
+    {
+      "id": "goal_4",
+      "goal": "The test-harness subprocess invocation must add at least two distinct guards that make the spawned CLI safe to run unattended in CI: an environment signal the hook code reads to skip its terminal probe AND at least one of {a non-terminal source attached to the subprocess's standard input, an explicit override of the inherited environment so the signal actually reaches the child}. The point is belt-and-suspenders: if one guard fails to propagate (e.g., the child shells out further), the other still prevents the hang. A submission that adds only one of the three guards does not satisfy this goal.",
+      "tier": "secondary",
+      "weight": 0.1,
+      "rationale": "Turn 21 ('do you think the devnull fix is still needed?') makes the multiple-guard question explicit. Phrased as a 2-of-3 admit so equivalent guard combinations score equally and so a submission that picks any two valid guards does not have to also match the canonical pair."
+    },
+    {
+      "id": "goal_5",
+      "goal": "The hard-coded per-command allowlist literals that previously sat in the runner — the brittle exact-match strings whose mismatch was the proximate cause of the policy rejection the user observed — must be removed from the runner's active code path. Their continued presence under the new approval mode is dead config that misleads future readers and re-introduces the same failure mode on any future revert. Comment-stripped presence (literals appearing only inside comments documenting the prior failure) does not violate this goal; literals present in executable string-construction code do.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Turns 12-15 isolated the exact-match list as the proximate cause; turn 8 endorsed the looser form without it. Anti-gaming clause distinguishes comment retention (acceptable for future-reader context) from live config retention (not acceptable)."
+    },
+    {
+      "id": "goal_6",
+      "goal": "In the carry-forward step that decides which uncommitted-in-shadow files to propagate to the next stage of the integration logic, files that already appear in the committed-head tree with content byte-identical to the shadow branch's view of those files must be excluded from the carry-forward list. Equality must be checked against the actual stored object content (hash equality of the two tree entries, or an equivalent content-equivalence check) — not by re-reading the working tree, which would race with concurrent edits. Files present in head but with different content from the shadow view must still be carried forward.",
+      "tier": "secondary",
+      "weight": 0.08,
+      "rationale": "Verification-phase bug surfaced at user turn 22 (failing shadow-branch test) and re-emphasized at turn 25 (cross-agent comparison). Behavioral phrasing — the goal requires content-equivalence at the object layer, not a specific API; the anti-race clause prevents a working-tree-stat 'fix' that would regress under concurrent edits."
+    }
+  ],
+  "decomposition_notes": "1 anti-effort floor + 2 cores + 4 secondaries. Weights sum to 1.00 (0.08 + 0.28 + 0.22 + 0.16 + 0.10 + 0.08 + 0.08). All goals are behaviorally phrased without naming the oracle-canonical function names, environment variable, flag value, or library API. Anti-gaming guards are embedded INSIDE each goal — not just in goal_0 — so a submission cannot satisfy a goal via a trivial / destructive shortcut. Provenance for every goal cites the verbatim user-simulator turn(s) that justify the goal; goal_0 is the only one without a specific turn cite (it's the standard anti-effort floor). Weights deliberately disagree with the F2P-gate weight vector in tests/test_manifest.yaml — the manifest assigns 0.20/0.20/0.20/0.15/0.15/0.10 to the same conceptual fixes plus a TTY-guard gate; v3 puts more weight on the root-cause hook detection (goal_1 at 0.28) where the user actually steered the conversation, less weight on the second hook site (goal_2 at 0.22) which the user generalized but did not separately verify, and substantially less weight on the verification-phase carry-forward bug (goal_6 at 0.08) because it only surfaced after the main task was already complete and was discussed in only 3 of 25 turns."
+}

@@ -1,0 +1,48 @@
+{
+  "session_id": "ad23fc35-7c07-4f09-bdd5-13ce23c28ce9",
+  "commits_in_checkpoint": 1,
+  "commit_sha": null,
+  "repo_id": "comfyanonymous/ComfyUI",
+  "is_agent_author": true,
+  "files_changed_count": 1,
+  "total_additions": 9,
+  "total_deletions": 2,
+  "commit_message": "[reconstructed from session messages]",
+  "files_changed": "M\tcomfy/text_encoders/llama.py\n",
+  "numstat": [
+    "9\t2\tcomfy/text_encoders/llama.py"
+  ],
+  "patch": "diff --git a/comfy/text_encoders/llama.py b/comfy/text_encoders/llama.py\nindex 0d07ac8..96e86fb 100644\n--- a/comfy/text_encoders/llama.py\n+++ b/comfy/text_encoders/llama.py\n@@ -177,7 +177,7 @@ class Gemma3_4B_Config:\n     num_key_value_heads: int = 4\n     max_position_embeddings: int = 131072\n     rms_norm_eps: float = 1e-6\n-    rope_theta = [10000.0, 1000000.0]\n+    rope_theta = [1000000.0, 10000.0]\n     transformer_type: str = \"gemma3\"\n     head_dim = 256\n     rms_norm_add = True\n@@ -387,7 +387,14 @@ class TransformerBlockGemma2(nn.Module):\n         if self.transformer_type == 'gemma3':\n             if self.sliding_attention:\n                 if x.shape[1] > self.sliding_attention:\n-                    logging.warning(\"Warning: sliding attention not implemented, results may be incorrect\")\n+                    sliding_mask = torch.ones(x.shape[1], x.shape[1], device=x.device, dtype=torch.bool)\n+                    sliding_mask = torch.triu(sliding_mask, diagonal=-self.sliding_attention)\n+                    window_mask = torch.zeros((x.shape[1], x.shape[1]), device=x.device, dtype=x.dtype)\n+                    window_mask.masked_fill_(~sliding_mask, float(\"-inf\"))\n+                    if attention_mask is not None:\n+                        attention_mask = attention_mask + window_mask\n+                    else:\n+                        attention_mask = window_mask\n                 freqs_cis = freqs_cis[1]\n             else:\n                 freqs_cis = freqs_cis[0]\n",
+  "_source": "comfyui",
+  "_reconstruction": "tool_replay",
+  "_fidelity": "exact",
+  "_reconstruction_warnings": [],
+  "_base_commit": "1ca89b810e921efce95fb4d254a8c6c93180450b",
+  "_repo_url": "https://github.com/comfyanonymous/ComfyUI",
+  "_task_name": "comfyui-gemma3-sliding-window",
+  "_n_mutating_ops": 3,
+  "_canonical_source_path": "data-pipeline/artifacts_comfyui/canonical_patches/ad23fc35-7c07-4f09-bdd5-13ce23c28ce9.json",
+  "_sync_note": "Auto-synced 2026-05-14 after Fix B (WRITE/EDIT tool aliases) recovered this canonical. Edit source, not this copy.",
+  "_review": {
+    "status": "APPROVED",
+    "reviewer": "subagent-batch-ad",
+    "date": "2026-05-14",
+    "note": "exact fidelity, schema complete, hdr=1/1 +9/-2 matches numstat, file aligned with test.sh, 0 warnings",
+    "checks_passed": [
+      "schema_15_fields",
+      "diff_coherence",
+      "test_sh_alignment",
+      "no_phantom_files",
+      "fidelity_honest"
+    ]
+  },
+  "_triple_check_round2": {
+    "status": "PASS",
+    "reviewer": "round2-batch-ad",
+    "date": "2026-05-15",
+    "found_issues": [],
+    "note": "hdr=1/fc=1 +9/9 -2/2 hunks=2"
+  },
+  "_instruction_verbatim_enforced": true,
+  "_instruction_pii_redacted": false
+}

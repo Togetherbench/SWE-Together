@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$PATH"
+
+# Skip install if Claude Code is already available (e.g. pre-baked in Dockerfile)
+if command -v claude &> /dev/null; then
+    echo "Claude Code already installed, skipping install"
+    claude --version
+    exit 0
+fi
+
+# Install curl if not available
+if command -v apk &> /dev/null; then
+    apk add --no-cache curl bash nodejs npm
+elif command -v apt-get &> /dev/null; then
+    apt-get update && apt-get install -y curl
+elif command -v yum &> /dev/null; then
+    yum install -y curl
+else
+    echo "Warning: No known package manager found, assuming curl is available" >&2
+fi
+
+if command -v apk &> /dev/null; then
+    # Alpine/musl: use npm-based Claude Code (bypasses native binary issues entirely)
+    {% if version %}
+    npm install -g @anthropic-ai/claude-code@{{ version }}
+    {% else %}
+    npm install -g @anthropic-ai/claude-code
+    {% endif %}
+else
+    # Standard glibc install — use official installer
+    {% if version %}
+    curl -fsSL https://claude.ai/install.sh | bash -s -- {{ version }}
+    {% else %}
+    curl -fsSL https://claude.ai/install.sh | bash
+    {% endif %}
+fi
+
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+export PATH="$HOME/.local/bin:$PATH"
+claude --version

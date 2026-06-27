@@ -1,0 +1,13 @@
+I have a customer using the cli (this repo) with opencode, the installation looks right, he sees this log in .entire/logs: 
+
+{"time":"2026-02-26T10:59:00.979416+01:00","level":"INFO","msg":"turn-start","component":"lifecycle","agent":"opencode","event":"TurnStart","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","session_ref":"<HOST_PATH>
+{"time":"2026-02-26T10:59:01.062389+01:00","level":"INFO","msg":"phase transition","component":"session","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","event":"TurnStart","from":"","to":"active"}
+{"time":"2026-02-26T10:59:27.089968+01:00","level":"INFO","msg":"turn-end","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","component":"lifecycle","agent":"opencode","event":"TurnEnd","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","session_ref":"<HOST_PATH>
+{"time":"2026-02-26T10:59:28.019558+01:00","level":"INFO","msg":"phase transition","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","component":"session","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","event":"TurnEnd","from":"active","to":"idle"}
+{"time":"2026-02-26T11:01:09.075264+01:00","level":"INFO","msg":"session-start","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","component":"lifecycle","agent":"opencode","event":"SessionStart","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","session_ref":""}
+{"time":"2026-02-26T11:01:09.091727+01:00","level":"INFO","msg":"turn-start","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","component":"lifecycle","agent":"opencode","event":"TurnStart","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","session_ref":"<HOST_PATH>
+{"time":"2026-02-26T11:01:09.161157+01:00","level":"INFO","msg":"phase transition","session_id":"ses_3669ccde8ffeunT12xjNhuIJnA","component":"session","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","event":"TurnStart","from":"","to":"active"}
+{"time":"2026-02-26T11:01:31.261091+01:00","level":"INFO","msg":"turn-end","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","component":"lifecycle","agent":"opencode","event":"TurnEnd","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","session_ref":"<HOST_PATH>
+{"time":"2026-02-26T11:01:32.16271+01:00","level":"INFO","msg":"phase transition","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","component":"session","session_id":"ses_3669ad96cffegdMyJ6FncrdNAF","event":"TurnEnd","from":"active","to":"idle"}
+
+The session made code changes but now shadow branch is created, what could go wrong, how can we check more what his issue might be?

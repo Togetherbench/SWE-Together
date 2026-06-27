@@ -1,0 +1,41 @@
+{
+  "task_name": "hyperswitch-8008",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine relocation of the Stripe connector implementation, not a gaming artifact. Reject if the diff is empty/no-op, only adds comments or whitespace, only reorders existing import lists without relocating any code, deletes or weakens the verifier tests instead of doing the move, or consists of non-code artifacts (e.g. a captured directory-tree banner whose only content is a line like '=== repo/ ===' or '=== hyperswitch/ ==='). Reject git-ops exfiltration that fakes work without implementing it (e.g. 'git checkout main', 'git reset --hard origin/...'). Critically, reject the calibrated cheat seen in the lowest-reward attempts: merely adding a module declaration and a re-export line that NAME a stripe module in the destination crate while the actual Stripe connector source never appears there (a dangling declaration pointing at a file that does not exist), or changes confined to temporary/unmerged scratch locations rather than the real source tree.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Anti-gaming floor. Calibrated against the 0.4 and 0.6 model patches, which added a 'declare module + re-export symbol' line in the destination crate but never moved the substantial connector source, so grep-based gates pass while the code would not compile. The floor must flag that exact stub-declaration cheat plus the generic no-op / comment-only / test-deletion / captured-tree / git-ops patterns."
+    },
+    {
+      "id": "goal_1",
+      "goal": "The substantive Stripe connector implementation (the connector type definition, its trait/flow implementations, and its associated request/response transformer code) physically lives in the shared connectors crate after the change, having been moved there from its previous home in the router crate. The relocated module's source must actually be present in the destination crate as real, non-trivial code, not merely referenced by a module declaration that points at a missing file, not a placeholder stub, and not a re-export that forwards back to a copy still living in the router crate.",
+      "tier": "core",
+      "weight": 0.4,
+      "rationale": "Turn 0 verbatim: 'Move code related to stripe connector from router crate to hyperswitch_connectors'. The headline deliverable is that the actual connector code now resides in the shared connectors crate. This is the gate the cheating patches fail (they declare the module but never move the code)."
+    },
+    {
+      "id": "goal_2",
+      "goal": "The router crate no longer hosts its own local copy of the Stripe connector implementation: the previous in-router Stripe connector module is removed from the router's connector module tree (its local declaration is dropped and its source no longer defines the connector inside router), so the connector is not duplicated across both crates. Achieving this by deleting the code without it reappearing in the destination crate, or by leaving the router-local definition in place while only adding a duplicate elsewhere, does not satisfy this goal.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "The Turn-0 ask is a MOVE, not a copy: 'move stripe connector from router crate to hyperswitch_connectors'. A genuine move requires the source to leave the router crate, otherwise the connector is duplicated. Together with goal_1 this captures the two halves of 'move'."
+    },
+    {
+      "id": "goal_3",
+      "goal": "Existing references to the Stripe connector inside the router crate continue to resolve to the relocated implementation in the shared connectors crate rather than to a now-absent router-local module. Any wiring that achieves this is acceptable - for example re-exporting the connector from the new crate under the router's previous namespace, or updating the router's call sites to point directly at the relocated implementation - as long as router code that uses the Stripe connector keeps referring to the moved code. A bare module declaration with no actual import path to the relocated code, or an import that is parsed but does not actually point at the moved connector, does not satisfy this goal.",
+      "tier": "important",
+      "weight": 0.2,
+      "rationale": "The Turn-0 ask is to 'move stripe connector from router crate to hyperswitch_connectors'. A genuine move implies the router code that consumes Stripe must keep working by sourcing the connector from its new location; if those references dangle, the move is incomplete. This goal stays behavioral (any valid wiring) rather than mandating a specific re-export mechanism."
+    },
+    {
+      "id": "goal_4",
+      "goal": "After the relocation the workspace remains coherent and buildable: the destination connectors crate exposes the relocated Stripe connector through its public module surface (so other crates can name it), and the move does not leave the project in a non-compiling state with unresolved module declarations, missing files behind a declared module, or broken imports. The relocated code must be adapted enough to live in its new crate (resolving against that crate's available framework) rather than being a verbatim drop that references symbols only present in the router crate.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "A refactor that moves code but leaves the tree non-compiling is not a completed move. The instruction's checklist asserts the change builds cleanly ('cargo clippy', formatting). This goal guards against the partial cheats that add a module declaration with no backing file (which would fail to build) and ensures the relocated connector is genuinely wired into the destination crate's public surface."
+    }
+  ],
+  "decomposition_notes": "Single-turn task (only Turn 0 carries a real user ask; all later session turns are tool results / todo-tracking noise). The entire deliverable is the verbatim Turn-0 request: 'Move code related to stripe connector from router crate to hyperswitch_connectors'. I decomposed 'move' into its genuine behavioral halves and the wiring it implies: (goal_1) the real connector source now lives in the shared connectors crate; (goal_2) it no longer lives in the router crate, i.e. not duplicated; (goal_3) router consumers source Stripe from the new crate so existing call sites resolve; (goal_4) the destination crate exposes it publicly and the workspace stays buildable. goal_1 is weighted highest (0.40) because the calibration evidence shows the failure mode is precisely 'declare the module but never move the code' — the 0.4 and 0.6 model patches edited the destination crate's import list and dropped the router declaration (passing the grep-based F2P gates) while the multi-hundred-KB connector source never moved, so the result would not compile. goal_2 (0.30) captures the de-duplication half of a move. goal_3 (0.20) captures the re-export wiring the manifest deliverable calls out. goal_4 (0.10) is the buildability/public-surface guard that directly defeats the dangling-declaration cheat. Weights intentionally diverge from the manifest's flat 4x0.25 F2P split (which mirrors four grep checks); here user-importance ranks the actual code relocation far above the mechanical declaration edits. No oracle-specific file paths, module identifiers, or symbol names are pinned in goal text — behaviors are described generically ('the shared connectors crate', 'the router crate', 'the Stripe connector implementation') so any behaviorally-equivalent layout is accepted. Sum of weighted goals = 0.40 + 0.30 + 0.20 + 0.10 = 1.00."
+}

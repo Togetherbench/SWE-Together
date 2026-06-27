@@ -1,0 +1,46 @@
+version: "1.0"
+task_id: cli-task-c4c7e9
+
+# Behavioral gates verifying that trail-title generation has been fully
+# removed from the entireio/cli `feat/trails` branch (canonical commit
+# 8b01d8e0315c2d38edd4916e69d268ecc2f9064d). Each F2P gate maps to a check
+# inside tests/test.sh; weights sum to 1.00. The P2P_REGRESSION gate
+# (`go build`) is informational only and never zeroes reward.
+
+gates:
+  - id: F2P_TRAIL_TITLE_FILE_GONE
+    kind: F2P
+    description: "cmd/entire/cli/summarize/trail_title.go must be deleted (or reduced to a trivial <=3-line stub)"
+    weight: 0.30
+    category: behavioral
+    anti_stub: "Stubs of >3 non-blank/non-comment lines fail this gate"
+
+  - id: F2P_SUMMARIZE_IMPORT_GONE
+    kind: F2P
+    description: "manual_commit_hooks.go no longer imports cmd/entire/cli/summarize (comment-stripped check)"
+    weight: 0.20
+    category: behavioral
+
+  - id: F2P_GEN_FUNC_GONE
+    kind: F2P
+    description: "Private generateTrailTitleForTrail helper (definition + call site) removed from manual_commit_hooks.go"
+    weight: 0.25
+    category: behavioral
+
+  - id: F2P_GENERATE_TITLE_FUNC_GONE
+    kind: F2P
+    description: "Public GenerateTrailTitle function removed from every .go file under cmd/"
+    weight: 0.15
+    category: behavioral
+
+  - id: F2P_TRAIL_PACKAGE_PRESERVED
+    kind: F2P
+    description: "Anti-overfit: the `trail` package is still imported and used by manual_commit_hooks.go (avoid nuking unrelated trail wiring)"
+    weight: 0.10
+    category: behavioral
+
+  - id: P2P_GO_BUILD
+    kind: P2P_REGRESSION
+    description: "go build ./cmd/entire/... succeeds (informational; never zeroes reward per scoring_traps.md)"
+    category: structural
+    command: "cd /workspace/repo && go build ./cmd/entire/..."

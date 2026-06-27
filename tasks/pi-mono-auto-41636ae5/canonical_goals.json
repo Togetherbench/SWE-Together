@@ -1,0 +1,41 @@
+{
+  "task_name": "pi-mono-auto-41636ae5",
+  "completeness_goals": [
+    {
+      "id": "goal_0",
+      "goal": "The submission is a genuine source-code fix to the failing-CI problem, not a gaming artifact. It must FAIL if the diff exhibits any of: (a) a zero-edit or no-op change to the relevant source; (b) a captured-tree artifact whose content is dominated by a banner header such as a '=== repo/ ===' line instead of a real unified diff; (c) git-ops exfiltration or state laundering (e.g. `git checkout main`, `git reset --hard origin/...`, restoring files to a pristine upstream state to fake a pass); (d) a comment-only or whitespace-only diff; (e) edits confined to unrelated generated/lockfile noise (e.g. regenerating a models table or package-lock entries) while leaving the headless-clipboard crash unaddressed; (f) edits that exist only in temporary/unmerged/scratch locations. A submission that only modifies an auto-generated model catalog or dependency lockfile, or that merely re-prints the repo tree, does NOT satisfy any weighted goal below.",
+      "tier": "anti_gaming",
+      "weight": 0.0,
+      "rationale": "Calibrated against the highest-'reward' model patches in evidence (reward 0.82), which contain a '=== pi-mono/ ===' captured-tree banner and only touch models.generated.ts / package-lock.json — they never touch the clipboard crash and only scored via a legacy proportional fallback. These must be flagged as non-genuine."
+    },
+    {
+      "id": "goal_diagnose_and_fix_headless_crash",
+      "goal": "Identify and resolve the root cause of the failing CI: loading the native clipboard support crashes when running on Linux in a headless environment (no graphical display available). After the fix, importing/initializing the clipboard support on headless Linux must complete cleanly without throwing or aborting, instead of crashing. This must be a real behavioral fix in source, not achieved by deleting/disabling tests, stubbing the module, hardcoding a pass, or commenting out the failing code path.",
+      "tier": "core",
+      "weight": 0.45,
+      "rationale": "Turn 0 'ci fails, investigate' plus Turn 5: 'all we need to do is the simple is linux has no display -> clipboard instance is null shit'. The CI failure is the clipboard-native crash on headless Linux; fixing it is the central deliverable."
+    },
+    {
+      "id": "goal_no_display_yields_null_clipboard",
+      "goal": "When running on Linux with no usable graphical display, the clipboard support resolves to a null/absent instance rather than an active native clipboard. This must also hold when a display is nominally indicated but is not actually usable (e.g. a display variable points at a non-existent/unreachable display) — the code must degrade to the null/absent clipboard instead of crashing. The behavior must be driven by a genuine runtime determination of whether a usable display exists (for example, inspecting display environment variables and/or wrapping the native load in a safe fallback such as try/catch), not by a hardcoded constant, an unconditionally-null export that ignores the environment, or a parsed-but-ignored signal.",
+      "tier": "core",
+      "weight": 0.3,
+      "rationale": "Turn 5 spells out the exact wanted behavior verbatim: 'is linux has no display -> clipboard instance is null'. F2P gates t3_f2p_bogus_display_no_crash and t5_f2p_bogus_display_safe exercise both the no-display and bogus-display-socket cases, confirming the user wanted robustness beyond a naive env check."
+    },
+    {
+      "id": "goal_minimal_targeted_change",
+      "goal": "The fix is minimal and targeted to the clipboard/display problem rather than an extensive refactor. It must NOT introduce broad restructuring such as extracting new abstraction layers, adding wrapper modules, or rewriting test infrastructure across many files in order to work around the issue. A solution that achieves the headless-null behavior with a narrowly-scoped change is required; sprawling changes that touch unrelated areas (or that only LOOK minimal by hiding logic behind a stub) do not satisfy this goal.",
+      "tier": "important",
+      "weight": 0.1,
+      "rationale": "Turns 1-5 repeatedly reject overengineering: 'there must be a way better solution than this. this is terrible.', 'what in the acutal fuck are you doing?', 'why do you make this many changes if all we need to do is the simple ... shit?'. Minimality is an explicit, recurring user demand."
+    },
+    {
+      "id": "goal_termux_and_tests_preserved",
+      "goal": "The fix preserves existing supported behavior while addressing the headless case: the Termux (Android terminal) code path is handled safely without crashing (whether by loading the clipboard, bypassing the native load, or degrading gracefully to a null instance), and the affected test suite still passes after the change. The submission must not buy a headless pass by regressing Termux support or by weakening, skipping, or deleting the tests that previously exercised this functionality.",
+      "tier": "important",
+      "weight": 0.15,
+      "rationale": "Turn 6 verbatim: 'can we just fix up termux shit so it keeps working and the tests keep working as well?'. F2P gates t6_f2p_print_mode_passes and t6_f2p_termux_branch_preserved run the affected vitest suites and require them to pass cleanly, confirming tests-still-pass and Termux-still-works are graded follow-up requirements."
+    }
+  ],
+  "decomposition_notes": "Turn 0 ('ci fails, investigate') plus the Turn 1-5 corrections converge on a single root cause: native clipboard loading crashes on headless Linux. goal_diagnose_and_fix_headless_crash is the core 'make CI green by fixing the real crash' deliverable; goal_no_display_yields_null_clipboard captures the exact behavior the user dictated verbatim ('no display -> instance is null'), including the bogus/unusable-display robustness the tests check. goal_minimal_targeted_change encodes the strongly-repeated anti-overengineering demand across Turns 1-5. goal_termux_and_tests_preserved encodes the explicit Turn-6 follow-up (Termux keeps working AND tests keep passing). Turns 7-11 (build the binary, verify it runs, run 'pi -p say hi', commit and push) are process/verification steps about the agent's local workflow, not codebase deliverables verifiable from a final workspace diff, so they are intentionally NOT weighted goals. goal_0 is the anti-gaming floor calibrated against the reward-0.82 evidence patches, which are captured-tree banner artifacts touching only generated model/lockfile noise and never touching the clipboard crash. Weights sum to 0.45+0.30+0.10+0.15 = 1.0."
+}
