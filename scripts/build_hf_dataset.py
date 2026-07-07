@@ -216,7 +216,6 @@ def build_row(task_id: str) -> dict:
             goals.get("completeness_goals", []), ensure_ascii=False
         ),
         "test_manifest": manifest_text,
-        "session_id": ref.get("session_id") or oracle.get("task"),
     }
     return row
 
@@ -254,7 +253,7 @@ def hf_features():
         "patch_deletions": Value("int64"),
         "patch_is_agent_author": Value("bool"),
         "oracle_intents": S, "completeness_goals": S,
-        "test_manifest": S, "session_id": S,
+        "test_manifest": S,
     })
 
 
@@ -283,19 +282,7 @@ def report(rows: list[dict]) -> None:
 # Dataset card
 # --------------------------------------------------------------------------- #
 def dataset_card(rows: list[dict], repo_id: str) -> str:
-    from collections import Counter
-
     n = len(rows)
-    tiers = Counter(r["scoring_tier"] for r in rows)
-    langs = Counter(r["language"] for r in rows if r["language"])
-    diffs = Counter(r["difficulty"] for r in rows if r["difficulty"])
-    n_repos = len({r["repo"] for r in rows if r["repo"]})
-    diff_rows = "\n".join(
-        f"| {k} | {v} |" for k, v in sorted(diffs.items(), key=lambda x: -x[1])
-    )
-    lang_rows = "\n".join(
-        f"| {k} | {v} |" for k, v in sorted(langs.items(), key=lambda x: -x[1])
-    )
     return f"""---
 license: apache-2.0
 task_categories:
@@ -330,7 +317,6 @@ canonical suite as one metadata row per task.
 - 📄 Paper: https://huggingface.co/papers/2606.29957
 - 🌐 Website: https://togetherbench.com
 - 💻 Code + Docker environments + verifiers: https://github.com/Togetherbench/SWE-Together
-- 🔎 Trace viewer: https://traces.togetherbench.com/jobs/trials
 
 ```python
 from datasets import load_dataset
@@ -375,20 +361,6 @@ browsable and loadable; `docker_image` and `task_id` point back to the full task
 | `oracle_intents` | string (JSON) | Ordered user intents `[{{intent_id, source_turn, intent_kind, text, verbatim_excerpt}}]` driving the multi-turn loop. |
 | `completeness_goals` | string (JSON) | Judge rubric goals for the agentic correctness score. |
 | `test_manifest` | string (YAML) | Legacy-tier F2P/P2P scoring gates and weights. |
-| `session_id` | string | Source session identifier (provenance). |
-
-## Suite at a glance
-
-- **{n} tasks**, **{n_repos} distinct repositories**.
-- Scoring tiers: {", ".join(f"`{k}` ({v})" for k, v in tiers.items())}.
-
-| Difficulty | Tasks |
-|---|---:|
-{diff_rows}
-
-| Language (SWE-rebench tier) | Tasks |
-|---|---:|
-{lang_rows}
 
 ## Running the benchmark
 
@@ -404,12 +376,15 @@ cd SWE-Together && uv sync
 
 ## Citation
 
+If you use SWE-Together, please cite our [paper](https://arxiv.org/pdf/2606.29957):
+
 ```bibtex
-@misc{{swetogether2026,
-  title  = {{SWE-Together: Evaluating Coding Agents in Interactive User Sessions}},
-  author = {{Wu, Yifan and others}},
-  year   = {{2026}},
-  url    = {{https://togetherbench.com}}
+@article{{wu2026swetogether,
+  title   = {{SWE-Together: Evaluating Coding Agents in Interactive User Sessions}},
+  author  = {{Wu, Yifan and Zhao, Zhuokai and Li, Songlin and Lee, Ho Hin and Zhu, Jiacheng and Wu, Shirley and Yu, Tianhe and Li, Serena and Zhang, Lizhu and Fan, Xiangjun and Li, Shengzhi}},
+  year    = {{2026}},
+  journal = {{arXiv preprint arXiv:2606.29957}},
+  url     = {{https://arxiv.org/pdf/2606.29957}}
 }}
 ```
 
