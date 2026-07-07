@@ -3,6 +3,7 @@
 <p align="center">
   <a href="https://arxiv.org/pdf/2606.29957"><img src="https://img.shields.io/badge/arXiv-2606.29957-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
   <a href="https://togetherbench.com"><img src="https://img.shields.io/badge/Website-togetherbench.com-2563eb?logo=googlechrome&logoColor=white" alt="Website"></a>
+  <a href="https://huggingface.co/datasets/yfwu/SWE-Together"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-SWE--Together-ffcc00" alt="Hugging Face Dataset"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-green?logo=apache&logoColor=white" alt="License"></a>
 </p>
 
@@ -13,6 +14,15 @@
 - **109 tasks**, each a first user message + a replayable interaction, run in a sandbox.
 - Pluggable coding agents: **opencode, claude-code, codex, mini-swe-agent**.
 - Reported axes: **correctness** (agentic judge), **User Correction** (how much the user had to push back the agent).
+
+Browse the task specs in the [dataset viewer](https://huggingface.co/datasets/yfwu/SWE-Together), or load them without cloning:
+
+```python
+from datasets import load_dataset
+ds = load_dataset("yfwu/SWE-Together", split="test")   # 109 task specs
+```
+
+The dataset is a metadata table (instruction, repo, base commit, scoring targets, reference patch, user intents). The Docker environments + verifiers that make each task *runnable* live here in `tasks/<task_id>/` — regenerate the export with `python scripts/build_hf_dataset.py`.
 
 
 <p align="center">
