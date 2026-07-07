@@ -22,7 +22,7 @@ from datasets import load_dataset
 ds = load_dataset("yfwu/SWE-Together", split="test")   # 109 task specs
 ```
 
-The dataset is a metadata table (instruction, repo, base commit, scoring targets, reference patch, user intents). The Docker environments + verifiers that make each task *runnable* live here in `tasks/<task_id>/` — regenerate the export with `python scripts/build_hf_dataset.py`.
+Each row is a task spec (instruction, repo, base commit, scoring targets, reference patch, user intents). The row's `docker_image` points at the task's prebuilt environment on GHCR and `task_id` maps back to `tasks/<task_id>/` here (Dockerfile + verifier + user-sim prompts) — that's what makes the task *runnable*.
 
 
 <p align="center">
