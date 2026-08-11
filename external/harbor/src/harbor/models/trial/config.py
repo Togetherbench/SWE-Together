@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_serializer, model_validator
 from shortuuid import ShortUUID
 
 from harbor.models.agent.name import AgentName
@@ -37,6 +37,50 @@ class ArtifactConfig(BaseModel):
     destination: str | None = None
 
 
+_REDACTED = "[REDACTED]"
+_SENSITIVE_KEY_SUFFIXES = (
+    "_API_KEY",
+    "_AUTH_TOKEN",
+    "_ACCESS_TOKEN",
+    "_SECRET",
+    "_PASSWORD",
+    "_CREDENTIALS",
+)
+_SENSITIVE_KEYS = {
+    "API_KEY",
+    "AUTHORIZATION",
+    "CUSTOM_HEADERS",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "USER_API_KEY",
+}
+
+
+def _redact_config_secrets(value: Any) -> Any:
+    """Return a JSON-safe copy with credential-bearing values removed.
+
+    Trial configs must retain real credentials in memory so agents can run,
+    but config.json/result.json are durable artifacts and must never persist
+    them. Key-based recursive redaction covers agent env plus nested kwargs
+    without hiding non-secret token controls such as max_output_tokens.
+    """
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, nested in value.items():
+            normalized = str(key).upper()
+            if normalized in _SENSITIVE_KEYS or normalized.endswith(
+                _SENSITIVE_KEY_SUFFIXES
+            ):
+                redacted[key] = _REDACTED
+            else:
+                redacted[key] = _redact_config_secrets(nested)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_config_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_config_secrets(item) for item in value)
+    return value
+
+
 class AgentConfig(BaseModel):
     name: str | None = None
     import_path: str | None = None
@@ -46,6 +90,10 @@ class AgentConfig(BaseModel):
     max_timeout_sec: float | None = None
     kwargs: dict[str, Any] = Field(default_factory=dict)
     env: dict[str, str] = Field(default_factory=dict)
+
+    @field_serializer("kwargs", "env", when_used="json")
+    def redact_serialized_secrets(self, value: dict[str, Any]) -> dict[str, Any]:
+        return _redact_config_secrets(value)
 
     @model_validator(mode="after")
     def set_default_name(self):
@@ -67,6 +115,10 @@ class EnvironmentConfig(BaseModel):
     mounts_json: list[ServiceVolumeConfig] | None = None
     env: dict[str, str] = Field(default_factory=dict)
     kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer("env", "kwargs", when_used="json")
+    def redact_serialized_secrets(self, value: dict[str, Any]) -> dict[str, Any]:
+        return _redact_config_secrets(value)
 
     @model_validator(mode="after")
     def set_default_type(self):

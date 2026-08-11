@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 SIDECAR_NAME = "trial_infra.json"
-SIDECAR_VERSION = 1
+SIDECAR_VERSION = 3
 
 # Patch sizes <= this are treated as "empty" (header-only stubs of the form
 # `=== /workspace/repo (cumulative vs harbor-base) ===`). The longest such
@@ -95,6 +95,8 @@ class TrialSignals:
     result_subtypes: list[str] = field(default_factory=list)
     transcript_present_but_empty: bool = False
     empty_transcript_names: list[str] = field(default_factory=list)
+    exception_type: str = ""
+    exception_message: str = ""
 
 
 @dataclass
@@ -256,6 +258,14 @@ def collect_signals(trial_dir: Path) -> TrialSignals:
     if present and all(_is_empty_transcript(p) for p in present):
         sig.transcript_present_but_empty = True
         sig.empty_transcript_names = [p.name for p in present]
+    try:
+        result = json.loads((trial_dir / "result.json").read_text(errors="ignore"))
+        exception = result.get("exception_info") or {}
+        if isinstance(exception, dict):
+            sig.exception_type = str(exception.get("exception_type") or "")
+            sig.exception_message = str(exception.get("exception_message") or "")
+    except (OSError, json.JSONDecodeError):
+        pass
     return sig
 
 
@@ -386,6 +396,54 @@ def _detect_no_agent_progress(sig: TrialSignals) -> tuple[bool, str, dict[str, A
     }
 
 
+def _detect_modal_control_plane(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
+    """Detect retryable Modal SDK/control-plane failures recorded by Harbor."""
+    dns_failure = (
+        sig.exception_type == "ConnectionError"
+        and "nodename nor servname provided" in sig.exception_message
+    )
+    stream_failure = (
+        sig.exception_type == "InternalError"
+        and "Failed to read exec stdio stream" in sig.exception_message
+    )
+    sandbox_not_found = (
+        sig.exception_type == "NotFoundError"
+        and "Modal Sandbox with container ID" in sig.exception_message
+        and "has already shut down" in sig.exception_message
+    )
+    if not (dns_failure or stream_failure or sandbox_not_found):
+        return False, "", {}
+    if dns_failure:
+        kind = "DNS/control-plane lookup"
+        failure_kind = "dns"
+    elif stream_failure:
+        kind = "exec stdio stream"
+        failure_kind = "exec_stream"
+    else:
+        kind = "sandbox disappearance"
+        failure_kind = "sandbox_not_found"
+    return True, f"Modal {kind} failure interrupted the trial", {
+        "exception_type": sig.exception_type,
+        "failure_kind": failure_kind,
+    }
+
+
+def _detect_harness_command_arg_limit(
+    sig: TrialSignals,
+) -> tuple[bool, str, dict[str, Any]]:
+    """Detect Modal's command-argument limit rejecting a valid large prompt."""
+    matched = (
+        sig.exception_type == "InvalidError"
+        and "Total length of CMD arguments cannot exceed 65536 bytes" in sig.exception_message
+    )
+    if not matched:
+        return False, "", {}
+    return True, "Harness embedded a command larger than Modal ARG_MAX", {
+        "exception_type": sig.exception_type,
+        "failure_kind": "command_arg_limit",
+    }
+
+
 _OPENCODE_PROVIDER_HINTS = (
     "exceeded your current quota", "insufficient_quota", "provider_unavailable",
     "resource_exhausted", "rate limit", "rate_limit", "overloaded",
@@ -443,6 +501,8 @@ def _detect_opencode_backend_error(sig: TrialSignals) -> tuple[bool, str, dict[s
 # "no_agent_progress" detector runs last so a real provider error gets the
 # precise reason in its sidecar instead of the generic one.
 DETECTORS: list[tuple[str, Any]] = [
+    ("modal_control_plane", _detect_modal_control_plane),
+    ("harness_command_arg_limit", _detect_harness_command_arg_limit),
     ("empty_transcript", _detect_empty_transcript),
     ("provider_402_balance", _detect_provider_402_balance),
     ("provider_429_quota", _detect_provider_429_quota),
@@ -488,6 +548,26 @@ def classify_trial(trial_dir: Path, strict: bool = False) -> InfraVerdict:
         "edit_tool_calls": sig.edit_tool_calls,
         "api_retry_count": sig.api_retry_count,
     }
+    modal_matched, modal_detail, modal_evidence = _detect_modal_control_plane(sig)
+    if modal_matched:
+        return InfraVerdict(
+            status="infra_failed",
+            reason="modal_control_plane",
+            detail=modal_detail,
+            signals=["modal_control_plane"],
+            evidence={**modal_evidence, **base_evidence},
+        )
+    arg_limit_matched, arg_limit_detail, arg_limit_evidence = (
+        _detect_harness_command_arg_limit(sig)
+    )
+    if arg_limit_matched:
+        return InfraVerdict(
+            status="infra_failed",
+            reason="harness_command_arg_limit",
+            detail=arg_limit_detail,
+            signals=["harness_command_arg_limit"],
+            evidence={**arg_limit_evidence, **base_evidence},
+        )
     if has_real_patch and not strict:
         return InfraVerdict(
             status="ok", reason="", detail="",

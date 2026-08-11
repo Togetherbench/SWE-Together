@@ -1,5 +1,6 @@
 import os
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 from modal import App, Image, Sandbox, Secret, Volume
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -8,6 +9,14 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import EnvironmentPaths, TrialPaths
+
+
+# Modal caps the combined size of Sandbox.exec command arguments at 65,536
+# bytes. Keep enough headroom for the shell argv itself and stage larger shell
+# programs through the sandbox filesystem instead. SWE-Together contains a
+# legitimate 78 KiB task instruction, so this is not merely a defensive edge
+# case.
+_MAX_INLINE_COMMAND_BYTES = 60_000
 
 
 class ModalEnvironment(BaseEnvironment):
@@ -160,7 +169,7 @@ class ModalEnvironment(BaseEnvironment):
             # TODO(alexgshaw): use __harbor__ once Modal removes this error: The
             # selected app is locked - probably due to a concurrent modification taking
             # place.
-            name="__harbor__",
+            name=os.environ.get("HARBOR_MODAL_APP_NAME", "__harbor__"),
             # name=self.session_id,
             create_if_missing=True,
         )
@@ -368,10 +377,21 @@ class ModalEnvironment(BaseEnvironment):
         if not self._sandbox:
             raise RuntimeError("Sandbox not found. Please start the environment first.")
 
+        exec_args = ("bash", "-c", command)
+        command_bytes = command.encode("utf-8")
+        if len(command_bytes) > _MAX_INLINE_COMMAND_BYTES:
+            script_path = f"/tmp/harbor-exec-{uuid4().hex}.sh"
+            async with await self._sandbox.open.aio(script_path, "wb") as file_handle:
+                await file_handle.write.aio(command_bytes)
+            exec_args = ("bash", script_path)
+            self.logger.debug(
+                "Staged %d-byte command at %s to stay below Modal ARG_MAX",
+                len(command_bytes),
+                script_path,
+            )
+
         process = await self._sandbox.exec.aio(
-            "bash",
-            "-c",
-            command,
+            *exec_args,
             workdir=cwd,
             secrets=[Secret.from_dict(env)] if env else [],  # type: ignore
             timeout=timeout_sec,

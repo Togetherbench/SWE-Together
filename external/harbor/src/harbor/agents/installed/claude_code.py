@@ -879,6 +879,13 @@ class ClaudeCode(BaseInstalledAgent):
             or os.environ.get("ANTHROPIC_AUTH_TOKEN")
             or "",
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL", None),
+            "ANTHROPIC_CUSTOM_HEADERS": os.environ.get(
+                "ANTHROPIC_CUSTOM_HEADERS", None
+            ),
+            "ENABLE_TOOL_SEARCH": os.environ.get("ENABLE_TOOL_SEARCH", None),
+            "CLAUDE_CODE_EFFORT_LEVEL": os.environ.get(
+                "CLAUDE_CODE_EFFORT_LEVEL", None
+            ),
             "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""),
             "CLAUDE_CODE_MAX_OUTPUT_TOKENS": os.environ.get(
                 "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "128000"

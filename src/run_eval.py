@@ -430,7 +430,9 @@ def build_trial_config(
         # install pulls LATEST (currently 2.1.119), which has a client-side
         # model-name validator that rejects non-Anthropic names like kimi-k2.6
         # before any API call is made.
-        "version": "2.1.108",
+        "version": os.environ.get(
+            "SWE_TOGETHER_CLAUDE_CODE_VERSION", "2.1.108"
+        ),
     }
 
     # Model name sent to Harbor.self.model_name governs BOTH the ANTHROPIC_MODEL
@@ -441,6 +443,10 @@ def build_trial_config(
     # (LiteLLM proxy OR direct Anthropic-compatible endpoint), lie to Harbor
     # and say "claude-sonnet-4-6" — the backend maps it to the real model.
     harbor_model = action_model
+    if action_model.startswith("anthropic/"):
+        # Claude Code expects its native model id even when the request is sent
+        # through a custom Anthropic-compatible base URL such as WorkWeave.
+        harbor_model = action_model.split("/", 1)[1]
     if agent_env.get("LITELLM_PROXY_MODEL"):
         harbor_model = "claude-sonnet-4-6"
     elif agent_env.get("ANTHROPIC_BASE_URL") in (_ARK_BASE_URL, _MINIMAX_BASE_URL, _GLMD_BASE_URL):
@@ -559,6 +565,14 @@ def build_trial_config(
     env_config = EnvironmentConfig(delete=True, force_build=force_build)
     if env_type:
         env_config.type = EnvironmentType(env_type)
+    if env_type == "modal":
+        # Orphaned sandboxes must self-terminate even if the coordinator loses
+        # its Modal control-plane connection during cleanup. The agent gets up
+        # to 80 minutes; two hours leaves room for setup and verification.
+        env_config.kwargs.update(
+            sandbox_timeout_secs=7200,
+            sandbox_idle_timeout_secs=900,
+        )
 
     return TrialConfig(
         task=TaskConfig(path=task_dir),
@@ -640,6 +654,25 @@ def _emit_infra_sidecars(trials_dir: Path) -> dict[str, int]:
         if verdict.status == "infra_failed":
             counts[verdict.reason] = counts.get(verdict.reason, 0) + 1
     return counts
+
+
+def _build_retry_config() -> RetryConfig:
+    """Retry transient provider and sandbox-control-plane interruptions."""
+    return RetryConfig(
+        max_retries=5,
+        include_exceptions=[
+            "RateLimitException",  # E2B 429 — sandbox cap or template-build cap
+            "TimeoutException",    # sandbox lost mid-run (gRPC unavailable)
+            "ConnectTimeout",      # httpcore network blip during sandbox create
+            "ConnectionError",     # Modal DNS/control-plane lookup failure
+            "InternalError",       # Modal exec stdio stream interruption
+            "NotFoundError",       # Modal sandbox disappeared mid-trial
+            "AddTestsDirError",    # transient docker upload_dir failure
+        ],
+        min_wait_sec=60.0,
+        max_wait_sec=300.0,
+        wait_multiplier=2.0,
+    )
 
 
 def _sanitize_and_upload(trials_dir: Path):
@@ -733,6 +766,8 @@ async def main():
                              "thinking.budget_tokens low=1024/med=4096/high=16384). "
                              "DeepSeek ignores this knob.")
     parser.add_argument("--trials-dir", default=None, help="Trials directory (default: trials/)")
+    parser.add_argument("--pipeline-logs-dir", default=None,
+                        help="Manifest/summary directory (default: <repo>/pipeline_logs)")
     parser.add_argument("--tasks", default=None, help="Comma-separated task names or globs")
     parser.add_argument("--skip-existing", action="store_true", help="Skip tasks with existing results")
     parser.add_argument("--dry-run", action="store_true")
@@ -813,9 +848,21 @@ async def main():
 
     # Reproducibility metadata
     import subprocess as _sp
-    git_sha = _sp.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=str(REPO_ROOT)).stdout.strip()
-    git_tag = _sp.run(["git", "describe", "--tags", "--exact-match"], capture_output=True, text=True, cwd=str(REPO_ROOT)).stdout.strip() or "untagged"
-    git_dirty = "clean" if _sp.run(["git", "diff", "--quiet"], cwd=str(REPO_ROOT)).returncode == 0 else "dirty"
+    git_sha = os.environ.get("SWE_TOGETHER_SOURCE_SHA", "") or _sp.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+        cwd=str(REPO_ROOT),
+    ).stdout.strip()
+    git_tag = os.environ.get("SWE_TOGETHER_SOURCE_TAG", "") or _sp.run(
+        ["git", "describe", "--tags", "--exact-match"], capture_output=True,
+        text=True, cwd=str(REPO_ROOT),
+    ).stdout.strip() or "untagged"
+    git_dirty = os.environ.get("SWE_TOGETHER_SOURCE_DIRTY", "")
+    if not git_dirty:
+        dirty_check = _sp.run(
+            ["git", "diff", "--quiet"], capture_output=True,
+            cwd=str(REPO_ROOT),
+        )
+        git_dirty = "clean" if dirty_check.returncode == 0 else "dirty"
     from datetime import datetime
     started_at = datetime.now().isoformat()
 
@@ -851,7 +898,8 @@ async def main():
         "task_count": len(task_names),
         "tasks": task_names,
     }
-    manifest_dir = REPO_ROOT / "pipeline_logs"
+    manifest_dir = (Path(args.pipeline_logs_dir) if args.pipeline_logs_dir
+                    else REPO_ROOT / "pipeline_logs")
     manifest_dir.mkdir(exist_ok=True)
     manifest_path = manifest_dir / f"eval-{args.tag}-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -900,18 +948,7 @@ async def main():
     # equality, not isinstance). So we list the *concrete* subclasses we want to
     # retry, not "SandboxException" (which would only match the literal alias-404
     # case where retry can never succeed).
-    retry_config = RetryConfig(
-        max_retries=5,
-        include_exceptions=[
-            "RateLimitException",  # E2B 429 — sandbox cap or template-build cap
-            "TimeoutException",    # sandbox lost mid-run (gRPC unavailable)
-            "ConnectTimeout",      # httpcore network blip during sandbox create
-            "AddTestsDirError",    # transient docker upload_dir failure
-        ],
-        min_wait_sec=60.0,
-        max_wait_sec=300.0,
-        wait_multiplier=2.0,
-    )
+    retry_config = _build_retry_config()
     orchestrator = LocalOrchestrator(
         trial_configs=trial_configs,
         n_concurrent_trials=args.workers,
@@ -987,7 +1024,8 @@ async def main():
         print(f"{s['task']:<40} {reward:>7} {s['interventions']:>5} {actions_str:<20} {status:<8}")
 
     # Write summary JSON
-    summary_dir = REPO_ROOT / "pipeline_logs"
+    summary_dir = (Path(args.pipeline_logs_dir) if args.pipeline_logs_dir
+                   else REPO_ROOT / "pipeline_logs")
     summary_dir.mkdir(exist_ok=True)
     summary_path = summary_dir / f"eval-{args.tag}-summary.json"
     summary_data = {
