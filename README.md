@@ -44,9 +44,20 @@ cp .env.example .env     # then fill in the keys you need (table below)
 
 Run everything below with the project venv (`.venv/bin/python`) so harbor is importable.
 
-You also need either an **E2B** account (cloud sandboxes, scales to 100+ concurrent) or local **Docker** (`--env-type docker`). Task images are pulled from `ghcr.io/togetherbench/*`.
+### 2. Pick a sandbox
 
-### 2. Launch run
+Trials (and the judge) run inside containers of the task images. Set `SWT_SANDBOX` in `.env`:
+
+| `SWT_SANDBOX` | where trials run | needs |
+|---|---|---|
+| `e2b` (default) | E2B cloud sandboxes, scales to 100+ concurrent | an [E2B](https://e2b.dev) account (`E2B_API_KEY`) |
+| `docker` | local Docker (judge still on E2B) | Docker + `E2B_API_KEY` |
+| `enroot` | enroot containers on a Slurm cluster | `enroot` + Slurm, no sandbox account |
+
+All task images are pulled from `ghcr.io/togetherbench/*` (public). Details, including the Slurm
+launcher for `enroot`, are in [docs/sandboxes.md](docs/sandboxes.md).
+
+### 3. Launch run
 
 The launcher reads a plan and drives both stages. It is **dry-run by default** — it prints the commands; add `--execute` to actually run.
 
@@ -61,17 +72,27 @@ The launcher reads a plan and drives both stages. It is **dry-run by default** �
 
 Trials land in `trials/canonical_full109/<tag>_r<k>/`; judge aggregates in `results/<tag>/`.
 
-### 3. Optionally, run the two stages separately
+On a Slurm cluster with `SWT_SANDBOX=enroot`, submit the same two stages as batch jobs instead:
+
+```bash
+.venv/bin/python scripts/slurm/launch.py prepull --submit                       # import task images once
+.venv/bin/python scripts/slurm/launch.py run   --tag opencode_opus48_r1 --submit
+.venv/bin/python scripts/slurm/launch.py judge --trials-root trials/opencode_opus48_r1 \
+    --output-dir results/opencode_opus48 --model-tag opencode_opus48 --submit
+```
+
+### 4. Optionally, run the two stages separately
 
 ```bash
 # Stage 1 — agent solves the tasks (one cohort)
 .venv/bin/python src/run_eval.py \
   --model openrouter/anthropic/claude-opus-4-8 \
-  --tag opus48 --agent-type opencode --env-type e2b \
+  --tag opus48 --agent-type opencode \
   --workers 25 --agent-timeout 4800 \
   --trials-dir trials/opus48_r1
-# (--dry-run to preview, --tasks a,b for a subset, --skip-existing to resume,
-#  rerun with --trials-dir trials/opus48_r2 for a replicate)
+# (--env-type e2b|docker|enroot overrides SWT_SANDBOX; --dry-run to preview,
+#  --tasks a,b for a subset, --skip-existing to resume, --shard k/n to split
+#  across machines, rerun with --trials-dir trials/opus48_r2 for a replicate)
 
 # Stage 2 — judge & score (repeat --trials-root per replicate)
 .venv/bin/python -m eval.run_eval \
@@ -83,15 +104,21 @@ Trials land in `trials/canonical_full109/<tag>_r<k>/`; judge aggregates in `resu
 
 ## Environment keys
 
-Most runs need only a subset; `.env.example` documents them all. Minimum for an opencode + Opus run on E2B:
+Most runs need only a subset; `.env.example` documents them all.
 
 | key | used for |
 |---|---|
-| `E2B_API_KEY` | the sandbox (run **and** judge) |
-| `GEMINI_API_KEY` | user simulator + message tagging (**every** run) |
+| `SWT_SANDBOX` | `e2b` / `docker` / `enroot` — where trials and the judge run |
 | `OPENROUTER_API_KEY` | the agent model (or the provider key matching your model) |
+| `GEMINI_API_KEY` | user simulator + message tagging with the default `gemini/…` models |
 | `ANTHROPIC_API_KEY` | the Step-1 agentic judge |
-| `GHCR_USER` / `GHCR_TOKEN` | pull task images from `ghcr.io/togetherbench/*` |
+| `E2B_API_KEY` | the sandbox (run **and** judge) when `SWT_SANDBOX=e2b` or `docker` |
+| `SLURM_QOS`, `SLURM_ACCOUNT`, … | your cluster's submission settings when `SWT_SANDBOX=enroot` (kept in `.env`, never committed) |
+
+**Single-key setup.** Everything can be routed through OpenRouter: set `JUDGE_VIA_OR=1` (judge →
+`anthropic/claude-opus-4.6` on OpenRouter) and pass `--user-model openrouter/google/gemini-3.1-pro-preview`
+to the run stage and `--tag-model openrouter/google/gemini-3.1-pro-preview` to the judge stage; then only
+`OPENROUTER_API_KEY` is needed. With `SWT_SANDBOX=enroot` no sandbox account is needed either.
 
 
 ---

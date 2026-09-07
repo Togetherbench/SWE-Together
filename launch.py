@@ -50,6 +50,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from sandbox_config import SANDBOXES, load_dotenv, stage1_sandbox  # noqa: E402
+
+load_dotenv()
 
 
 def _print_cmd(cmd: list[str]) -> None:
@@ -74,7 +79,8 @@ def _run(cmd: list[str], execute: bool) -> int:
     return subprocess.run(cmd, cwd=REPO_ROOT).returncode
 
 
-def stage_run(plan: dict, models: dict, env_type: str | None, execute: bool) -> int:
+def stage_run(plan: dict, models: dict, env_type: str | None, execute: bool,
+              user_model: str | None = None) -> int:
     trials_root = REPO_ROOT / plan["trials_root"]
     tasks = plan.get("tasks") or []
     rc = 0
@@ -90,6 +96,9 @@ def stage_run(plan: dict, models: dict, env_type: str | None, execute: bool) -> 
                 "--trials-dir", str(out),
                 "--skip-existing",
             ]
+            um = user_model or cfg.get("user_model") or plan.get("user_model")
+            if um:
+                cmd += ["--user-model", um]
             if env_type:
                 cmd += ["--env-type", env_type]
             if cfg.get("agent_timeout"):
@@ -129,13 +138,19 @@ def main() -> int:
     ap.add_argument("--stage", choices=["run", "judge", "all"], default="all")
     ap.add_argument("--models", default=None,
                     help="Comma-separated subset of model tags (default: every model in the plan)")
-    ap.add_argument("--env-type", default="e2b",
-                    help="Sandbox for the run stage: e2b or docker (default: e2b)")
+    ap.add_argument("--env-type", default=None, choices=list(SANDBOXES),
+                    help="Sandbox for the run stage. Default: $SWT_SANDBOX from .env, else e2b. "
+                         "enroot must run on a Slurm compute node - see scripts/slurm/launch.py "
+                         "and docs/sandboxes.md")
+    ap.add_argument("--user-model", default=None,
+                    help="User-simulator model for the run stage (overrides the plan's "
+                         "per-model/global `user_model`; default: run_eval.py's gemini default)")
     ap.add_argument("--results-dir", default="results",
                     help="Where judge aggregates go (default: results/)")
     ap.add_argument("--execute", action="store_true",
                     help="Actually launch. Without it, commands are only printed (dry-run).")
     args = ap.parse_args()
+    args.env_type = stage1_sandbox(args.env_type)
 
     plan = json.loads(args.plan.read_text())
     models = plan["models"]
@@ -150,11 +165,12 @@ def main() -> int:
 
     if not args.execute:
         print("DRY RUN - printing commands only. Pass --execute to launch.\n")
+    print(f"sandbox: {args.env_type}  (override with --env-type or SWT_SANDBOX in .env)")
 
     rc = 0
     if args.stage in ("run", "all"):
         print("== STAGE: run (produce trials) ==")
-        rc = stage_run(plan, models, args.env_type, args.execute) or rc
+        rc = stage_run(plan, models, args.env_type, args.execute, args.user_model) or rc
     if args.stage in ("judge", "all"):
         print("\n== STAGE: judge (score trials) ==")
         rc = stage_judge(plan, models, args.results_dir, args.execute) or rc

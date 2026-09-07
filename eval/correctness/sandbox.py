@@ -1,12 +1,13 @@
-"""E2B sandbox wrapper for the agentic judge.
+"""Sandbox wrapper for the agentic judge.
 
-Spins up the task's existing E2B template (built during the original eval run),
+Spins up a sandbox from the task's image (E2B template, or an enroot container
+of the same image when ``JUDGE_SANDBOX=enroot`` — see ``judge_sandbox.py``),
 applies the agent's patch to /workspace, drops the four input files plus the
-judge system prompt into /judge_inputs/, runs `claude --print` headlessly with
-a 20-turn / 10-min budget, and pulls back the verdict.json.
+judge system prompt into /tmp/judge_inputs/, runs `claude --print` headlessly
+with a turn / wall-clock budget, and pulls back the verdict.json.
 
-The judge uses CLAUDE_CODE_OAUTH_TOKEN (subscription auth, flat cost) — same
-mechanism as the existing Opus subscription cohort.
+Auth: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN (subscription), or
+JUDGE_VIA_OR=1 (OpenRouter's Anthropic-compatible endpoint).
 """
 from __future__ import annotations
 
@@ -19,7 +20,8 @@ from pathlib import Path
 from typing import Optional
 
 from dirhash import dirhash
-from e2b import AsyncSandbox
+
+from eval.correctness.judge_sandbox import CmdResult, open_judge_sandbox
 
 log = logging.getLogger(__name__)
 
@@ -127,7 +129,7 @@ class JudgeRunResult:
     judge_model: str = ""
 
 
-async def run_judge_in_e2b(
+async def run_judge(
     task_name: str,
     trial_id: str,
     inputs: JudgeInputs,
@@ -137,7 +139,7 @@ async def run_judge_in_e2b(
     max_turns: int = JUDGE_MAX_TURNS,
     api_key: str | None = None,
 ) -> JudgeRunResult:
-    """Run the agentic judge in a fresh E2B sandbox.
+    """Run the agentic judge in a fresh sandbox (E2B or enroot, per JUDGE_SANDBOX).
 
     Auth: prefer `api_key` (sk-ant-api03-…, pay-per-token) when supplied,
     otherwise fall back to `oauth_token` (sk-ant-oat01-…, subscription).
@@ -187,40 +189,16 @@ async def run_judge_in_e2b(
     else:
         auth_envs["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token or ""
 
-    # Retry sandbox spawn on E2B's flaky HTTP/2 ProtocolError ("Invalid input
-    # ConnectionInputs.SEND_SETTINGS in state ConnectionState.CLOSED") — pure
-    # infra-side hiccup, common at high concurrency. Up to 3 attempts with
-    # exponential backoff. Permanent errors (404 missing template, auth) fail fast.
-    import asyncio as _asyncio
-    last_err: Exception | None = None
-    sb = None
-    for attempt in range(3):
-        try:
-            log.info("spawning E2B sandbox: template=%s trial=%s (attempt %d)", alias, trial_id, attempt + 1)
-            sb = await AsyncSandbox.create(
-                template=alias,
-                envs=auth_envs,
-                timeout=timeout_sec + SANDBOX_BUFFER_SEC,
-                # Judge needs internet for: (1) claude-code installer when the task
-                # image doesn't bake it in, (2) `go mod download` / `pip install`
-                # triggered by test.sh on package-touching trials, (3) judge-driven
-                # web lookups when it wants to cross-reference upstream. E2B default
-                # is True; we pin it so a future SDK default flip doesn't silently
-                # break us.
-                allow_internet_access=True,
-            )
-            break
-        except Exception as e:
-            msg = str(e)
-            if "ProtocolError" in type(e).__name__ or "SEND_SETTINGS" in msg or "ConnectionState.CLOSED" in msg:
-                last_err = e
-                wait = 2 ** attempt  # 1s, 2s, 4s
-                log.warning("sandbox spawn ProtocolError attempt %d, retrying in %ds: %s", attempt + 1, wait, msg[:120])
-                await _asyncio.sleep(wait)
-                continue
-            raise
-    if sb is None:
-        raise last_err or RuntimeError("sandbox spawn failed after retries")
+    # Sandbox spawn. The E2B backend retries its flaky HTTP/2 ProtocolError
+    # internally; enroot creates a container from the task's .sqsh. Both need
+    # internet: (1) claude-code installer when the task image doesn't bake it
+    # in, (2) `go mod download` / `pip install` triggered by test.sh on
+    # package-touching trials, (3) judge-driven web lookups.
+    log.info("spawning judge sandbox: task=%s trial=%s", task_name, trial_id)
+    sb = await open_judge_sandbox(
+        task_name=task_name, e2b_template=alias, envs=auth_envs,
+        timeout_sec=timeout_sec, buffer_sec=SANDBOX_BUFFER_SEC,
+    )
     sandbox_id = sb.sandbox_id
 
     try:
@@ -234,7 +212,7 @@ async def run_judge_in_e2b(
         # chmod world-rwX so the judge agent can still read/run tests against
         # the patched workspace.
         patch_to_apply = inputs.oracle_patch if inputs.phase == 1 else inputs.agent_patch
-        await sb.files.write("/tmp/agent.patch", patch_to_apply)
+        await sb.write("/tmp/agent.patch", patch_to_apply)
         # Phase-1 with no oracle patch still needs the repo discovery (the
         # judge's first_message references {repo_hint}), but the apply step
         # should be a no-op — the workspace stays in the buggy state and the
@@ -249,7 +227,7 @@ async def run_judge_in_e2b(
         # of well-known roots (maxdepth 3) so every task layout is covered.
         # HARBOR_REPO_PATHS env var (colon-separated) is the escape hatch
         # for future nonstandard layouts.
-        apply = await sb.commands.run(
+        apply = await sb.run(
             "set -e; "
             'ROOTS="/workspace /opt /home /app /repo /tmp /entire-cli /entireio-cli /no-magic"; '
             'if [ -n "${HARBOR_REPO_PATHS:-}" ]; then '
@@ -296,17 +274,17 @@ async def run_judge_in_e2b(
         #
         # PATH gotcha: `claude.ai/install.sh` drops the binary in
         # `$HOME/.local/bin/` and only updates ~/.bashrc to add that to PATH.
-        # `sb.commands.run` does NOT source ~/.bashrc, so a subsequent
+        # `sb.run` does NOT source ~/.bashrc, so a subsequent
         # `command -v claude` returns empty even though the binary exists.
         # We explicitly prepend `~/.local/bin` everywhere we look for or run
         # claude (also covers `/root/.local/bin` for tasks that run as root).
         _PATH_PREFIX = "export PATH=\"$HOME/.local/bin:/root/.local/bin:$PATH\"; "
-        check_claude = await sb.commands.run(
+        check_claude = await sb.run(
             _PATH_PREFIX + "command -v claude || true", timeout=10
         )
         if not check_claude.stdout.strip():
             log.info("claude-code not in PATH; installing v2.1.108")
-            install = await sb.commands.run(
+            install = await sb.run(
                 "curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.108",
                 timeout=180,
             )
@@ -321,7 +299,7 @@ async def run_judge_in_e2b(
             # Re-verify claude is now resolvable with the PATH prefix.
             # If the installer wrote to a non-standard location we want to
             # fail fast here rather than blow up later inside judge_cmd.
-            recheck = await sb.commands.run(
+            recheck = await sb.run(
                 _PATH_PREFIX + "command -v claude || true", timeout=10
             )
             if not recheck.stdout.strip():
@@ -418,14 +396,14 @@ if __name__ == "__main__":
     print(f"OR-proxy: localhost:{PORT} → {TARGET_URL} model={REMAP_MODEL}", flush=True)
     http.server.HTTPServer(("127.0.0.1", PORT), Proxy).serve_forever()
 '''
-            await sb.files.write("/tmp/or_proxy.py", proxy_script)
-            await sb.commands.run(
+            await sb.write("/tmp/or_proxy.py", proxy_script)
+            await sb.run(
                 "nohup python3 /tmp/or_proxy.py > /tmp/or_proxy.log 2>&1 &",
                 timeout=10,
             )
             # Wait for port to bind (poll up to ~5s). Capture proxy log + GET
             # probe output so we can diagnose if it didn't come up.
-            probe = await sb.commands.run(
+            probe = await sb.run(
                 "for i in 1 2 3 4 5 6 7 8 9 10; do "
                 "  if curl -sf http://localhost:4210/v1/models/probe; then "
                 "    echo OR_PROXY_UP; exit 0; "
@@ -443,33 +421,33 @@ if __name__ == "__main__":
         inputs_dir = "/tmp/judge_inputs"
         tests_dir = f"{inputs_dir}/tests"
         logs_dir = f"{inputs_dir}/logs"
-        await sb.commands.run(f"mkdir -p {inputs_dir} {tests_dir} {logs_dir}", timeout=10)
-        await sb.files.write(f"{inputs_dir}/README.md", inputs.readme)
-        await sb.files.write(f"{inputs_dir}/user_simulation_prompt.md", inputs.user_sim_prompt)
-        await sb.files.write(f"{inputs_dir}/oracle.patch", inputs.oracle_patch)
+        await sb.run(f"mkdir -p {inputs_dir} {tests_dir} {logs_dir}", timeout=10)
+        await sb.write(f"{inputs_dir}/README.md", inputs.readme)
+        await sb.write(f"{inputs_dir}/user_simulation_prompt.md", inputs.user_sim_prompt)
+        await sb.write(f"{inputs_dir}/oracle.patch", inputs.oracle_patch)
         # Phase-1 fallback file: present only for tasks without an oracle patch.
         # When non-empty, the Phase 1 first_message redirects the judge to read
         # this instead of /tmp/judge_inputs/oracle.patch.
         if inputs.user_dialogue:
-            await sb.files.write(f"{inputs_dir}/user_dialogue.md", inputs.user_dialogue)
+            await sb.write(f"{inputs_dir}/user_dialogue.md", inputs.user_dialogue)
         # In phase=2 we do NOT need agent.patch as an input (it's already on disk
         # under /workspace), but we DO need the FROZEN rubric. In phase=1 we
         # need oracle.patch as reference reading material (it's also already
         # applied). Keep both files written for legacy compatibility.
-        await sb.files.write(f"{inputs_dir}/agent.patch", inputs.agent_patch)
-        await sb.files.write(f"{inputs_dir}/test.sh", inputs.test_sh)
-        await sb.files.write(f"{inputs_dir}/judge_system.md", inputs.system_prompt)
+        await sb.write(f"{inputs_dir}/agent.patch", inputs.agent_patch)
+        await sb.write(f"{inputs_dir}/test.sh", inputs.test_sh)
+        await sb.write(f"{inputs_dir}/judge_system.md", inputs.system_prompt)
         # Phase 2 only: upload the frozen rubric from the host so the judge
         # reads it instead of re-deriving goals.
         if inputs.phase == 2 and inputs.canonical_goals_json:
-            await sb.files.write(f"{inputs_dir}/canonical_goals.json", inputs.canonical_goals_json)
+            await sb.write(f"{inputs_dir}/canonical_goals.json", inputs.canonical_goals_json)
 
         # Mount the task's full tests/ dir so the judge can run the canonical
         # test.sh, not just read it. Mirrors Harbor's verifier mount path.
         for filename, content in (inputs.tests_files or {}).items():
-            await sb.files.write(f"{tests_dir}/{filename}", content)
+            await sb.write(f"{tests_dir}/{filename}", content)
         # test.sh needs to be executable.
-        await sb.commands.run(f"chmod +x {tests_dir}/test.sh 2>/dev/null || true", timeout=10)
+        await sb.run(f"chmod +x {tests_dir}/test.sh 2>/dev/null || true", timeout=10)
 
         # 3. Run judge agent headlessly. `claude --print` runs to completion;
         # --max-turns caps the agentic loop; `timeout` is the hard wall-clock kill.
@@ -546,7 +524,7 @@ if __name__ == "__main__":
             # Upload host OAuth credentials to sandbox CODEX_HOME (default /root/.codex).
             # chmod 600 to keep codex happy about file permissions.
             heredoc_marker = "CODEX_AUTH_EOF"
-            await sb.commands.run(
+            await sb.run(
                 f"mkdir -p /root/.codex && "
                 f"cat > /root/.codex/auth.json <<'{heredoc_marker}'\n"
                 f"{codex_auth_blob}\n"
@@ -609,30 +587,16 @@ if __name__ == "__main__":
         # `go run cmd/entire/main.go hooks claude-code session-end`).
         # /tmp is always writable and exists everywhere, including images
         # where the `agent` user is missing (e.g. agent-swarm-implement-e71acf).
-        # Also catch the CommandExitException raised on non-zero exit — claude
-        # may have written verdict.json successfully BEFORE the hook failed.
-        from e2b.sandbox.commands.command_handle import CommandExitException
-        try:
-            # codex needs root for apt-get install + npm -g; harmless for claude path.
-            judge_user = "root" if (judge_via_codex and codex_auth_blob) else None
-            result = await sb.commands.run(
-                judge_cmd, timeout=timeout_sec + 60, cwd="/tmp",
-                **({"user": judge_user} if judge_user else {}),
-            )
-            exit_code = result.exit_code
-            stdout, stderr = result.stdout, result.stderr
-        except CommandExitException as e:
-            exit_code = getattr(e, "exit_code", 1)
-            stdout = getattr(e, "stdout", "") or ""
-            stderr = getattr(e, "stderr", "") or str(e)
-            log.warning("judge exited non-zero (%s); attempting verdict read anyway", exit_code)
-
-        class _R:
-            pass
-        result = _R()
-        result.exit_code = exit_code
-        result.stdout = stdout
-        result.stderr = stderr
+        # A non-zero exit is returned (not raised) by the sandbox layer — claude
+        # may have written verdict.json successfully BEFORE a hook failed, so we
+        # always attempt the verdict read.
+        # codex needs root for apt-get install + npm -g; harmless for claude path.
+        judge_user = "root" if (judge_via_codex and codex_auth_blob) else None
+        result: CmdResult = await sb.run(
+            judge_cmd, timeout=timeout_sec + 60, cwd="/tmp", user=judge_user,
+        )
+        if result.exit_code != 0:
+            log.warning("judge exited non-zero (%s); attempting verdict read anyway", result.exit_code)
         log.info("judge exit=%s stdout_len=%d stdout_tail=%r stderr_tail=%r",
                  result.exit_code, len(result.stdout),
                  result.stdout[-400:], (result.stderr or "")[-300:])
@@ -642,7 +606,7 @@ if __name__ == "__main__":
         output_filename = "canonical_goals.json" if inputs.phase == 1 else "verdict.json"
         verdict: dict
         try:
-            raw = await sb.files.read(f"{inputs_dir}/{output_filename}")
+            raw = await sb.read(f"{inputs_dir}/{output_filename}")
             verdict = json.loads(raw)
         except Exception as e:
             verdict = {
@@ -667,3 +631,7 @@ if __name__ == "__main__":
             await sb.kill()
         except Exception as e:
             log.warning("sandbox kill failed for %s: %s", sandbox_id, e)
+
+
+# Backwards-compatible name used by run_batch.py and generate_task_goals.py.
+run_judge_in_e2b = run_judge

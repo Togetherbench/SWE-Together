@@ -1,9 +1,17 @@
 {
-  "_comment": "Canonical full109 run plan: 109 discriminating tasks x the published opencode leaderboard cohorts, 2 replicates each. Used by launch.py. Edit models/replicates/tasks to define your own run; model strings are litellm/harbor-format and need the matching key in .env.",
+  "_comment": "Canonical full109 run plan: 109 discriminating tasks x the published opencode leaderboard cohorts, 2 replicates each. Used by launch.py. Edit models/replicates/tasks to define your own run; model strings are litellm/harbor-format and need the matching key in .env. `user_model` (global or per-model) overrides run_eval.py's gemini default; the enroot/OpenRouter setup uses openrouter/google/gemini-3.1-pro-preview so only OPENROUTER_API_KEY is needed.",
   "name": "full109",
   "trials_root": "trials/canonical_full109",
   "tasks_root": "tasks",
+  "user_model": "openrouter/google/gemini-3.1-pro-preview",
   "models": {
+    "opencode_muse13": {
+      "model": "openrouter/meta/muse-spark-1.3",
+      "agent_type": "opencode",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
     "opencode_opus48": {
       "model": "openrouter/anthropic/claude-opus-4-8",
       "agent_type": "opencode",
