@@ -105,9 +105,12 @@ def test_rate_limit_and_fatal_markers():
 
 def test_sinkhole_entries_from_real_tasks():
     entries = hosts.sinkhole_entries(REPO_ROOT / "tasks")
-    assert "github.com" in entries
-    assert "huggingface.co" in entries
-    assert "raw.githubusercontent.com" in entries
+    # Exact-hostname membership (the function returns a list of hostnames, not
+    # URLs), expressed as a set comparison rather than `"host" in entries`, which
+    # CodeQL misreads as URL-substring sanitization.
+    expected = {"github.com", "raw.githubusercontent.com", "huggingface.co", "gitlab.com"}
+    assert expected <= set(entries), sorted(expected - set(entries))
+    assert all(h == h.strip().lower() and "/" not in h and ":" not in h for h in entries)
     assert not any(e.replace(".", "").isdigit() for e in entries)
 
 
