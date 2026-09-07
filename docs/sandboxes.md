@@ -104,6 +104,17 @@ reuses stale bytes. All 109 images total ~98 GB compressed (~130 GB as `.sqsh`).
 Import on compute nodes with `launch.py prepull`; a missing image is imported on
 demand at trial start (slower, and it holds a worker slot).
 
+**enroot < 4.0 cannot import the Go-based `cli-*` task images.** Their layers
+contain a read-only Go module cache (`/go/pkg/mod`, directories `r-x`, files
+`r--`). enroot 3.x extracts layers with plain `tar -px`, which applies a
+directory's read-only mode as soon as the directory entry is seen and then fails
+on the files inside it (`tar: …/gopre19.go: Cannot open: Permission denied`).
+enroot 4.0 added `--delay-directory-restore` to the same `tar` call and is
+unaffected. `prepull` reports these as import failures; import those images on a
+host with enroot ≥ 4.0 (the login node here) into the same store — the `.sqsh`
+format is compatible and the 3.5.0 compute nodes run them fine. `python -m
+enroot_backend.images verify` lists what is still missing.
+
 ### Workflow
 
 ```bash

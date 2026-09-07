@@ -95,6 +95,10 @@ def test_rate_limit_and_fatal_markers():
     assert images.is_rate_limited("... error code: 429 ...")
     assert images.is_fatal("... manifest unknown ...")
     assert not images.is_fatal("network timeout")
+    assert images.is_old_enroot_perm_failure(
+        "tar: go/pkg/mod/golang.org/x/text@v0.31.0/message/catalog/gopre19.go: Cannot open: Permission denied"
+    )
+    assert not images.is_old_enroot_perm_failure("tar: Exiting with failure status due to previous errors")
 
 
 # ── hosts ─────────────────────────────────────────────────────────────────

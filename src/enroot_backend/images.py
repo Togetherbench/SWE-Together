@@ -61,6 +61,10 @@ FATAL_MARKERS = (
     "401 Unauthorized", "manifest unknown", "name unknown",
     "repository does not exist", "not found",
 )
+#: enroot < 4.0 extracts layers with plain `tar -px` and fails on images whose
+#: layers carry read-only directories (e.g. a baked Go module cache). Retrying
+#: on the same host never helps; the image must be imported with enroot >= 4.0.
+OLD_ENROOT_MARKERS = ("Cannot open: Permission denied",)
 
 _DOCKER_REF = re.compile(r"^(?P<registry>[^/]+)/(?P<repo>.+?)(?::(?P<tag>[^:/]+))?$")
 
@@ -228,6 +232,14 @@ class ImageStore:
             last = output[-600:]
             partial.unlink(missing_ok=True)
 
+            if is_old_enroot_perm_failure(output):
+                raise EnrootImageUnavailable(
+                    f"{iid}: layer extraction hit a read-only directory "
+                    f"(tar 'Cannot open: Permission denied'). This enroot "
+                    f"({_enroot_version_str()}) lacks tar --delay-directory-restore; "
+                    f"import this image on a host with enroot >= 4.0 into the same "
+                    f"store, then rerun. See docs/sandboxes.md."
+                )
             if is_fatal(output):
                 logger.warning("%s cannot be imported from %s: %s", iid, url, last.strip()[-160:])
                 break
@@ -295,6 +307,15 @@ def is_rate_limited(output: str) -> bool:
 def is_fatal(output: str) -> bool:
     lowered = output.lower()
     return any(m.lower() in lowered for m in FATAL_MARKERS)
+
+
+def is_old_enroot_perm_failure(output: str) -> bool:
+    return any(m in output for m in OLD_ENROOT_MARKERS)
+
+
+def _enroot_version_str() -> str:
+    from .runtime import enroot_version
+    return enroot_version()
 
 
 def shard_list(items: list[str], shard: str | None) -> list[str]:
