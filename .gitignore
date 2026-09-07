@@ -12,6 +12,20 @@ trials/
 trials-*/
 trials_*/
 hf_dataset/
+pipeline_logs/
+results/
+slurm_logs/
+
+# enroot: local .sqsh image store (default SWT_IMAGE_STORE) and stray imports
+enroot_images/
+*.sqsh
+*.sqsh.partial
+
+# Tests / tooling
+.pytest_cache/
+
+# Local reference material (e.g. the arXiv PDF) — not source
+paper/
 
 # OS
 .DS_Store

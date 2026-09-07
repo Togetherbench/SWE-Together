@@ -79,20 +79,17 @@ logging.basicConfig(
 )
 log = logging.getLogger("run_eval")
 
-# Load .env
-_env_path = REPO_ROOT / ".env"
-if _env_path.exists():
-    for line in _env_path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+# Load .env (keys + SWT_SANDBOX); process env wins.
+from sandbox_config import load_dotenv, stage1_sandbox  # noqa: E402
+
+load_dotenv(REPO_ROOT / ".env")
 
 
 AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_claude_code:UserEnabledClaudeCode"
 CODEX_AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_codex:UserEnabledCodex"
 MINI_SWE_AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_mini_swe_agent:UserEnabledMiniSweAgent"
 OPENCODE_IMPORT_PATH = "user_agent.agents.user_enabled_opencode:UserEnabledOpenCode"
+ENROOT_ENV_IMPORT_PATH = "enroot_backend.environment:EnrootEnvironment"
 
 # Env vars the codex wrapper inspects on the host — forwarded into the trial's
 # agent_env so the in-sandbox wrapper sees them (CODEX_USE_HOST_AUTH triggers
@@ -378,6 +375,7 @@ def build_trial_config(
     force_build: bool = False,
     agent_type: str = "claude-code",
     reasoning_effort: str | None = None,
+    enroot_kwargs: dict[str, str] | None = None,
 ) -> TrialConfig:
     """Build a TrialConfig with per-task user sim kwargs."""
     # Load per-task data
@@ -557,7 +555,12 @@ def build_trial_config(
     )
 
     env_config = EnvironmentConfig(delete=True, force_build=force_build)
-    if env_type:
+    if env_type == "enroot":
+        # Not in Harbor's factory map; loaded by import path from src/. kwargs are
+        # forwarded verbatim to EnrootEnvironment.__init__.
+        env_config.import_path = ENROOT_ENV_IMPORT_PATH
+        env_config.kwargs = dict(enroot_kwargs or {})
+    elif env_type:
         env_config.type = EnvironmentType(env_type)
 
     return TrialConfig(
@@ -719,7 +722,10 @@ async def main():
     parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview", help="User sim model")
     parser.add_argument("--tag", required=True, help="Short tag for this run")
     parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
-    parser.add_argument("--env-type", default=None, help="Environment: docker, e2b, etc.")
+    parser.add_argument("--env-type", default=None, choices=["docker", "e2b", "enroot"],
+                        help="Sandbox for trials. Default: $SWT_SANDBOX from .env, else e2b. "
+                             "'enroot' runs each trial in an enroot container on a Slurm compute "
+                             "node (see scripts/slurm/launch.py and docs/sandboxes.md).")
     parser.add_argument("--agent-type", default="claude-code",
                         choices=["claude-code", "codex", "mini-swe-agent", "opencode"],
                         help="Coding agent type. Default claude-code. Use 'codex' for "
@@ -739,7 +745,19 @@ async def main():
     parser.add_argument("--user-context-chars", type=int, default=3000)
     parser.add_argument("--call-user-on-completion", type=bool, default=True)
     parser.add_argument("--force-build", action="store_true", help="Force E2B template rebuild (recovers from corrupted template aliases)")
+    parser.add_argument("--shard", default=None,
+                        help="k/n: run only every n-th task starting at k (stable stride over the "
+                             "sorted task list, applied before --skip-existing). Used by the Slurm "
+                             "array launcher.")
+    parser.add_argument("--image-store", default=None,
+                        help="enroot only: .sqsh image store root (default: $SWT_IMAGE_STORE, "
+                             "else <repo>/enroot_images)")
+    parser.add_argument("--hosts-file", default=None,
+                        help="enroot only: hosts file mounted over /etc/hosts (default: generated "
+                             "from tasks/*/environment/seal-dns.sh)")
     args = parser.parse_args()
+    # One top-level switch: --env-type > SWT_SANDBOX (.env) > e2b.
+    args.env_type = stage1_sandbox(args.env_type)
 
     # Resolve model + key
     action_model, action_key, _env_var = resolve_model(args.model)
@@ -801,6 +819,33 @@ async def main():
     else:
         task_names = get_all_tasks()
 
+    # Shard BEFORE --skip-existing so the k/n partition is a pure function of the
+    # task list and stays stable when a shard is resubmitted after a partial run.
+    shard_suffix = ""
+    if args.shard:
+        from enroot_backend.images import shard_list
+        before = len(task_names)
+        task_names = shard_list(sorted(task_names), args.shard)
+        k, n = args.shard.split("/")
+        shard_suffix = f"-s{k}of{n}"
+        log.info("Shard %s: %d → %d tasks", args.shard, before, len(task_names))
+
+    # enroot: image store + DNS-sinkhole hosts file, forwarded to EnrootEnvironment.
+    enroot_kwargs: dict[str, str] = {}
+    if args.env_type == "enroot":
+        from enroot_backend.hosts import write_hosts_file
+        from enroot_backend.runtime import EnrootRuntime, enroot_version, register_cleanup
+        register_cleanup()
+        runtime = EnrootRuntime()
+        hosts_file = Path(args.hosts_file) if args.hosts_file else write_hosts_file(
+            runtime.hosts_path, REPO_ROOT / "tasks"
+        )
+        enroot_kwargs = {"hosts_file": str(hosts_file)}
+        if args.image_store:
+            enroot_kwargs["image_store_root"] = args.image_store
+        log.info("  enroot %s | runtime root %s | hosts file %s",
+                 enroot_version(), runtime.root, hosts_file)
+
     # Resolve task dirs
     trials_dir = Path(args.trials_dir) if args.trials_dir else REPO_ROOT / "trials"
     trials_dir.mkdir(parents=True, exist_ok=True)
@@ -826,12 +871,14 @@ async def main():
     print(f"Started:   {started_at}")
     print(f"Model:     {args.model}")
     print(f"User sim:  {args.user_model}")
-    print(f"Env:       {args.env_type or 'docker (default)'}")
+    print(f"Env:       {args.env_type}")
     print(f"Timeout:   {args.agent_timeout or 'default'}s")
-    print(f"Tag:       {args.tag}")
+    print(f"Tag:       {args.tag}{shard_suffix}")
     print(f"Workers:   {args.workers}")
     print(f"Trials:    {trials_dir}")
     print(f"Tasks:     {len(task_names)}")
+    if os.environ.get("SLURM_JOB_ID"):
+        print(f"Slurm:     job {os.environ['SLURM_JOB_ID']} on {os.uname().nodename}")
     print(f"{'='*70}\n")
 
     # Save manifest
@@ -850,10 +897,13 @@ async def main():
         "trials_dir": str(trials_dir),
         "task_count": len(task_names),
         "tasks": task_names,
+        "shard": args.shard,
+        "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+        "hostname": os.uname().nodename,
     }
     manifest_dir = REPO_ROOT / "pipeline_logs"
     manifest_dir.mkdir(exist_ok=True)
-    manifest_path = manifest_dir / f"eval-{args.tag}-manifest.json"
+    manifest_path = manifest_dir / f"eval-{args.tag}{shard_suffix}-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     log.info("Manifest: %s", manifest_path)
 
@@ -884,6 +934,7 @@ async def main():
             force_build=args.force_build,
             agent_type=args.agent_type,
             reasoning_effort=args.reasoning_effort,
+            enroot_kwargs=enroot_kwargs,
         )
         trial_configs.append(tc)
 
@@ -907,6 +958,7 @@ async def main():
             "TimeoutException",    # sandbox lost mid-run (gRPC unavailable)
             "ConnectTimeout",      # httpcore network blip during sandbox create
             "AddTestsDirError",    # transient docker upload_dir failure
+            "EnrootSetupError",    # enroot: tmpfs pressure / create race on a busy node
         ],
         min_wait_sec=60.0,
         max_wait_sec=300.0,
@@ -989,7 +1041,7 @@ async def main():
     # Write summary JSON
     summary_dir = REPO_ROOT / "pipeline_logs"
     summary_dir.mkdir(exist_ok=True)
-    summary_path = summary_dir / f"eval-{args.tag}-summary.json"
+    summary_path = summary_dir / f"eval-{args.tag}{shard_suffix}-summary.json"
     summary_data = {
         "tag": args.tag,
         "model": args.model,

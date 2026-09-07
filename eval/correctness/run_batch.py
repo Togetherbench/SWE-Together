@@ -268,9 +268,13 @@ async def amain() -> int:
     )
 
     load_dotenv()
-    if not os.environ.get("E2B_API_KEY"):
-        print("ERROR: E2B_API_KEY not set", file=sys.stderr)
+    from eval.correctness.judge_sandbox import check_backend_prereqs, selected_backend
+    backend = selected_backend()
+    problem = check_backend_prereqs(backend)
+    if problem:
+        print(f"ERROR: {problem}", file=sys.stderr)
         return 2
+    log.info("judge sandbox backend: %s", backend)
     api_key = os.environ.get("ANTHROPIC_API_KEY") or None
     oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if not (api_key or oauth):
