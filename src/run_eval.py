@@ -84,6 +84,9 @@ from sandbox_config import load_dotenv, stage1_sandbox  # noqa: E402
 
 load_dotenv(REPO_ROOT / ".env")
 
+import llm_config  # noqa: E402
+from llm_config import BACKENDS, resolve_seat_model, seat_backend, to_litellm_model, to_opencode_model  # noqa: E402
+
 
 AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_claude_code:UserEnabledClaudeCode"
 CODEX_AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_codex:UserEnabledCodex"
@@ -355,6 +358,15 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         env["DEEPSEEK_API_KEY"] = action_key
         return env
 
+    if provider == "bedrock":
+        # AWS credentials are minted by runner.resolve_model (bedrock_creds) and
+        # forwarded from os.environ in build_trial_config; opencode's Bedrock
+        # provider only needs the region here. No ANTHROPIC_API_KEY: there is
+        # no key, and the fallthrough below would export an empty one.
+        env["AWS_REGION"] = llm_config.aws_region()
+        env["AWS_DEFAULT_REGION"] = env["AWS_REGION"]
+        return env
+
     # Unknown provider — pass key directly
     env["ANTHROPIC_API_KEY"] = action_key
     return env
@@ -376,6 +388,8 @@ def build_trial_config(
     agent_type: str = "claude-code",
     reasoning_effort: str | None = None,
     enroot_kwargs: dict[str, str] | None = None,
+    user_temperature: float | None = 0.5,
+    opencode_version: str | None = None,
 ) -> TrialConfig:
     """Build a TrialConfig with per-task user sim kwargs."""
     # Load per-task data
@@ -414,7 +428,7 @@ def build_trial_config(
 
     user_sim_kwargs = {
         "user_model_name": user_model,
-        "user_api_key": user_key,
+        "user_api_key": user_key or None,
         "user_api_base": user_api_base,
         "original_user_messages": user_messages,
         "session_analysis": session_analysis_with_guidance,
@@ -430,6 +444,11 @@ def build_trial_config(
         # before any API call is made.
         "version": "2.1.108",
     }
+    # Only forwarded when it differs from the wrappers' own default, so trial
+    # configs of existing cohorts are unchanged. None = omit temperature (some
+    # models, e.g. GPT-5.6, reject the field outright).
+    if user_temperature != 0.5:
+        user_sim_kwargs["user_temperature"] = user_temperature
 
     # Model name sent to Harbor.self.model_name governs BOTH the ANTHROPIC_MODEL
     # env var AND all the ANTHROPIC_DEFAULT_*_MODEL aliases Harbor sets when
@@ -505,10 +524,17 @@ def build_trial_config(
         # vendor keys (Harbor's OpenCode.create_run_agent_commands picks
         # the right one based on the `provider/...` prefix in model_name).
         import_path = OPENCODE_IMPORT_PATH
-        harbor_model = action_model  # provider/model string passed as-is
+        # provider/model string passed as-is, except that opencode names the
+        # Bedrock provider `amazon-bedrock` (bedrock/X → amazon-bedrock/X).
+        harbor_model = to_opencode_model(action_model)
         user_sim_kwargs.pop("version", None)
         if reasoning_effort:
             user_sim_kwargs["reasoning_effort"] = reasoning_effort
+        # Harness version is part of the run's identity: record it in the trial
+        # config so a cohort can pin a different opencode release (the wrapper's
+        # own default stays the benchmark's canonical pin).
+        if opencode_version:
+            user_sim_kwargs["opencode_version"] = opencode_version
         opencode_env = {
             k: v for k, v in agent_env.items()
             if not k.startswith("ANTHROPIC_") and not k.startswith("CLAUDE_CODE_")
@@ -520,7 +546,10 @@ def build_trial_config(
                     "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
                     "GOOGLE_GENERATIVE_AI_API_KEY", "GROQ_API_KEY",
                     "MISTRAL_API_KEY", "XAI_API_KEY", "GITHUB_TOKEN",
-                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION",
+                    # STS credentials are a key/secret/session-token triple;
+                    # the wrapper re-overlays fresh values on every turn.
+                    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                    "AWS_REGION", "AWS_DEFAULT_REGION",
                     # OAuth proxy path (same as mini-swe-agent): wrapper
                     # launches a localhost ChatGPT-OAuth proxy in the
                     # sandbox; OpenCode's openai provider routes via
@@ -714,12 +743,24 @@ async def main():
         description="In-process batch eval using Harbor's LocalOrchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--model", required=True, help="Action agent model (e.g., anthropic/claude-opus-4-6)")
+    parser.add_argument("--model", required=True,
+                        help="Action agent model: a registry name (gpt-5.6-sol, claude-opus-4.6) resolved "
+                             "on --agent-backend, or a fully-qualified provider/model string "
+                             "(anthropic/claude-opus-4-6, openrouter/meta/muse-spark-1.3, "
+                             "bedrock/global.openai.gpt-5.6-sol)")
+    parser.add_argument("--agent-backend", default=None, choices=list(BACKENDS),
+                        help="Where a registry-named agent model is served. Default: "
+                             "$SWT_AGENT_BACKEND > $SWT_LLM_BACKEND > native. Ignored when --model "
+                             "already carries a provider prefix. See docs/llm_backends.md.")
     # Default to direct Gemini (matches config.yaml + runner.py + the v0.4.4
     # DS-Flash / DS-Pro production manifests). The OpenRouter route works too,
     # pass --user-model openrouter/google/gemini-3.1-pro-preview if needed,
     # but the default OR token has been flaky (401 "User not found").
-    parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview", help="User sim model")
+    parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview",
+                        help="User sim model (registry name or provider/model string)")
+    parser.add_argument("--user-sim-backend", default=None, choices=list(BACKENDS),
+                        help="Backend for a registry-named --user-model. Default: "
+                             "$SWT_USER_SIM_BACKEND > $SWT_LLM_BACKEND > native.")
     parser.add_argument("--tag", required=True, help="Short tag for this run")
     parser.add_argument("--workers", type=int, default=20, help="Max concurrent trials (default: 20)")
     parser.add_argument("--env-type", default=None, choices=["docker", "e2b", "enroot"],
@@ -738,6 +779,10 @@ async def main():
                              "(OpenAI/ChatGPT: reasoning.effort; Anthropic: "
                              "thinking.budget_tokens low=1024/med=4096/high=16384). "
                              "DeepSeek ignores this knob.")
+    parser.add_argument("--opencode-version", default=None,
+                        help="opencode-ai release installed in the sandbox for --agent-type opencode "
+                             "(default: the wrapper's canonical pin, 1.15.13). Recorded in each "
+                             "trial's config.json.")
     parser.add_argument("--trials-dir", default=None, help="Trials directory (default: trials/)")
     parser.add_argument("--tasks", default=None, help="Comma-separated task names or globs")
     parser.add_argument("--skip-existing", action="store_true", help="Skip tasks with existing results")
@@ -759,12 +804,28 @@ async def main():
     # One top-level switch: --env-type > SWT_SANDBOX (.env) > e2b.
     args.env_type = stage1_sandbox(args.env_type)
 
+    # Per-seat backend + registry-name resolution (docs/llm_backends.md). A
+    # fully-qualified provider/model string passes through untouched.
+    agent_seat = resolve_seat_model("agent", args.model, seat_backend("agent", args.agent_backend))
+    user_seat = resolve_seat_model(
+        "user_sim", args.user_model or args.model, seat_backend("user_sim", args.user_sim_backend),
+    )
+    args.model = agent_seat.model
+    args.user_model = user_seat.model
+    log.info("Seats: agent=%s [%s]  user_sim=%s [%s]",
+             agent_seat.model, agent_seat.backend, user_seat.model, user_seat.backend)
+    llm_config.warn_if_uncatalogued(agent_seat.model)
+
     # Resolve model + key
     action_model, action_key, _env_var = resolve_model(args.model)
-    user_model, user_key, _ = resolve_model(args.user_model or args.model)
+    user_model, user_key, _ = resolve_model(args.user_model)
+    # LiteLLM spells the Bedrock route `bedrock/converse/<id>`; no API key applies.
+    user_model = to_litellm_model(user_model)
+    if user_seat.backend == "bedrock":
+        user_key = ""
 
     # User sim api_base — force real Anthropic endpoint when proxy is active
-    user_provider = (args.user_model or args.model).split("/", 1)[0]
+    user_provider = args.user_model.split("/", 1)[0]
     user_api_base = "https://api.anthropic.com" if user_provider == "anthropic" else None
 
     # Build shared agent env (proxy config — same for all tasks)
@@ -890,6 +951,9 @@ async def main():
         "model": args.model,
         "user_model": args.user_model,
         "agent_type": args.agent_type,
+        "agent_backend": agent_seat.backend,
+        "user_sim_backend": user_seat.backend,
+        "opencode_version": args.opencode_version if args.agent_type == "opencode" else None,
         "env_type": args.env_type,
         "agent_timeout": args.agent_timeout,
         "tag": args.tag,
@@ -935,6 +999,8 @@ async def main():
             agent_type=args.agent_type,
             reasoning_effort=args.reasoning_effort,
             enroot_kwargs=enroot_kwargs,
+            user_temperature=0.5 if user_seat.supports_temperature else None,
+            opencode_version=args.opencode_version,
         )
         trial_configs.append(tc)
 

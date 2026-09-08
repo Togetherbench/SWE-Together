@@ -99,6 +99,12 @@ def stage_run(plan: dict, models: dict, env_type: str | None, execute: bool,
             um = user_model or cfg.get("user_model") or plan.get("user_model")
             if um:
                 cmd += ["--user-model", um]
+            # Per-cohort backend for a registry-named model (docs/llm_backends.md).
+            if cfg.get("agent_backend"):
+                cmd += ["--agent-backend", str(cfg["agent_backend"])]
+            # Per-cohort harness pin; absent = the wrapper's canonical opencode release.
+            if cfg.get("opencode_version"):
+                cmd += ["--opencode-version", str(cfg["opencode_version"])]
             if env_type:
                 cmd += ["--env-type", env_type]
             if cfg.get("agent_timeout"):

@@ -337,7 +337,9 @@ class OpenCode(BaseInstalledAgent):
 
         # Get provider environment variables
         if provider == "amazon-bedrock":
-            keys.extend(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"])
+            # SWE-Together: STS credentials also need AWS_SESSION_TOKEN.
+            keys.extend(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                         "AWS_REGION", "AWS_DEFAULT_REGION"])
         elif provider == "anthropic":
             keys.append("ANTHROPIC_API_KEY")
         elif provider == "azure":

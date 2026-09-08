@@ -30,6 +30,7 @@ if `opencode.txt` is later truncated for any reason.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -57,6 +58,204 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4
 _OPENCODE_LOG = "/logs/agent/opencode.txt"
+
+# Provider backpressure. Bedrock answers a tokens-per-minute overrun with HTTP
+# 400 "Too many tokens, please wait before trying again."; opencode 1.18.x
+# maps that text to ContextOverflowError (400 + "tokens"), does not retry it,
+# and ends the step with no output. Left alone, every such turn becomes a
+# silent no-op and the trial measures the account's quota instead of the
+# model. The wrapper therefore re-runs a turn whose only outcome was throttling,
+# with exponential backoff, inside the normal trial budget.
+_THROTTLE_MARKERS = (
+    "too many tokens, please wait",
+    "throttlingexception",
+    "too many requests",
+    "rate limit",
+    "rate_limit",
+    "serviceunavailableexception",
+    "service unavailable",
+    "overloaded",
+)
+_THROTTLE_MAX_RETRIES = 8
+_THROTTLE_BACKOFF_SEC = (15, 30, 60, 90, 120, 180, 240, 300)
+
+
+def classify_turn_events(stdout: str) -> dict[str, int]:
+    """Count the event kinds in one `opencode run --format=json` stdout capture.
+
+    Returns ``{"steps", "errors", "throttle_errors", "tool_calls",
+    "ended_on_throttle"}``. A turn is *throttled* when it produced throttle
+    errors and no completed step; it *ended on a throttle* when the last
+    step/error event was a throttle, i.e. opencode gave up mid-turn after some
+    progress (the common shape under load: ``S S S T T``).
+    """
+    counts = {"steps": 0, "errors": 0, "throttle_errors": 0, "tool_calls": 0, "ended_on_throttle": 0}
+    last = None
+    for line in (stdout or "").split("\n"):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        etype = event.get("type")
+        if etype == "step_finish":
+            counts["steps"] += 1
+            last = "step"
+        elif etype == "tool_use":
+            counts["tool_calls"] += 1
+        elif etype == "error":
+            counts["errors"] += 1
+            err = event.get("error") or {}
+            data = err.get("data") or {}
+            text = " ".join(
+                str(x) for x in (err.get("name"), data.get("message"), data.get("responseBody"))
+                if x
+            ).lower()
+            if any(m in text for m in _THROTTLE_MARKERS):
+                counts["throttle_errors"] += 1
+                last = "throttle"
+            else:
+                last = "error"
+    counts["ended_on_throttle"] = int(last == "throttle")
+    return counts
+
+
+def turn_was_throttled(stdout: str) -> bool:
+    c = classify_turn_events(stdout)
+    return c["throttle_errors"] > 0 and c["steps"] == 0
+
+
+def turn_ended_on_throttle(stdout: str) -> bool:
+    """Some progress, then the provider refused the next step and opencode stopped."""
+    c = classify_turn_events(stdout)
+    return c["steps"] > 0 and c["ended_on_throttle"] == 1
+
+
+_THROTTLE_CONTINUE_MESSAGE = (
+    "Your previous step was interrupted by a temporary provider rate limit. "
+    "Please continue exactly where you left off."
+)
+
+# Reasoning efforts written as explicit opencode.json `variants` per provider.
+# OpenRouter forwards `reasoning.effort` to the underlying vendor. Bedrock's
+# `@ai-sdk/amazon-bedrock` provider takes `reasoningConfig` and translates it
+# per model family (OpenAI ids → `reasoning.effort`; Anthropic ids →
+# `thinking: adaptive` + `output_config.effort`) — the same shape opencode
+# 1.15.13 auto-generates when the id matches the models.dev catalog, written
+# explicitly so a catalog miss cannot silently disable reasoning.
+_OR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+_BEDROCK_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
+_BEDROCK_PROVIDER = "amazon-bedrock"
+
+
+def build_opencode_config_patch_script(
+    *,
+    using_proxied_provider: bool,
+    disallowed_tools: str | None,
+    bedrock_region: str | None,
+    or_efforts: tuple[str, ...] = _OR_EFFORTS,
+    bedrock_efforts: tuple[str, ...] = _BEDROCK_EFFORTS,
+) -> str:
+    """Python source that patches ~/.config/opencode/opencode.json in the sandbox.
+
+    Kept as a pure function of its inputs so the generated script can be
+    executed against a seeded config in unit tests. See
+    :meth:`UserEnabledOpenCode._opencode_thinking_patch_command` for why each
+    block exists.
+    """
+    disallow = [t.strip().lower() for t in (disallowed_tools or "").split(",") if t.strip()]
+    script = (
+        "import json, pathlib, os\n"
+        "p = pathlib.Path.home()/'.config/opencode/opencode.json'\n"
+        "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
+        "prov = cfg.setdefault('provider', {})\n"
+    )
+    if using_proxied_provider:
+        # Route opencode's anthropic provider (@ai-sdk/anthropic) to the
+        # in-sandbox proxy on localhost:4210. The masked model name puts
+        # us on the 'anthropic' provider, whose default baseURL is
+        # api.anthropic.com/v1 — and unlike LiteLLM there is no env-var
+        # override; baseURL must come from opencode.json provider
+        # options. Without this, every call 401s at real Anthropic with
+        # the placeholder key (mm27 smoke, 2026-06-03). The SDK appends
+        # "/messages" to baseURL, so "/v1" stays in the value. Config
+        # persists in the sandbox, so --session resume turns inherit it.
+        script += (
+            "prov.setdefault('anthropic', {}).setdefault('options', {})"
+            "['baseURL'] = 'http://localhost:4210/v1'\n"
+        )
+    script += (
+        "or_efforts = " + json.dumps(list(or_efforts)) + "\n"
+        "bedrock_efforts = " + json.dumps(list(bedrock_efforts)) + "\n"
+        # Only the `openrouter` and `amazon-bedrock` provider entries get an
+        # explicit variants write; for other providers (openai/deepseek/
+        # anthropic) opencode's auto-generator emits the right per-provider
+        # shape from the models.dev catalog hit (reasoningEffort for
+        # openai-compatible, thinking{type:adaptive}+effort for
+        # @ai-sdk/anthropic, etc.). Overwriting those with {reasoning:{effort}}
+        # would break gpt55, ds, and the proxied anthropic path. The
+        # reasoning=true flag on the model entry is safe across providers — it
+        # only ever upgrades capability detection.
+        "for name in list(prov):\n"
+        "    models = prov[name].setdefault('models', {})\n"
+        "    for mid in list(models):\n"
+        "        entry = models[mid] if isinstance(models[mid], dict) else {}\n"
+        "        entry['reasoning'] = True\n"
+        "        if name == 'openrouter':\n"
+        "            variants = entry.setdefault('variants', {})\n"
+        "            for eff in or_efforts:\n"
+        "                variants.setdefault(eff, {'reasoning': {'effort': eff}})\n"
+        f"        if name == {_BEDROCK_PROVIDER!r}:\n"
+        "            variants = entry.setdefault('variants', {})\n"
+        "            for eff in bedrock_efforts:\n"
+        "                variants.setdefault(eff, {'reasoningConfig': {'type': 'adaptive', 'maxReasoningEffort': eff}})\n"
+        "        models[mid] = entry\n"
+    )
+    if bedrock_region:
+        # opencode's Bedrock provider defaults to us-east-1 when AWS_REGION is
+        # absent from its process env; pin the region in the config as well.
+        script += (
+            f"if {_BEDROCK_PROVIDER!r} in prov:\n"
+            f"    prov[{_BEDROCK_PROVIDER!r}].setdefault('options', {{}}).setdefault('region', {bedrock_region!r})\n"
+        )
+    script += (
+        "perm = cfg.get('permission')\n"
+        "if perm != 'allow':\n"
+        "    if not isinstance(perm, dict):\n"
+        "        perm = {'*': perm} if isinstance(perm, str) else {}\n"
+        "    ext = perm.get('external_directory')\n"
+        "    if ext != 'allow':\n"
+        "        if not isinstance(ext, dict):\n"
+        "            ext = {'*': ext} if isinstance(ext, str) else {}\n"
+        "        for pattern in [\n"
+        "            '/workspace/**', '/tmp/**', '/var/tmp/**',\n"
+        "            '/opt/**', '/root/**', '/home/**',\n"
+        "            '/proc/**', '/usr/**', '/logs/**',\n"
+        "        ]:\n"
+        "            ext.setdefault(pattern, 'allow')\n"
+        "        perm['external_directory'] = ext\n"
+        "    cfg['permission'] = perm\n"
+        # PR #221: per-task disallowed_tools — disable webfetch/websearch
+        # at the opencode.json `permission.tools` registry. opencode's
+        # core picks this up at session start (run.ts → permission resolver)
+        # and refuses the tool with "tool unavailable" without ever calling
+        # the model with it. Confirmed-working with v1.15.13.
+        f"_disallow = {json.dumps(disallow)}\n"
+        "if _disallow:\n"
+        "    _perm = cfg.setdefault('permission', {})\n"
+        "    if not isinstance(_perm, dict): _perm = {}\n"
+        "    _tools = _perm.setdefault('tools', {})\n"
+        "    if not isinstance(_tools, dict): _tools = {}\n"
+        "    for _t in _disallow:\n"
+        "        _tools[_t] = 'deny'\n"
+        "    _perm['tools'] = _tools\n"
+        "    cfg['permission'] = _perm\n"
+        "p.parent.mkdir(parents=True, exist_ok=True)\n"
+        "p.write_text(json.dumps(cfg, indent=2))\n"
+    )
+    return script
 
 # What of each tool call to surface to the user-sim in "## Agent activity".
 # The sim role-plays a HUMAN user, who reacts to what a human sees — the agent's
@@ -108,7 +307,7 @@ class UserEnabledOpenCode(BaseAgent):
         user_model_name: str = "anthropic/claude-opus-4-6",
         user_api_base: str | None = None,
         user_api_key: str | None = None,
-        user_temperature: float = 0.5,
+        user_temperature: float | None = 0.5,
         user_context_chars: int = 3000,
         original_user_messages: list[str] | None = None,
         session_analysis: str = "",
@@ -170,6 +369,7 @@ class UserEnabledOpenCode(BaseAgent):
         # doesn't yet accept a reasoning kwarg.
         self._reasoning_effort = reasoning_effort
         self._disallowed_tools = disallowed_tools
+        self._throttle_retries = 0
 
         self._sim_user = UserAgent(
             llm=LiteLLM(
@@ -442,7 +642,7 @@ class UserEnabledOpenCode(BaseAgent):
         # Provides deep reasoning on complex tasks." Medium "may skip thinking
         # for very simple queries", which on a 13-turn agentic trial means the
         # model skips reasoning on most tool-result observations.
-        effort = self._reasoning_effort or "high"
+        #
         # Reasoning engages via per-model variants, not provider-factory options.
         # opencode v1.15.13 resolves the effort by looking up
         # `model.variants[<flag-value>]` (session/llm/request.ts:78-81); the
@@ -467,87 +667,22 @@ class UserEnabledOpenCode(BaseAgent):
         # opencode's catalog-merge promotes capabilities.reasoning to true
         # regardless of catalog-key alignment, and write the explicit variants
         # dict so the path works even if opencode's auto-generator changes.
-        # The variant entries match what auto-gen would produce for OR/Claude.
-        # For OpenAI (gpt5*) Responses API, opencode picks `reasoningEffort`
-        # at a different layer (variants() switch case `@ai-sdk/openai`); we
-        # don't touch that path here.
-        _OR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+        # The variant entries match what auto-gen would produce for OR/Claude
+        # and for Bedrock (`reasoningConfig`, see _BEDROCK_EFFORTS). For OpenAI
+        # (gpt5*) Responses API, opencode picks `reasoningEffort` at a
+        # different layer (variants() switch case `@ai-sdk/openai`); we don't
+        # touch that path here.
+        #
         # python3 instead of jq — guaranteed present in the base images.
         # Heredoc avoids shell-quoting hell around the embedded JSON literal.
-        script = (
-            "import json, pathlib, os\n"
-            "p = pathlib.Path.home()/'.config/opencode/opencode.json'\n"
-            "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
-            "prov = cfg.setdefault('provider', {})\n"
-        )
-        if self._using_proxied_provider:
-            # Route opencode's anthropic provider (@ai-sdk/anthropic) to the
-            # in-sandbox proxy on localhost:4210. The masked model name puts
-            # us on the 'anthropic' provider, whose default baseURL is
-            # api.anthropic.com/v1 — and unlike LiteLLM there is no env-var
-            # override; baseURL must come from opencode.json provider
-            # options. Without this, every call 401s at real Anthropic with
-            # the placeholder key (mm27 smoke, 2026-06-03). The SDK appends
-            # "/messages" to baseURL, so "/v1" stays in the value. Config
-            # persists in the sandbox, so --session resume turns inherit it.
-            script += (
-                "prov.setdefault('anthropic', {}).setdefault('options', {})"
-                "['baseURL'] = 'http://localhost:4210/v1'\n"
-            )
-        script += (
-            "or_efforts = " + json.dumps(list(_OR_EFFORTS)) + "\n"
-            # Only the `openrouter` provider entry needs the explicit variants
-            # write; for other providers (openai/deepseek/anthropic) opencode's
-            # auto-generator emits the right per-provider shape from the
-            # models.dev catalog hit (reasoningEffort for openai-compatible,
-            # thinking{type:adaptive}+effort for @ai-sdk/anthropic, etc.).
-            # Overwriting those with {reasoning:{effort}} would break gpt55,
-            # ds, and the proxied anthropic path. The reasoning=true flag on
-            # the model entry is safe across providers — it only ever upgrades
-            # capability detection.
-            "for name in list(prov):\n"
-            "    models = prov[name].setdefault('models', {})\n"
-            "    for mid in list(models):\n"
-            "        entry = models[mid] if isinstance(models[mid], dict) else {}\n"
-            "        entry['reasoning'] = True\n"
-            "        if name == 'openrouter':\n"
-            "            variants = entry.setdefault('variants', {})\n"
-            "            for eff in or_efforts:\n"
-            "                variants.setdefault(eff, {'reasoning': {'effort': eff}})\n"
-            "        models[mid] = entry\n"
-            "perm = cfg.get('permission')\n"
-            "if perm != 'allow':\n"
-            "    if not isinstance(perm, dict):\n"
-            "        perm = {'*': perm} if isinstance(perm, str) else {}\n"
-            "    ext = perm.get('external_directory')\n"
-            "    if ext != 'allow':\n"
-            "        if not isinstance(ext, dict):\n"
-            "            ext = {'*': ext} if isinstance(ext, str) else {}\n"
-            "        for pattern in [\n"
-            "            '/workspace/**', '/tmp/**', '/var/tmp/**',\n"
-            "            '/opt/**', '/root/**', '/home/**',\n"
-            "            '/proc/**', '/usr/**', '/logs/**',\n"
-            "        ]:\n"
-            "            ext.setdefault(pattern, 'allow')\n"
-            "        perm['external_directory'] = ext\n"
-            "    cfg['permission'] = perm\n"
-            # PR #221: per-task disallowed_tools — disable webfetch/websearch
-            # at the opencode.json `permission.tools` registry. opencode's
-            # core picks this up at session start (run.ts → permission resolver)
-            # and refuses the tool with "tool unavailable" without ever calling
-            # the model with it. Confirmed-working with v1.15.13.
-            f"_disallow = {json.dumps([t.strip().lower() for t in (self._disallowed_tools or '').split(',') if t.strip()])}\n"
-            "if _disallow:\n"
-            "    _perm = cfg.setdefault('permission', {})\n"
-            "    if not isinstance(_perm, dict): _perm = {}\n"
-            "    _tools = _perm.setdefault('tools', {})\n"
-            "    if not isinstance(_tools, dict): _tools = {}\n"
-            "    for _t in _disallow:\n"
-            "        _tools[_t] = 'deny'\n"
-            "    _perm['tools'] = _tools\n"
-            "    cfg['permission'] = _perm\n"
-            "p.parent.mkdir(parents=True, exist_ok=True)\n"
-            "p.write_text(json.dumps(cfg, indent=2))\n"
+        bedrock_region = None
+        if self._is_bedrock_agent():
+            from llm_config import aws_region
+            bedrock_region = aws_region()
+        script = build_opencode_config_patch_script(
+            using_proxied_provider=self._using_proxied_provider,
+            disallowed_tools=self._disallowed_tools,
+            bedrock_region=bedrock_region,
         )
         # Subshell wrap is load-bearing: the caller chains this with
         # `... && opencode run ...`. A bare heredoc can't be chained — bash
@@ -555,6 +690,111 @@ class UserEnabledOpenCode(BaseAgent):
         # a line. Wrapping in `(...)` puts `)` on its own line to close the
         # heredoc and lets `) && opencode` sit on one valid line.
         return f"(python3 - <<'PYEOF'\n{script}PYEOF\n)"
+
+    # ── provider backpressure ─────────────────────────────────────────
+
+    async def _exec_turn_with_throttle_retry(
+        self, environment: BaseEnvironment, exec_input: ExecInput, *, turn: int,
+        session_id: str | None = None,
+    ):
+        """Run one agent turn, absorbing provider throttling.
+
+        Two shapes of throttled turn are handled:
+
+        * **nothing completed** (``T T``): opencode's session store is
+          unchanged, so the identical command is re-issued after a backoff.
+        * **interrupted mid-turn** (``S S S T T``): the completed steps are
+          real; after a backoff the same session is resumed with a synthetic
+          "continue" so the agent finishes what the provider cut off. This
+          only applies when a ``session_id`` is known (turn 0 exposes it once
+          it has started; resume turns always have one).
+
+        Backoff sleeps count against the trial budget like any other
+        wall-clock; the loop stops early when the budget is nearly gone.
+        Returns ``(result, timed_out, attempts)``. ``result.stdout`` holds the
+        concatenated event stream of every attempt that made progress.
+        """
+        attempts = 0
+        kept_stdout: list[str] = []
+        cur = exec_input
+        while True:
+            attempts += 1
+            result, timed_out = await exec_with_budget(
+                environment, cur, start_time=self._start_time,
+            )
+            out = result.stdout or ""
+            if timed_out:
+                kept_stdout.append(out)
+                break
+            if turn_was_throttled(out):
+                verdict = "no progress"
+                # Discard the attempt's output: only throttle errors in it.
+                self._archive_turn_stdout(f"{turn}-throttled-{attempts}", out)
+            elif turn_ended_on_throttle(out):
+                verdict = "interrupted"
+                kept_stdout.append(out)
+                if session_id is None:
+                    session_id = self._session_id_from(out)
+                if session_id is None:
+                    break  # cannot resume; keep what we have
+            else:
+                kept_stdout.append(out)
+                break
+            if attempts > _THROTTLE_MAX_RETRIES:
+                log.warning("turn %d: provider still throttling after %d attempts — giving up on this turn",
+                            turn, attempts)
+                break
+            delay = _THROTTLE_BACKOFF_SEC[min(attempts - 1, len(_THROTTLE_BACKOFF_SEC) - 1)]
+            remaining = TRIAL_BUDGET_SEC - (time.monotonic() - self._start_time)
+            if remaining < delay + 120:
+                log.warning("turn %d: throttled but only %.0fs of trial budget left — not retrying", turn, remaining)
+                break
+            counts = classify_turn_events(out)
+            log.warning(
+                "turn %d: provider throttled (%s; %d throttle events, %d steps) — retry %d/%d in %ds",
+                turn, verdict, counts["throttle_errors"], counts["steps"], attempts, _THROTTLE_MAX_RETRIES, delay,
+            )
+            self._throttle_retries += 1
+            await asyncio.sleep(delay)
+            if verdict == "interrupted":
+                cur = self._build_resume_command(session_id, _THROTTLE_CONTINUE_MESSAGE)
+            cur.env = self._refresh_agent_env(cur.env)
+        result.stdout = "\n".join(s for s in kept_stdout if s)
+        return result, timed_out, attempts
+
+    @staticmethod
+    def _session_id_from(stdout: str) -> str | None:
+        for line in (stdout or "").split("\n"):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                sid = json.loads(line).get("sessionID")
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+            if isinstance(sid, str) and sid:
+                return sid
+        return None
+
+    # ── Bedrock credential refresh ────────────────────────────────────
+
+    def _is_bedrock_agent(self) -> bool:
+        return (self._inner.model_name or "").startswith(f"{_BEDROCK_PROVIDER}/")
+
+    def _refresh_agent_env(self, env: dict[str, str] | None) -> dict[str, str]:
+        """Overlay current AWS credentials onto an exec env for Bedrock agents.
+
+        Harbor copies AWS_* from the host env once, when it builds the turn-0
+        command, and we reuse that env for every resume turn. STS credentials
+        expire, and a trial can outlive a lease, so each exec re-reads the
+        (possibly refreshed) values. No-op for every other provider.
+        """
+        env = dict(env or {})
+        if not self._is_bedrock_agent():
+            return env
+        import bedrock_creds
+        env.update(bedrock_creds.aws_env_overlay())
+        return env
 
     # ── resume command builder ────────────────────────────────────────
 
@@ -567,8 +807,9 @@ class UserEnabledOpenCode(BaseAgent):
         escaped_message = shlex.quote(user_message)
         # Reuse the env (provider keys + OPENCODE_FAKE_VCS) the inner sets up
         # on turn 0. Harbor's create_run_agent_commands stores it on the
-        # final ExecInput; we already cached that during turn-0 exec.
-        env = getattr(self, "_inner_run_env", {}) or {}
+        # final ExecInput; we already cached that during turn-0 exec. Bedrock
+        # credentials are re-read each turn (see _refresh_agent_env).
+        env = self._refresh_agent_env(getattr(self, "_inner_run_env", {}) or {})
 
         # `--thinking` flag matches the turn-0 injection (see
         # _inject_opencode_flags): force reasoning events into the JSON
@@ -724,7 +965,7 @@ class UserEnabledOpenCode(BaseAgent):
                     break
         return trajectory, observation
 
-    def _archive_turn_stdout(self, turn: int, stdout: str) -> None:
+    def _archive_turn_stdout(self, turn: int | str, stdout: str) -> None:
         """Persist the per-turn opencode event stream so prior turns' steps
         survive even if /logs/agent/opencode.txt is later truncated.
         Mirrors the trajectory-archive guarantee in
@@ -881,6 +1122,8 @@ class UserEnabledOpenCode(BaseAgent):
         # Turn 0: initial run via inner agent's commands.
         commands = self._inner.create_run_agent_commands(instruction)
         commands = self._inject_opencode_flags(commands)
+        for c in commands:
+            c.env = self._refresh_agent_env(c.env)
         # Remember the env from the last command (the actual `opencode run`)
         # so resume invocations get the same provider keys + OPENCODE_FAKE_VCS.
         if commands:
@@ -889,9 +1132,15 @@ class UserEnabledOpenCode(BaseAgent):
         turn0_timed_out = False
         try:
             for i, exec_input in enumerate(commands):
-                result, timed_out = await exec_with_budget(
-                    environment, exec_input, start_time=self._start_time,
-                )
+                is_run = "opencode --model=" in exec_input.command
+                if is_run:
+                    result, timed_out, _ = await self._exec_turn_with_throttle_retry(
+                        environment, exec_input, turn=0,
+                    )
+                else:
+                    result, timed_out = await exec_with_budget(
+                        environment, exec_input, start_time=self._start_time,
+                    )
                 if result.stdout:
                     self._cumulative_output.append(result.stdout)
 
@@ -993,8 +1242,8 @@ class UserEnabledOpenCode(BaseAgent):
 
             turn_timed_out = False
             try:
-                result, timed_out = await exec_with_budget(
-                    environment, resume_cmd, start_time=self._start_time,
+                result, timed_out, _ = await self._exec_turn_with_throttle_retry(
+                    environment, resume_cmd, turn=turn, session_id=session_id,
                 )
                 if result.stdout:
                     self._cumulative_output.append(result.stdout)
@@ -1032,6 +1281,13 @@ class UserEnabledOpenCode(BaseAgent):
 
         # Pull OAuth proxy log back from sandbox for offline debug
         await self._flush_proxy_log()
+        if self._throttle_retries:
+            log.warning("trial re-ran %d throttled turn(s); see opencode.txt.turn-*-throttled-* for the discarded attempts",
+                        self._throttle_retries)
+            try:
+                (self.logs_dir / "throttle_retries.txt").write_text(f"{self._throttle_retries}\n")
+            except Exception as e:
+                log.debug("throttle_retries.txt write failed: %s", e)
 
         # Post-run: populate trajectory via inner agent (parses opencode.txt
         # into ATIF; this is why we used `tee -a` rather than per-turn-only

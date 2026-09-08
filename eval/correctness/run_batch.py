@@ -218,6 +218,8 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     verdict["judge_exit_code"] = sb.exit_code
     if sb.judge_model:
         verdict["judge_model"] = sb.judge_model
+    if sb.judge_backend:
+        verdict["judge_backend"] = sb.judge_backend
     verdict["judge_phase"] = 2
     verdict["rubric_n_goals"] = len(rubric.get("completeness_goals", []))
 
@@ -275,15 +277,17 @@ async def amain() -> int:
         print(f"ERROR: {problem}", file=sys.stderr)
         return 2
     log.info("judge sandbox backend: %s", backend)
+    # Judge seat auth, per its backend (native key/OAuth, OpenRouter key, Bedrock
+    # credentials, or codex auth blob). See docs/llm_backends.md.
+    import llm_config
+    judge = llm_config.judge_model()
+    problem = llm_config.check_judge_auth(judge)
+    if problem:
+        print(f"ERROR: {problem}", file=sys.stderr)
+        return 2
+    log.info("judge model: %s [%s]", judge.model, judge.backend)
     api_key = os.environ.get("ANTHROPIC_API_KEY") or None
     oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if not (api_key or oauth):
-        print("ERROR: need ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN",
-              file=sys.stderr)
-        return 2
-    auth_kind = ("ANTHROPIC_API_KEY (pay-per-token)" if api_key
-                 else "CLAUDE_CODE_OAUTH_TOKEN (subscription)")
-    log.info("judge auth: %s", auth_kind)
 
     if not args.plan.exists():
         print(f"ERROR: plan not found: {args.plan}", file=sys.stderr)
