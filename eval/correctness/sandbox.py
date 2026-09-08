@@ -22,6 +22,7 @@ from typing import Optional
 from dirhash import dirhash
 
 from eval.correctness.judge_sandbox import CmdResult, open_judge_sandbox
+import llm_config  # noqa: E402  (src/ is on sys.path via judge_sandbox)
 
 log = logging.getLogger(__name__)
 
@@ -112,8 +113,8 @@ class JudgeInputs:
     user_dialogue: str = ""
 
 
-JUDGE_MODEL_CLAUDE = "claude-opus-4-6"
-JUDGE_MODEL_CODEX_DEFAULT = "gpt-5.5"
+JUDGE_MODEL_CLAUDE = llm_config.LEGACY_JUDGE_NATIVE_MODEL.split("/", 1)[1]  # "claude-opus-4-6"
+JUDGE_MODEL_CODEX_DEFAULT = llm_config.LEGACY_JUDGE_CODEX_MODEL
 
 
 @dataclass
@@ -127,6 +128,8 @@ class JudgeRunResult:
     # verdict JSON so post-hoc analyses can tell 4-6 vs 4-7 runs apart, and
     # which trials used the codex-as-judge cross-family calibration.
     judge_model: str = ""
+    # Where that model was served (native | openrouter | bedrock | codex).
+    judge_backend: str = ""
 
 
 async def run_judge(
@@ -147,47 +150,40 @@ async def run_judge(
     via its standard ANTHROPIC_API_KEY env var.
     """
     alias = template_alias(task_name)
-    auth_envs: dict[str, str] = {}
-    # [judge-via-codex] If JUDGE_VIA_CODEX=1, swap `claude` for `codex` as the
-    # agentic judge. Auth via host's ~/.codex/auth.json (ChatGPT OAuth — same
-    # mechanism Harbor uses with CODEX_USE_HOST_AUTH=1 for agent runs).
-    judge_via_codex = os.environ.get("JUDGE_VIA_CODEX") == "1"
+    # Judge seat: which Claude and where it is served (docs/llm_backends.md).
+    # Honours the legacy JUDGE_VIA_OR / JUDGE_VIA_CODEX switches; an explicit
+    # SWT_JUDGE_BACKEND wins. Re-resolved per trial so refreshed Bedrock
+    # credentials in os.environ reach every new sandbox.
+    judge = llm_config.judge_model()
+    judge_via_codex = judge.backend == "codex"
     codex_auth_path = Path.home() / ".codex" / "auth.json"
     codex_auth_blob: str | None = None
-    # [judge-via-or] If JUDGE_VIA_OR=1, route `claude --print` through OpenRouter's
-    # Anthropic-compat endpoint (https://openrouter.ai/api/v1/messages). Uses
-    # pay-per-token OR credit instead of the host's Anthropic OAuth subscription,
-    # which avoids the rate-limit ceiling we hit at workers>10 on opus-4-7
-    # and gives reproducible cost per judge run.
-    judge_via_or = os.environ.get("JUDGE_VIA_OR") == "1"
-    or_api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if judge_via_codex and codex_auth_path.exists():
+        # [judge-via-codex] Swap `claude` for `codex` as the agentic judge. Auth
+        # via host's ~/.codex/auth.json (ChatGPT OAuth — same mechanism Harbor
+        # uses with CODEX_USE_HOST_AUTH=1 for agent runs).
         codex_auth_blob = codex_auth_path.read_text()
         log.info("judge auth: codex via host ~/.codex/auth.json (ChatGPT OAuth)")
-    elif judge_via_or and or_api_key:
-        # Direct OR routing per
-        # https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration
-        # CC accepts ANTHROPIC_AUTH_TOKEN (vs ANTHROPIC_API_KEY) without doing the
-        # strict /v1/models/<name> pre-flight that blocked the legacy proxy-stub
-        # approach. Required env tuple:
-        #   ANTHROPIC_BASE_URL = https://openrouter.ai/api
-        #   ANTHROPIC_AUTH_TOKEN = <OR-key>
-        #   ANTHROPIC_API_KEY   = "" (MUST be empty — non-empty here breaks auth)
-        # Model names use OR's dot notation (anthropic/claude-opus-4.6 NOT -4-6).
-        auth_envs["ANTHROPIC_BASE_URL"] = "https://openrouter.ai/api"
-        auth_envs["ANTHROPIC_AUTH_TOKEN"] = or_api_key
-        auth_envs["ANTHROPIC_API_KEY"] = ""
-        or_target = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
-        # CC resolves per-tier model from these env vars; pin all three to the
-        # same OR slug so any model-tier dispatch routes correctly.
-        auth_envs["ANTHROPIC_DEFAULT_OPUS_MODEL"] = or_target
-        auth_envs["ANTHROPIC_DEFAULT_SONNET_MODEL"] = or_target
-        auth_envs["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = or_target
-        log.info("judge auth: claude --print → OpenRouter direct (model=%s)", or_target)
-    elif api_key:
-        auth_envs["ANTHROPIC_API_KEY"] = api_key
-    else:
-        auth_envs["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token or ""
+    if judge.backend == "bedrock":
+        import bedrock_creds
+        bedrock_creds.ensure_fresh()
+    env_view = dict(os.environ)
+    if api_key:
+        env_view["ANTHROPIC_API_KEY"] = api_key
+    if oauth_token:
+        env_view.setdefault("CLAUDE_CODE_OAUTH_TOKEN", oauth_token)
+    auth_envs: dict[str, str] = llm_config.judge_auth_envs(judge, env_view)
+    if judge.backend == "openrouter":
+        # [judge-via-or] `claude --print` through OpenRouter's Anthropic-compat
+        # endpoint: pay-per-token OR credit instead of the host's Anthropic OAuth
+        # subscription, which avoids the rate-limit ceiling hit at workers>10 on
+        # opus-4-7 and gives reproducible cost per judge run.
+        log.info("judge auth: claude --print → OpenRouter direct (model=%s)", judge.model)
+    elif judge.backend == "bedrock":
+        log.info("judge auth: claude --print → AWS Bedrock (model=%s, region=%s)",
+                 judge.model, auth_envs.get("AWS_REGION"))
+    judge_model_label = llm_config.judge_model_label(judge)
+    claude_model = llm_config.to_claude_code_model(judge.model)
 
     # Sandbox spawn. The E2B backend retries its flaky HTTP/2 ProtocolError
     # internally; enroot creates a container from the task's .sqsh. Both need
@@ -254,16 +250,13 @@ async def run_judge(
             timeout=120, user="root",
         )
         if apply.exit_code != 0:
-            # Intended judge model (the run errored before we picked which branch);
-            # default to the claude path since judge_via_codex requires an explicit opt-in env.
-            intended_model = f"codex:{os.environ.get('CODEX_JUDGE_MODEL', JUDGE_MODEL_CODEX_DEFAULT)}" if judge_via_codex else JUDGE_MODEL_CLAUDE
             return JudgeRunResult(
                 verdict={"error": "patch_apply_failed",
                          "stdout": apply.stdout[-2000:],
                          "stderr": apply.stderr[-2000:]},
                 stdout=apply.stdout, stderr=apply.stderr,
                 exit_code=apply.exit_code, sandbox_id=sandbox_id,
-                judge_model=intended_model,
+                judge_model=judge_model_label, judge_backend=judge.backend,
             )
 
         # 2. Ensure claude-code CLI is present. Production task images
@@ -294,7 +287,7 @@ async def run_judge(
                              "stderr": install.stderr[-2000:]},
                     stdout=install.stdout, stderr=install.stderr,
                     exit_code=install.exit_code, sandbox_id=sandbox_id,
-                    judge_model=JUDGE_MODEL_CLAUDE,
+                    judge_model=judge_model_label, judge_backend=judge.backend,
                 )
             # Re-verify claude is now resolvable with the PATH prefix.
             # If the installer wrote to a non-standard location we want to
@@ -309,15 +302,16 @@ async def run_judge(
                              "install_stderr_tail": install.stderr[-1000:]},
                     stdout=install.stdout, stderr=install.stderr,
                     exit_code=1, sandbox_id=sandbox_id,
-                    judge_model=JUDGE_MODEL_CLAUDE,
+                    judge_model=judge_model_label, judge_backend=judge.backend,
                 )
             log.info("claude-code resolved at: %s", recheck.stdout.strip())
 
         # 2b. Legacy in-sandbox OR proxy — superseded by direct routing per
         # OR's claude-code cookbook. Kept guarded by a deprecated flag for
         # backwards-compat with any one-off experiments that still set it.
-        if judge_via_or and or_api_key and os.environ.get("JUDGE_OR_USE_LEGACY_PROXY") == "1":
-            or_target_model = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
+        or_api_key = auth_envs.get("ANTHROPIC_AUTH_TOKEN", "")
+        if judge.backend == "openrouter" and or_api_key and os.environ.get("JUDGE_OR_USE_LEGACY_PROXY") == "1":
+            or_target_model = claude_model
             proxy_script = '''#!/usr/bin/env python3
 """Minimal OR proxy: GET /v1/models/<*> → 200, POST /v1/messages → rewrite model + forward."""
 import http.server, urllib.request, json, sys
@@ -519,8 +513,7 @@ if __name__ == "__main__":
         # because claude code's project-settings loader finds the workspace .claude/
         # via auto-detection independent of cwd.
         if judge_via_codex and codex_auth_blob:
-            codex_model = os.environ.get("CODEX_JUDGE_MODEL", JUDGE_MODEL_CODEX_DEFAULT)
-            judge_model_label = f"codex:{codex_model}"
+            _, codex_model = llm_config.split_model(judge.model)
             # Upload host OAuth credentials to sandbox CODEX_HOME (default /root/.codex).
             # chmod 600 to keep codex happy about file permissions.
             heredoc_marker = "CODEX_AUTH_EOF"
@@ -559,16 +552,9 @@ if __name__ == "__main__":
                 f"-- {shlex.quote(full_instruction)}"
             )
         else:
-            # When routing through OR, pass the OR-formatted slug directly.
-            # CC honors ANTHROPIC_AUTH_TOKEN auth with no /v1/models pre-flight,
-            # so the model name is forwarded as-is to OR (no rewriting needed).
-            if judge_via_or:
-                or_target = os.environ.get("JUDGE_OR_MODEL", "anthropic/claude-opus-4.6")
-                judge_model_label = f"or:{or_target}"
-                claude_model = or_target  # OR's dot notation, e.g. anthropic/claude-opus-4.6
-            else:
-                judge_model_label = JUDGE_MODEL_CLAUDE
-                claude_model = JUDGE_MODEL_CLAUDE
+            # `claude_model` is the backend's spelling: OR's dotted slug
+            # (anthropic/claude-opus-4.6), a Bedrock inference-profile id, or
+            # the native name. Resolved once above from llm_config.judge_model().
             # PATH prefix mirrors the install/check step above — required when
             # the binary was on-demand-installed to ~/.local/bin and the
             # shell doesn't source ~/.bashrc.
@@ -625,6 +611,7 @@ if __name__ == "__main__":
             exit_code=result.exit_code,
             sandbox_id=sandbox_id,
             judge_model=judge_model_label,
+            judge_backend=judge.backend,
         )
     finally:
         try:

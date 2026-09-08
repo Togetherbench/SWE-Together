@@ -58,6 +58,125 @@ _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4
 _OPENCODE_LOG = "/logs/agent/opencode.txt"
 
+# Reasoning efforts written as explicit opencode.json `variants` per provider.
+# OpenRouter forwards `reasoning.effort` to the underlying vendor. Bedrock's
+# `@ai-sdk/amazon-bedrock` provider takes `reasoningConfig` and translates it
+# per model family (OpenAI ids → `reasoning.effort`; Anthropic ids →
+# `thinking: adaptive` + `output_config.effort`) — the same shape opencode
+# 1.15.13 auto-generates when the id matches the models.dev catalog, written
+# explicitly so a catalog miss cannot silently disable reasoning.
+_OR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+_BEDROCK_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
+_BEDROCK_PROVIDER = "amazon-bedrock"
+
+
+def build_opencode_config_patch_script(
+    *,
+    using_proxied_provider: bool,
+    disallowed_tools: str | None,
+    bedrock_region: str | None,
+    or_efforts: tuple[str, ...] = _OR_EFFORTS,
+    bedrock_efforts: tuple[str, ...] = _BEDROCK_EFFORTS,
+) -> str:
+    """Python source that patches ~/.config/opencode/opencode.json in the sandbox.
+
+    Kept as a pure function of its inputs so the generated script can be
+    executed against a seeded config in unit tests. See
+    :meth:`UserEnabledOpenCode._opencode_thinking_patch_command` for why each
+    block exists.
+    """
+    disallow = [t.strip().lower() for t in (disallowed_tools or "").split(",") if t.strip()]
+    script = (
+        "import json, pathlib, os\n"
+        "p = pathlib.Path.home()/'.config/opencode/opencode.json'\n"
+        "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
+        "prov = cfg.setdefault('provider', {})\n"
+    )
+    if using_proxied_provider:
+        # Route opencode's anthropic provider (@ai-sdk/anthropic) to the
+        # in-sandbox proxy on localhost:4210. The masked model name puts
+        # us on the 'anthropic' provider, whose default baseURL is
+        # api.anthropic.com/v1 — and unlike LiteLLM there is no env-var
+        # override; baseURL must come from opencode.json provider
+        # options. Without this, every call 401s at real Anthropic with
+        # the placeholder key (mm27 smoke, 2026-06-03). The SDK appends
+        # "/messages" to baseURL, so "/v1" stays in the value. Config
+        # persists in the sandbox, so --session resume turns inherit it.
+        script += (
+            "prov.setdefault('anthropic', {}).setdefault('options', {})"
+            "['baseURL'] = 'http://localhost:4210/v1'\n"
+        )
+    script += (
+        "or_efforts = " + json.dumps(list(or_efforts)) + "\n"
+        "bedrock_efforts = " + json.dumps(list(bedrock_efforts)) + "\n"
+        # Only the `openrouter` and `amazon-bedrock` provider entries get an
+        # explicit variants write; for other providers (openai/deepseek/
+        # anthropic) opencode's auto-generator emits the right per-provider
+        # shape from the models.dev catalog hit (reasoningEffort for
+        # openai-compatible, thinking{type:adaptive}+effort for
+        # @ai-sdk/anthropic, etc.). Overwriting those with {reasoning:{effort}}
+        # would break gpt55, ds, and the proxied anthropic path. The
+        # reasoning=true flag on the model entry is safe across providers — it
+        # only ever upgrades capability detection.
+        "for name in list(prov):\n"
+        "    models = prov[name].setdefault('models', {})\n"
+        "    for mid in list(models):\n"
+        "        entry = models[mid] if isinstance(models[mid], dict) else {}\n"
+        "        entry['reasoning'] = True\n"
+        "        if name == 'openrouter':\n"
+        "            variants = entry.setdefault('variants', {})\n"
+        "            for eff in or_efforts:\n"
+        "                variants.setdefault(eff, {'reasoning': {'effort': eff}})\n"
+        f"        if name == {_BEDROCK_PROVIDER!r}:\n"
+        "            variants = entry.setdefault('variants', {})\n"
+        "            for eff in bedrock_efforts:\n"
+        "                variants.setdefault(eff, {'reasoningConfig': {'type': 'adaptive', 'maxReasoningEffort': eff}})\n"
+        "        models[mid] = entry\n"
+    )
+    if bedrock_region:
+        # opencode's Bedrock provider defaults to us-east-1 when AWS_REGION is
+        # absent from its process env; pin the region in the config as well.
+        script += (
+            f"if {_BEDROCK_PROVIDER!r} in prov:\n"
+            f"    prov[{_BEDROCK_PROVIDER!r}].setdefault('options', {{}}).setdefault('region', {bedrock_region!r})\n"
+        )
+    script += (
+        "perm = cfg.get('permission')\n"
+        "if perm != 'allow':\n"
+        "    if not isinstance(perm, dict):\n"
+        "        perm = {'*': perm} if isinstance(perm, str) else {}\n"
+        "    ext = perm.get('external_directory')\n"
+        "    if ext != 'allow':\n"
+        "        if not isinstance(ext, dict):\n"
+        "            ext = {'*': ext} if isinstance(ext, str) else {}\n"
+        "        for pattern in [\n"
+        "            '/workspace/**', '/tmp/**', '/var/tmp/**',\n"
+        "            '/opt/**', '/root/**', '/home/**',\n"
+        "            '/proc/**', '/usr/**', '/logs/**',\n"
+        "        ]:\n"
+        "            ext.setdefault(pattern, 'allow')\n"
+        "        perm['external_directory'] = ext\n"
+        "    cfg['permission'] = perm\n"
+        # PR #221: per-task disallowed_tools — disable webfetch/websearch
+        # at the opencode.json `permission.tools` registry. opencode's
+        # core picks this up at session start (run.ts → permission resolver)
+        # and refuses the tool with "tool unavailable" without ever calling
+        # the model with it. Confirmed-working with v1.15.13.
+        f"_disallow = {json.dumps(disallow)}\n"
+        "if _disallow:\n"
+        "    _perm = cfg.setdefault('permission', {})\n"
+        "    if not isinstance(_perm, dict): _perm = {}\n"
+        "    _tools = _perm.setdefault('tools', {})\n"
+        "    if not isinstance(_tools, dict): _tools = {}\n"
+        "    for _t in _disallow:\n"
+        "        _tools[_t] = 'deny'\n"
+        "    _perm['tools'] = _tools\n"
+        "    cfg['permission'] = _perm\n"
+        "p.parent.mkdir(parents=True, exist_ok=True)\n"
+        "p.write_text(json.dumps(cfg, indent=2))\n"
+    )
+    return script
+
 # What of each tool call to surface to the user-sim in "## Agent activity".
 # The sim role-plays a HUMAN user, who reacts to what a human sees — the agent's
 # natural-language narration (the `text` events) and the visible code changes
@@ -108,7 +227,7 @@ class UserEnabledOpenCode(BaseAgent):
         user_model_name: str = "anthropic/claude-opus-4-6",
         user_api_base: str | None = None,
         user_api_key: str | None = None,
-        user_temperature: float = 0.5,
+        user_temperature: float | None = 0.5,
         user_context_chars: int = 3000,
         original_user_messages: list[str] | None = None,
         session_analysis: str = "",
@@ -442,7 +561,7 @@ class UserEnabledOpenCode(BaseAgent):
         # Provides deep reasoning on complex tasks." Medium "may skip thinking
         # for very simple queries", which on a 13-turn agentic trial means the
         # model skips reasoning on most tool-result observations.
-        effort = self._reasoning_effort or "high"
+        #
         # Reasoning engages via per-model variants, not provider-factory options.
         # opencode v1.15.13 resolves the effort by looking up
         # `model.variants[<flag-value>]` (session/llm/request.ts:78-81); the
@@ -467,87 +586,22 @@ class UserEnabledOpenCode(BaseAgent):
         # opencode's catalog-merge promotes capabilities.reasoning to true
         # regardless of catalog-key alignment, and write the explicit variants
         # dict so the path works even if opencode's auto-generator changes.
-        # The variant entries match what auto-gen would produce for OR/Claude.
-        # For OpenAI (gpt5*) Responses API, opencode picks `reasoningEffort`
-        # at a different layer (variants() switch case `@ai-sdk/openai`); we
-        # don't touch that path here.
-        _OR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+        # The variant entries match what auto-gen would produce for OR/Claude
+        # and for Bedrock (`reasoningConfig`, see _BEDROCK_EFFORTS). For OpenAI
+        # (gpt5*) Responses API, opencode picks `reasoningEffort` at a
+        # different layer (variants() switch case `@ai-sdk/openai`); we don't
+        # touch that path here.
+        #
         # python3 instead of jq — guaranteed present in the base images.
         # Heredoc avoids shell-quoting hell around the embedded JSON literal.
-        script = (
-            "import json, pathlib, os\n"
-            "p = pathlib.Path.home()/'.config/opencode/opencode.json'\n"
-            "cfg = json.loads(p.read_text()) if p.exists() else {}\n"
-            "prov = cfg.setdefault('provider', {})\n"
-        )
-        if self._using_proxied_provider:
-            # Route opencode's anthropic provider (@ai-sdk/anthropic) to the
-            # in-sandbox proxy on localhost:4210. The masked model name puts
-            # us on the 'anthropic' provider, whose default baseURL is
-            # api.anthropic.com/v1 — and unlike LiteLLM there is no env-var
-            # override; baseURL must come from opencode.json provider
-            # options. Without this, every call 401s at real Anthropic with
-            # the placeholder key (mm27 smoke, 2026-06-03). The SDK appends
-            # "/messages" to baseURL, so "/v1" stays in the value. Config
-            # persists in the sandbox, so --session resume turns inherit it.
-            script += (
-                "prov.setdefault('anthropic', {}).setdefault('options', {})"
-                "['baseURL'] = 'http://localhost:4210/v1'\n"
-            )
-        script += (
-            "or_efforts = " + json.dumps(list(_OR_EFFORTS)) + "\n"
-            # Only the `openrouter` provider entry needs the explicit variants
-            # write; for other providers (openai/deepseek/anthropic) opencode's
-            # auto-generator emits the right per-provider shape from the
-            # models.dev catalog hit (reasoningEffort for openai-compatible,
-            # thinking{type:adaptive}+effort for @ai-sdk/anthropic, etc.).
-            # Overwriting those with {reasoning:{effort}} would break gpt55,
-            # ds, and the proxied anthropic path. The reasoning=true flag on
-            # the model entry is safe across providers — it only ever upgrades
-            # capability detection.
-            "for name in list(prov):\n"
-            "    models = prov[name].setdefault('models', {})\n"
-            "    for mid in list(models):\n"
-            "        entry = models[mid] if isinstance(models[mid], dict) else {}\n"
-            "        entry['reasoning'] = True\n"
-            "        if name == 'openrouter':\n"
-            "            variants = entry.setdefault('variants', {})\n"
-            "            for eff in or_efforts:\n"
-            "                variants.setdefault(eff, {'reasoning': {'effort': eff}})\n"
-            "        models[mid] = entry\n"
-            "perm = cfg.get('permission')\n"
-            "if perm != 'allow':\n"
-            "    if not isinstance(perm, dict):\n"
-            "        perm = {'*': perm} if isinstance(perm, str) else {}\n"
-            "    ext = perm.get('external_directory')\n"
-            "    if ext != 'allow':\n"
-            "        if not isinstance(ext, dict):\n"
-            "            ext = {'*': ext} if isinstance(ext, str) else {}\n"
-            "        for pattern in [\n"
-            "            '/workspace/**', '/tmp/**', '/var/tmp/**',\n"
-            "            '/opt/**', '/root/**', '/home/**',\n"
-            "            '/proc/**', '/usr/**', '/logs/**',\n"
-            "        ]:\n"
-            "            ext.setdefault(pattern, 'allow')\n"
-            "        perm['external_directory'] = ext\n"
-            "    cfg['permission'] = perm\n"
-            # PR #221: per-task disallowed_tools — disable webfetch/websearch
-            # at the opencode.json `permission.tools` registry. opencode's
-            # core picks this up at session start (run.ts → permission resolver)
-            # and refuses the tool with "tool unavailable" without ever calling
-            # the model with it. Confirmed-working with v1.15.13.
-            f"_disallow = {json.dumps([t.strip().lower() for t in (self._disallowed_tools or '').split(',') if t.strip()])}\n"
-            "if _disallow:\n"
-            "    _perm = cfg.setdefault('permission', {})\n"
-            "    if not isinstance(_perm, dict): _perm = {}\n"
-            "    _tools = _perm.setdefault('tools', {})\n"
-            "    if not isinstance(_tools, dict): _tools = {}\n"
-            "    for _t in _disallow:\n"
-            "        _tools[_t] = 'deny'\n"
-            "    _perm['tools'] = _tools\n"
-            "    cfg['permission'] = _perm\n"
-            "p.parent.mkdir(parents=True, exist_ok=True)\n"
-            "p.write_text(json.dumps(cfg, indent=2))\n"
+        bedrock_region = None
+        if self._is_bedrock_agent():
+            from llm_config import aws_region
+            bedrock_region = aws_region()
+        script = build_opencode_config_patch_script(
+            using_proxied_provider=self._using_proxied_provider,
+            disallowed_tools=self._disallowed_tools,
+            bedrock_region=bedrock_region,
         )
         # Subshell wrap is load-bearing: the caller chains this with
         # `... && opencode run ...`. A bare heredoc can't be chained — bash
@@ -555,6 +609,26 @@ class UserEnabledOpenCode(BaseAgent):
         # a line. Wrapping in `(...)` puts `)` on its own line to close the
         # heredoc and lets `) && opencode` sit on one valid line.
         return f"(python3 - <<'PYEOF'\n{script}PYEOF\n)"
+
+    # ── Bedrock credential refresh ────────────────────────────────────
+
+    def _is_bedrock_agent(self) -> bool:
+        return (self._inner.model_name or "").startswith(f"{_BEDROCK_PROVIDER}/")
+
+    def _refresh_agent_env(self, env: dict[str, str] | None) -> dict[str, str]:
+        """Overlay current AWS credentials onto an exec env for Bedrock agents.
+
+        Harbor copies AWS_* from the host env once, when it builds the turn-0
+        command, and we reuse that env for every resume turn. STS credentials
+        expire, and a trial can outlive a lease, so each exec re-reads the
+        (possibly refreshed) values. No-op for every other provider.
+        """
+        env = dict(env or {})
+        if not self._is_bedrock_agent():
+            return env
+        import bedrock_creds
+        env.update(bedrock_creds.aws_env_overlay())
+        return env
 
     # ── resume command builder ────────────────────────────────────────
 
@@ -567,8 +641,9 @@ class UserEnabledOpenCode(BaseAgent):
         escaped_message = shlex.quote(user_message)
         # Reuse the env (provider keys + OPENCODE_FAKE_VCS) the inner sets up
         # on turn 0. Harbor's create_run_agent_commands stores it on the
-        # final ExecInput; we already cached that during turn-0 exec.
-        env = getattr(self, "_inner_run_env", {}) or {}
+        # final ExecInput; we already cached that during turn-0 exec. Bedrock
+        # credentials are re-read each turn (see _refresh_agent_env).
+        env = self._refresh_agent_env(getattr(self, "_inner_run_env", {}) or {})
 
         # `--thinking` flag matches the turn-0 injection (see
         # _inject_opencode_flags): force reasoning events into the JSON
@@ -881,6 +956,8 @@ class UserEnabledOpenCode(BaseAgent):
         # Turn 0: initial run via inner agent's commands.
         commands = self._inner.create_run_agent_commands(instruction)
         commands = self._inject_opencode_flags(commands)
+        for c in commands:
+            c.env = self._refresh_agent_env(c.env)
         # Remember the env from the last command (the actual `opencode run`)
         # so resume invocations get the same provider keys + OPENCODE_FAKE_VCS.
         if commands:

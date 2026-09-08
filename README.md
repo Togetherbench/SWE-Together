@@ -109,9 +109,11 @@ Most runs need only a subset; `.env.example` documents them all.
 | key | used for |
 |---|---|
 | `SWT_SANDBOX` | `e2b` / `docker` / `enroot` — where trials and the judge run |
+| `SWT_LLM_BACKEND`, `SWT_<SEAT>_BACKEND` | `native` / `openrouter` / `bedrock` per LLM seat (agent, user_sim, judge, tagger) — see [docs/llm_backends.md](docs/llm_backends.md) |
 | `OPENROUTER_API_KEY` | the agent model (or the provider key matching your model) |
 | `GEMINI_API_KEY` | user simulator + message tagging with the default `gemini/…` models |
 | `ANTHROPIC_API_KEY` | the Step-1 agentic judge |
+| `SWT_AWS_CREDENTIAL_CMD`, `SWT_AWS_REGION` | AWS credentials for the `bedrock` backend when the host has none |
 | `E2B_API_KEY` | the sandbox (run **and** judge) when `SWT_SANDBOX=e2b` or `docker` |
 | `SLURM_QOS`, `SLURM_ACCOUNT`, … | your cluster's submission settings when `SWT_SANDBOX=enroot` (kept in `.env`, never committed) |
 
@@ -119,6 +121,11 @@ Most runs need only a subset; `.env.example` documents them all.
 `anthropic/claude-opus-4.6` on OpenRouter) and pass `--user-model openrouter/google/gemini-3.1-pro-preview`
 to the run stage and `--tag-model openrouter/google/gemini-3.1-pro-preview` to the judge stage; then only
 `OPENROUTER_API_KEY` is needed. With `SWT_SANDBOX=enroot` no sandbox account is needed either.
+
+**Mixing backends.** Each of the four LLM seats can be served by a different backend — e.g. the agent
+under test on AWS Bedrock (`--model gpt-5.6-sol --agent-backend bedrock`) with the user simulator, judge
+and tagger unchanged on OpenRouter. Models can be given by short registry name and are translated to the
+id each backend expects. Details, credentials and caveats: [docs/llm_backends.md](docs/llm_backends.md).
 
 
 ---

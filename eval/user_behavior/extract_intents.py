@@ -118,7 +118,8 @@ async def extract_one(
     )
 
     sys_prompt = SYSTEM_PROMPT_PATH.read_text()
-    llm = LiteLLM(model_name=model, temperature=0.0)
+    from eval.user_behavior.coverage_one import _prepare_model
+    llm = LiteLLM(model_name=_prepare_model(model), temperature=0.0)
 
     t0 = time.monotonic()
     resp = await llm.call(

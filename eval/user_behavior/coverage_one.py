@@ -110,12 +110,26 @@ class _OAuthLiteLLMShim:
 def _make_llm(model: str, temperature: float):
     """Pick LiteLLM (api-key) or OAuth shim based on env. OAuth wins only when
     ANTHROPIC_API_KEY is empty/unset (LiteLLM would prefer api-key otherwise).
+
+    `bedrock/<id>` models are spelled `bedrock/converse/<id>` for LiteLLM and
+    need fresh AWS credentials in the process env (see src/bedrock_creds.py).
     """
+    model = _prepare_model(model)
     oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if model.startswith("anthropic/") and oauth and not api_key:
         return _OAuthLiteLLMShim(model_name=model, temperature=temperature, oauth_token=oauth)
     return LiteLLM(model_name=model, temperature=temperature)
+
+
+def _prepare_model(model: str) -> str:
+    if str(REPO_ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+    import llm_config
+    if llm_config.is_bedrock(model):
+        import bedrock_creds
+        bedrock_creds.ensure_fresh()
+    return llm_config.to_litellm_model(model)
 
 # Score formula (coverage outweighs precision)
 W_COVERAGE = 0.70

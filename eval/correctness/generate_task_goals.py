@@ -309,10 +309,12 @@ async def amain():
 
     api_key = os.environ.get("ANTHROPIC_API_KEY") or None
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if not (api_key or oauth_token):
-        sys.exit("ERROR: need ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN")
-    auth_kind = "ANTHROPIC_API_KEY (pay-per-token)" if api_key else "CLAUDE_CODE_OAUTH_TOKEN (subscription)"
-    log.info("judge auth: %s", auth_kind)
+    import llm_config
+    judge = llm_config.judge_model()
+    problem = llm_config.check_judge_auth(judge)
+    if problem:
+        sys.exit(f"ERROR: {problem}")
+    log.info("judge model: %s [%s]", judge.model, judge.backend)
     log.info("phase-1 over %d task(s), workers=%d", len(task_dirs), args.workers)
 
     sem = asyncio.Semaphore(args.workers)

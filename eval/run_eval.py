@@ -543,7 +543,14 @@ def main() -> int:
     ap.add_argument("--force-tag-messages", action="store_true")
     ap.add_argument("--tag-workers", type=int, default=50)
     ap.add_argument("--tag-model", default="gemini/gemini-3.1-pro-preview",
-                    help="LLM model for message tagging (pinned for reproducibility)")
+                    help="LLM model for message tagging (pinned for reproducibility); a registry "
+                         "name (gemini-3.1-pro) is resolved on --tagger-backend")
+    ap.add_argument("--tagger-backend", default=None,
+                    help="bedrock | openrouter | native — backend for registry-named tagging / "
+                         "intent-coverage models (default: $SWT_TAGGER_BACKEND > $SWT_LLM_BACKEND > native)")
+    ap.add_argument("--judge-backend", default=None,
+                    help="bedrock | openrouter | native | codex — where `claude --print` gets its model "
+                         "(default: $SWT_JUDGE_BACKEND > $SWT_LLM_BACKEND > JUDGE_VIA_OR/JUDGE_VIA_CODEX > native)")
     ap.add_argument("--only-aggregate", action="store_true",
                     help="Skip all three steps and just aggregate existing verdicts")
     ap.add_argument("--force-correctness", action="store_true")
@@ -563,6 +570,26 @@ def main() -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+    # Per-seat backends (docs/llm_backends.md). The three steps run as
+    # subprocesses that re-read their models from argv and their backends from
+    # the environment, so resolve here and export.
+    import llm_config
+    from sandbox_config import load_dotenv as _load_dotenv
+    _load_dotenv(REPO_ROOT / ".env")
+    if args.judge_backend:
+        os.environ["SWT_JUDGE_BACKEND"] = args.judge_backend
+    tagger_backend = llm_config.seat_backend("tagger", args.tagger_backend)
+    tag_seat = llm_config.resolve_seat_model("tagger", args.tag_model, tagger_backend)
+    args.tag_model = llm_config.to_litellm_model(tag_seat.model)
+    if args.intent_coverage_model:
+        cov_seat = llm_config.resolve_seat_model("tagger", args.intent_coverage_model, tagger_backend)
+        args.intent_coverage_model = llm_config.to_litellm_model(cov_seat.model)
+    judge = llm_config.judge_model()
+    logger.info("seats: judge=%s [%s]  tagger=%s [%s]", judge.model, judge.backend, tag_seat.model, tag_seat.backend)
+    if tag_seat.backend == "bedrock" or judge.backend == "bedrock":
+        import bedrock_creds
+        bedrock_creds.ensure_fresh(strict=True)
 
     out = args.output_dir.resolve()
     out.mkdir(parents=True, exist_ok=True)

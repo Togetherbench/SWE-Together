@@ -111,9 +111,20 @@ def resolve_model(model_arg: str) -> tuple[str, str, str]:
       - "gemini-2.5-flash"             → inferred from available keys
       - "anthropic/claude-opus-4-6"
       - "openrouter/google/gemini-..."
+      - "bedrock/global.openai.gpt-5.6-sol"  → AWS credentials, no API key
     """
     # Split off provider prefix
     parts = model_arg.split("/", 1)
+    if len(parts) == 2 and parts[0] == "bedrock":
+        # Bedrock authenticates with AWS credentials, not an API key. Mint or
+        # refresh them now so a misconfiguration fails here, like a missing key.
+        import bedrock_creds
+        try:
+            bedrock_creds.ensure_fresh(strict=True)
+        except bedrock_creds.CredentialError as exc:
+            log.error("Model %s: %s", model_arg, exc)
+            sys.exit(1)
+        return model_arg, "", ""
     if len(parts) == 2 and parts[0] in _PROVIDER_MAP:
         provider, _ = parts[0], parts[1]
         env_var, agent_env_var = _PROVIDER_MAP[provider]

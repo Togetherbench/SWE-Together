@@ -55,12 +55,24 @@ from sandbox_config import enroot_base, load_dotenv  # noqa: E402
 
 load_dotenv()
 
+import bedrock_creds  # noqa: E402
+import llm_config  # noqa: E402
+
 DEFAULT_CONDA_ENV = os.environ.get("SWT_CONDA_ENV", "swetogether")
 DEFAULT_MODEL = "openrouter/meta/muse-spark-1.3"
 DEFAULT_USER_MODEL = "openrouter/google/gemini-3.1-pro-preview"
 DEFAULT_TAG_MODEL = "openrouter/google/gemini-3.1-pro-preview"
 LOG_ROOT = REPO_ROOT / "slurm_logs"
 ENROOT_BASE = str(enroot_base())
+
+#: Non-secret per-seat backend switches forwarded into the job script when set
+#: on the launcher's command line. Credentials are never written to the script.
+BACKEND_FLAG_VARS = {
+    "agent_backend": "SWT_AGENT_BACKEND",
+    "user_sim_backend": "SWT_USER_SIM_BACKEND",
+    "judge_backend": "SWT_JUDGE_BACKEND",
+    "tagger_backend": "SWT_TAGGER_BACKEND",
+}
 
 ENROOT_BLOCK = f"""
 # ── enroot: everything on tmpfs, isolated per job, removed on exit ──────────
@@ -173,7 +185,12 @@ def _submit(script: Path, submit: bool) -> int:
         print("DRY RUN — re-run with --submit to launch:")
         print(f"  $ sbatch {script}")
         return 0
-    res = subprocess.run(["sbatch", str(script)], capture_output=True, text=True)
+    # sbatch exports the submitting environment into the job (--export=ALL).
+    # Short-lived AWS credentials must not ride along: the job would inherit a
+    # lease that expires mid-run. It mints its own from SWT_AWS_CREDENTIAL_CMD.
+    res = subprocess.run(
+        ["sbatch", str(script)], capture_output=True, text=True, env=bedrock_creds.scrubbed_env(),
+    )
     sys.stdout.write(res.stdout)
     sys.stderr.write(res.stderr)
     if res.returncode == 0:
@@ -222,15 +239,51 @@ def cmd_prepull(args: argparse.Namespace) -> int:
     return _submit(script, args.submit)
 
 
-# ── run (Stage 1) ─────────────────────────────────────────────────────────
+def _backend_exports(args: argparse.Namespace) -> str:
+    """`export SWT_<SEAT>_BACKEND=...` lines for backends chosen on the launcher CLI."""
+    lines = []
+    for attr, var in BACKEND_FLAG_VARS.items():
+        value = getattr(args, attr, None)
+        if value:
+            lines.append(f"export {var}={shlex.quote(value)}")
+    return "".join(line + "\n" for line in lines)
+
+
+def _bedrock_preflight(models: list[str]) -> None:
+    """Fail fast on the login node when a seat runs on Bedrock but credentials cannot be minted.
+
+    The job re-mints on start; this only catches misconfiguration before an
+    8-hour job is queued. Also warns when an agent id is not in opencode's
+    catalog (reasoning variants would silently be dropped).
+    """
+    if not any(llm_config.is_bedrock(m) for m in models):
+        return
+    try:
+        bedrock_creds.ensure_fresh(strict=True)
+    except bedrock_creds.CredentialError as exc:
+        raise SystemExit(f"bedrock preflight: {exc}") from exc
+    print(f"bedrock preflight: credentials OK (command: {bedrock_creds.describe_command()}), "
+          f"region {llm_config.aws_region()}")
+    for m in models:
+        llm_config.warn_if_uncatalogued(m)
+
+
+# ── run (Stage 1) ───────────────────────────────────────────────────────────────────
 
 def cmd_run(args: argparse.Namespace) -> int:
     py = _python_for_conda_env(args.conda_env)
     trials_dir = (REPO_ROOT / (args.trials_dir or f"trials/{args.tag}")).resolve()
+    # Resolve registry names here too, so the preflight sees the real ids and
+    # the sbatch script records exactly what will run.
+    agent = llm_config.resolve_seat_model(
+        "agent", args.model, llm_config.seat_backend("agent", args.agent_backend))
+    user = llm_config.resolve_seat_model(
+        "user_sim", args.user_model, llm_config.seat_backend("user_sim", args.user_sim_backend))
+    print(f"agent: {agent.model} [{agent.backend}]   user_sim: {user.model} [{user.backend}]")
     cmd = [
         '"$PYTHON_BIN"', "src/run_eval.py",
-        "--model", shlex.quote(args.model),
-        "--user-model", shlex.quote(args.user_model),
+        "--model", shlex.quote(agent.model),
+        "--user-model", shlex.quote(user.model),
         "--tag", shlex.quote(args.tag),
         "--agent-type", shlex.quote(args.agent_type),
         "--env-type", "enroot",
@@ -243,13 +296,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         cmd += ["--agent-timeout", str(args.agent_timeout)]
     if args.reasoning_effort:
         cmd += ["--reasoning-effort", args.reasoning_effort]
+    if args.opencode_version:
+        cmd += ["--opencode-version", shlex.quote(args.opencode_version)]
     if args.tasks:
         cmd += ["--tasks", shlex.quote(args.tasks)]
     if args.store:
         cmd += ["--image-store", shlex.quote(args.store)]
     if args.extra:
         cmd += [args.extra]
-    body = " ".join(cmd) + "\n"
+    body = _backend_exports(args) + " ".join(cmd) + "\n"
 
     array = f"0-{args.shards - 1}%{args.concurrent or args.shards}"
     script, log_dir = _write_script("run", args.tag, "")
@@ -258,6 +313,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     ) + _preamble(py, args.conda_env) + body
     script.write_text(content)
     print(f"trials → {trials_dir}")
+    if args.submit:
+        _bedrock_preflight([agent.model, user.model])
     return _submit(script, args.submit)
 
 
@@ -279,7 +336,7 @@ def cmd_judge(args: argparse.Namespace) -> int:
     ]
     if args.extra:
         cmd += [args.extra]
-    body = ""
+    body = _backend_exports(args)
     if args.store:
         body += f"export SWT_IMAGE_STORE={shlex.quote(args.store)}\n"
     body += " ".join(cmd) + "\n"
@@ -289,6 +346,12 @@ def cmd_judge(args: argparse.Namespace) -> int:
         job_name=f"swt-judge-{args.model_tag}", log_dir=log_dir, array=None, **_sbatch_kwargs(args),
     ) + _preamble(py, args.conda_env) + body
     script.write_text(content)
+    if args.submit:
+        judge = llm_config.judge_model(args.judge_backend)
+        tagger = llm_config.resolve_seat_model(
+            "tagger", args.tag_model, llm_config.seat_backend("tagger", args.tagger_backend))
+        print(f"judge: {judge.model} [{judge.backend}]   tagger: {tagger.model} [{tagger.backend}]")
+        _bedrock_preflight([judge.model, tagger.model])
     return _submit(script, args.submit)
 
 
@@ -330,12 +393,19 @@ def main() -> int:
 
     p = sub.add_parser("run", help="Stage 1 trials (sharded sbatch array)")
     p.add_argument("--tag", required=True)
-    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--model", default=DEFAULT_MODEL,
+                   help="registry name (gpt-5.6-sol) or provider/model string")
+    p.add_argument("--agent-backend", default=None, choices=list(llm_config.BACKENDS),
+                   help="backend for a registry-named --model (default: $SWT_AGENT_BACKEND > "
+                        "$SWT_LLM_BACKEND > native)")
     p.add_argument("--user-model", default=DEFAULT_USER_MODEL)
+    p.add_argument("--user-sim-backend", default=None, choices=list(llm_config.BACKENDS))
     p.add_argument("--agent-type", default="opencode",
                    choices=["claude-code", "codex", "mini-swe-agent", "opencode"])
     p.add_argument("--agent-timeout", type=int, default=4800)
     p.add_argument("--reasoning-effort", default="high", choices=["low", "medium", "high"])
+    p.add_argument("--opencode-version", default=None,
+                   help="opencode-ai release for the sandbox (default: the wrapper's canonical pin)")
     p.add_argument("--tasks", default=None, help="comma-separated subset (default: all)")
     p.add_argument("--trials-dir", default=None, help="default: trials/<tag>")
     p.add_argument("--store", default=None)
@@ -354,7 +424,11 @@ def main() -> int:
     p.add_argument("--correctness-workers", type=int, default=16)
     p.add_argument("--intent-coverage-workers", type=int, default=5)
     p.add_argument("--tag-model", default=DEFAULT_TAG_MODEL,
-                   help="LLM for message tagging + intent coverage (LiteLLM string)")
+                   help="LLM for message tagging + intent coverage (registry name or LiteLLM string)")
+    p.add_argument("--tagger-backend", default=None, choices=list(llm_config.BACKENDS))
+    p.add_argument("--judge-backend", default=None, choices=list(llm_config.JUDGE_BACKENDS),
+                   help="where `claude --print` gets its model (default: $SWT_JUDGE_BACKEND > "
+                        "$SWT_LLM_BACKEND > JUDGE_VIA_OR/JUDGE_VIA_CODEX > native)")
     p.add_argument("--store", default=None)
     p.add_argument("--extra", default="")
     _common_sbatch_args(p, cpus=64, mem="256G", time_limit="08:00:00")
