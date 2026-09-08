@@ -152,8 +152,42 @@ in the run manifest. Cohorts without the field keep the canonical pin.
   read on top, but Bedrock's `inputTokens` for GPT models already *excludes*
   cached tokens (Anthropic-style accounting, verified live). Reported cost is
   therefore inflated on cache-heavy agentic trials — roughly 6× on the pilot
-  ($9.57 reported vs ≈$1.47 at list price). Use the token counts with the
-  models.dev `amazon-bedrock` prices for a bill estimate, or AWS billing.
+  ($9.57 reported vs ≈$1.47 at list price) and ~8× on the full GPT-5.6 Sol
+  cohort ($7.7k reported vs ≈$0.93k; 97.7% cache-hit rate). Use the token
+  counts with the models.dev `amazon-bedrock` prices for a bill estimate, or
+  AWS billing.
+
+## Operational notes from the first Bedrock cohort (GPT-5.6 Sol, 2×109)
+
+- **Throttling is an HTTP 400, and opencode will not retry it.** Bedrock
+  signals token-rate throttling for GPT-5.6 as `400 {"message":"Too many
+  tokens, please wait before trying again."}`, not 429. opencode 1.18.x maps
+  that body to `ContextOverflowError`, which its retry logic explicitly skips,
+  so a throttled step is lost. The wrapper compensates: a turn that ended with
+  only throttle errors is re-issued, a turn interrupted mid-way is resumed with
+  a synthetic continue, both with backoff (`_THROTTLE_BACKOFF_SEC`); retries are
+  counted in `agent/throttle_retries.txt`. Onset is load-dependent: 18
+  concurrent trials (`--shards 12 --concurrent 3`) ran two full replicates with
+  zero throttling, 24 throttled after a few minutes, 48+ heavily. Chain
+  replicates with a Slurm dependency instead of running them side by side.
+- **Images inside tool results are rejected for OpenAI models.** Bedrock
+  accepts an image as a plain user-message part but returns `400 This model
+  doesn't support the image field for user messages` when the same image sits
+  inside a `toolResult` block. opencode's `read` tool attaches image files as
+  base64 and its Bedrock adapter keeps tool-result images inside the tool
+  result, so once the agent reads a `.png`/`.jpg` every later call in that
+  session fails (the offending message stays in history). 3 of 218 trials were
+  affected, one fatally (`infra_failed`). There is no opencode setting for this;
+  the available mitigation is a `permission.read` deny on image globs for
+  Bedrock + OpenAI seats, which is a protocol deviation and was not applied.
+- **The judge runs without prompt caching.** Opus 4.6 on Bedrock reported zero
+  cache reads for every `cache_control` form and inference profile we tried
+  (Sonnet 4.6 caches normally), so each Claude Code turn re-reads the whole
+  context. Verdicts took ~1.6× longer than via OpenRouter with a heavy tail, and
+  5 of 214 first-pass verdicts hit the 50-turn cap or the 1200 s timeout (0 of
+  218 via OpenRouter). To re-judge failures, move each failed
+  `judge_verdict.json` aside and re-run the judge launcher: existing verdicts
+  are skipped, so only the missing ones are judged and the report is rebuilt.
 
 ## Verdict provenance
 
