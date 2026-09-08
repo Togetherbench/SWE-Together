@@ -30,6 +30,7 @@ if `opencode.txt` is later truncated for any reason.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -57,6 +58,64 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4
 _OPENCODE_LOG = "/logs/agent/opencode.txt"
+
+# Provider backpressure. Bedrock answers a tokens-per-minute overrun with HTTP
+# 400 "Too many tokens, please wait before trying again."; opencode 1.18.x
+# maps that text to ContextOverflowError (400 + "tokens"), does not retry it,
+# and ends the step with no output. Left alone, every such turn becomes a
+# silent no-op and the trial measures the account's quota instead of the
+# model. The wrapper therefore re-runs a turn whose only outcome was throttling,
+# with exponential backoff, inside the normal trial budget.
+_THROTTLE_MARKERS = (
+    "too many tokens, please wait",
+    "throttlingexception",
+    "too many requests",
+    "rate limit",
+    "rate_limit",
+    "serviceunavailableexception",
+    "service unavailable",
+    "overloaded",
+)
+_THROTTLE_MAX_RETRIES = 8
+_THROTTLE_BACKOFF_SEC = (15, 30, 60, 90, 120, 180, 240, 300)
+
+
+def classify_turn_events(stdout: str) -> dict[str, int]:
+    """Count the event kinds in one `opencode run --format=json` stdout capture.
+
+    Returns ``{"steps", "errors", "throttle_errors", "tool_calls"}``. A turn is
+    *throttled* when it produced throttle errors and no completed step.
+    """
+    counts = {"steps": 0, "errors": 0, "throttle_errors": 0, "tool_calls": 0}
+    for line in (stdout or "").split("\n"):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        etype = event.get("type")
+        if etype == "step_finish":
+            counts["steps"] += 1
+        elif etype == "tool_use":
+            counts["tool_calls"] += 1
+        elif etype == "error":
+            counts["errors"] += 1
+            err = event.get("error") or {}
+            data = err.get("data") or {}
+            text = " ".join(
+                str(x) for x in (err.get("name"), data.get("message"), data.get("responseBody"))
+                if x
+            ).lower()
+            if any(m in text for m in _THROTTLE_MARKERS):
+                counts["throttle_errors"] += 1
+    return counts
+
+
+def turn_was_throttled(stdout: str) -> bool:
+    c = classify_turn_events(stdout)
+    return c["throttle_errors"] > 0 and c["steps"] == 0
 
 # Reasoning efforts written as explicit opencode.json `variants` per provider.
 # OpenRouter forwards `reasoning.effort` to the underlying vendor. Bedrock's
@@ -289,6 +348,7 @@ class UserEnabledOpenCode(BaseAgent):
         # doesn't yet accept a reasoning kwarg.
         self._reasoning_effort = reasoning_effort
         self._disallowed_tools = disallowed_tools
+        self._throttle_retries = 0
 
         self._sim_user = UserAgent(
             llm=LiteLLM(
@@ -610,6 +670,50 @@ class UserEnabledOpenCode(BaseAgent):
         # heredoc and lets `) && opencode` sit on one valid line.
         return f"(python3 - <<'PYEOF'\n{script}PYEOF\n)"
 
+    # ── provider backpressure ─────────────────────────────────────────
+
+    async def _exec_turn_with_throttle_retry(
+        self, environment: BaseEnvironment, exec_input: ExecInput, *, turn: int,
+    ):
+        """Run one agent turn, re-running it while the provider only throttled.
+
+        A throttled attempt leaves opencode's session store unchanged (no step
+        completed), so re-issuing the identical command is safe: for turn 0 it
+        starts the run afresh, for a resume turn it re-sends the same user
+        message. Backoff sleeps count against the trial budget like any other
+        wall-clock; the retry loop stops early when the budget is nearly gone.
+        Returns ``(result, timed_out, attempts)``.
+        """
+        attempts = 0
+        while True:
+            attempts += 1
+            result, timed_out = await exec_with_budget(
+                environment, exec_input, start_time=self._start_time,
+            )
+            if timed_out or not turn_was_throttled(result.stdout or ""):
+                return result, timed_out, attempts
+            if attempts > _THROTTLE_MAX_RETRIES:
+                log.warning("turn %d: provider still throttling after %d attempts — giving up on this turn",
+                            turn, attempts)
+                return result, timed_out, attempts
+            delay = _THROTTLE_BACKOFF_SEC[min(attempts - 1, len(_THROTTLE_BACKOFF_SEC) - 1)]
+            remaining = TRIAL_BUDGET_SEC - (time.monotonic() - self._start_time)
+            if remaining < delay + 120:
+                log.warning("turn %d: throttled but only %.0fs of trial budget left — not retrying", turn, remaining)
+                return result, timed_out, attempts
+            counts = classify_turn_events(result.stdout or "")
+            log.warning(
+                "turn %d: provider throttled (%d throttle events, 0 steps) — retry %d/%d in %ds",
+                turn, counts["throttle_errors"], attempts, _THROTTLE_MAX_RETRIES, delay,
+            )
+            self._throttle_retries += 1
+            # A throttled attempt's error events are noise; keep the archive of
+            # the attempt for forensics but don't let it pollute the trajectory
+            # the user-sim sees.
+            self._archive_turn_stdout(f"{turn}-throttled-{attempts}", result.stdout or "")
+            await asyncio.sleep(delay)
+            exec_input.env = self._refresh_agent_env(exec_input.env)
+
     # ── Bedrock credential refresh ────────────────────────────────────
 
     def _is_bedrock_agent(self) -> bool:
@@ -799,7 +903,7 @@ class UserEnabledOpenCode(BaseAgent):
                     break
         return trajectory, observation
 
-    def _archive_turn_stdout(self, turn: int, stdout: str) -> None:
+    def _archive_turn_stdout(self, turn: int | str, stdout: str) -> None:
         """Persist the per-turn opencode event stream so prior turns' steps
         survive even if /logs/agent/opencode.txt is later truncated.
         Mirrors the trajectory-archive guarantee in
@@ -966,9 +1070,15 @@ class UserEnabledOpenCode(BaseAgent):
         turn0_timed_out = False
         try:
             for i, exec_input in enumerate(commands):
-                result, timed_out = await exec_with_budget(
-                    environment, exec_input, start_time=self._start_time,
-                )
+                is_run = "opencode --model=" in exec_input.command
+                if is_run:
+                    result, timed_out, _ = await self._exec_turn_with_throttle_retry(
+                        environment, exec_input, turn=0,
+                    )
+                else:
+                    result, timed_out = await exec_with_budget(
+                        environment, exec_input, start_time=self._start_time,
+                    )
                 if result.stdout:
                     self._cumulative_output.append(result.stdout)
 
@@ -1070,8 +1180,8 @@ class UserEnabledOpenCode(BaseAgent):
 
             turn_timed_out = False
             try:
-                result, timed_out = await exec_with_budget(
-                    environment, resume_cmd, start_time=self._start_time,
+                result, timed_out, _ = await self._exec_turn_with_throttle_retry(
+                    environment, resume_cmd, turn=turn,
                 )
                 if result.stdout:
                     self._cumulative_output.append(result.stdout)
@@ -1109,6 +1219,13 @@ class UserEnabledOpenCode(BaseAgent):
 
         # Pull OAuth proxy log back from sandbox for offline debug
         await self._flush_proxy_log()
+        if self._throttle_retries:
+            log.warning("trial re-ran %d throttled turn(s); see opencode.txt.turn-*-throttled-* for the discarded attempts",
+                        self._throttle_retries)
+            try:
+                (self.logs_dir / "throttle_retries.txt").write_text(f"{self._throttle_retries}\n")
+            except Exception as e:
+                log.debug("throttle_retries.txt write failed: %s", e)
 
         # Post-run: populate trajectory via inner agent (parses opencode.txt
         # into ATIF; this is why we used `tee -a` rather than per-turn-only
