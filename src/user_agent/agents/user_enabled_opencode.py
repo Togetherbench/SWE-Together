@@ -83,10 +83,14 @@ _THROTTLE_BACKOFF_SEC = (15, 30, 60, 90, 120, 180, 240, 300)
 def classify_turn_events(stdout: str) -> dict[str, int]:
     """Count the event kinds in one `opencode run --format=json` stdout capture.
 
-    Returns ``{"steps", "errors", "throttle_errors", "tool_calls"}``. A turn is
-    *throttled* when it produced throttle errors and no completed step.
+    Returns ``{"steps", "errors", "throttle_errors", "tool_calls",
+    "ended_on_throttle"}``. A turn is *throttled* when it produced throttle
+    errors and no completed step; it *ended on a throttle* when the last
+    step/error event was a throttle, i.e. opencode gave up mid-turn after some
+    progress (the common shape under load: ``S S S T T``).
     """
-    counts = {"steps": 0, "errors": 0, "throttle_errors": 0, "tool_calls": 0}
+    counts = {"steps": 0, "errors": 0, "throttle_errors": 0, "tool_calls": 0, "ended_on_throttle": 0}
+    last = None
     for line in (stdout or "").split("\n"):
         line = line.strip()
         if not line.startswith("{"):
@@ -98,6 +102,7 @@ def classify_turn_events(stdout: str) -> dict[str, int]:
         etype = event.get("type")
         if etype == "step_finish":
             counts["steps"] += 1
+            last = "step"
         elif etype == "tool_use":
             counts["tool_calls"] += 1
         elif etype == "error":
@@ -110,12 +115,28 @@ def classify_turn_events(stdout: str) -> dict[str, int]:
             ).lower()
             if any(m in text for m in _THROTTLE_MARKERS):
                 counts["throttle_errors"] += 1
+                last = "throttle"
+            else:
+                last = "error"
+    counts["ended_on_throttle"] = int(last == "throttle")
     return counts
 
 
 def turn_was_throttled(stdout: str) -> bool:
     c = classify_turn_events(stdout)
     return c["throttle_errors"] > 0 and c["steps"] == 0
+
+
+def turn_ended_on_throttle(stdout: str) -> bool:
+    """Some progress, then the provider refused the next step and opencode stopped."""
+    c = classify_turn_events(stdout)
+    return c["steps"] > 0 and c["ended_on_throttle"] == 1
+
+
+_THROTTLE_CONTINUE_MESSAGE = (
+    "Your previous step was interrupted by a temporary provider rate limit. "
+    "Please continue exactly where you left off."
+)
 
 # Reasoning efforts written as explicit opencode.json `variants` per provider.
 # OpenRouter forwards `reasoning.effort` to the underlying vendor. Bedrock's
@@ -674,45 +695,86 @@ class UserEnabledOpenCode(BaseAgent):
 
     async def _exec_turn_with_throttle_retry(
         self, environment: BaseEnvironment, exec_input: ExecInput, *, turn: int,
+        session_id: str | None = None,
     ):
-        """Run one agent turn, re-running it while the provider only throttled.
+        """Run one agent turn, absorbing provider throttling.
 
-        A throttled attempt leaves opencode's session store unchanged (no step
-        completed), so re-issuing the identical command is safe: for turn 0 it
-        starts the run afresh, for a resume turn it re-sends the same user
-        message. Backoff sleeps count against the trial budget like any other
-        wall-clock; the retry loop stops early when the budget is nearly gone.
-        Returns ``(result, timed_out, attempts)``.
+        Two shapes of throttled turn are handled:
+
+        * **nothing completed** (``T T``): opencode's session store is
+          unchanged, so the identical command is re-issued after a backoff.
+        * **interrupted mid-turn** (``S S S T T``): the completed steps are
+          real; after a backoff the same session is resumed with a synthetic
+          "continue" so the agent finishes what the provider cut off. This
+          only applies when a ``session_id`` is known (turn 0 exposes it once
+          it has started; resume turns always have one).
+
+        Backoff sleeps count against the trial budget like any other
+        wall-clock; the loop stops early when the budget is nearly gone.
+        Returns ``(result, timed_out, attempts)``. ``result.stdout`` holds the
+        concatenated event stream of every attempt that made progress.
         """
         attempts = 0
+        kept_stdout: list[str] = []
+        cur = exec_input
         while True:
             attempts += 1
             result, timed_out = await exec_with_budget(
-                environment, exec_input, start_time=self._start_time,
+                environment, cur, start_time=self._start_time,
             )
-            if timed_out or not turn_was_throttled(result.stdout or ""):
-                return result, timed_out, attempts
+            out = result.stdout or ""
+            if timed_out:
+                kept_stdout.append(out)
+                break
+            if turn_was_throttled(out):
+                verdict = "no progress"
+                # Discard the attempt's output: only throttle errors in it.
+                self._archive_turn_stdout(f"{turn}-throttled-{attempts}", out)
+            elif turn_ended_on_throttle(out):
+                verdict = "interrupted"
+                kept_stdout.append(out)
+                if session_id is None:
+                    session_id = self._session_id_from(out)
+                if session_id is None:
+                    break  # cannot resume; keep what we have
+            else:
+                kept_stdout.append(out)
+                break
             if attempts > _THROTTLE_MAX_RETRIES:
                 log.warning("turn %d: provider still throttling after %d attempts — giving up on this turn",
                             turn, attempts)
-                return result, timed_out, attempts
+                break
             delay = _THROTTLE_BACKOFF_SEC[min(attempts - 1, len(_THROTTLE_BACKOFF_SEC) - 1)]
             remaining = TRIAL_BUDGET_SEC - (time.monotonic() - self._start_time)
             if remaining < delay + 120:
                 log.warning("turn %d: throttled but only %.0fs of trial budget left — not retrying", turn, remaining)
-                return result, timed_out, attempts
-            counts = classify_turn_events(result.stdout or "")
+                break
+            counts = classify_turn_events(out)
             log.warning(
-                "turn %d: provider throttled (%d throttle events, 0 steps) — retry %d/%d in %ds",
-                turn, counts["throttle_errors"], attempts, _THROTTLE_MAX_RETRIES, delay,
+                "turn %d: provider throttled (%s; %d throttle events, %d steps) — retry %d/%d in %ds",
+                turn, verdict, counts["throttle_errors"], counts["steps"], attempts, _THROTTLE_MAX_RETRIES, delay,
             )
             self._throttle_retries += 1
-            # A throttled attempt's error events are noise; keep the archive of
-            # the attempt for forensics but don't let it pollute the trajectory
-            # the user-sim sees.
-            self._archive_turn_stdout(f"{turn}-throttled-{attempts}", result.stdout or "")
             await asyncio.sleep(delay)
-            exec_input.env = self._refresh_agent_env(exec_input.env)
+            if verdict == "interrupted":
+                cur = self._build_resume_command(session_id, _THROTTLE_CONTINUE_MESSAGE)
+            cur.env = self._refresh_agent_env(cur.env)
+        result.stdout = "\n".join(s for s in kept_stdout if s)
+        return result, timed_out, attempts
+
+    @staticmethod
+    def _session_id_from(stdout: str) -> str | None:
+        for line in (stdout or "").split("\n"):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                sid = json.loads(line).get("sessionID")
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                continue
+            if isinstance(sid, str) and sid:
+                return sid
+        return None
 
     # ── Bedrock credential refresh ────────────────────────────────────
 
@@ -1181,7 +1243,7 @@ class UserEnabledOpenCode(BaseAgent):
             turn_timed_out = False
             try:
                 result, timed_out, _ = await self._exec_turn_with_throttle_retry(
-                    environment, resume_cmd, turn=turn,
+                    environment, resume_cmd, turn=turn, session_id=session_id,
                 )
                 if result.stdout:
                     self._cumulative_output.append(result.stdout)
