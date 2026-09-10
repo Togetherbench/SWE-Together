@@ -21,6 +21,24 @@
       "agent_timeout": 4800,
       "workers": 6
     },
+    "opencode_fable51": {
+      "model": "claude-fable-5.1",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_fable5": {
+      "model": "claude-fable-5",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
     "opencode_opus48": {
       "model": "openrouter/anthropic/claude-opus-4-8",
       "agent_type": "opencode",
