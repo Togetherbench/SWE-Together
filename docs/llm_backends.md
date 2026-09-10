@@ -124,6 +124,23 @@ to `provider_data_share` in the calling region (an account-admin action:
 No request field bypasses it. Once the account is opted in, the registry entries
 work unchanged.
 
+Notes from enabling it for the Fable cohorts:
+
+- The setting is per account **and per calling region**; `global.*` inference
+  profiles route across regions, but the check is made against the region of
+  the caller (`SWT_AWS_REGION`), so only that one region needs the opt-in.
+- It is a policy decision — Fable prompts and outputs are shared with the
+  provider for up to 30 days; other models on the account are unaffected — so
+  it belongs to the account owner, not to whoever holds the invocation role.
+- Older AWS CLIs (< ~2.35) lack `put-account-data-retention`; a SigV4-signed
+  `PUT https://bedrock.<region>.amazonaws.com/data-retention` with body
+  `{"mode":"provider_data_share"}` does the same (`awscurl` works too).
+  `GET` on the same path reads the current mode.
+- Propagation is not instant: for ~15 minutes after the flip a small fraction
+  of calls (2 of ~60 in the canary) still returned the old error. opencode does
+  not retry a 400, so run the 1-task smoke test until it completes with zero
+  such errors before launching a cohort.
+
 ## Reasoning effort on Bedrock
 
 The benchmark runs opencode with `--variant=<effort>`; the config patch the
@@ -144,10 +161,14 @@ in the run manifest. Cohorts without the field keep the canonical pin.
 
 ### Accounting caveats for GPT models on Bedrock
 
-- Bedrock returns GPT reasoning as encrypted `redactedContent`; opencode's
-  `step_finish.tokens.reasoning` is therefore `0` even when reasoning is on
-  (the `reasoning` events are present). Judge metrics are unaffected; the
-  per-trial `output_tokens` excludes reasoning for these trials.
+- Bedrock returns GPT reasoning as encrypted `redactedContent` and Claude
+  thinking as signed blocks; opencode's `step_finish.tokens.reasoning` is
+  therefore `0` for every Bedrock trial even when reasoning is on (the
+  `reasoning` events are present). Bedrock's `outputTokens` already includes
+  the hidden reasoning/thinking tokens (verified live: a one-character answer
+  bills 170–500 output tokens at effort high and ~5 at effort none), so the
+  per-trial `output_tokens` = output + reasoning stays comparable with
+  OpenRouter cohorts, where the two are reported separately.
 - opencode's `step_finish.cost` prices `tokens.input` in full and adds the cache
   read on top, but Bedrock's `inputTokens` for GPT models already *excludes*
   cached tokens (Anthropic-style accounting, verified live). Reported cost is
@@ -188,6 +209,29 @@ in the run manifest. Cohorts without the field keep the canonical pin.
   218 via OpenRouter). To re-judge failures, move each failed
   `judge_verdict.json` aside and re-run the judge launcher: existing verdicts
   are skipped, so only the missing ones are judged and the report is rebuilt.
+
+## Operational notes from the Fable cohorts (Fable 5.1 and Fable 5, 2×109 each)
+
+- **Anthropic models on Bedrock were error-free at the same concurrency.** Both
+  cohorts ran 218/218 trials at 18 concurrent (`--shards 12 --concurrent 3`)
+  with zero API errors of any kind and zero throttle retries, and prompt
+  caching worked for the agent (~98% cache-hit rate). The 18-trial ceiling was
+  set by GPT-5.6's throttling, not by Anthropic quota.
+- **A Slurm `OUT_OF_MEMORY` on a shard is not necessarily a lost shard.** The
+  container's `/tmp` is tmpfs and counts toward the job's memory cgroup; on
+  `mlx-lm-mambacache` the agent downloaded a 42 GB model checkpoint into it,
+  which tripped the 128 GB limit at job exit — after every trial in the shard
+  had finished and written its verifier reward. Check `trial_infra.json` and
+  `verifier/reward.txt` for the shard's trials before treating the flag as a
+  failure.
+- **Judge max-turn failures recur on the same tasks.** `cli-task-e5813e` hit
+  Claude Code's 50-turn cap for GPT-5.6, Fable 5.1 and Fable 5 alike; a second
+  pass recovered most verdicts (Fable 5: 2/2, Fable 5.1: 3/4, GPT-5.6: 4/5) and
+  the residual is scored 0.0 per the leaderboard rule.
+- **Cost differs between the two Fables mainly through the cache-read rate.**
+  At list price Fable 5 came to ≈$3.9k and Fable 5.1 ≈$1.8k for similar token
+  volumes: Fable 5's cache reads are billed at $1/M vs $0.25/M, and cache reads
+  are ~98% of input tokens on agentic trials.
 
 ## Verdict provenance
 
