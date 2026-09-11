@@ -50,6 +50,10 @@ PRE_AGENT_EXCEPTIONS = frozenset({
     "AgentSetupTimeoutError",   # install script exceeded the setup budget (e.g. apt mirror stall)
     "EnrootSetupError",         # sandbox could not be created / started
 })
+#: Harbor raises a bare RuntimeError with this message when the install script
+#: exits non-zero (e.g. apt exit 100 on an unreachable mirror) — same class of
+#: failure as the timeout, just faster.
+_SETUP_FAILED_MESSAGE = "Agent setup failed with exit code"
 
 # Number of parse-failure assistant blocks that constitutes corruption. One
 # could theoretically be a real edit; we've never seen ≥2 in a healthy run.
@@ -267,9 +271,11 @@ def collect_signals(trial_dir: Path) -> TrialSignals:
     if present and all(_is_empty_transcript(p) for p in present):
         sig.transcript_present_but_empty = True
         sig.empty_transcript_names = [p.name for p in present]
-    exc_type = _result_exception_type(trial_dir)
+    exc_type, exc_msg = _result_exception(trial_dir)
     if exc_type in PRE_AGENT_EXCEPTIONS:
         sig.pre_agent_exception = exc_type
+    elif exc_type == "RuntimeError" and exc_msg.startswith(_SETUP_FAILED_MESSAGE):
+        sig.pre_agent_exception = "AgentSetupError"
     return sig
 
 
@@ -642,15 +648,20 @@ def _trial_text(trial: Path, limit_per_file: int = 200_000) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _result_exception_type(trial: Path) -> str:
+def _result_exception(trial: Path) -> tuple[str, str]:
+    """``(exception_type, exception_message)`` from result.json, or ``("", "")``."""
     try:
         data = json.loads((trial / "result.json").read_text(errors="ignore"))
     except Exception:
-        return ""
+        return "", ""
     exc = data.get("exception_info")
     if not isinstance(exc, dict):
-        return ""
-    return str(exc.get("exception_type") or "")
+        return "", ""
+    return str(exc.get("exception_type") or ""), str(exc.get("exception_message") or "")
+
+
+def _result_exception_type(trial: Path) -> str:
+    return _result_exception(trial)[0]
 
 
 def _patch_is_empty_or_missing(patch: Path) -> bool:

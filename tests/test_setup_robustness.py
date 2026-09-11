@@ -219,6 +219,29 @@ def test_setup_failed_trial_is_infra_failed(tmp_path):
     assert v.evidence["exception_type"] == "AgentSetupTimeoutError"
 
 
+def test_setup_script_nonzero_exit_is_infra_failed(tmp_path):
+    """Harbor raises a bare RuntimeError when install.sh exits non-zero (apt
+    exit 100 on an unreachable mirror) — same pre-agent class as the timeout."""
+    t = _setup_failed_trial(tmp_path, "rudel-task-468289__oWBzf9N")
+    (t / "result.json").write_text(json.dumps({
+        "exception_info": {"exception_type": "RuntimeError",
+                           "exception_message": "Agent setup failed with exit code 100. See logs in /x/agent/setup"},
+        "verifier_result": None,
+    }))
+    v = sentinel.classify_trial(t)
+    assert v.status == "infra_failed" and v.reason == "pre_agent_failure"
+    assert v.evidence["exception_type"] == "AgentSetupError"
+
+
+def test_unrelated_runtime_error_is_not_pre_agent(tmp_path):
+    t = _completed_trial(tmp_path, "cli-task-30159a__YCCQ7vm")
+    (t / "result.json").write_text(json.dumps({
+        "exception_info": {"exception_type": "RuntimeError", "exception_message": "something else"},
+        "verifier_result": {"rewards": {"reward": 1.0}},
+    }))
+    assert sentinel.classify_trial(t).status == "ok"
+
+
 def test_agent_timeout_with_patch_is_not_infra(tmp_path):
     """Ordinary budget exhaustion (agent ran, produced a patch) must stay `ok`."""
     t = _completed_trial(tmp_path, "mlx-lm-mambacache__Dodqy2e", reward=0.0)
