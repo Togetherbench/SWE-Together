@@ -76,6 +76,14 @@ _THROTTLE_MARKERS = (
     "serviceunavailableexception",
     "service unavailable",
     "overloaded",
+    # Gemini 3.x via OpenRouter: Google rejects a replayed history whose
+    # opaque reasoning signature the SDK/session store did not round-trip
+    # (HTTP 400 "Corrupted thought signature"). Transient in practice —
+    # opencode's own retry recovered it in-turn once — but when it isn't
+    # retried the turn aborts with the agent mid-task, so it gets the same
+    # back-off-and-resume treatment as backpressure. 8/36 trials in the
+    # first Gemini 3.8 Flash cohort lost a turn to it.
+    "corrupted thought signature",
 )
 _THROTTLE_MAX_RETRIES = 8
 _THROTTLE_BACKOFF_SEC = (15, 30, 60, 90, 120, 180, 240, 300)
@@ -135,7 +143,7 @@ def turn_ended_on_throttle(stdout: str) -> bool:
 
 
 _THROTTLE_CONTINUE_MESSAGE = (
-    "Your previous step was interrupted by a temporary provider rate limit. "
+    "Your previous step was interrupted by a temporary provider error. "
     "Please continue exactly where you left off."
 )
 

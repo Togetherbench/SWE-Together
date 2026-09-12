@@ -133,6 +133,28 @@ def test_turn_ended_on_throttle_detection():
     assert c["ended_on_throttle"] == 0 and c["throttle_errors"] == 1 and c["steps"] == 2
 
 
+# Gemini 3.x through OpenRouter: the exact event opencode 1.18.29 emits when Google
+# rejects a replayed reasoning signature. Note the message is a JSON string nested
+# inside data.message (no responseBody).
+GEMINI_SIGNATURE = _ev(type="error", error={
+    "name": "UnknownError",
+    "data": {"message": '{"code":400,"message":"Corrupted thought signature.",'
+                        '"metadata":{"error_type":"invalid_request","provider_code":"400"}}'}})
+
+
+def test_gemini_corrupted_signature_is_a_retryable_interruption():
+    # observed shape: several completed steps, then the 400 ends the turn
+    assert ueo.turn_ended_on_throttle("\n".join([STEP, STEP, STEP, GEMINI_SIGNATURE]))
+    # and, if it fires before any step completes, the turn is re-run
+    assert ueo.turn_was_throttled(GEMINI_SIGNATURE)
+    # opencode recovered by itself → nothing to do
+    assert not ueo.turn_ended_on_throttle("\n".join([STEP, GEMINI_SIGNATURE, STEP, STEP]))
+    # an unrelated 400 is still not treated as backpressure
+    other = _ev(type="error", error={"name": "UnknownError",
+                                     "data": {"message": '{"code":400,"message":"Invalid tool schema."}'}})
+    assert not ueo.turn_ended_on_throttle("\n".join([STEP, other]))
+
+
 def test_interrupted_turn_is_resumed_with_continue(tmp_path, monkeypatch):
     monkeypatch.setattr(ueo, "_THROTTLE_BACKOFF_SEC", (0,))
     w = _wrapper(tmp_path)
