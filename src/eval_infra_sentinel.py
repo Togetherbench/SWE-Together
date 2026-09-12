@@ -43,6 +43,18 @@ EDIT_TOOL_NAMES = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 # meaningful — a 2-turn refusal isn't infra failure.
 MIN_TURNS_FOR_NO_PROGRESS = 5
 
+#: Harbor exception types raised before the agent's first turn. A trial that
+#: ended this way never exercised the model, so it is infrastructure by
+#: definition — regardless of what else the directory contains.
+PRE_AGENT_EXCEPTIONS = frozenset({
+    "AgentSetupTimeoutError",   # install script exceeded the setup budget (e.g. apt mirror stall)
+    "EnrootSetupError",         # sandbox could not be created / started
+})
+#: Harbor raises a bare RuntimeError with this message when the install script
+#: exits non-zero (e.g. apt exit 100 on an unreachable mirror) — same class of
+#: failure as the timeout, just faster.
+_SETUP_FAILED_MESSAGE = "Agent setup failed with exit code"
+
 # Number of parse-failure assistant blocks that constitutes corruption. One
 # could theoretically be a real edit; we've never seen ≥2 in a healthy run.
 PARSE_FAILURE_THRESHOLD = 2
@@ -95,6 +107,9 @@ class TrialSignals:
     result_subtypes: list[str] = field(default_factory=list)
     transcript_present_but_empty: bool = False
     empty_transcript_names: list[str] = field(default_factory=list)
+    #: ``exception_info.exception_type`` from result.json when Harbor aborted
+    #: the trial BEFORE the agent's first turn (setup / sandbox failures).
+    pre_agent_exception: str = ""
 
 
 @dataclass
@@ -256,6 +271,11 @@ def collect_signals(trial_dir: Path) -> TrialSignals:
     if present and all(_is_empty_transcript(p) for p in present):
         sig.transcript_present_but_empty = True
         sig.empty_transcript_names = [p.name for p in present]
+    exc_type, exc_msg = _result_exception(trial_dir)
+    if exc_type in PRE_AGENT_EXCEPTIONS:
+        sig.pre_agent_exception = exc_type
+    elif exc_type == "RuntimeError" and exc_msg.startswith(_SETUP_FAILED_MESSAGE):
+        sig.pre_agent_exception = "AgentSetupError"
     return sig
 
 
@@ -355,6 +375,19 @@ def _detect_parse_failure_corruption(sig: TrialSignals) -> tuple[bool, str, dict
     ), {"hit_count": hits, "api_retry_count": sig.api_retry_count}
 
 
+def _detect_pre_agent_failure(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
+    """Harbor aborted before the agent ran (agent setup / sandbox start). There
+    is no transcript at all — not even an empty one — so none of the
+    transcript-based detectors can fire, and without this the empty patch
+    would be scored as a model failure (0.0). 16 trials on 2026-09-11."""
+    if not sig.pre_agent_exception:
+        return False, "", {}
+    return True, (
+        f"Trial aborted before the agent's first turn: {sig.pre_agent_exception} "
+        f"(no transcript, patch_bytes={sig.patch_bytes})"
+    ), {"exception_type": sig.pre_agent_exception}
+
+
 def _detect_empty_transcript(sig: TrialSignals) -> tuple[bool, str, dict[str, Any]]:
     """Harness wrote a transcript file but it's empty (0 bytes). The agent
     never produced output — e.g. the opencode-gpt launch-hang. Distinct from
@@ -443,6 +476,7 @@ def _detect_opencode_backend_error(sig: TrialSignals) -> tuple[bool, str, dict[s
 # "no_agent_progress" detector runs last so a real provider error gets the
 # precise reason in its sidecar instead of the generic one.
 DETECTORS: list[tuple[str, Any]] = [
+    ("pre_agent_failure", _detect_pre_agent_failure),
     ("empty_transcript", _detect_empty_transcript),
     ("provider_402_balance", _detect_provider_402_balance),
     ("provider_429_quota", _detect_provider_429_quota),
@@ -614,15 +648,20 @@ def _trial_text(trial: Path, limit_per_file: int = 200_000) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _result_exception_type(trial: Path) -> str:
+def _result_exception(trial: Path) -> tuple[str, str]:
+    """``(exception_type, exception_message)`` from result.json, or ``("", "")``."""
     try:
         data = json.loads((trial / "result.json").read_text(errors="ignore"))
     except Exception:
-        return ""
+        return "", ""
     exc = data.get("exception_info")
     if not isinstance(exc, dict):
-        return ""
-    return str(exc.get("exception_type") or "")
+        return "", ""
+    return str(exc.get("exception_type") or ""), str(exc.get("exception_message") or "")
+
+
+def _result_exception_type(trial: Path) -> str:
+    return _result_exception(trial)[0]
 
 
 def _patch_is_empty_or_missing(patch: Path) -> bool:

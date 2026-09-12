@@ -32,6 +32,47 @@ knows the defaults, so it is also where to read the precedence rules.
   `github.com`, `huggingface.co`, … at `127.0.0.1` so the agent cannot fetch the
   upstream fix. Every backend must keep it in force.
 
+### opencode is installed from a cached binary, not from apt/npm
+
+Harbor's stock `install-opencode.sh.j2` runs `apt-get update`, installs Node
+from NodeSource and `npm i -g opencode-ai@<v>` inside every trial — five network
+round-trips to three services to obtain one file. On 2026-09-11
+`archive.ubuntu.com` stalled (30–60 s per request, then timeouts) and 16 trials
+across two cohorts died at setup (`AgentSetupTimeoutError` after 360 s) before
+the agent ever ran; nothing else in the pipeline was affected.
+
+`opencode-ai` is a thin npm wrapper around a self-contained ELF binary
+(`opencode-linux-x64`, libc-only), and every task image already ships `curl` and
+`ca-certificates`, so the wrapper now (`src/opencode_dist.py`):
+
+1. caches the binary once on the host under
+   `<SWT_IMAGE_STORE>/tools/opencode/<version>/linux-x64/opencode`, verifying the
+   npm `integrity` digest (`python src/opencode_dist.py 1.18.29`; the Slurm
+   launcher does this in its preflight for `--opencode-version` / the wrapper's
+   default pin);
+2. uploads it into the sandbox with `environment.upload_file` and runs a
+   three-line script that symlinks it onto `PATH` and checks `opencode --version`.
+
+Setup drops from ~25 s (and ≥360 s when a mirror degrades) to a few seconds and no
+longer depends on apt mirrors, NodeSource or the npm registry. If no cached
+binary exists for the pinned version the wrapper logs a warning and falls back to
+the stock apt/npm script, so unpinned or un-cached setups behave as before.
+
+### Setup failures are infrastructure, not model failures
+
+A trial Harbor aborts before the agent's first turn (`AgentSetupTimeoutError`,
+`EnrootSetupError`) has no transcript at all, so the transcript-based sentinel
+detectors cannot fire and the empty patch used to be scored **0.0** against the
+model. `src/eval_infra_sentinel.py` now classifies such trials as
+`infra_failed` (`pre_agent_failure`), which the leaderboard excludes, and
+`src/run_eval.py` retries `AgentSetupTimeoutError` like the other transient
+sandbox errors.
+
+On relaunch, `--skip-existing` re-runs those tasks and **archives** the failed
+predecessor dirs to `<trials_dir>/_failed/` first (no `__` in the name, so the
+judge and aggregator ignore them); previously the failed dir stayed next to the
+re-run and counted as an extra 0.0 replicate.
+
 ## e2b
 
 Nothing to configure beyond `E2B_API_KEY`. The first run builds one E2B template

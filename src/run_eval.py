@@ -34,6 +34,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -128,33 +129,37 @@ def get_all_tasks() -> list[str]:
     return runnable
 
 
-def is_task_completed(task_name: str, trials_dir: Path) -> bool:
-    """Check if a task has a successful trial.
+FAILED_ARCHIVE_DIR = "_failed"
 
-    A trial counts as completed only if (a) Harbor recorded a verifier
-    result AND (b) the infra sentinel says the agent actually ran. Trials
-    that scored 0.0 because the provider returned 402/429/HTML inside the
-    sandbox are excluded, so ``--skip-existing`` reruns them instead of
-    silently inheriting the bad data point.
+
+def _classify_trial_dirs(task_name: str, trials_dir: Path) -> tuple[bool, list[Path]]:
+    """Return ``(has_completed_trial, incomplete_dirs)`` for ``task_name``.
+
+    A trial counts as completed only if (a) Harbor recorded a verifier result
+    AND (b) the infra sentinel says the agent actually ran. Everything else
+    (setup failure, no result, infra_failed) is *incomplete* and is what
+    ``--skip-existing`` re-runs.
     """
     if not trials_dir.exists():
-        return False
+        return False, []
     # Harbor truncates trial dir names to 32 chars of task name; match on
     # the truncated prefix or long-named tasks (4 in lite70) are NEVER
     # seen as complete and get re-run on every --skip-existing relaunch.
     dir_prefix = task_name[:32] + "__"
+    completed = False
+    incomplete: list[Path] = []
     for d in trials_dir.iterdir():
         if not (d.is_dir() and d.name.startswith(dir_prefix)):
             continue
         result_path = d / "result.json"
-        if not result_path.exists():
-            continue
         try:
             result = json.loads(result_path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            incomplete.append(d)
             continue
         vr = result.get("verifier_result")
         if not (vr and vr.get("rewards")):
+            incomplete.append(d)
             continue
         verdict = classify_or_load(d)
         if verdict.status == "infra_failed":
@@ -162,9 +167,43 @@ def is_task_completed(task_name: str, trials_dir: Path) -> bool:
                 "Re-running %s: trial %s flagged infra_failed (%s)",
                 task_name, d.name, verdict.reason,
             )
+            incomplete.append(d)
             continue
-        return True
-    return False
+        completed = True
+    return completed, incomplete
+
+
+def is_task_completed(task_name: str, trials_dir: Path) -> bool:
+    """True when ``task_name`` already has a trial that counts (see
+    :func:`_classify_trial_dirs`). Trials that scored 0.0 because the provider
+    returned 402/429/HTML inside the sandbox, or that never reached the agent,
+    do not count — ``--skip-existing`` reruns them instead of silently
+    inheriting the bad data point."""
+    return _classify_trial_dirs(task_name, trials_dir)[0]
+
+
+def archive_incomplete_trials(task_names: list[str], trials_dir: Path) -> int:
+    """Move failed / incomplete trial dirs of the tasks about to be re-run into
+    ``<trials_dir>/_failed/`` so the re-run's dir is the only one the judge and
+    aggregator see for that task.
+
+    Without this, ``--skip-existing`` re-runs a setup-failed task but leaves the
+    failed dir in place; ``eval/run_eval.py`` then counts it as an extra
+    0.0-scored replicate. The archive keeps the failed artefacts for audit and
+    is ignored by every consumer (no ``__`` in the dir name).
+    """
+    archive = trials_dir / FAILED_ARCHIVE_DIR
+    moved = 0
+    for task in task_names:
+        for d in _classify_trial_dirs(task, trials_dir)[1]:
+            archive.mkdir(exist_ok=True)
+            dest = archive / d.name
+            if dest.exists():
+                dest = archive / f"{d.name}.{int(time.time())}"
+            shutil.move(str(d), str(dest))
+            log.info("Archived incomplete trial %s → %s", d.name, dest.relative_to(trials_dir))
+            moved += 1
+    return moved
 
 
 def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[str, str]:
@@ -916,6 +955,11 @@ async def main():
         before = len(task_names)
         task_names = [t for t in task_names if not is_task_completed(t, trials_dir)]
         log.info("Skip existing: %d → %d tasks", before, len(task_names))
+        # The tasks left are being re-run; park their failed predecessors so the
+        # judge/aggregator never see two dirs for one (task, replicate).
+        n_archived = archive_incomplete_trials(task_names, trials_dir)
+        if n_archived:
+            log.info("Archived %d incomplete trial dir(s) under %s/", n_archived, FAILED_ARCHIVE_DIR)
 
     # Reproducibility metadata
     import subprocess as _sp
@@ -1025,6 +1069,10 @@ async def main():
             "ConnectTimeout",      # httpcore network blip during sandbox create
             "AddTestsDirError",    # transient docker upload_dir failure
             "EnrootSetupError",    # enroot: tmpfs pressure / create race on a busy node
+            # Agent bootstrap never reached the model: a stalled apt mirror /
+            # npm registry (2026-09-11) or a slow sandbox start. Retrying costs
+            # nothing model-side and turns a phantom 0.0 into a real trial.
+            "AgentSetupTimeoutError",
         ],
         min_wait_sec=60.0,
         max_wait_sec=300.0,

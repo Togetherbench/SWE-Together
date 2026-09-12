@@ -49,6 +49,7 @@ from harbor.llms.lite_llm import LiteLLM
 
 from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
+import opencode_dist
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
 from ..user_agent import UserAgent, UserDecision
@@ -358,6 +359,7 @@ class UserEnabledOpenCode(BaseAgent):
         inner_kwargs: dict[str, Any] = dict(kwargs)
         if opencode_version:
             inner_kwargs["version"] = opencode_version
+        self._opencode_version = opencode_version
         self._inner = OpenCode(
             logs_dir=logs_dir, model_name=inner_model_name, **inner_kwargs,
         )
@@ -399,8 +401,52 @@ class UserEnabledOpenCode(BaseAgent):
     def version(self) -> str | None:
         return self._inner.version()
 
+    async def _install_opencode(self, environment: BaseEnvironment) -> None:
+        """Put the pinned opencode binary on the sandbox PATH.
+
+        Preferred path: upload the host-cached binary (see opencode_dist) and
+        run a three-line script — no apt, no NodeSource, no npm, so a degraded
+        distro mirror cannot turn into a wave of AgentSetupTimeoutErrors (16
+        trials on 2026-09-11 when archive.ubuntu.com stalled). Falls back to
+        Harbor's stock install-opencode.sh.j2 when no cached binary exists for
+        the pinned version (or when the version is unpinned), so behaviour is
+        unchanged for setups that never ran the cache step.
+        """
+        binary = opencode_dist.cached_binary(self._opencode_version) if self._opencode_version else None
+        if binary is None:
+            log.warning(
+                "opencode: no cached binary for version %r under %s — falling back to the "
+                "apt/npm install script (network-dependent). Run "
+                "`python -m opencode_dist <version>` on the host to cache it.",
+                self._opencode_version, opencode_dist.cache_root(),
+            )
+            await self._inner.setup(environment)
+            return
+
+        script = self.logs_dir / "install.sh"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(opencode_dist.render_install_script(self._opencode_version))
+        await environment.exec(command="mkdir -p /installed-agent")
+        await environment.upload_file(source_path=binary, target_path="/installed-agent/opencode")
+        await environment.upload_file(source_path=script, target_path="/installed-agent/install.sh")
+        result = await environment.exec(command="bash /installed-agent/install.sh")
+
+        setup_dir = self.logs_dir / "setup"
+        setup_dir.mkdir(parents=True, exist_ok=True)
+        (setup_dir / "return-code.txt").write_text(str(result.return_code))
+        if result.stdout:
+            (setup_dir / "stdout.txt").write_text(result.stdout)
+        if result.stderr:
+            (setup_dir / "stderr.txt").write_text(result.stderr)
+        if result.return_code != 0:
+            raise RuntimeError(
+                f"opencode setup (pre-fetched binary) failed with exit code "
+                f"{result.return_code}. See logs in {setup_dir}"
+            )
+        self._inner._version = self._opencode_version
+
     async def setup(self, environment: BaseEnvironment) -> None:
-        await self._inner.setup(environment)
+        await self._install_opencode(environment)
         # Tag every git repo as `harbor-base` so per-turn `git diff` can
         # show only the agent's edits, even when a Dockerfile post-checkout
         # `git commit` lands mid-trial. See repo_diff for rationale.

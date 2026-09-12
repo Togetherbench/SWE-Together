@@ -57,6 +57,7 @@ load_dotenv()
 
 import bedrock_creds  # noqa: E402
 import llm_config  # noqa: E402
+import opencode_dist  # noqa: E402
 
 DEFAULT_CONDA_ENV = os.environ.get("SWT_CONDA_ENV", "swetogether")
 DEFAULT_MODEL = "openrouter/meta/muse-spark-1.3"
@@ -268,6 +269,25 @@ def _bedrock_preflight(models: list[str]) -> None:
         llm_config.warn_if_uncatalogued(m)
 
 
+# The wrapper's pin when a cohort does not set opencode_version (see
+# UserEnabledOpenCode.__init__). Kept in sync by tests/test_opencode_dist.py.
+DEFAULT_OPENCODE_VERSION = "1.15.13"
+
+
+def _opencode_preflight(agent_type: str, version: str | None) -> None:
+    """Make sure the pinned opencode binary is in the image-store cache so trials
+    install it with a file copy instead of apt + NodeSource + npm. Downloads on
+    the login node (verified against npm's integrity digest) if missing."""
+    if agent_type != "opencode":
+        return
+    version = version or DEFAULT_OPENCODE_VERSION
+    try:
+        path = opencode_dist.ensure_cached(version)
+    except Exception as exc:  # network / integrity / fs — surface, don't queue a doomed job
+        raise SystemExit(f"opencode preflight: could not cache opencode {version}: {exc}") from exc
+    print(f"opencode preflight: {version} cached at {path}")
+
+
 # ── run (Stage 1) ───────────────────────────────────────────────────────────────────
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -315,6 +335,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"trials → {trials_dir}")
     if args.submit:
         _bedrock_preflight([agent.model, user.model])
+        _opencode_preflight(args.agent_type, args.opencode_version)
     return _submit(script, args.submit)
 
 
