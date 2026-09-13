@@ -270,8 +270,8 @@ def _bedrock_preflight(models: list[str]) -> None:
 
 
 # The wrapper's pin when a cohort does not set opencode_version (see
-# UserEnabledOpenCode.__init__). Kept in sync by tests/test_opencode_dist.py.
-DEFAULT_OPENCODE_VERSION = "1.15.13"
+# UserEnabledOpenCode.__init__). Kept in sync by tests/test_setup_robustness.py.
+DEFAULT_OPENCODE_VERSION = "1.18.29"
 
 
 def _opencode_preflight(agent_type: str, version: str | None) -> None:

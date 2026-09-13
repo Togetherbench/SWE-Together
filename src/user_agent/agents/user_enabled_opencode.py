@@ -330,11 +330,13 @@ class UserEnabledOpenCode(BaseAgent):
         # Pin the in-sandbox opencode-ai CLI version for reproducibility
         # (mirrors mswea_version in user_enabled_mini_swe_agent). Unlike
         # Claude Code (baked into task images at 2.1.108), opencode installs
-        # at agent-setup time per trial — without a pin, Harbor's
-        # install-opencode.sh.j2 falls through to `npm i -g opencode-ai@latest`
-        # and a multi-day cohort can silently mix CLI versions mid-run.
-        # 1.15.13 is what the mm27 lite cohort (2026-06-03) actually installed.
-        opencode_version: str | None = "1.15.13",
+        # at agent-setup time per trial — without a pin, a multi-day cohort
+        # could silently mix CLI versions mid-run. The paper's cohorts ran on
+        # 1.15.13 (pinned explicitly in canonical_full109.json); 1.18.29 is
+        # the benchmark default from the Bedrock cohorts onward — it fixes the
+        # OpenAI-on-Bedrock `reasoningConfig` rejection and is the version the
+        # host-side binary cache (opencode_dist) is populated with.
+        opencode_version: str | None = "1.18.29",
         # Per-task contamination defense (PR #212 / #213): comma-separated tool
         # names to disable. Matches claude-code's `--disallowedTools` semantics.
         # OpenCode's CLI takes `--tools '-webfetch,-websearch,*'` (negative
