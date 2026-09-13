@@ -264,9 +264,20 @@ def _effective_judge_score(trial_dir: Path, judge: dict):
       - any non-infra failure (empty/no patch, verdict_read_   → 0.0   (a fail)
         failed, unjudged)
       - otherwise                                             → judge_score
+
+    A trial still carrying ``agent/diff_polluted.flag`` (cumulative diff spanning
+    hundreds of run-generated files) is refused rather than scored: the judge
+    skips such patches, so scoring it here would silently record a 0.0 for a
+    patch nobody evaluated. Repair it first (``src/repair_polluted_patches.py``).
     """
     if _is_infra_failed(trial_dir):
         return None
+    if (trial_dir / "agent" / "diff_polluted.flag").exists():
+        raise SystemExit(
+            f"{trial_dir.name}: agent/diff_polluted.flag present — final.patch is run-generated "
+            f"pollution, not the agent's edits. Run `python src/repair_polluted_patches.py "
+            f"{trial_dir.parent}` and re-judge before aggregating."
+        )
     score = judge.get("judge_score")
     if score is None or judge.get("error") == "verdict_read_failed":
         return 0.0

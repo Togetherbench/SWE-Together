@@ -73,6 +73,68 @@ predecessor dirs to `<trials_dir>/_failed/` first (no `__` in the name, so the
 judge and aggregator ignore them); previously the failed dir stayed next to the
 re-run and counted as an extra 0.0 replicate.
 
+### The graded diff excludes run-generated files, and the user-sim diff is bounded
+
+`capture_git_diff` (`src/user_agent/repo_diff.py`) diffs the repo against the
+`harbor-base` tag after every turn and strips run-generated directories before
+writing `agent/final.patch`. The filter covers virtualenvs, `node_modules`,
+caches, and **language module caches** (`.go/`, `pkg/mod`, `.cargo`, `.npm`,
+`.pnpm-store`, `.m2`, …). The last group matters because a task image may point a
+package manager *into* the repo: `cli-fix-2026-0` shipped
+`GOPATH=/workspace/repo/.go`, so any `go build` dropped ~7k vendored files into
+the working tree and the cumulative diff grew to 270–370 MB. Two such trials
+(Fable 5.1 r2, Opus 4.8 r2) had passed the verifier (1.0) but were judged
+**0.0 "incorrect"** on the module-cache noise; a third overflowed the user-sim's
+request limit and OOM-killed a shard.
+
+Three guards now apply:
+
+1. the filter above (the task's Dockerfile was also fixed to keep `GOPATH`
+   outside the repo);
+2. the per-turn incremental diff handed to the simulated user is capped at
+   `USER_SIM_DIFF_MAX_CHARS` (200 k chars) with a truncation marker — it is a
+   context hint, not the graded artefact, and unbounded it produced 70–125 MB
+   prompts;
+3. a trial still carrying `agent/diff_polluted.flag` (cumulative diff spanning
+   > 300 files) is **skipped by the judge** and **refused by the aggregator**
+   instead of being scored 0.0. `python src/repair_polluted_patches.py
+   <trials_root>…` re-applies the current filter to stored patches, keeps the
+   original as `final.patch.unfiltered`, retires the stale `judge_verdict.json`
+   (→ `judge_verdict.polluted-N.json`) and clears the flag, so the next judge
+   pass re-scores the trial on the agent's real edits. Flags that turn out to be
+   genuine agent output (e.g. a generated fixture tree) are renamed to
+   `diff_polluted.agent-edits` by hand after review.
+
+### Recorded patches must apply cleanly in the judge sandbox
+
+Investigating the re-judge exposed a second, older defect in the same path.
+The diff text was `str.strip()`-ed before being written, so whenever the last
+hunk ended on an **empty source line** its blank context line (a lone space)
+was removed and the hunk came out one line shorter than its `@@` header — 232
+of 1,941 recorded patches. `git apply` rejects such a patch as *corrupt*; the
+judge sandbox chained the apply as `git apply … && chmod … || true`, so the
+failure was swallowed, the judge was told the patch "has already been applied",
+and it scored an **unmodified workspace**. Most judges noticed and applied the
+diff by hand (38 verdicts say so), but several scored 0.0 on work that had
+passed the verifier.
+
+Fixes: `repo_diff` trims only empty lines (`_trim_diff`) instead of stripping;
+`src/patch_normalize.py` builds the patch the judge applies from the recorded
+diff — the **task repo's section only** (agents often clone scratch copies under
+`/tmp`, and older recordings listed those first), with **submodule-pointer and
+`Binary files … differ` blocks removed** (unapplyable and not gradable) and a
+short last hunk repaired by shrinking its header (with an end-of-file fallback
+candidate). The judge sandbox applies in the repo the recorder named (falling
+back to the shallowest `.git`, never `find | head -1`, which picked a nested
+submodule for the nunchaku tasks), tries the candidates with `git apply --check`
+and no longer masks an apply failure (`patch_apply_failed` is reported instead).
+The repair tool applies the same normalisation to stored patches and retires
+verdicts that graded something other than the agent's edits: junk in the patch,
+a patch the old judge could not have applied (scratch-clone-first, submodule,
+binary), or notes showing the judge stumbled ("applied manually", "workspace
+unmodified"). On `arr-monitor-add-processes-flag` 12 of 14 published trials had
+been judged 0.0 with verifier ≥ 0.83 for exactly this reason.
+
 ## e2b
 
 Nothing to configure beyond `E2B_API_KEY`. The first run builds one E2B template

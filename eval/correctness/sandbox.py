@@ -12,6 +12,7 @@ JUDGE_VIA_OR=1 (OpenRouter's Anthropic-compatible endpoint).
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import shlex
@@ -23,6 +24,7 @@ from dirhash import dirhash
 
 from eval.correctness.judge_sandbox import CmdResult, open_judge_sandbox
 import llm_config  # noqa: E402  (src/ is on sys.path via judge_sandbox)
+from patch_normalize import apply_candidates as _patch_apply_candidates, main_repo_path as _patch_main_repo  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +210,23 @@ async def run_judge(
         # chmod world-rwX so the judge agent can still read/run tests against
         # the patched workspace.
         patch_to_apply = inputs.oracle_patch if inputs.phase == 1 else inputs.agent_patch
-        await sb.write("/tmp/agent.patch", patch_to_apply)
+        # `git apply` rejects two artefacts of the harness's own diff capture:
+        # the `=== <repo> (cumulative vs harbor-base) ===` banner line, and a
+        # last hunk whose trailing blank context line was lost (patches recorded
+        # before repo_diff._trim_diff). patch_normalize yields one or two
+        # reconstructions (they differ only in that unknowable whitespace line);
+        # the first that `git apply --check` accepts is applied. Candidate 0 is
+        # written first so the judge's /tmp/agent.patch is always populated.
+        candidates = _patch_apply_candidates(patch_to_apply) or [""]
+        for i, cand in enumerate(candidates):
+            await sb.write(f"/tmp/agent.patch.{i}", cand)
+        await sb.write("/tmp/agent.patch", candidates[0])
+        n_candidates = len(candidates)
+        # The recorder names the task repo in its first banner; prefer it over
+        # filesystem discovery, whose `find | head -1` can land on a nested
+        # submodule (nunchaku: /workspace/nunchaku before /workspace) or a
+        # scratch clone the agent made under /tmp.
+        hinted_repo = _patch_main_repo(patch_to_apply) or ""
         # Phase-1 with no oracle patch still needs the repo discovery (the
         # judge's first_message references {repo_hint}), but the apply step
         # should be a no-op — the workspace stays in the buggy state and the
@@ -225,6 +243,7 @@ async def run_judge(
         # for future nonstandard layouts.
         apply = await sb.run(
             "set -e; "
+            f'HINT={shlex.quote(hinted_repo)}; '
             'ROOTS="/workspace /opt /home /app /repo /tmp /entire-cli /entireio-cli /no-magic"; '
             'if [ -n "${HARBOR_REPO_PATHS:-}" ]; then '
             '  ROOTS="$ROOTS $(echo "$HARBOR_REPO_PATHS" | tr ":" " ")"; '
@@ -232,7 +251,14 @@ async def run_judge(
             'EXISTING=""; '
             'for r in $ROOTS; do [ -e "$r" ] && EXISTING="$EXISTING $r"; done; '
             'if [ -z "$EXISTING" ]; then echo "NO_REPO_ROOTS_EXIST" >&2; exit 1; fi; '
-            'REPO=$(find $EXISTING -maxdepth 3 -name .git \\( -type d -o -type f \\) 2>/dev/null | head -1 | xargs -I{} dirname {}); '
+            # Prefer the repo the recorder named; otherwise the shallowest .git
+            # (shortest path), so a nested submodule never shadows its parent.
+            'REPO=""; '
+            'if [ -n "$HINT" ] && [ -e "$HINT/.git" ]; then REPO="$HINT"; fi; '
+            'if [ -z "$REPO" ]; then '
+            '  REPO=$(find $EXISTING -maxdepth 3 -name .git \\( -type d -o -type f \\) 2>/dev/null '
+            '         | while IFS= read -r g; do printf "%d %s\\n" "${#g}" "$g"; done | sort -n | head -1 | cut -d" " -f2- | xargs -I{} dirname {}); '
+            'fi; '
             'if [ -z "$REPO" ]; then echo "NO_GIT_REPO_FOUND" >&2; exit 1; fi; '
             'cd "$REPO" && echo "applying to $(pwd)" && '
             # safe.directory='*' lets root run git on repos owned by `agent`
@@ -244,8 +270,27 @@ async def run_judge(
                 'chmod -R a+rwX "$REPO" 2>/dev/null || true'
                 if skip_apply
                 else
-                'git -c safe.directory="*" apply --whitespace=nowarn /tmp/agent.patch && '
-                'chmod -R a+rwX "$REPO" 2>/dev/null || true'
+                # The chmod is best-effort; the apply is not. Keep `|| true`
+                # scoped to the chmod so a rejected patch surfaces as
+                # patch_apply_failed instead of the judge scoring an unmodified
+                # workspace as "incorrect". Try each candidate with --check and
+                # apply the first that fits; publish it as /tmp/agent.patch so
+                # the judge reads exactly what was applied. Second sweep with
+                # -C2 (two exact context lines per hunk instead of three):
+                # str.strip() in old recorders also ate trailing whitespace on
+                # the diff's very last context line, which no line-count check
+                # can detect; the reduced context lets that one line be ignored.
+                'APPLIED=""; '
+                'for flags in "" "-C2"; do '
+                '  for i in $(seq 0 %d); do '
+                '    if git -c safe.directory="*" apply --check --whitespace=nowarn $flags "/tmp/agent.patch.$i" 2>/dev/null; then '
+                '      git -c safe.directory="*" apply --whitespace=nowarn $flags "/tmp/agent.patch.$i" && cp "/tmp/agent.patch.$i" /tmp/agent.patch && APPLIED="$i${flags:+ $flags}"; break 2; '
+                '    fi; '
+                '  done; '
+                'done; '
+                'if [ -z "$APPLIED" ]; then git -c safe.directory="*" apply --check --whitespace=nowarn /tmp/agent.patch.0; exit 1; fi; '
+                'echo "applied candidate $APPLIED"; '
+                '{ chmod -R a+rwX "$REPO" 2>/dev/null || true; }' % (n_candidates - 1)
             ),
             timeout=120, user="root",
         )
@@ -603,6 +648,12 @@ if __name__ == "__main__":
                 "judge_stdout_tail": result.stdout[-2000:],
                 "judge_stderr_tail": result.stderr[-2000:],
             }
+        # Provenance: which normalised candidate was applied (repair tooling
+        # distinguishes verdicts on the normalised patch from pre-fix ones).
+        m_applied = re.search(r"applied candidate (\d+)((?: -[-A-Za-z0-9]+)*)", apply.stdout or "")
+        verdict["patch_applied_candidate"] = int(m_applied.group(1)) if m_applied else None
+        verdict["patch_applied_flags"] = m_applied.group(2).strip() if m_applied else None
+        verdict["patch_applied_repo"] = repo_hint
 
         return JudgeRunResult(
             verdict=verdict,

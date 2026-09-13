@@ -46,6 +46,7 @@ from eval.correctness.sandbox import (  # noqa: E402
     judge_timeout_for_task,
     run_judge_in_e2b,
 )
+from patch_normalize import apply_candidates as _patch_apply_candidates  # noqa: E402  (src/ on sys.path via sandbox)
 from eval.correctness.generate_task_goals import generate_one as _phase1_generate_one
 from eval.correctness._env import load_dotenv  # shared .env loader
 
@@ -145,8 +146,18 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     if not agent_patch_p.exists():
         result["status"] = "skipped_no_patch"
         return result
+    # A cumulative diff spanning hundreds of files is run-generated pollution
+    # (module cache / diverged baseline), not the agent's edits; judging it as-is
+    # yields a false "incorrect". Repair first (src/repair_polluted_patches.py).
+    if (trial_dir / "agent" / "diff_polluted.flag").exists():
+        result["status"] = "skipped_polluted_patch"
+        result["error"] = "diff_polluted.flag present; run repair_polluted_patches before judging"
+        return result
     agent_patch = agent_patch_p.read_text()
-    if len(agent_patch.strip()) < 100:
+    # "Empty" means no gradable edit to the task repo: a banner-only recording,
+    # or a diff whose only hunks touch scratch clones the agent made under /tmp
+    # (apply_candidates() keeps the task repo's section only).
+    if len(agent_patch.strip()) < 100 or not _patch_apply_candidates(agent_patch):
         result["status"] = "skipped_empty_patch"
         result["patch_bytes"] = len(agent_patch)
         return result
