@@ -275,11 +275,18 @@ async def run_judge(
                 # patch_apply_failed instead of the judge scoring an unmodified
                 # workspace as "incorrect". Try each candidate with --check and
                 # apply the first that fits; publish it as /tmp/agent.patch so
-                # the judge reads exactly what was applied.
-                'APPLIED=""; for i in $(seq 0 %d); do '
-                '  if git -c safe.directory="*" apply --check --whitespace=nowarn "/tmp/agent.patch.$i" 2>/dev/null; then '
-                '    git -c safe.directory="*" apply --whitespace=nowarn "/tmp/agent.patch.$i" && cp "/tmp/agent.patch.$i" /tmp/agent.patch && APPLIED=$i; break; '
-                '  fi; '
+                # the judge reads exactly what was applied. Second sweep with
+                # -C2 (two exact context lines per hunk instead of three):
+                # str.strip() in old recorders also ate trailing whitespace on
+                # the diff's very last context line, which no line-count check
+                # can detect; the reduced context lets that one line be ignored.
+                'APPLIED=""; '
+                'for flags in "" "-C2"; do '
+                '  for i in $(seq 0 %d); do '
+                '    if git -c safe.directory="*" apply --check --whitespace=nowarn $flags "/tmp/agent.patch.$i" 2>/dev/null; then '
+                '      git -c safe.directory="*" apply --whitespace=nowarn $flags "/tmp/agent.patch.$i" && cp "/tmp/agent.patch.$i" /tmp/agent.patch && APPLIED="$i${flags:+ $flags}"; break 2; '
+                '    fi; '
+                '  done; '
                 'done; '
                 'if [ -z "$APPLIED" ]; then git -c safe.directory="*" apply --check --whitespace=nowarn /tmp/agent.patch.0; exit 1; fi; '
                 'echo "applied candidate $APPLIED"; '
@@ -643,8 +650,9 @@ if __name__ == "__main__":
             }
         # Provenance: which normalised candidate was applied (repair tooling
         # distinguishes verdicts on the normalised patch from pre-fix ones).
-        m_applied = re.search(r"applied candidate (\d+)", apply.stdout or "")
+        m_applied = re.search(r"applied candidate (\d+)((?: -[-A-Za-z0-9]+)*)", apply.stdout or "")
         verdict["patch_applied_candidate"] = int(m_applied.group(1)) if m_applied else None
+        verdict["patch_applied_flags"] = m_applied.group(2).strip() if m_applied else None
         verdict["patch_applied_repo"] = repo_hint
 
         return JudgeRunResult(

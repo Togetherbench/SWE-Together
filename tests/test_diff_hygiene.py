@@ -223,12 +223,14 @@ def test_candidates_apply_when_the_lost_line_was_the_last_line_of_the_file(tmp_p
 def test_judge_sandbox_tries_candidates_and_does_not_swallow_apply_failure():
     src = (REPO_ROOT / "eval" / "correctness" / "sandbox.py").read_text()
     assert "_patch_apply_candidates(patch_to_apply)" in src
-    assert 'apply --check --whitespace=nowarn "/tmp/agent.patch.$i"' in src
+    assert 'apply --check --whitespace=nowarn $flags "/tmp/agent.patch.$i"' in src
     assert 'if [ -z "$APPLIED" ]; then' in src and "exit 1; fi;" in src      # no candidate fits → hard failure
     assert 'apply --whitespace=nowarn /tmp/agent.patch && \'\n                \'chmod -R a+rwX "$REPO" 2>/dev/null || true\'' not in src
     # repo choice: recorder's hint first, then shallowest .git (never `find | head -1`)
     assert '_patch_main_repo(patch_to_apply)' in src and 'REPO="$HINT"' in src
     assert 'name .git \\\\( -type d -o -type f \\\\) 2>/dev/null | head -1' not in src
+    # second sweep with reduced context for a lost trailing space on the diff's last context line
+    assert 'for flags in "" "-C2"; do' in src and 'patch_applied_flags' in src
 
 
 # ── multi-repo, submodule and binary blocks ───────────────────────────────
@@ -346,3 +348,25 @@ def test_verdict_on_normalised_patch_is_never_retired_structurally(tmp_path):
                verdict={"judge_score": 0.7, "judge_notes": "3 of 4 goals", "patch_applied_candidate": 0, "patch_applied_repo": "/workspace"}, flag=None)
     assert repair.repair_trial(t) is None                                  # fixed judge already applied the normalised patch
     assert (t / "judge_verdict.json").exists()
+
+
+def test_lost_trailing_space_on_last_context_line_applies_with_reduced_context(tmp_path):
+    """str.strip() also removed trailing whitespace from the final context line of the
+    whole diff; the hunk counts still match, so only git's reduced-context sweep can
+    apply it (the judge tries "" then "-C2")."""
+    repo, git = _git_repo(tmp_path, "a\nb\nc\nd\ne \n")          # 3 context lines after the edit; last has a trailing space
+    (repo / "x.go").write_text("a\nB\nc\nd\ne \n")
+    full = git("diff").stdout; git("checkout", "--", "x.go")
+    recorded = full.strip()                                        # eats the trailing space of " c "
+    cand = patch_normalize.apply_candidates(recorded)[0]
+    assert git("apply", "--check", "--whitespace=nowarn", "-", input=cand, check=False).returncode != 0
+    assert git("apply", "--check", "--whitespace=nowarn", "-C2", "-", input=cand, check=False).returncode == 0
+
+
+def test_scratch_only_diff_is_empty_for_the_judge():
+    """Edits only in the agent's /tmp clone are not gradable: no candidates → skipped_empty_patch."""
+    diff = ("=== /opt/entire-cli (cumulative vs harbor-base) ===\n"
+            "=== /tmp/opencode/repro (cumulative vs harbor-base) ===\n" + _block("main.go", "+x\n"))
+    assert patch_normalize.apply_candidates(diff) == []
+    src = (REPO_ROOT / "eval" / "correctness" / "run_batch.py").read_text()
+    assert "not _patch_apply_candidates(agent_patch)" in src
