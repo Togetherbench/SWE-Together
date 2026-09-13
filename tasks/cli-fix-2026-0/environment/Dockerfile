@@ -22,9 +22,12 @@ RUN git clone https://github.com/entireio/cli.git repo
 WORKDIR /workspace/repo
 RUN git checkout 7cd5dfae
 
-# Set up Go environment
-ENV GOPATH="/workspace/repo/.go"
-ENV GOMODCACHE="/workspace/repo/.go/pkg/mod"
+# Set up Go environment. Keep the module cache OUTSIDE the repo: with
+# GOPATH under /workspace/repo, any `go build`/`go test` mutates thousands of
+# files inside the working tree and the graded diff becomes 300 MB of vendored
+# modules instead of the agent's edits.
+ENV GOPATH="/root/go"
+ENV GOMODCACHE="/root/go/pkg/mod"
 
 # Download dependencies
 RUN go mod download

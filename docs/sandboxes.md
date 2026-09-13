@@ -73,6 +73,38 @@ predecessor dirs to `<trials_dir>/_failed/` first (no `__` in the name, so the
 judge and aggregator ignore them); previously the failed dir stayed next to the
 re-run and counted as an extra 0.0 replicate.
 
+### The graded diff excludes run-generated files, and the user-sim diff is bounded
+
+`capture_git_diff` (`src/user_agent/repo_diff.py`) diffs the repo against the
+`harbor-base` tag after every turn and strips run-generated directories before
+writing `agent/final.patch`. The filter covers virtualenvs, `node_modules`,
+caches, and **language module caches** (`.go/`, `pkg/mod`, `.cargo`, `.npm`,
+`.pnpm-store`, `.m2`, …). The last group matters because a task image may point a
+package manager *into* the repo: `cli-fix-2026-0` shipped
+`GOPATH=/workspace/repo/.go`, so any `go build` dropped ~7k vendored files into
+the working tree and the cumulative diff grew to 270–370 MB. Two such trials
+(Fable 5.1 r2, Opus 4.8 r2) had passed the verifier (1.0) but were judged
+**0.0 "incorrect"** on the module-cache noise; a third overflowed the user-sim's
+request limit and OOM-killed a shard.
+
+Three guards now apply:
+
+1. the filter above (the task's Dockerfile was also fixed to keep `GOPATH`
+   outside the repo);
+2. the per-turn incremental diff handed to the simulated user is capped at
+   `USER_SIM_DIFF_MAX_CHARS` (200 k chars) with a truncation marker — it is a
+   context hint, not the graded artefact, and unbounded it produced 70–125 MB
+   prompts;
+3. a trial still carrying `agent/diff_polluted.flag` (cumulative diff spanning
+   > 300 files) is **skipped by the judge** and **refused by the aggregator**
+   instead of being scored 0.0. `python src/repair_polluted_patches.py
+   <trials_root>…` re-applies the current filter to stored patches, keeps the
+   original as `final.patch.unfiltered`, retires the stale `judge_verdict.json`
+   (→ `judge_verdict.polluted-N.json`) and clears the flag, so the next judge
+   pass re-scores the trial on the agent's real edits. Flags that turn out to be
+   genuine agent output (e.g. a generated fixture tree) are renamed to
+   `diff_polluted.agent-edits` by hand after review.
+
 ## e2b
 
 Nothing to configure beyond `E2B_API_KEY`. The first run builds one E2B template

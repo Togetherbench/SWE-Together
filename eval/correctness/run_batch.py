@@ -145,6 +145,13 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     if not agent_patch_p.exists():
         result["status"] = "skipped_no_patch"
         return result
+    # A cumulative diff spanning hundreds of files is run-generated pollution
+    # (module cache / diverged baseline), not the agent's edits; judging it as-is
+    # yields a false "incorrect". Repair first (src/repair_polluted_patches.py).
+    if (trial_dir / "agent" / "diff_polluted.flag").exists():
+        result["status"] = "skipped_polluted_patch"
+        result["error"] = "diff_polluted.flag present; run repair_polluted_patches before judging"
+        return result
     agent_patch = agent_patch_p.read_text()
     if len(agent_patch.strip()) < 100:
         result["status"] = "skipped_empty_patch"

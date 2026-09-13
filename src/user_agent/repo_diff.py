@@ -195,11 +195,43 @@ def split_diff_output(raw: str) -> tuple[str, str]:
 # don't .gitignore them. Stripped from the graded diff. Deliberately does NOT
 # include .claude/.codex/.opencode (coding-agent repos ship those as source) or
 # dist/build/target (can be legit source dirs in some repos).
+#
+# Language package/module caches are junk wherever they land: some task images
+# point GOPATH/GOMODCACHE *inside* the repo (cli-fix-2026-0 sets
+# GOPATH=/workspace/repo/.go), so a plain `go build` drops thousands of vendored
+# files into the tree and the cumulative diff balloons to 300+ MB. `.go` here is
+# a directory name, not the file extension: `(^|/)\.go(/|$)` matches
+# `.go/pkg/mod/...` and never `main.go`.
 _JUNK_RE = re.compile(
     r'(^|/)(\.venv|venv|node_modules|__pycache__|\.pytest_cache|\.mypy_cache'
     r'|\.ruff_cache|\.tox|\.desloppify|\.coverage|\.cache|\.eggs|\.gradle'
-    r'|\.next|site-packages)(/|$)'
+    r'|\.next|site-packages'
+    r'|\.go|pkg/mod|\.cargo|\.npm|\.pnpm-store|\.m2|\.ivy2|\.nuget|\.stack-work|\.pub-cache'
+    r')(/|$)'
 )
+
+#: Upper bound on the incremental diff handed to the simulated user. The diff is
+#: a *context hint* for the user-sim, not the graded artefact; unbounded, it
+#: produced 70–125 MB prompts that OpenRouter rejected ("total text input size
+#: exceeds 8 MB") and, held in memory across a shard's workers, OOM-killed the
+#: shard. Far above any legitimate per-turn edit.
+USER_SIM_DIFF_MAX_CHARS = 200_000
+
+
+def truncate_diff_for_user_sim(diff: str, limit: int = USER_SIM_DIFF_MAX_CHARS) -> str:
+    """Cut a diff at ``limit`` chars on a line boundary, appending a marker with
+    the total size and file count so the user-sim knows it saw a prefix."""
+    if len(diff) <= limit:
+        return diff
+    nfiles = diff.count("\ndiff --git ") + int(diff.startswith("diff --git "))
+    head = diff[:limit]
+    cut = head.rfind("\n")
+    if cut > 0:
+        head = head[:cut]
+    return (
+        f"{head}\n[... diff truncated for the user simulator: {len(diff):,} chars "
+        f"across {nfiles} files; showing the first {len(head):,} chars ...]"
+    )
 
 
 def _strip_junk(diff: str) -> str:
@@ -304,4 +336,4 @@ async def capture_git_diff(
             incremental + "\n"
         )
 
-    return incremental
+    return truncate_diff_for_user_sim(incremental)
