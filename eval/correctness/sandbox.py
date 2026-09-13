@@ -23,7 +23,7 @@ from dirhash import dirhash
 
 from eval.correctness.judge_sandbox import CmdResult, open_judge_sandbox
 import llm_config  # noqa: E402  (src/ is on sys.path via judge_sandbox)
-from patch_normalize import apply_candidates as _patch_apply_candidates  # noqa: E402
+from patch_normalize import apply_candidates as _patch_apply_candidates, main_repo_path as _patch_main_repo  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -221,6 +221,11 @@ async def run_judge(
             await sb.write(f"/tmp/agent.patch.{i}", cand)
         await sb.write("/tmp/agent.patch", candidates[0])
         n_candidates = len(candidates)
+        # The recorder names the task repo in its first banner; prefer it over
+        # filesystem discovery, whose `find | head -1` can land on a nested
+        # submodule (nunchaku: /workspace/nunchaku before /workspace) or a
+        # scratch clone the agent made under /tmp.
+        hinted_repo = _patch_main_repo(patch_to_apply) or ""
         # Phase-1 with no oracle patch still needs the repo discovery (the
         # judge's first_message references {repo_hint}), but the apply step
         # should be a no-op — the workspace stays in the buggy state and the
@@ -237,6 +242,7 @@ async def run_judge(
         # for future nonstandard layouts.
         apply = await sb.run(
             "set -e; "
+            f'HINT={shlex.quote(hinted_repo)}; '
             'ROOTS="/workspace /opt /home /app /repo /tmp /entire-cli /entireio-cli /no-magic"; '
             'if [ -n "${HARBOR_REPO_PATHS:-}" ]; then '
             '  ROOTS="$ROOTS $(echo "$HARBOR_REPO_PATHS" | tr ":" " ")"; '
@@ -244,7 +250,14 @@ async def run_judge(
             'EXISTING=""; '
             'for r in $ROOTS; do [ -e "$r" ] && EXISTING="$EXISTING $r"; done; '
             'if [ -z "$EXISTING" ]; then echo "NO_REPO_ROOTS_EXIST" >&2; exit 1; fi; '
-            'REPO=$(find $EXISTING -maxdepth 3 -name .git \\( -type d -o -type f \\) 2>/dev/null | head -1 | xargs -I{} dirname {}); '
+            # Prefer the repo the recorder named; otherwise the shallowest .git
+            # (shortest path), so a nested submodule never shadows its parent.
+            'REPO=""; '
+            'if [ -n "$HINT" ] && [ -e "$HINT/.git" ]; then REPO="$HINT"; fi; '
+            'if [ -z "$REPO" ]; then '
+            '  REPO=$(find $EXISTING -maxdepth 3 -name .git \\( -type d -o -type f \\) 2>/dev/null '
+            '         | while IFS= read -r g; do printf "%d %s\\n" "${#g}" "$g"; done | sort -n | head -1 | cut -d" " -f2- | xargs -I{} dirname {}); '
+            'fi; '
             'if [ -z "$REPO" ]; then echo "NO_GIT_REPO_FOUND" >&2; exit 1; fi; '
             'cd "$REPO" && echo "applying to $(pwd)" && '
             # safe.directory='*' lets root run git on repos owned by `agent`

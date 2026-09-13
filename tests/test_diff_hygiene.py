@@ -221,6 +221,63 @@ def test_judge_sandbox_tries_candidates_and_does_not_swallow_apply_failure():
     assert 'apply --check --whitespace=nowarn "/tmp/agent.patch.$i"' in src
     assert 'if [ -z "$APPLIED" ]; then' in src and "exit 1; fi;" in src      # no candidate fits → hard failure
     assert 'apply --whitespace=nowarn /tmp/agent.patch && \'\n                \'chmod -R a+rwX "$REPO" 2>/dev/null || true\'' not in src
+    # repo choice: recorder's hint first, then shallowest .git (never `find | head -1`)
+    assert '_patch_main_repo(patch_to_apply)' in src and 'REPO="$HINT"' in src
+    assert 'name .git \\\\( -type d -o -type f \\\\) 2>/dev/null | head -1' not in src
+
+
+# ── multi-repo, submodule and binary blocks ───────────────────────────────
+
+SUBMODULE_BLOCK = ("diff --git a/nunchaku b/nunchaku\nindex f86ad470..edd50864 160000\n--- a/nunchaku\n+++ b/nunchaku\n"
+                   "@@ -1 +1 @@\n-Subproject commit f86ad47001de7b7f48e0ff592a19ac5d3a2d7f09\n+Subproject commit edd50864c3e62d495886851056fc90e1e08d872f\n")
+BINARY_BLOCK = "diff --git a/voyager-1.3.2-chrome.zip b/voyager-1.3.2-chrome.zip\nnew file mode 100644\nindex 0000000..8ec8e26\nBinary files /dev/null and b/voyager-1.3.2-chrome.zip differ\n"
+MULTI_REPO = ("=== /workspace (cumulative vs harbor-base) ===\n" + SUBMODULE_BLOCK + _block("quantize.py", "+fixed\n") + BINARY_BLOCK +
+              "=== /workspace/nunchaku (cumulative vs harbor-base) ===\n" + _block("src/kernel.cu", "+scratch\n"))
+
+
+def test_main_repo_section_and_repo_path():
+    assert patch_normalize.banner_repos(MULTI_REPO) == ["/workspace", "/workspace/nunchaku"]
+    assert patch_normalize.main_repo_path(MULTI_REPO) == "/workspace"
+    sec = patch_normalize.main_repo_section(MULTI_REPO)
+    assert "quantize.py" in sec and "src/kernel.cu" not in sec
+    assert patch_normalize.main_repo_section(SOURCE) == SOURCE                        # single section: untouched
+    assert patch_normalize.main_repo_path(SOURCE) is None
+
+
+def test_scratch_clones_under_tmp_never_win():
+    # older recordings sort sections alphabetically, so /tmp/... scratch clones precede the task repo
+    diff = ("=== /tmp/tmp5css_dsc (cumulative vs harbor-base) ===\n" + _block("scratch.txt") +
+            "=== /tmp/opencode/x (cumulative vs harbor-base) ===\n" + _block("y.txt") +
+            "=== /workspace/cli (cumulative vs harbor-base) ===\n" + _block("cmd/main.go", "+real\n"))
+    assert patch_normalize.main_repo_path(diff) == "/workspace/cli"
+    sec = patch_normalize.main_repo_section(diff)
+    assert "cmd/main.go" in sec and "scratch.txt" not in sec and "y.txt" not in sec
+    only_tmp = "=== /tmp/only (cumulative vs harbor-base) ===\n" + _block("a.txt")
+    assert patch_normalize.main_repo_path(only_tmp) == "/tmp/only"                    # nothing better: keep it
+
+
+def test_multi_line_trailing_context_loss():
+    # two whitespace-only lines lost at the end of the last hunk (header 3/3, body 1/1)
+    eaten = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,3 +1,3 @@\n-a\n+b"
+    fixed = patch_normalize.restore_trailing_context(eaten)
+    assert "@@ -1,1 +1,1 @@" in fixed
+    cands = patch_normalize.apply_candidates(eaten)
+    assert len(cands) == 2 and cands[1].endswith("\n \n \n")                          # k=2 blank lines re-added
+
+
+def test_unapplyable_blocks_are_dropped_but_source_kept():
+    trimmed, dropped = patch_normalize.drop_unapplyable_blocks(patch_normalize.strip_banners(MULTI_REPO))
+    assert dropped == {"submodule": 1, "binary": 1}
+    assert "Subproject commit" not in trimmed and "Binary files" not in trimmed
+    assert "quantize.py" in trimmed and "src/kernel.cu" in trimmed                    # (section trimming is a separate step)
+
+
+def test_apply_candidates_use_main_repo_without_unapplyable_blocks():
+    cands = patch_normalize.apply_candidates(MULTI_REPO)
+    assert len(cands) == 1
+    c = cands[0]
+    assert "quantize.py" in c and "Subproject" not in c and "Binary files" not in c and "kernel.cu" not in c and "===" not in c
+    assert patch_normalize.apply_candidates("=== /workspace (cumulative vs harbor-base) ===\n" + BINARY_BLOCK) == []   # nothing gradable left
 
 
 # ── evaluator guards ──────────────────────────────────────────────────────
@@ -245,3 +302,22 @@ def test_aggregator_refuses_flagged_patch(tmp_path):
         run_eval._effective_judge_score(t, {"judge_score": 0.0})
     (t / "agent" / "diff_polluted.flag").unlink()
     assert run_eval._effective_judge_score(t, {"judge_score": 0.7}) == 0.7
+
+
+def test_repair_retires_verdicts_the_old_judge_could_not_have_applied(tmp_path):
+    # /tmp scratch clone listed first: the old judge applied the wrong section → 0.0 on an untouched workspace
+    diff = ("=== /tmp/tmp.abc/repo (cumulative vs harbor-base) ===\n" + _block("arr-monitor.py", "+conflict\n") +
+            "=== /workspace (cumulative vs harbor-base) ===\n" + _block("arr-monitor.py", "+real fix\n"))
+    t = _trial(tmp_path, "arr-monitor-add-processes-flag__x", diff, verdict={"judge_score": 0.0, "judge_notes": "the /workspace tree is completely unchanged"}, flag=None)
+    rec = repair.repair_trial(t)
+    assert rec and rec["unapplyable_as_recorded"] == "tmp-first" and rec["verdict_retired"]
+    assert (t / "judge_verdict.polluted-1.json").exists() and not (t / "judge_verdict.json").exists()
+    assert not (t / "agent" / "final.patch.unfiltered").exists()          # the patch text itself was fine
+    # submodule pointer block → same treatment
+    t2 = _trial(tmp_path, "nunchaku-quantize-bugfix__y", "=== /workspace (cumulative vs harbor-base) ===\n" + SUBMODULE_BLOCK + _block("quantize.py"),
+                verdict={"judge_score": 0.1}, flag=None)
+    rec2 = repair.repair_trial(t2)
+    assert rec2 and rec2["unapplyable_as_recorded"] == "submodule" and rec2["verdict_retired"]
+    # a clean single-repo patch with a sound verdict is untouched
+    t3 = _trial(tmp_path, "task__clean2", "=== /workspace/repo (cumulative vs harbor-base) ===\n" + SOURCE, verdict={"judge_score": 0.9}, flag=None)
+    assert repair.repair_trial(t3) is None

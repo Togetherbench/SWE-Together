@@ -119,12 +119,21 @@ diff by hand (38 verdicts say so), but several scored 0.0 on work that had
 passed the verifier.
 
 Fixes: `repo_diff` trims only empty lines (`_trim_diff`) instead of stripping;
-`src/patch_normalize.py` strips the repo banner lines and restores the missing
-context line from the header's line counts, and the judge sandbox normalises
-every patch before applying and no longer masks an apply failure
-(`patch_apply_failed` is reported instead). The repair tool applies the same
-normalisation to stored patches and retires only those verdicts where the judge
-visibly stumbled (apply error, "applied manually", "workspace unmodified").
+`src/patch_normalize.py` builds the patch the judge applies from the recorded
+diff — the **task repo's section only** (agents often clone scratch copies under
+`/tmp`, and older recordings listed those first), with **submodule-pointer and
+`Binary files … differ` blocks removed** (unapplyable and not gradable) and a
+short last hunk repaired by shrinking its header (with an end-of-file fallback
+candidate). The judge sandbox applies in the repo the recorder named (falling
+back to the shallowest `.git`, never `find | head -1`, which picked a nested
+submodule for the nunchaku tasks), tries the candidates with `git apply --check`
+and no longer masks an apply failure (`patch_apply_failed` is reported instead).
+The repair tool applies the same normalisation to stored patches and retires
+verdicts that graded something other than the agent's edits: junk in the patch,
+a patch the old judge could not have applied (scratch-clone-first, submodule,
+binary), or notes showing the judge stumbled ("applied manually", "workspace
+unmodified"). On `arr-monitor-add-processes-flag` 12 of 14 published trials had
+been judged 0.0 with verifier ≥ 0.83 for exactly this reason.
 
 ## e2b
 

@@ -35,7 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from user_agent.repo_diff import _strip_junk  # noqa: E402
-from patch_normalize import restore_trailing_context  # noqa: E402
+from patch_normalize import restore_trailing_context, banner_repos, _is_scratch, _SUBMODULE_RE, _BINARY_RE  # noqa: E402
 
 UNFILTERED_SUFFIX = ".unfiltered"
 
@@ -65,37 +65,66 @@ def _judge_stumbled_on_patch(verdict_path: Path) -> bool:
     return bool(_STUMBLE_RE.search(str(v.get("judge_notes") or "")))
 
 
+def _old_judge_could_not_apply(raw: str) -> str:
+    """Structural reasons the pre-fix judge sandbox (raw text, ``git apply`` in
+    the first ``.git`` found, failure swallowed) could not have applied this
+    patch, so its verdict graded an unmodified workspace. Empty string if none.
+
+    * ``tmp-first``: the recorder listed an agent scratch clone under /tmp before
+      the task repo, so the wrong section's hunks were applied to the task repo
+      (arr-monitor-add-processes-flag: 12/14 trials judged 0.0 with verifier
+      ≥ 0.83);
+    * ``submodule``: a ``160000`` pointer block needs the submodule checked out;
+    * ``binary``: ``Binary files ... differ`` placeholders cannot be applied.
+    """
+    reasons = []
+    repos = banner_repos(raw)
+    if repos and _is_scratch(repos[0]) and any(not _is_scratch(r) for r in repos):
+        reasons.append("tmp-first")
+    if _SUBMODULE_RE.search(raw):
+        reasons.append("submodule")
+    if _BINARY_RE.search(raw):
+        reasons.append("binary")
+    return "+".join(reasons)
+
+
 def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
-    """Return a change record if the trial's patch needed repair, else None."""
+    """Return a change record if the trial's patch or verdict needed repair, else None."""
     patch = trial_dir / "agent" / "final.patch"
     if not patch.is_file():
         return None
     raw = patch.read_text(errors="replace")
     stripped = _strip_junk(raw)
     clean = restore_trailing_context(stripped)
-    if clean == raw.rstrip("\n"):
+    unapplyable = _old_judge_could_not_apply(raw)
+    patch_changed = clean != raw.rstrip("\n")
+    verdict = trial_dir / "judge_verdict.json"
+    # Retire the stored verdict when it graded something other than the agent's
+    # edits: junk was in the patch, the old judge could not have applied it, or
+    # the verdict itself shows the judge stumbled. Sound verdicts on a patch
+    # that merely lacked its trailing line are left in place.
+    junk_stripped = _nfiles(raw) != _nfiles(stripped)
+    retire = verdict.exists() and (junk_stripped or bool(unapplyable) or _judge_stumbled_on_patch(verdict))
+    if not patch_changed and not retire:
         return None
     rec = {
         "trial": trial_dir.name,
         "before_bytes": len(raw), "before_files": _nfiles(raw),
         "after_bytes": len(clean), "after_files": _nfiles(clean),
-        "junk_stripped": _nfiles(raw) != _nfiles(stripped),
+        "junk_stripped": junk_stripped,
         "trailing_context_restored": clean != stripped,
+        "unapplyable_as_recorded": unapplyable,
         "verdict_retired": False,
     }
     if dry_run:
+        rec["verdict_retired"] = retire
         return rec
-    backup = patch.with_name(patch.name + UNFILTERED_SUFFIX)
-    if not backup.exists():
-        patch.rename(backup)
-    patch.write_text(clean + "\n")
-    # The verdict (if any) judged the polluted/corrupt patch; move it aside so
-    # the judge launcher's skip-existing logic re-scores this trial. Verdicts on
-    # a patch that merely lacked its trailing context line are only retired when
-    # the judge visibly stumbled on it (apply failure / manual application),
-    # otherwise its score stands.
-    verdict = trial_dir / "judge_verdict.json"
-    if verdict.exists() and (rec["junk_stripped"] or _judge_stumbled_on_patch(verdict)):
+    if patch_changed:
+        backup = patch.with_name(patch.name + UNFILTERED_SUFFIX)
+        if not backup.exists():
+            patch.rename(backup)
+        patch.write_text(clean + "\n")
+    if retire:
         n = 1
         while (trial_dir / f"judge_verdict.polluted-{n}.json").exists():
             n += 1
