@@ -228,13 +228,20 @@ def _trial_runtime_sec(trial_dir: Path) -> float | None:
     return float(v) if v is not None else None
 
 
-def _trial_output_tokens(trial_dir: Path) -> int | None:
-    """Output+reasoning tokens per trial, summed from the opencode event log
-    (agent/opencode.txt `step_finish` rows). None for harnesses without it."""
+def _trial_tokens(trial_dir: Path) -> dict | None:
+    """Token usage per trial, summed from the opencode event log
+    (agent/opencode.txt `step_finish` rows). None for harnesses without it.
+
+    Returns {input, cache_read, cache_write, output} where `output` is
+    output + reasoning and `input` is what the provider reported as input.
+    Providers differ on whether `input` includes cached tokens: Anthropic-style
+    accounting (Bedrock) excludes them, OpenAI/Gemini/xAI-style includes them.
+    Consumers that price the usage must apply the route's convention."""
     p = trial_dir / "agent" / "opencode.txt"
     if not p.exists():
         return None
-    tot, found = 0, False
+    tot = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
+    found = False
     for line in p.read_text().splitlines():
         try:
             e = json.loads(line)
@@ -242,9 +249,19 @@ def _trial_output_tokens(trial_dir: Path) -> int | None:
             continue
         if e.get("type") == "step_finish":
             u = (e.get("part") or {}).get("tokens") or {}
-            tot += (u.get("output") or 0) + (u.get("reasoning") or 0)
+            c = u.get("cache") or {}
+            tot["input"] += u.get("input") or 0
+            tot["cache_read"] += c.get("read") or 0
+            tot["cache_write"] += c.get("write") or 0
+            tot["output"] += (u.get("output") or 0) + (u.get("reasoning") or 0)
             found = True
     return tot if found else None
+
+
+def _trial_output_tokens(trial_dir: Path) -> int | None:
+    """Output+reasoning tokens per trial (see _trial_tokens)."""
+    t = _trial_tokens(trial_dir)
+    return t["output"] if t else None
 
 
 def _is_infra_failed(trial_dir: Path) -> bool:
@@ -324,6 +341,7 @@ def join_trial_artefacts(job: dict) -> dict:
         # trial cost
         "runtime_sec": _trial_runtime_sec(trial_dir),
         "output_tokens": _trial_output_tokens(trial_dir),
+        "tokens": _trial_tokens(trial_dir),
         # step 2 — intent_coverage (diagnostic)
         "overall_score": cov.get("overall_score"),
         "coverage_rate": cov.get("coverage_rate"),
@@ -399,6 +417,8 @@ def aggregate_per_task(trials_by_task: dict[str, list[dict]]) -> list[dict]:
             # trial cost (avg per trial)
             "runtime_sec_mean": _safe_mean(t.get("runtime_sec") for t in trials),
             "output_tokens_mean": _safe_mean(t.get("output_tokens") for t in trials),
+            "tokens_mean": {k: _safe_mean((t.get("tokens") or {}).get(k) for t in trials if t.get("tokens"))
+                            for k in ("input", "cache_read", "cache_write", "output")},
             # diagnostics — Intent Coverage (sim-vs-oracle) + benchmark fidelity
             "coverage_mean": _safe_mean(t.get("overall_score") for t in trials),
             "empty_patch_rate": round(empty_patch_rate, 4),
@@ -441,6 +461,8 @@ def cross_task_rollup(rows: list[dict], denom_tasks: int | None = None) -> dict:
         "user_correction_mean": m("user_correction_mean"),
         "runtime_sec_mean": m("runtime_sec_mean"),
         "output_tokens_mean": m("output_tokens_mean"),
+        "tokens_mean": {k: _safe_mean((r.get("tokens_mean") or {}).get(k) for r in rows)
+                        for k in ("input", "cache_read", "cache_write", "output")},
         # diagnostics
         "coverage_mean": m("coverage_mean"),
         "empty_patch_rate_mean": m("empty_patch_rate"),
