@@ -35,7 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from user_agent.repo_diff import _strip_junk  # noqa: E402
-from patch_normalize import restore_trailing_context, banner_repos, _is_scratch, _SUBMODULE_RE, _BINARY_RE  # noqa: E402
+from patch_normalize import _short_last_hunk, _rstrip_empty, banner_repos, _is_scratch, _SUBMODULE_RE, _BINARY_RE  # noqa: E402
 
 UNFILTERED_SUFFIX = ".unfiltered"
 
@@ -95,8 +95,13 @@ def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
         return None
     raw = patch.read_text(errors="replace")
     stripped = _strip_junk(raw)
-    clean = restore_trailing_context(stripped)
+    # The stored patch keeps its original hunk headers: a header that is short
+    # of its body is exactly what tells the judge (patch_normalize) that
+    # trailing context was lost and lets it try both reconstructions. Only the
+    # junk filter rewrites the stored text.
+    clean = stripped
     unapplyable = _old_judge_could_not_apply(raw)
+    short_hunk = _short_last_hunk(_rstrip_empty(stripped))[0] is not None
     patch_changed = clean != raw.rstrip("\n")
     verdict = trial_dir / "judge_verdict.json"
     # Retire the stored verdict when it graded something other than the agent's
@@ -112,7 +117,7 @@ def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
         "before_bytes": len(raw), "before_files": _nfiles(raw),
         "after_bytes": len(clean), "after_files": _nfiles(clean),
         "junk_stripped": junk_stripped,
-        "trailing_context_restored": clean != stripped,
+        "short_last_hunk": short_hunk,
         "unapplyable_as_recorded": unapplyable,
         "verdict_retired": False,
     }

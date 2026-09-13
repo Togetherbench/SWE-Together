@@ -143,17 +143,18 @@ HUNK_SHRUNK = HUNK_EATEN.replace("@@ -1,3 +1,3 @@", "@@ -1,2 +1,2 @@")
 
 
 def test_restore_trailing_context_shrinks_header_only_when_it_proves_a_loss():
-    assert repair.restore_trailing_context(HUNK_EATEN) == HUNK_SHRUNK
-    assert repair.restore_trailing_context(HUNK_SHRUNK) == HUNK_SHRUNK                 # idempotent
-    assert repair.restore_trailing_context(HUNK_ENDING_BLANK) == HUNK_ENDING_BLANK     # intact hunk untouched
-    assert repair.restore_trailing_context(SOURCE) == SOURCE.rstrip("\n")             # complete hunk: nothing changed
+    assert patch_normalize.restore_trailing_context(HUNK_EATEN) == HUNK_SHRUNK
+    assert patch_normalize.restore_trailing_context(HUNK_SHRUNK) == HUNK_SHRUNK                 # idempotent
+    assert patch_normalize.restore_trailing_context(HUNK_ENDING_BLANK) == HUNK_ENDING_BLANK     # intact hunk untouched
+    assert patch_normalize.restore_trailing_context(SOURCE) == SOURCE.rstrip("\n")             # complete hunk: nothing changed
 
 
-def test_repair_restores_context_but_keeps_sound_verdict(tmp_path):
+def test_repair_keeps_original_headers_and_sound_verdict_for_short_hunk(tmp_path):
+    """A short last hunk is the judge's cue to try both reconstructions, so the
+    stored text is left byte-for-byte (only junk gets stripped); a sound verdict stands."""
     t = _trial(tmp_path, "task__ctx", HUNK_EATEN, verdict={"judge_score": 0.9, "judge_notes": "all goals met"}, flag=None)
-    rec = repair.repair_trial(t)
-    assert rec and rec["trailing_context_restored"] and not rec["junk_stripped"] and not rec["verdict_retired"]
-    assert (t / "agent" / "final.patch").read_text() == HUNK_SHRUNK + "\n"
+    assert repair.repair_trial(t) is None
+    assert (t / "agent" / "final.patch").read_text() == HUNK_EATEN + "\n"
     assert (t / "judge_verdict.json").exists()
 
 
@@ -161,7 +162,8 @@ def test_repair_retires_verdict_when_judge_stumbled_on_corrupt_patch(tmp_path):
     t = _trial(tmp_path, "task__stumble", HUNK_EATEN,
                verdict={"judge_score": 0.0, "judge_notes": "The agent.patch was NOT applied to the workspace; HEAD is still the base commit."}, flag=None)
     rec = repair.repair_trial(t)
-    assert rec and rec["verdict_retired"] and (t / "judge_verdict.polluted-1.json").exists()
+    assert rec and rec["short_last_hunk"] and rec["verdict_retired"] and (t / "judge_verdict.polluted-1.json").exists()
+    assert not (t / "agent" / "final.patch.unfiltered").exists()          # text unchanged: no backup needed
 
 
 # ── judge-side normalisation ──────────────────────────────────────────────
