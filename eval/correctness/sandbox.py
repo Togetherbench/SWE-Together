@@ -23,7 +23,7 @@ from dirhash import dirhash
 
 from eval.correctness.judge_sandbox import CmdResult, open_judge_sandbox
 import llm_config  # noqa: E402  (src/ is on sys.path via judge_sandbox)
-from patch_normalize import normalize_for_git_apply as _normalize_patch_for_apply  # noqa: E402
+from patch_normalize import apply_candidates as _patch_apply_candidates  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -212,10 +212,15 @@ async def run_judge(
         # `git apply` rejects two artefacts of the harness's own diff capture:
         # the `=== <repo> (cumulative vs harbor-base) ===` banner line, and a
         # last hunk whose trailing blank context line was lost (patches recorded
-        # before repo_diff._trim_diff). Normalise both here so the judge really
-        # does start from an applied patch.
-        patch_to_apply = _normalize_patch_for_apply(patch_to_apply)
-        await sb.write("/tmp/agent.patch", patch_to_apply)
+        # before repo_diff._trim_diff). patch_normalize yields one or two
+        # reconstructions (they differ only in that unknowable whitespace line);
+        # the first that `git apply --check` accepts is applied. Candidate 0 is
+        # written first so the judge's /tmp/agent.patch is always populated.
+        candidates = _patch_apply_candidates(patch_to_apply) or [""]
+        for i, cand in enumerate(candidates):
+            await sb.write(f"/tmp/agent.patch.{i}", cand)
+        await sb.write("/tmp/agent.patch", candidates[0])
+        n_candidates = len(candidates)
         # Phase-1 with no oracle patch still needs the repo discovery (the
         # judge's first_message references {repo_hint}), but the apply step
         # should be a no-op — the workspace stays in the buggy state and the
@@ -254,9 +259,17 @@ async def run_judge(
                 # The chmod is best-effort; the apply is not. Keep `|| true`
                 # scoped to the chmod so a rejected patch surfaces as
                 # patch_apply_failed instead of the judge scoring an unmodified
-                # workspace as "incorrect".
-                'git -c safe.directory="*" apply --whitespace=nowarn /tmp/agent.patch && '
-                '{ chmod -R a+rwX "$REPO" 2>/dev/null || true; }'
+                # workspace as "incorrect". Try each candidate with --check and
+                # apply the first that fits; publish it as /tmp/agent.patch so
+                # the judge reads exactly what was applied.
+                'APPLIED=""; for i in $(seq 0 %d); do '
+                '  if git -c safe.directory="*" apply --check --whitespace=nowarn "/tmp/agent.patch.$i" 2>/dev/null; then '
+                '    git -c safe.directory="*" apply --whitespace=nowarn "/tmp/agent.patch.$i" && cp "/tmp/agent.patch.$i" /tmp/agent.patch && APPLIED=$i; break; '
+                '  fi; '
+                'done; '
+                'if [ -z "$APPLIED" ]; then git -c safe.directory="*" apply --check --whitespace=nowarn /tmp/agent.patch.0; exit 1; fi; '
+                'echo "applied candidate $APPLIED"; '
+                '{ chmod -R a+rwX "$REPO" 2>/dev/null || true; }' % (n_candidates - 1)
             ),
             timeout=120, user="root",
         )
