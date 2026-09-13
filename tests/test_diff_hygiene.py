@@ -5,6 +5,7 @@ before a filter change can be repaired and re-judged instead of scored as-is.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -92,6 +93,8 @@ def _trial(root: Path, name: str, patch: str, *, verdict: dict | None, flag: int
         (t / "agent" / "diff_polluted.flag").write_text(f"{flag}\n")
     if verdict is not None:
         (t / "judge_verdict.json").write_text(json.dumps(verdict))
+        # verdicts without the provenance marker stand for pre-fix judge output
+        os.utime(t / "judge_verdict.json", (repair.NORMALISED_JUDGE_SINCE - 86400,) * 2)
     return t
 
 
@@ -323,3 +326,23 @@ def test_repair_retires_verdicts_the_old_judge_could_not_have_applied(tmp_path):
     # a clean single-repo patch with a sound verdict is untouched
     t3 = _trial(tmp_path, "task__clean2", "=== /workspace/repo (cumulative vs harbor-base) ===\n" + SOURCE, verdict={"judge_score": 0.9}, flag=None)
     assert repair.repair_trial(t3) is None
+
+
+def test_repair_is_idempotent_and_respects_fresh_verdicts(tmp_path):
+    diff = ("=== /tmp/scratch (cumulative vs harbor-base) ===\n" + _block("s.txt") +
+            "=== /workspace (cumulative vs harbor-base) ===\n" + _block("arr-monitor.py", "+fix\n"))
+    t = _trial(tmp_path, "arr-monitor-add-processes-flag__z", diff, verdict={"judge_score": 0.0, "judge_notes": "unchanged tree"}, flag=None)
+    assert repair.repair_trial(t)["verdict_retired"]                       # stale verdict retired
+    assert repair.repair_trial(t) is None                                  # nothing left to do
+    # a judge pass on the fixed code writes a fresh verdict on the normalised patch: it must stand
+    (t / "judge_verdict.json").write_text(json.dumps({"judge_score": 0.9, "judge_notes": "all goals met"}))
+    assert repair.repair_trial(t) is None
+    assert (t / "judge_verdict.json").exists()
+
+
+def test_verdict_on_normalised_patch_is_never_retired_structurally(tmp_path):
+    diff = "=== /workspace (cumulative vs harbor-base) ===\n" + SUBMODULE_BLOCK + _block("quantize.py", "+fix\n")
+    t = _trial(tmp_path, "nunchaku-quantize-bugfix__q", diff,
+               verdict={"judge_score": 0.7, "judge_notes": "3 of 4 goals", "patch_applied_candidate": 0, "patch_applied_repo": "/workspace"}, flag=None)
+    assert repair.repair_trial(t) is None                                  # fixed judge already applied the normalised patch
+    assert (t / "judge_verdict.json").exists()

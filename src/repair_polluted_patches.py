@@ -39,9 +39,23 @@ from patch_normalize import _short_last_hunk, _rstrip_empty, banner_repos, _is_s
 
 UNFILTERED_SUFFIX = ".unfiltered"
 
+#: Judge runs that started at or after this instant applied the normalised patch
+#: (task-repo section, unapplyable blocks dropped, candidates tried in the
+#: recorder's repo). Verdicts written earlier graded the raw recorded text and
+#: are eligible for structural retirement. UTC 2026-09-13 10:59:30 = the commit
+#: that completed the judge-side normalisation; later verdicts also carry an
+#: explicit `patch_applied_candidate` marker.
+NORMALISED_JUDGE_SINCE = 1789297170.0
+
 
 def _nfiles(diff: str) -> int:
     return len(re.findall(r"^diff --git ", diff, re.M))
+
+
+def _trim(diff: str) -> str:
+    """Text comparison that ignores trailing newlines only (the on-disk patch
+    always ends with exactly one)."""
+    return diff.rstrip("\n")
 
 
 _STUMBLE_RE = re.compile(
@@ -89,7 +103,14 @@ def _old_judge_could_not_apply(raw: str) -> str:
 
 
 def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
-    """Return a change record if the trial's patch or verdict needed repair, else None."""
+    """Return a change record if the trial's patch or verdict needed repair, else None.
+
+    Idempotent: a second run over the same trial does nothing. Structural
+    retirement reasons (junk, unapplyable-as-recorded) apply only to a verdict
+    produced *before* this tool last touched the trial; a verdict written by a
+    later judge pass — which applies the normalised patch — stands unless its
+    own notes show the judge stumbled.
+    """
     patch = trial_dir / "agent" / "final.patch"
     if not patch.is_file():
         return None
@@ -102,14 +123,27 @@ def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
     clean = stripped
     unapplyable = _old_judge_could_not_apply(raw)
     short_hunk = _short_last_hunk(_rstrip_empty(stripped))[0] is not None
-    patch_changed = clean != raw.rstrip("\n")
-    verdict = trial_dir / "judge_verdict.json"
-    # Retire the stored verdict when it graded something other than the agent's
-    # edits: junk was in the patch, the old judge could not have applied it, or
-    # the verdict itself shows the judge stumbled. Sound verdicts on a patch
-    # that merely lacked its trailing line are left in place.
+    patch_changed = _trim(clean) != _trim(raw)
     junk_stripped = _nfiles(raw) != _nfiles(stripped)
-    retire = verdict.exists() and (junk_stripped or bool(unapplyable) or _judge_stumbled_on_patch(verdict))
+
+    verdict = trial_dir / "judge_verdict.json"
+    # A verdict produced by the fixed judge graded the normalised patch and must
+    # not be retired for structural reasons. Verdicts written by the fixed judge
+    # carry `patch_applied_candidate`; those written between the fix landing
+    # and that marker being added are recognised by timestamp
+    # (NORMALISED_JUDGE_SINCE). Everything earlier applied the raw text.
+    on_normalised_patch = False
+    if verdict.exists():
+        try:
+            on_normalised_patch = "patch_applied_candidate" in json.loads(verdict.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+        on_normalised_patch = on_normalised_patch or verdict.stat().st_mtime >= NORMALISED_JUDGE_SINCE
+    verdict_predates_repair = verdict.exists() and not on_normalised_patch
+    structural = junk_stripped or bool(unapplyable)
+    retire = verdict.exists() and (
+        (structural and verdict_predates_repair) or _judge_stumbled_on_patch(verdict)
+    )
     if not patch_changed and not retire:
         return None
     rec = {

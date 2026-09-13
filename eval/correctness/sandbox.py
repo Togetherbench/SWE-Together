@@ -12,6 +12,7 @@ JUDGE_VIA_OR=1 (OpenRouter's Anthropic-compatible endpoint).
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import shlex
@@ -640,6 +641,11 @@ if __name__ == "__main__":
                 "judge_stdout_tail": result.stdout[-2000:],
                 "judge_stderr_tail": result.stderr[-2000:],
             }
+        # Provenance: which normalised candidate was applied (repair tooling
+        # distinguishes verdicts on the normalised patch from pre-fix ones).
+        m_applied = re.search(r"applied candidate (\d+)", apply.stdout or "")
+        verdict["patch_applied_candidate"] = int(m_applied.group(1)) if m_applied else None
+        verdict["patch_applied_repo"] = repo_hint
 
         return JudgeRunResult(
             verdict=verdict,
