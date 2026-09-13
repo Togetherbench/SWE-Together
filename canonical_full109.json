@@ -40,6 +40,69 @@
       "agent_timeout": 4800,
       "workers": 6
     },
+    "opencode_gpt6astra": {
+      "model": "gpt-6-astra",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_grok46": {
+      "model": "grok-4.6",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_opus48_bedrock": {
+      "model": "claude-opus-4.8",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_gemini38flash": {
+      "model": "gemini-3.8-flash",
+      "agent_backend": "openrouter",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_opus5_bedrock": {
+      "model": "claude-opus-5",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_opus47_bedrock": {
+      "model": "claude-opus-4.7",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_opus46_bedrock": {
+      "model": "claude-opus-4.6",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
     "opencode_opus48": {
       "model": "openrouter/anthropic/claude-opus-4-8",
       "agent_type": "opencode",

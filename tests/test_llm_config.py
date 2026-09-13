@@ -40,6 +40,16 @@ def test_registry_ids_use_expected_grammar():
 def test_registry_targets_present():
     assert lc.MODEL_REGISTRY["gpt-5.6-sol"].bedrock == "global.openai.gpt-5.6-sol"
     assert lc.MODEL_REGISTRY["gpt-5.6-sol"].supports_temperature is False
+    assert lc.MODEL_REGISTRY["gpt-6-astra"].bedrock == "global.openai.gpt-6-astra"
+    assert lc.MODEL_REGISTRY["gpt-6-astra"].supports_temperature is False
+    assert lc.lookup("gpt-6") is lc.MODEL_REGISTRY["gpt-6-astra"]
+    assert lc.MODEL_REGISTRY["grok-4.6"].bedrock == "global.xai.grok-4.6"
+    assert lc.MODEL_REGISTRY["grok-4.6"].supports_temperature is False
+    assert lc.MODEL_REGISTRY["claude-opus-4.7"].bedrock == "global.anthropic.claude-opus-4-7"
+    assert lc.lookup("claude-opus-4-7") is lc.MODEL_REGISTRY["claude-opus-4.7"]
+    assert lc.MODEL_REGISTRY["claude-opus-5"].bedrock == "global.anthropic.claude-opus-5"
+    assert lc.MODEL_REGISTRY["gemini-3.8-flash"].bedrock is None
+    assert lc.MODEL_REGISTRY["gemini-3.8-flash"].openrouter == "google/gemini-3.8-flash"
     assert lc.MODEL_REGISTRY["claude-fable-5.1"].bedrock == "global.anthropic.claude-fable-5-1"
     assert lc.MODEL_REGISTRY["claude-opus-4.6"].openrouter == "anthropic/claude-opus-4.6"
     assert lc.MODEL_REGISTRY["gemini-3.1-pro"].bedrock is None

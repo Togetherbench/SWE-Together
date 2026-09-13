@@ -53,8 +53,13 @@ The registry (`src/llm_config.py`, `MODEL_REGISTRY`):
 | Registry name | `openrouter` | `bedrock` | `native` |
 |---|---|---|---|
 | `gpt-5.6-sol` (alias `gpt-5.6`), `-luna`, `-terra` | `openai/gpt-5.6-*` | `global.openai.gpt-5.6-*` | — |
+| `gpt-6-astra` (alias `gpt-6`) | `openai/gpt-6-astra` | `global.openai.gpt-6-astra` | — |
+| `grok-4.6` (alias `grok-4-6`) | `x-ai/grok-4.6` | `global.xai.grok-4.6` | — |
 | `claude-opus-4.6` | `anthropic/claude-opus-4.6` | `global.anthropic.claude-opus-4-6-v1` | `claude-opus-4-6` |
+| `claude-opus-4.7` (alias `claude-opus-4-7`) | `anthropic/claude-opus-4.7` | `global.anthropic.claude-opus-4-7` | `claude-opus-4-7` |
 | `claude-opus-4.8` | `anthropic/claude-opus-4.8` | `global.anthropic.claude-opus-4-8` | `claude-opus-4-8` |
+| `claude-opus-5` | `anthropic/claude-opus-5` | `global.anthropic.claude-opus-5` | `claude-opus-5` |
+| `gemini-3.8-flash` | `google/gemini-3.8-flash` | — | `gemini-3.8-flash` |
 | `claude-fable-5`, `claude-fable-5.1` | `anthropic/claude-fable-5[.1]` | `global.anthropic.claude-fable-5[-1]` | `claude-fable-5[-1]` |
 | `claude-haiku-4.5` | `anthropic/claude-haiku-4.5` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` | `claude-haiku-4-5` |
 | `gemini-3.1-pro` | `google/gemini-3.1-pro-preview` | — | `gemini-3.1-pro-preview` |
@@ -149,7 +154,16 @@ for the `amazon-bedrock` provider in the shape opencode's Bedrock SDK expects
 (`reasoningConfig: {type: adaptive, maxReasoningEffort: <effort>}`), which the SDK
 turns into `reasoning.effort` for OpenAI models and `thinking: adaptive` +
 `output_config.effort` for Anthropic models. Accepted efforts: GPT-5.6
-`none|low|medium|high|xhigh|max`; Claude `low|high|max`.
+`none|low|medium|high|xhigh|max`; GPT-6 Astra `low|medium|high|xhigh|max`
+(rejects `none`/`minimal`); Claude `low|high|max`.
+
+For any other family (xAI, DeepSeek, MiniMax, Moonshot, Z.AI, Qwen) the SDK
+forwards `reasoningConfig` as-is — `{maxReasoningEffort: <effort>}`, with the
+`adaptive` type dropped — as an `additionalModelRequestFields` entry. Bedrock
+accepts that for Grok 4.6 (verified live for `low`/`high`; the model reasons
+on every call regardless and the effort nudges the thinking budget), so the
+same `--variant=<effort>` invocation works; check the first turn of a smoke
+test for a `reasoning` event before relying on it for a new family.
 
 **opencode ≥ 1.18.26 is required for OpenAI models on Bedrock.** Earlier
 releases (including 1.15.13, which the paper's cohorts ran on) detect OpenAI
