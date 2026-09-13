@@ -23,6 +23,7 @@ from dirhash import dirhash
 
 from eval.correctness.judge_sandbox import CmdResult, open_judge_sandbox
 import llm_config  # noqa: E402  (src/ is on sys.path via judge_sandbox)
+from patch_normalize import normalize_for_git_apply as _normalize_patch_for_apply  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -208,6 +209,12 @@ async def run_judge(
         # chmod world-rwX so the judge agent can still read/run tests against
         # the patched workspace.
         patch_to_apply = inputs.oracle_patch if inputs.phase == 1 else inputs.agent_patch
+        # `git apply` rejects two artefacts of the harness's own diff capture:
+        # the `=== <repo> (cumulative vs harbor-base) ===` banner line, and a
+        # last hunk whose trailing blank context line was lost (patches recorded
+        # before repo_diff._trim_diff). Normalise both here so the judge really
+        # does start from an applied patch.
+        patch_to_apply = _normalize_patch_for_apply(patch_to_apply)
         await sb.write("/tmp/agent.patch", patch_to_apply)
         # Phase-1 with no oracle patch still needs the repo discovery (the
         # judge's first_message references {repo_hint}), but the apply step
@@ -244,8 +251,12 @@ async def run_judge(
                 'chmod -R a+rwX "$REPO" 2>/dev/null || true'
                 if skip_apply
                 else
+                # The chmod is best-effort; the apply is not. Keep `|| true`
+                # scoped to the chmod so a rejected patch surfaces as
+                # patch_apply_failed instead of the judge scoring an unmodified
+                # workspace as "incorrect".
                 'git -c safe.directory="*" apply --whitespace=nowarn /tmp/agent.patch && '
-                'chmod -R a+rwX "$REPO" 2>/dev/null || true'
+                '{ chmod -R a+rwX "$REPO" 2>/dev/null || true; }'
             ),
             timeout=120, user="root",
         )

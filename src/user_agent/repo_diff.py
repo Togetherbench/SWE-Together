@@ -186,7 +186,20 @@ def split_diff_output(raw: str) -> tuple[str, str]:
             cum_lines.append(line)
         elif mode == "inc":
             inc_lines.append(line)
-    return "\n".join(cum_lines).strip(), "\n".join(inc_lines).strip()
+    return _trim_diff("\n".join(cum_lines)), _trim_diff("\n".join(inc_lines))
+
+
+def _trim_diff(diff: str) -> str:
+    """Remove leading/trailing *empty* lines only. ``str.strip()`` would also eat a
+    final blank context line (a lone space) when the last hunk ends on an empty
+    source line, leaving the hunk one line short of its header and making
+    ``git apply`` reject the patch as corrupt."""
+    lines = diff.split("\n")
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines)
 
 
 # Run-generated junk that the agent's pip/npm install or tooling creates in the
@@ -254,7 +267,7 @@ def _strip_junk(diff: str) -> str:
             skip = bool(_JUNK_RE.search(m.group(1)))
         if not skip:
             out.append(ln)
-    return "\n".join(out).strip()
+    return _trim_diff("\n".join(out))
 
 
 async def tag_harbor_base(environment) -> None:

@@ -1,20 +1,28 @@
-"""Re-derive a trial's ``final.patch`` after the junk filter changed.
+"""Repair a trial's stored ``final.patch`` so it reflects the agent's real edits
+and applies cleanly.
 
-``capture_git_diff`` strips run-generated directories (``.venv``, ``node_modules``,
-language module caches, ...) before writing ``agent/final.patch``. When the
-filter gains a new pattern, trials recorded earlier still carry the unfiltered
-patch; where the pollution was severe, ``diff_polluted.flag`` marks them. This
-tool re-applies the *current* filter to the stored cumulative patch and, if the
-result differs, rewrites ``final.patch`` (keeping the original as
-``final.patch.unfiltered``) and retires the stale judge verdict so the next judge
-pass re-scores the trial on the agent's real edits.
+Two recording artefacts are corrected:
+
+* **Run-generated junk.** ``capture_git_diff`` strips virtualenvs, module caches
+  and similar before writing the patch; trials recorded before a filter gained a
+  pattern still carry the unfiltered diff (``diff_polluted.flag`` marks the
+  severe cases). The *current* filter is re-applied.
+* **Lost trailing context line.** Older builds ``str.strip()``-ed the diff, so a
+  last hunk ending on an empty source line lost its ``" "`` context line and
+  ``git apply`` rejected the patch as corrupt; the judge then scored an
+  unmodified workspace. The line is restored when the ``@@`` header proves it
+  is missing.
+
+The original is kept as ``final.patch.unfiltered``. A stale ``judge_verdict.json``
+is retired (→ ``judge_verdict.polluted-N.json``) when junk was stripped, or when
+the verdict shows the judge stumbled on the patch (apply failure / manual
+application / "workspace unmodified"); a sound verdict on a patch that merely
+lacked its trailing line is left in place.
 
 Usage::
 
-    python -m repair_polluted_patches trials/canonical_full109/opencode_fable51_r2 [...]
-    python -m repair_polluted_patches --dry-run trials/canonical_full109/*_r*
-
-Only trials whose filtered patch differs from the stored one are touched.
+    python src/repair_polluted_patches.py trials/canonical_full109/opencode_fable51_r2 [...]
+    python src/repair_polluted_patches.py --dry-run trials/canonical_full109/*_r*
 """
 from __future__ import annotations
 
@@ -27,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from user_agent.repo_diff import _strip_junk  # noqa: E402
+from patch_normalize import restore_trailing_context  # noqa: E402
 
 UNFILTERED_SUFFIX = ".unfiltered"
 
@@ -35,19 +44,43 @@ def _nfiles(diff: str) -> int:
     return len(re.findall(r"^diff --git ", diff, re.M))
 
 
+_STUMBLE_RE = re.compile(
+    r"not applied|NOT applied|was not applied|patch_apply_failed|corrupt patch|"
+    r"manually applied|applied (the )?(patch|diff|changes) manually|had to be manually|"
+    r"HEAD is (still )?the base|original unmodified state|missing trailing newline",
+    re.I,
+)
+
+
+def _judge_stumbled_on_patch(verdict_path: Path) -> bool:
+    """True when the stored verdict shows the judge could not (cleanly) apply the
+    patch — an apply error, or notes saying it applied the diff by hand or found
+    the workspace unmodified."""
+    try:
+        v = json.loads(verdict_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    if v.get("error") in ("patch_apply_failed", "verdict_read_failed"):
+        return True
+    return bool(_STUMBLE_RE.search(str(v.get("judge_notes") or "")))
+
+
 def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
     """Return a change record if the trial's patch needed repair, else None."""
     patch = trial_dir / "agent" / "final.patch"
     if not patch.is_file():
         return None
     raw = patch.read_text(errors="replace")
-    clean = _strip_junk(raw)
-    if clean.strip() == raw.strip():
+    stripped = _strip_junk(raw)
+    clean = restore_trailing_context(stripped)
+    if clean == raw.rstrip("\n"):
         return None
     rec = {
         "trial": trial_dir.name,
         "before_bytes": len(raw), "before_files": _nfiles(raw),
         "after_bytes": len(clean), "after_files": _nfiles(clean),
+        "junk_stripped": _nfiles(raw) != _nfiles(stripped),
+        "trailing_context_restored": clean != stripped,
         "verdict_retired": False,
     }
     if dry_run:
@@ -56,10 +89,13 @@ def repair_trial(trial_dir: Path, *, dry_run: bool = False) -> dict | None:
     if not backup.exists():
         patch.rename(backup)
     patch.write_text(clean + "\n")
-    # The verdict (if any) judged the polluted patch; move it aside so the judge
-    # launcher's skip-existing logic re-scores this trial.
+    # The verdict (if any) judged the polluted/corrupt patch; move it aside so
+    # the judge launcher's skip-existing logic re-scores this trial. Verdicts on
+    # a patch that merely lacked its trailing context line are only retired when
+    # the judge visibly stumbled on it (apply failure / manual application),
+    # otherwise its score stands.
     verdict = trial_dir / "judge_verdict.json"
-    if verdict.exists():
+    if verdict.exists() and (rec["junk_stripped"] or _judge_stumbled_on_patch(verdict)):
         n = 1
         while (trial_dir / f"judge_verdict.polluted-{n}.json").exists():
             n += 1

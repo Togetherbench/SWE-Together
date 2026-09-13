@@ -121,6 +121,81 @@ def test_repair_dry_run_changes_nothing(tmp_path):
     assert (t / "judge_verdict.json").exists() and (t / "agent" / "diff_polluted.flag").exists()
 
 
+# ── trailing blank context line ───────────────────────────────────────────
+
+# A hunk whose last line is an empty source line: its context line is a lone " ".
+HUNK_ENDING_BLANK = ("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,3 +1,3 @@\n"
+                     " a\n-b\n+c\n ")
+
+
+def test_trim_keeps_final_blank_context_line():
+    raw = f"===HARBOR_DIFF_BEGIN_CUM===\n{HUNK_ENDING_BLANK}\n===HARBOR_DIFF_END_CUM===\n"
+    cum, _ = repo_diff.split_diff_output(raw)
+    assert cum.endswith("\n ")                      # str.strip() would have removed it
+    assert repo_diff._strip_junk(cum).endswith("\n ")
+    assert repo_diff._trim_diff("\n\n" + HUNK_ENDING_BLANK + "\n\n") == HUNK_ENDING_BLANK
+
+
+def test_restore_trailing_context_only_when_header_says_so():
+    eaten = HUNK_ENDING_BLANK.rstrip()             # what old builds wrote
+    assert repair.restore_trailing_context(eaten) == HUNK_ENDING_BLANK
+    assert repair.restore_trailing_context(HUNK_ENDING_BLANK) == HUNK_ENDING_BLANK   # idempotent
+    assert repair.restore_trailing_context(SOURCE) == SOURCE.rstrip("\n")             # complete hunk: nothing added
+
+
+def test_repair_restores_context_but_keeps_sound_verdict(tmp_path):
+    t = _trial(tmp_path, "task__ctx", HUNK_ENDING_BLANK.rstrip(), verdict={"judge_score": 0.9, "judge_notes": "all goals met"}, flag=None)
+    rec = repair.repair_trial(t)
+    assert rec and rec["trailing_context_restored"] and not rec["junk_stripped"] and not rec["verdict_retired"]
+    assert (t / "agent" / "final.patch").read_text() == HUNK_ENDING_BLANK + "\n"
+    assert (t / "judge_verdict.json").exists()
+
+
+def test_repair_retires_verdict_when_judge_stumbled_on_corrupt_patch(tmp_path):
+    t = _trial(tmp_path, "task__stumble", HUNK_ENDING_BLANK.rstrip(),
+               verdict={"judge_score": 0.0, "judge_notes": "The agent.patch was NOT applied to the workspace; HEAD is still the base commit."}, flag=None)
+    rec = repair.repair_trial(t)
+    assert rec and rec["verdict_retired"] and (t / "judge_verdict.polluted-1.json").exists()
+
+
+# ── judge-side normalisation ──────────────────────────────────────────────
+
+import patch_normalize  # noqa: E402
+
+
+def test_normalize_strips_banner_and_restores_context():
+    recorded = "=== /workspace/repo (cumulative vs harbor-base) ===\n" + HUNK_ENDING_BLANK.rstrip()
+    out = patch_normalize.normalize_for_git_apply(recorded)
+    assert "===" not in out and out.endswith("\n \n")
+    assert patch_normalize.normalize_for_git_apply("") == ""
+    assert patch_normalize.normalize_for_git_apply(SOURCE) == SOURCE.rstrip("\n") + "\n"
+
+
+def test_normalized_patch_applies_with_git(tmp_path):
+    import subprocess
+    repo = tmp_path / "r"; repo.mkdir()
+    def git(*a): return subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (repo / "x.go").write_text("a\nb\n\n")           # file ends with an empty line → hunk ends on blank context
+    git("add", "."); git("commit", "-qm", "base")
+    (repo / "x.go").write_text("a\nc\n\n")
+    diff = git("diff").stdout
+    recorded = "=== /workspace/repo (cumulative vs harbor-base) ===\n" + diff.strip()   # what old builds stored
+    git("checkout", "--", "x.go")
+    bad = subprocess.run(["git", "-C", str(repo), "apply", "--check", "-"], input=recorded + "\n", capture_output=True, text=True)
+    assert bad.returncode != 0                                                      # reproduces the judge's failure
+    good = subprocess.run(["git", "-C", str(repo), "apply", "--check", "-"], input=patch_normalize.normalize_for_git_apply(recorded), capture_output=True, text=True)
+    assert good.returncode == 0, good.stderr
+
+
+def test_judge_sandbox_does_not_swallow_apply_failure():
+    src = (REPO_ROOT / "eval" / "correctness" / "sandbox.py").read_text()
+    assert "_normalize_patch_for_apply(patch_to_apply)" in src
+    # `|| true` must be scoped to the chmod, never to the git apply
+    assert '/tmp/agent.patch && \'\n                \'{ chmod -R a+rwX "$REPO" 2>/dev/null || true; }' in src
+    assert 'apply --whitespace=nowarn /tmp/agent.patch && \'\n                \'chmod -R a+rwX "$REPO" 2>/dev/null || true\'' not in src
+
+
 # ── evaluator guards ──────────────────────────────────────────────────────
 
 def test_judge_batch_skips_flagged_patch():

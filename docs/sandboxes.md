@@ -105,6 +105,27 @@ Three guards now apply:
    genuine agent output (e.g. a generated fixture tree) are renamed to
    `diff_polluted.agent-edits` by hand after review.
 
+### Recorded patches must apply cleanly in the judge sandbox
+
+Investigating the re-judge exposed a second, older defect in the same path.
+The diff text was `str.strip()`-ed before being written, so whenever the last
+hunk ended on an **empty source line** its blank context line (a lone space)
+was removed and the hunk came out one line shorter than its `@@` header — 232
+of 1,941 recorded patches. `git apply` rejects such a patch as *corrupt*; the
+judge sandbox chained the apply as `git apply … && chmod … || true`, so the
+failure was swallowed, the judge was told the patch "has already been applied",
+and it scored an **unmodified workspace**. Most judges noticed and applied the
+diff by hand (38 verdicts say so), but several scored 0.0 on work that had
+passed the verifier.
+
+Fixes: `repo_diff` trims only empty lines (`_trim_diff`) instead of stripping;
+`src/patch_normalize.py` strips the repo banner lines and restores the missing
+context line from the header's line counts, and the judge sandbox normalises
+every patch before applying and no longer masks an apply failure
+(`patch_apply_failed` is reported instead). The repair tool applies the same
+normalisation to stored patches and retires only those verdicts where the judge
+visibly stumbled (apply error, "applied manually", "workspace unmodified").
+
 ## e2b
 
 Nothing to configure beyond `E2B_API_KEY`. The first run builds one E2B template
