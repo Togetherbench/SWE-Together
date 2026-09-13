@@ -206,7 +206,17 @@ def test_launcher_default_version_matches_wrapper_pin():
     import inspect
     from user_agent.agents.user_enabled_opencode import UserEnabledOpenCode
     pin = inspect.signature(UserEnabledOpenCode.__init__).parameters["opencode_version"].default
-    assert launch.DEFAULT_OPENCODE_VERSION == pin
+    assert launch.DEFAULT_OPENCODE_VERSION == pin == "1.18.29"
+
+
+def test_every_opencode_cohort_in_plan_is_explicitly_pinned():
+    """The default pin moved from 1.15.13 (paper) to 1.18.29; published cohorts must
+    keep their own pin so re-running the plan reproduces the paper's rows."""
+    plan = json.loads((REPO_ROOT / "canonical_full109.json").read_text())
+    unpinned = [k for k, c in plan["models"].items() if c.get("agent_type") == "opencode" and "opencode_version" not in c]
+    assert unpinned == [], unpinned
+    paper = ("opencode_muse13", "opencode_opus48", "opencode_opus", "opencode_ds", "opencode_gpt", "opencode_mm27", "opencode_glm52", "opencode_glm51")
+    assert {plan["models"][k]["opencode_version"] for k in paper} == {"1.15.13"}
 
 
 # ── 2. setup failures are infra, and retried ──────────────────────────────

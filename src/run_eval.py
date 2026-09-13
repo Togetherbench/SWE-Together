@@ -820,8 +820,8 @@ async def main():
                              "DeepSeek ignores this knob.")
     parser.add_argument("--opencode-version", default=None,
                         help="opencode-ai release installed in the sandbox for --agent-type opencode "
-                             "(default: the wrapper's canonical pin, 1.15.13). Recorded in each "
-                             "trial's config.json.")
+                             "(default: the wrapper's pin, 1.18.29; the paper's cohorts are pinned to "
+                             "1.15.13 in the plan file). Recorded in each trial's config.json.")
     parser.add_argument("--trials-dir", default=None, help="Trials directory (default: trials/)")
     parser.add_argument("--tasks", default=None, help="Comma-separated task names or globs")
     parser.add_argument("--skip-existing", action="store_true", help="Skip tasks with existing results")

@@ -152,12 +152,19 @@ turns into `reasoning.effort` for OpenAI models and `thinking: adaptive` +
 `none|low|medium|high|xhigh|max`; Claude `low|high|max`.
 
 **opencode ≥ 1.18.26 is required for OpenAI models on Bedrock.** Earlier
-releases (including the benchmark's canonical pin, 1.15.13) detect OpenAI
+releases (including 1.15.13, which the paper's cohorts ran on) detect OpenAI
 models by `modelId.startsWith("openai.")`, which is false for inference-profile
 ids, and send a field Bedrock rejects (HTTP 400 `Unknown parameter:
-'reasoningConfig'`). Pin per cohort with `opencode_version` in the plan file or
-`--opencode-version`; the version is recorded in each trial's `config.json` and
-in the run manifest. Cohorts without the field keep the canonical pin.
+'reasoningConfig'`). The wrapper's default pin is therefore **1.18.29**; the
+paper's cohorts carry an explicit `"opencode_version": "1.15.13"` in
+`canonical_full109.json` so re-running them reproduces the published rows, and
+new cohorts inherit 1.18.29 unless they set the field or pass
+`--opencode-version`. The version is recorded in each trial's `config.json` and
+in the run manifest. The two versions are not interchangeable for comparison:
+re-running Opus 4.8 on 1.18.29 (Bedrock) measured 59.6 % pass@1 against the
+published 63 % (paired 95 % CI on the difference −9.6 … +1.8 pp), with the
+per-trial judge-score distribution shifted at the tails rather than uniformly —
+i.e. the agent's behaviour changed, not the judge's strictness.
 
 ### Accounting caveats for GPT models on Bedrock
 
