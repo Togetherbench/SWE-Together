@@ -14,6 +14,10 @@ Shared by the Harbor ``EnrootEnvironment`` (Stage 1) and the judge sandbox
 * The wrapped command's output is redirected to files inside the persistent
   ``/tmp`` and read back from the host. A background daemon that inherits a
   pipe blocks the parent forever; a file does not.
+* With an ``egress`` namespace (Stage 1 agent trials), every ``enroot start`` is
+  prefixed with ``nsenter`` into the container's user+network namespace and the
+  proxy environment is injected; the container then has no route except the
+  relay to the host-side egress proxy (``netns.py``).
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import shutil
 import uuid
 from pathlib import Path, PurePosixPath
 
+from .netns import EgressNamespace
 from .runtime import (
     CONTAINER_ENV_MARKER,
     CONTAINER_PREFIX,
@@ -57,11 +62,16 @@ class EnrootContainer:
         workdir: str = "/",
         mounts: list[tuple[str | Path, str]] | None = None,
         persist_tmp: bool = True,
+        egress: EgressNamespace | None = None,
     ) -> None:
         self.runtime = runtime
         self.image_path = Path(image_path)
         self.workdir = workdir
         self.persist_tmp = persist_tmp
+        # When set, every exec runs inside this container's network namespace and
+        # the only way out is the egress proxy (see netns.py). None = host network
+        # (the judge sandbox, which sees the oracle patch anyway).
+        self.egress = egress
         self._extra_mounts: list[tuple[Path, str]] = [
             (Path(h), c) for h, c in (mounts or [])
         ]
@@ -157,12 +167,22 @@ class EnrootContainer:
         if self.persist_tmp:
             self.tmp_host_dir.mkdir(parents=True, exist_ok=True)
             (self.tmp_host_dir / _IO_DIR).mkdir(exist_ok=True)
-        log.info("created container %s from %s", self.name, self.image_path.name)
+        if self.egress is not None:
+            self.egress.container_name = self.name
+            try:
+                self.egress.start()
+            except EnrootSetupError:
+                await self.remove()
+                raise
+        log.info("created container %s from %s%s", self.name, self.image_path.name,
+                 f" (egress namespace, relay pid {self.egress.pid})" if self.egress else "")
         return self
 
     async def remove(self) -> None:
         if not self._created:
             return
+        if self.egress is not None:
+            self.egress.stop()
         try:
             n = kill_container_processes(self.name)
             if n:
@@ -193,11 +213,17 @@ class EnrootContainer:
         stdout_in_container: str | None = None,
         stderr_in_container: str | None = None,
     ) -> list[str]:
-        argv = ["enroot", "start", "--root", "--rw"]
+        argv: list[str] = []
+        merged_env: dict[str, str] = {}
+        if self.egress is not None:
+            argv += self.egress.exec_prefix()
+            merged_env.update(sandbox_egress_env())
+        merged_env.update(env or {})
+        argv += ["enroot", "start", "--root", "--rw"]
         for host, cont in self.mounts():
             argv += ["--mount", f"{host}:{cont}"]
         argv += ["-e", f"{CONTAINER_ENV_MARKER}={self.name}"]
-        for k, v in (env or {}).items():
+        for k, v in merged_env.items():
             argv += ["-e", f"{k}={v}"]
         script = f"cd {shlex.quote(cwd or self.workdir)} && {command}"
         if stdout_in_container and stderr_in_container:
@@ -295,6 +321,11 @@ class EnrootContainer:
 
     def __repr__(self) -> str:
         return f"EnrootContainer(name={self.name!r}, created={self._created})"
+
+
+def sandbox_egress_env() -> dict[str, str]:
+    import egress_policy
+    return egress_policy.sandbox_env()
 
 
 def _read(path: Path) -> str:

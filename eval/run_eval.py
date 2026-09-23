@@ -56,8 +56,10 @@ from eval.user_behavior import user_metrics as kg  # taxonomy + User Correction 
 sys.path.insert(0, str(REPO_ROOT / "src"))
 try:
     from eval_infra_sentinel import classify_or_load as _classify_infra  # noqa: E402
+    from eval_infra_sentinel import egress_log_summary as _egress_summary  # noqa: E402
 except Exception:
     _classify_infra = None
+    _egress_summary = None
 
 # Correctness pass bar.
 SUCCESS_THRESHOLD = 0.85
@@ -301,6 +303,13 @@ def _effective_judge_score(trial_dir: Path, judge: dict):
     return score
 
 
+def _egress_denied(trial_dir: Path) -> int | None:
+    if _egress_summary is None:
+        return None
+    s = _egress_summary(trial_dir)
+    return None if s is None else int(s["denied"])
+
+
 def join_trial_artefacts(job: dict) -> dict:
     """Read the three per-trial verdicts + reward.txt into one flat record.
 
@@ -342,6 +351,8 @@ def join_trial_artefacts(job: dict) -> dict:
         "runtime_sec": _trial_runtime_sec(trial_dir),
         "output_tokens": _trial_output_tokens(trial_dir),
         "tokens": _trial_tokens(trial_dir),
+        # sandbox egress (None for trials that predate enforcement); internal metric
+        "egress_denied_attempts": _egress_denied(trial_dir),
         # step 2 — intent_coverage (diagnostic)
         "overall_score": cov.get("overall_score"),
         "coverage_rate": cov.get("coverage_rate"),

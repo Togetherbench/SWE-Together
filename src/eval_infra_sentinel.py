@@ -494,6 +494,90 @@ DETECTORS: list[tuple[str, Any]] = [
 # ──────────────────────────────────────────────────────────────────────────
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Egress enforcement integrity (checked before the real-patch gate)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# A trial that ran without an enforced network sandbox is not a valid data
+# point even if it produced a perfect patch: the agent may have fetched the
+# upstream fix. Two artefacts written by the enroot backend are inspected:
+#
+#   agent/egress_selftest.json  — the in-container probe run before turn 0;
+#                                 ok=false means enforcement was not in place.
+#   agent/egress.log            — one JSON line per proxied connection. An
+#                                 *allowed* connection to a known leak vector
+#                                 can only mean the policy was tampered with.
+#
+# Trials predating enforcement carry neither file and are left to the audit.
+
+EGRESS_SELFTEST_FILE = "egress_selftest.json"
+EGRESS_LOG_FILE = "egress.log"
+
+
+def egress_log_summary(trial_dir: Path) -> dict[str, Any] | None:
+    """Counts from ``agent/egress.log`` (None when the trial has no log)."""
+    p = trial_dir / "agent" / EGRESS_LOG_FILE
+    if not p.exists():
+        return None
+    allowed: dict[str, int] = {}
+    denied: dict[str, int] = {}
+    errors = 0
+    for line in p.read_text(errors="replace").splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        host = str(rec.get("host") or "?")
+        decision = rec.get("decision")
+        if decision == "allow":
+            allowed[host] = allowed.get(host, 0) + 1
+        elif decision == "deny":
+            denied[host] = denied.get(host, 0) + 1
+        else:
+            errors += 1
+    return {
+        "connections": sum(allowed.values()) + sum(denied.values()) + errors,
+        "allowed": sum(allowed.values()),
+        "denied": sum(denied.values()),
+        "errors": errors,
+        "allowed_hosts": dict(sorted(allowed.items(), key=lambda kv: -kv[1])),
+        "denied_hosts": dict(sorted(denied.items(), key=lambda kv: -kv[1])),
+    }
+
+
+def _egress_integrity(trial_dir: Path) -> tuple[str, str, dict[str, Any]] | None:
+    """``(reason, detail, evidence)`` when the sandbox's egress enforcement is
+    shown to have been absent or breached; None otherwise."""
+    st_path = trial_dir / "agent" / EGRESS_SELFTEST_FILE
+    if st_path.exists():
+        try:
+            st = json.loads(st_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            st = {"ok": False, "checks": {"unreadable": False}}
+        if not st.get("ok"):
+            failed = sorted(k for k, v in (st.get("checks") or {}).items() if not v)
+            return (
+                "egress_policy_unenforced",
+                f"in-container egress self-test failed: {failed}",
+                {"selftest_checks": st.get("checks"), "policy_version": st.get("policy_version")},
+            )
+    summary = egress_log_summary(trial_dir)
+    if summary:
+        try:
+            from egress_policy import leak_vector
+        except ImportError:  # pragma: no cover
+            leak_vector = None
+        if leak_vector is not None:
+            breached = {h: n for h, n in summary["allowed_hosts"].items() if leak_vector(h)}
+            if breached:
+                return (
+                    "egress_policy_violation",
+                    f"proxy allowed connections to leak vectors: {sorted(breached)}",
+                    {"allowed_leak_vectors": breached},
+                )
+    return None
+
+
 def classify_trial(trial_dir: Path, strict: bool = False) -> InfraVerdict:
     """Inspect a completed trial directory and return an infra verdict.
 
@@ -522,6 +606,13 @@ def classify_trial(trial_dir: Path, strict: bool = False) -> InfraVerdict:
         "edit_tool_calls": sig.edit_tool_calls,
         "api_retry_count": sig.api_retry_count,
     }
+    egress = _egress_integrity(trial_dir)
+    if egress is not None:
+        reason, detail, evidence = egress
+        return InfraVerdict(
+            status="infra_failed", reason=reason, detail=detail,
+            signals=[reason], evidence={**evidence, **base_evidence},
+        )
     if has_real_patch and not strict:
         return InfraVerdict(
             status="ok", reason="", detail="",

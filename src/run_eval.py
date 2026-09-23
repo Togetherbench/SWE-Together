@@ -173,6 +173,11 @@ def _classify_trial_dirs(task_name: str, trials_dir: Path) -> tuple[bool, list[P
     return completed, incomplete
 
 
+def is_leaderboard_root(trials_dir: Path) -> bool:
+    """True for the canonical leaderboard trial roots (``trials/canonical_*``)."""
+    return any(part.startswith("canonical") for part in Path(trials_dir).resolve().parts)
+
+
 def is_task_completed(task_name: str, trials_dir: Path) -> bool:
     """True when ``task_name`` already has a trial that counts (see
     :func:`_classify_trial_dirs`). Trials that scored 0.0 because the provider
@@ -597,6 +602,18 @@ def build_trial_config(
                     "CODEX_HOST_AUTH_JSON"):
             if v := os.environ.get(var):
                 opencode_env[var] = v
+        if os.environ.get("SWT_EGRESS_ENFORCED") == "1":
+            # Under egress enforcement the OpenRouter key stays on the host: the
+            # wrapper points opencode's openrouter provider at the relay's
+            # `/openrouter/` reverse route and the egress proxy injects the real
+            # `Authorization` header. The placeholder keeps opencode's provider
+            # detection happy. GITHUB_TOKEN is a leak vector with no legitimate
+            # use in the sandbox; the other keys are for providers that are
+            # routed via CONNECT and still need their credential in the sandbox.
+            opencode_env.pop("GITHUB_TOKEN", None)
+            if action_model.startswith("openrouter/") and "OPENROUTER_API_KEY" in opencode_env:
+                import egress_policy
+                opencode_env["OPENROUTER_API_KEY"] = egress_policy.OPENROUTER_PLACEHOLDER
         agent_env_final = opencode_env
     else:
         import_path = AGENT_IMPORT_PATH
@@ -839,6 +856,13 @@ async def main():
     parser.add_argument("--hosts-file", default=None,
                         help="enroot only: hosts file mounted over /etc/hosts (default: generated "
                              "from tasks/*/environment/seal-dns.sh)")
+    parser.add_argument("--no-egress-enforcement", action="store_true",
+                        help="enroot only: run containers on the host network instead of the "
+                             "default-deny egress namespace (debugging; recorded in the manifest and "
+                             "every trial config, and refused for leaderboard trial roots)")
+    parser.add_argument("--allow-porous-sandbox", action="store_true",
+                        help="permit a leaderboard trials root (trials/canonical_*) on a backend "
+                             "without enforced egress (e2b/docker, or --no-egress-enforcement)")
     args = parser.parse_args()
     # One top-level switch: --env-type > SWT_SANDBOX (.env) > e2b.
     args.env_type = stage1_sandbox(args.env_type)
@@ -930,8 +954,10 @@ async def main():
         shard_suffix = f"-s{k}of{n}"
         log.info("Shard %s: %d → %d tasks", args.shard, before, len(task_names))
 
-    # enroot: image store + DNS-sinkhole hosts file, forwarded to EnrootEnvironment.
+    # enroot: image store + DNS-sinkhole hosts file + egress proxy, forwarded to EnrootEnvironment.
     enroot_kwargs: dict[str, str] = {}
+    egress_enforced = False
+    egress_proxy = None
     if args.env_type == "enroot":
         from enroot_backend.hosts import write_hosts_file
         from enroot_backend.runtime import EnrootRuntime, enroot_version, register_cleanup
@@ -945,10 +971,44 @@ async def main():
             enroot_kwargs["image_store_root"] = args.image_store
         log.info("  enroot %s | runtime root %s | hosts file %s",
                  enroot_version(), runtime.root, hosts_file)
+        if not args.no_egress_enforcement:
+            from enroot_backend.netns import namespaces_supported
+            from llm_config import aws_region
+            from proxies.egress_proxy import EgressProxy
+            ok, why = namespaces_supported()
+            if not ok:
+                raise SystemExit(f"egress enforcement unavailable on this host ({why}); "
+                                 f"pass --no-egress-enforcement only for debugging")
+            runtime.prepare()
+            pinned_model = agent_seat.model.split("/", 1)[1] if agent_seat.model.startswith("openrouter/") else None
+            egress_proxy = EgressProxy(
+                runtime.root / "egress.sock", aws_region=aws_region(),
+                fallback_log=runtime.root / "egress-unattributed.log",
+                llm_backend=agent_seat.backend, model=agent_seat.model,
+                llm_models=[pinned_model] if pinned_model else [],
+                ca_dir=runtime.root / "egress-ca",
+            )
+            egress_proxy.start()
+            enroot_kwargs["egress_sock"] = str(egress_proxy.sock_path)
+            enroot_kwargs["egress_ca"] = str(egress_proxy.ca.ca_pem)
+            egress_enforced = True
+            os.environ["SWT_EGRESS_ENFORCED"] = "1"
+            log.info("  egress: default-deny namespace per container; proxy on %s; llm backend=%s pinned=%s",
+                     egress_proxy.sock_path, agent_seat.backend, pinned_model or "(CONNECT to backend host)")
+        else:
+            log.warning("  egress: NOT enforced (--no-egress-enforcement); containers share the host network")
 
     # Resolve task dirs
     trials_dir = Path(args.trials_dir) if args.trials_dir else REPO_ROOT / "trials"
     trials_dir.mkdir(parents=True, exist_ok=True)
+    # Leaderboard cohorts must run on an enforced sandbox: the hostname blocklist
+    # alone was bypassed in every cohort (GitHub CDN mirrors, DoH + --resolve, …).
+    if is_leaderboard_root(trials_dir) and not egress_enforced and not args.allow_porous_sandbox:
+        raise SystemExit(
+            f"{trials_dir} is a leaderboard trials root but egress is not enforced on "
+            f"env-type={args.env_type}. Use --env-type enroot (default enforcement) or pass "
+            f"--allow-porous-sandbox to override knowingly (recorded in the manifest)."
+        )
 
     # Filter completed
     if args.skip_existing:
@@ -999,6 +1059,9 @@ async def main():
         "user_sim_backend": user_seat.backend,
         "opencode_version": args.opencode_version if args.agent_type == "opencode" else None,
         "env_type": args.env_type,
+        "egress_enforced": egress_enforced,
+        "egress_policy_version": __import__("egress_policy").POLICY_VERSION if egress_enforced else None,
+        "allow_porous_sandbox": bool(args.allow_porous_sandbox),
         "agent_timeout": args.agent_timeout,
         "tag": args.tag,
         "workers": args.workers,

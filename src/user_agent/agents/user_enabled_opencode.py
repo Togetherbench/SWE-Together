@@ -159,6 +159,83 @@ _BEDROCK_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_PROVIDER = "amazon-bedrock"
 
 
+def patch_opencode_config(
+    cfg: dict,
+    *,
+    using_proxied_provider: bool,
+    disallowed_tools: str | None,
+    bedrock_region: str | None,
+    or_efforts: tuple[str, ...] = _OR_EFFORTS,
+    bedrock_efforts: tuple[str, ...] = _BEDROCK_EFFORTS,
+    openrouter_base_url: str | None = None,
+) -> dict:
+    """Host-side equivalent of :func:`build_opencode_config_patch_script`.
+
+    Returns the patched config dict. Rendering the file on the host and writing
+    it with a plain heredoc removes the sandbox's dependency on ``python3`` —
+    several task images (Rust, plain ubuntu) ship none, and there the in-sandbox
+    patch failed silently, leaving opencode on its default base URL (fatal under
+    egress enforcement, which only serves the relay's route).
+    """
+    disallow = [t.strip().lower() for t in (disallowed_tools or "").split(",") if t.strip()]
+    prov = cfg.setdefault("provider", {})
+    if using_proxied_provider:
+        prov.setdefault("anthropic", {}).setdefault("options", {})["baseURL"] = "http://localhost:4210/v1"
+    if openrouter_base_url:
+        prov.setdefault("openrouter", {}).setdefault("options", {})["baseURL"] = openrouter_base_url
+    for name in list(prov):
+        models = prov[name].setdefault("models", {})
+        for mid in list(models):
+            entry = models[mid] if isinstance(models[mid], dict) else {}
+            entry["reasoning"] = True
+            if name == "openrouter":
+                variants = entry.setdefault("variants", {})
+                for eff in or_efforts:
+                    variants.setdefault(eff, {"reasoning": {"effort": eff}})
+            if name == _BEDROCK_PROVIDER:
+                variants = entry.setdefault("variants", {})
+                for eff in bedrock_efforts:
+                    variants.setdefault(eff, {"reasoningConfig": {"type": "adaptive", "maxReasoningEffort": eff}})
+            models[mid] = entry
+    if bedrock_region and _BEDROCK_PROVIDER in prov:
+        prov[_BEDROCK_PROVIDER].setdefault("options", {}).setdefault("region", bedrock_region)
+    perm = cfg.get("permission")
+    if perm != "allow":
+        if not isinstance(perm, dict):
+            perm = {"*": perm} if isinstance(perm, str) else {}
+        ext = perm.get("external_directory")
+        if ext != "allow":
+            if not isinstance(ext, dict):
+                ext = {"*": ext} if isinstance(ext, str) else {}
+            for pattern in ("/workspace/**", "/tmp/**", "/var/tmp/**", "/opt/**", "/root/**", "/home/**",
+                            "/proc/**", "/usr/**", "/logs/**"):
+                ext.setdefault(pattern, "allow")
+            perm["external_directory"] = ext
+        cfg["permission"] = perm
+    if disallow:
+        perm = cfg.setdefault("permission", {})
+        if not isinstance(perm, dict):
+            perm = {}
+        tools = perm.setdefault("tools", {})
+        if not isinstance(tools, dict):
+            tools = {}
+        for t in disallow:
+            tools[t] = "deny"
+        perm["tools"] = tools
+        cfg["permission"] = perm
+    return cfg
+
+
+def render_opencode_config_command(cfg: dict) -> str:
+    """Shell that writes ``cfg`` to ``~/.config/opencode/opencode.json`` with no
+    interpreter in the sandbox. Wrapped in ``( … )`` so the heredoc closer sits
+    on its own line and the caller can chain ``&& opencode run …``."""
+    body = json.dumps(cfg, indent=2)
+    assert "\nCFGEOF" not in body
+    return ("(mkdir -p ~/.config/opencode && cat > ~/.config/opencode/opencode.json <<'CFGEOF'\n"
+            f"{body}\nCFGEOF\n)")
+
+
 def build_opencode_config_patch_script(
     *,
     using_proxied_provider: bool,
@@ -166,6 +243,7 @@ def build_opencode_config_patch_script(
     bedrock_region: str | None,
     or_efforts: tuple[str, ...] = _OR_EFFORTS,
     bedrock_efforts: tuple[str, ...] = _BEDROCK_EFFORTS,
+    openrouter_base_url: str | None = None,
 ) -> str:
     """Python source that patches ~/.config/opencode/opencode.json in the sandbox.
 
@@ -194,6 +272,15 @@ def build_opencode_config_patch_script(
         script += (
             "prov.setdefault('anthropic', {}).setdefault('options', {})"
             "['baseURL'] = 'http://localhost:4210/v1'\n"
+        )
+    if openrouter_base_url:
+        # Egress enforcement: opencode's openrouter provider talks plain HTTP to
+        # the in-namespace relay, whose `/openrouter/` route the host-side egress
+        # proxy forwards to https://openrouter.ai with the real API key injected.
+        # The sandbox only ever sees a placeholder key.
+        script += (
+            "prov.setdefault('openrouter', {}).setdefault('options', {})"
+            f"['baseURL'] = {openrouter_base_url!r}\n"
         )
     script += (
         "or_efforts = " + json.dumps(list(or_efforts)) + "\n"
@@ -735,17 +822,40 @@ class UserEnabledOpenCode(BaseAgent):
         if self._is_bedrock_agent():
             from llm_config import aws_region
             bedrock_region = aws_region()
-        script = build_opencode_config_patch_script(
+        openrouter_base_url = None
+        if os.environ.get("SWT_EGRESS_ENFORCED") == "1" and self._is_openrouter_agent():
+            import egress_policy
+            openrouter_base_url = f"http://{egress_policy.RELAY_HOST}:{egress_policy.RELAY_PORT}/openrouter/api/v1"
+        # Start from exactly what Harbor's register-config step wrote (provider
+        # registration + MCP servers), patch on the host, write with `cat`.
+        cfg = self._initial_opencode_config()
+        cfg = patch_opencode_config(
+            cfg,
             using_proxied_provider=self._using_proxied_provider,
             disallowed_tools=self._disallowed_tools,
             bedrock_region=bedrock_region,
+            openrouter_base_url=openrouter_base_url,
         )
-        # Subshell wrap is load-bearing: the caller chains this with
-        # `... && opencode run ...`. A bare heredoc can't be chained — bash
-        # requires the closer (PYEOF) alone on its line, but `&&` can't start
-        # a line. Wrapping in `(...)` puts `)` on its own line to close the
-        # heredoc and lets `) && opencode` sit on one valid line.
-        return f"(python3 - <<'PYEOF'\n{script}PYEOF\n)"
+        return render_opencode_config_command(cfg)
+
+    def _initial_opencode_config(self) -> dict:
+        """Mirror of Harbor's ``OpenCode._build_register_config_command`` payload."""
+        cfg: dict = {}
+        servers = getattr(self._inner, "mcp_servers", None) or []
+        if servers:
+            mcp: dict = {}
+            for server in servers:
+                if getattr(server, "transport", None) == "stdio":
+                    cmd_list = [server.command] + list(server.args or []) if server.command else []
+                    mcp[server.name] = {"type": "local", "command": cmd_list}
+                else:
+                    mcp[server.name] = {"type": "remote", "url": server.url}
+            cfg["mcp"] = mcp
+        model_name = self._inner.model_name or ""
+        if "/" in model_name:
+            provider, model_id = model_name.split("/", 1)
+            cfg["provider"] = {provider: {"models": {model_id: {}}}}
+        return cfg
 
     # ── provider backpressure ─────────────────────────────────────────
 
@@ -836,6 +946,9 @@ class UserEnabledOpenCode(BaseAgent):
 
     def _is_bedrock_agent(self) -> bool:
         return (self._inner.model_name or "").startswith(f"{_BEDROCK_PROVIDER}/")
+
+    def _is_openrouter_agent(self) -> bool:
+        return (self._inner.model_name or "").startswith("openrouter/")
 
     def _refresh_agent_env(self, env: dict[str, str] | None) -> dict[str, str]:
         """Overlay current AWS credentials onto an exec env for Bedrock agents.

@@ -268,6 +268,20 @@ async def launch_litellm_proxy(environment: Any, logs_dir: Path) -> bool:
     fallback_key = os.environ.get("PROXY_FALLBACK_KEY", "")
     fallback_model = os.environ.get("PROXY_FALLBACK_MODEL", "")
 
+    if os.environ.get("SWT_EGRESS_ENFORCED") == "1":
+        # The script is written to the trial dir and /tmp inside the sandbox with
+        # the key in plaintext; under egress enforcement OpenRouter is reached only
+        # through the relay's credential-injecting route, so no real key may
+        # appear here (agents did read it from /tmp/model_proxy.py).
+        import egress_policy
+        route = f"http://{egress_policy.RELAY_HOST}:{egress_policy.RELAY_PORT}/openrouter/api"
+        if is_openrouter_target:
+            target_url, proxy_api_key = route, egress_policy.OPENROUTER_PLACEHOLDER
+        if fallback_url and "openrouter" in fallback_url:
+            fallback_url, fallback_key = route, egress_policy.OPENROUTER_PLACEHOLDER
+        elif fallback_url:
+            fallback_url = fallback_key = ""
+
     log.info(
         "Starting LiteLLM proxy in sandbox: model=%s port=%s target=%s fallback=%s",
         proxy_model, proxy_port, target_url, fallback_url or "none",
