@@ -191,13 +191,12 @@ class EnrootEnvironment(BaseEnvironment):
         import egress_policy
         container = self._require()
         res = await container.exec(egress_policy.workspace_packages_script(self._workdir), cwd="/", timeout=120)
-        pkgs: dict = {"npm": [], "pypi": [], "crates": []}
-        try:
-            line = [l for l in res.stdout.splitlines() if l.startswith("{")][-1]
-            pkgs = json.loads(line)
-        except (IndexError, ValueError):
-            self.logger.warning("workspace package scan produced no JSON (rc=%s): %s",
-                                res.return_code, (res.stderr or res.stdout)[-200:])
+        if "SWT_PKGSCAN_DONE" not in res.stdout:
+            raise EnrootSetupError(
+                f"workspace package scan did not complete for {self.session_id} (rc={res.return_code}): "
+                f"{(res.stderr or res.stdout)[-200:]}"
+            )
+        pkgs = egress_policy.parse_workspace_packages(res.stdout)
         (self.trial_paths.agent_dir / "egress_task_packages.json").write_text(json.dumps(pkgs, indent=1) + "\n")
         egress.update_meta(deny_packages=pkgs)
         self.logger.info("egress: denying registry access to %d npm / %d PyPI / %d crate names of the workspace",

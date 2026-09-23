@@ -569,19 +569,43 @@ def test_deny_packages_roundtrip():
     assert ep.DenyPackages.from_dict(d.to_dict()).to_dict() == d.to_dict()
 
 
-def test_workspace_scanner_script_runs(tmp_path):
+def test_workspace_scanner_script_runs_without_python(tmp_path):
     import subprocess
     (tmp_path / "package.json").write_text(json.dumps({"name": "@scope/root"}))
     (tmp_path / "packages" / "a").mkdir(parents=True)
-    (tmp_path / "packages" / "a" / "package.json").write_text(json.dumps({"name": "pkg-a"}))
+    (tmp_path / "packages" / "a" / "package.json").write_text('{\n  "name": "pkg-a",\n  "private": true\n}\n')
     (tmp_path / "node_modules" / "left-pad").mkdir(parents=True)
     (tmp_path / "node_modules" / "left-pad" / "package.json").write_text(json.dumps({"name": "left-pad"}))
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "my-py"\n')
-    (tmp_path / "Cargo.toml").write_text('[package]\nname = "my_crate"\n')
-    out = subprocess.run(["bash", "-c", ep.workspace_packages_script(str(tmp_path))], capture_output=True, text=True)
-    pk = json.loads(out.stdout.strip().splitlines()[-1])
-    assert set(pk["npm"]) >= {"@scope/root", "pkg-a", tmp_path.name} and "left-pad" not in pk["npm"]
-    assert "my-py" in pk["pypi"] and "my_crate" in pk["crates"]
+    (tmp_path / "setup.py").write_text('from setuptools import setup\nsetup(name="legacy", version="1")\n')
+    (tmp_path / "Cargo.toml").write_text("[package]\nname = 'my_crate'\n")
+    # plain sh with a PATH that has no python at all
+    out = subprocess.run(["sh", "-c", ep.workspace_packages_script(str(tmp_path))], capture_output=True, text=True,
+                         env={"PATH": "/usr/bin:/bin"})
+    assert "SWT_PKGSCAN_DONE" in out.stdout
+    pk = ep.parse_workspace_packages(out.stdout)
+    assert set(pk["npm"]) == {"@scope/root", "pkg-a", tmp_path.name}
+    assert set(pk["pypi"]) == {"my-py", "legacy", tmp_path.name}
+    assert set(pk["crates"]) == {"my_crate", tmp_path.name}
+
+
+def test_opencode_config_is_rendered_host_side_without_python():
+    import subprocess
+    from user_agent.agents.user_enabled_opencode import patch_opencode_config, render_opencode_config_command
+    cfg = patch_opencode_config({"provider": {"openrouter": {"models": {"x-ai/grok-4.7": {}}}}},
+                                using_proxied_provider=False, disallowed_tools="WebFetch,WebSearch",
+                                bedrock_region=None, openrouter_base_url="http://127.0.0.1:3128/openrouter/api/v1")
+    assert cfg["provider"]["openrouter"]["options"]["baseURL"] == "http://127.0.0.1:3128/openrouter/api/v1"
+    assert cfg["provider"]["openrouter"]["models"]["x-ai/grok-4.7"]["variants"]["high"] == {"reasoning": {"effort": "high"}}
+    assert cfg["permission"]["tools"] == {"webfetch": "deny", "websearch": "deny"}
+    cmd = render_opencode_config_command(cfg)
+    assert "python" not in cmd
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as home:
+        subprocess.run(["sh", "-c", cmd + " && echo chained"], check=True, env={"HOME": home, "PATH": "/usr/bin:/bin"},
+                       capture_output=True)
+        written = json.loads((Path(home) / ".config" / "opencode" / "opencode.json").read_text())
+    assert written == cfg
 
 
 # ── registry TLS interception ──────────────────────────────────────────────

@@ -438,45 +438,37 @@ def registry_decision(host: str, method: str, path: str, deny: DenyPackages) -> 
 
 
 #: Shell run inside the container at trial start to list the workspace's own
-#: package names. Output: one JSON object. Skips vendored/build trees.
+#: package names. POSIX sh + find/sed/tr only (several task images have no python3).
+#: Output: one line per ``kind<TAB>name``; the host turns it into the denylist.
+_PKGSCAN_TEMPLATE = r"""set +e
+ROOT=__ROOT__
+find "$ROOT" -maxdepth 7 \( -name node_modules -o -name .git -o -name target -o -name dist -o -name build -o -name .venv -o -name venv -o -name vendor -o -name site-packages -o -name __pycache__ -o -name .tox -o -name .cache \) -prune -o -type f \( -name package.json -o -name pyproject.toml -o -name setup.py -o -name setup.cfg -o -name Cargo.toml \) -print 2>/dev/null | while IFS= read -r f; do
+  case "$f" in
+    */package.json) tr ',{}' '\n\n\n' < "$f" | sed -n 's/^[[:space:]]*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/npm\t\1/p' | head -1 ;;
+    */pyproject.toml) sed -n "s/^[[:space:]]*name[[:space:]]*=[[:space:]]*[\"']\([^\"']*\)[\"'].*/pypi\t\1/p" "$f" ;;
+    */setup.py) tr ',()' '\n\n\n' < "$f" | sed -n "s/^[[:space:]]*name[[:space:]]*=[[:space:]]*[\"']\([^\"']*\)[\"'].*/pypi\t\1/p" ;;
+    */setup.cfg) sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/pypi\t\1/p' "$f" | head -1 ;;
+    */Cargo.toml) sed -n "s/^[[:space:]]*name[[:space:]]*=[[:space:]]*[\"']\([^\"']*\)[\"'].*/crates\t\1/p" "$f" ;;
+  esac
+done
+b=$(basename "$ROOT"); printf 'npm\t%s\npypi\t%s\ncrates\t%s\n' "$b" "$b" "$b"
+echo SWT_PKGSCAN_DONE
+"""
+
+
 def workspace_packages_script(workdir: str) -> str:
-    return r'''python3 - <<'PYEOF'
-import json, os, re, sys
-root = %r
-skip = {"node_modules", ".git", "target", "dist", "build", ".venv", "venv", "__pycache__", ".cache", "vendor", ".tox", ".mypy_cache", "site-packages"}
-out = {"npm": set(), "pypi": set(), "crates": set()}
-def add(kind, name):
-    if isinstance(name, str) and 0 < len(name) < 200 and not name.startswith("$"):
-        out[kind].add(name.strip())
-for dirpath, dirs, files in os.walk(root):
-    dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
-    if dirpath.count(os.sep) - root.count(os.sep) > 6:
-        dirs[:] = []
-    for f in files:
-        p = os.path.join(dirpath, f)
-        try:
-            if f == "package.json":
-                add("npm", json.load(open(p)).get("name"))
-            elif f == "pyproject.toml":
-                t = open(p, errors="replace").read()
-                for m in re.finditer(r'^\s*name\s*=\s*["\']([^"\']+)["\']', t, re.M):
-                    add("pypi", m.group(1))
-            elif f == "setup.py":
-                t = open(p, errors="replace").read()
-                for m in re.finditer(r'name\s*=\s*["\']([^"\']+)["\']', t):
-                    add("pypi", m.group(1))
-            elif f == "setup.cfg":
-                t = open(p, errors="replace").read()
-                m = re.search(r'^\s*name\s*=\s*(\S+)', t, re.M)
-                if m: add("pypi", m.group(1))
-            elif f == "Cargo.toml":
-                t = open(p, errors="replace").read()
-                for m in re.finditer(r'^\s*name\s*=\s*["\']([^"\']+)["\']', t, re.M):
-                    add("crates", m.group(1))
-        except Exception:
-            pass
-base = os.path.basename(root.rstrip("/"))
-if base:
-    out["npm"].add(base); out["pypi"].add(base); out["crates"].add(base)
-print(json.dumps({k: sorted(v) for k, v in out.items()}))
-PYEOF''' % workdir
+    import shlex
+    return _PKGSCAN_TEMPLATE.replace("__ROOT__", shlex.quote(workdir))
+
+
+def parse_workspace_packages(stdout: str) -> dict[str, list[str]]:
+    """``kind<TAB>name`` lines from :func:`workspace_packages_script` → denylist dict."""
+    out: dict[str, set[str]] = {"npm": set(), "pypi": set(), "crates": set()}
+    for line in stdout.splitlines():
+        if "\t" not in line:
+            continue
+        kind, _, name = line.partition("\t")
+        name = name.strip()
+        if kind in out and 0 < len(name) < 200 and not name.startswith("$") and "{" not in name:
+            out[kind].add(name)
+    return {k: sorted(v) for k, v in out.items()}
