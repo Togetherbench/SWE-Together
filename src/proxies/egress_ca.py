@@ -30,6 +30,14 @@ LEAF_DAYS = 7
 CA_DAYS = 30
 
 
+def client_tls_context(cafile: str | None = None) -> ssl.SSLContext:
+    """Verifying client context with an explicit TLS 1.2 floor (used for every
+    upstream connection the proxy opens and for the CA's own trust context)."""
+    ctx = ssl.create_default_context(cafile=cafile)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
+
+
 class EgressCA:
     def __init__(self, directory: Path, common_name: str = "SWE-Together egress sandbox CA") -> None:
         self.dir = Path(directory)
@@ -112,5 +120,4 @@ class EgressCA:
 
     def client_context(self) -> ssl.SSLContext:
         """A client context that trusts only this CA (tests / self-checks)."""
-        ctx = ssl.create_default_context(cafile=str(self.ca_pem))
-        return ctx
+        return client_tls_context(str(self.ca_pem))

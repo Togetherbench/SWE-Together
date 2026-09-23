@@ -309,7 +309,8 @@ class EgressProxy:
         if ca_dir is not None:
             from proxies.egress_ca import EgressCA
             self.ca = EgressCA(ca_dir)
-        self._upstream_ssl = upstream_ssl_context or ssl.create_default_context()
+        from proxies.egress_ca import client_tls_context
+        self._upstream_ssl = upstream_ssl_context or client_tls_context()
         self.credentials = credentials if credentials is not None else dict(os.environ)
         self.fallback_log = fallback_log
         self._resolver = policy_resolver or self._default_resolver

@@ -166,7 +166,7 @@ def test_write(tmp_path, policy):
     d = json.loads(out.read_text())
     assert d["version"] == ep.POLICY_VERSION
     assert d["digest"] == policy.digest()
-    assert "proxy.golang.org" in d["leak_vectors"]
+    assert d["leak_vectors"]["proxy.golang.org"].startswith("Go module proxy")
     assert d["allow_hosts"]["pypi.org"] == "registries" and "openrouter.ai" not in d["allow_hosts"]
 
 
@@ -619,7 +619,8 @@ def tls_upstream(tmp_path):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Upstream)
     srv.socket = server_ca.server_context("localhost").wrap_socket(srv.socket, server_side=True)
     t = threading.Thread(target=srv.serve_forever, daemon=True); t.start()
-    trust = _ssl.create_default_context(cafile=str(server_ca.ca_pem))
+    from proxies.egress_ca import client_tls_context
+    trust = client_tls_context(str(server_ca.ca_pem))
     yield srv.server_address[1], trust
     srv.shutdown()
 
@@ -649,7 +650,8 @@ def _connect_tls(proxy, port, path, preamble=None, trust_proxy_ca=True):
         s.sendall(xp.PREAMBLE_MAGIC + json.dumps(preamble).encode() + b"\n"); time.sleep(0.05)
     s.sendall(f"CONNECT localhost:{port} HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n".encode())
     assert s.recv(1024).startswith(b"HTTP/1.1 200")
-    ctx = proxy.ca.client_context() if trust_proxy_ca else _ssl.create_default_context()
+    from proxies.egress_ca import client_tls_context
+    ctx = proxy.ca.client_context() if trust_proxy_ca else client_tls_context()
     tls = ctx.wrap_socket(s, server_hostname="localhost")
     tls.sendall(f"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".encode())
     out = b""
