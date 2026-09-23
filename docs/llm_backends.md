@@ -120,6 +120,11 @@ Where the credentials go:
 `~/.aws` profiles are not visible inside containers, which is why values are
 materialised rather than a profile name being passed through.
 
+Under the enroot backend's enforced egress (`docs/sandboxes.md`), Bedrock calls
+leave the sandbox through the allowlisting proxy (`bedrock-runtime.<SWT_AWS_REGION>.amazonaws.com`
+is allowlisted; opencode honours `HTTPS_PROXY`), while the OpenRouter key never
+enters the sandbox at all — the proxy injects it on the `/openrouter/` route.
+
 ### Claude Fable on Bedrock
 
 Fable 5 / 5.1 calls fail with `data retention mode 'default' is not available

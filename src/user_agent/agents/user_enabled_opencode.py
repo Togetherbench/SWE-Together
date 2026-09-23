@@ -166,6 +166,7 @@ def build_opencode_config_patch_script(
     bedrock_region: str | None,
     or_efforts: tuple[str, ...] = _OR_EFFORTS,
     bedrock_efforts: tuple[str, ...] = _BEDROCK_EFFORTS,
+    openrouter_base_url: str | None = None,
 ) -> str:
     """Python source that patches ~/.config/opencode/opencode.json in the sandbox.
 
@@ -194,6 +195,15 @@ def build_opencode_config_patch_script(
         script += (
             "prov.setdefault('anthropic', {}).setdefault('options', {})"
             "['baseURL'] = 'http://localhost:4210/v1'\n"
+        )
+    if openrouter_base_url:
+        # Egress enforcement: opencode's openrouter provider talks plain HTTP to
+        # the in-namespace relay, whose `/openrouter/` route the host-side egress
+        # proxy forwards to https://openrouter.ai with the real API key injected.
+        # The sandbox only ever sees a placeholder key.
+        script += (
+            "prov.setdefault('openrouter', {}).setdefault('options', {})"
+            f"['baseURL'] = {openrouter_base_url!r}\n"
         )
     script += (
         "or_efforts = " + json.dumps(list(or_efforts)) + "\n"
@@ -735,10 +745,15 @@ class UserEnabledOpenCode(BaseAgent):
         if self._is_bedrock_agent():
             from llm_config import aws_region
             bedrock_region = aws_region()
+        openrouter_base_url = None
+        if os.environ.get("SWT_EGRESS_ENFORCED") == "1" and self._is_openrouter_agent():
+            import egress_policy
+            openrouter_base_url = f"http://{egress_policy.RELAY_HOST}:{egress_policy.RELAY_PORT}/openrouter/api/v1"
         script = build_opencode_config_patch_script(
             using_proxied_provider=self._using_proxied_provider,
             disallowed_tools=self._disallowed_tools,
             bedrock_region=bedrock_region,
+            openrouter_base_url=openrouter_base_url,
         )
         # Subshell wrap is load-bearing: the caller chains this with
         # `... && opencode run ...`. A bare heredoc can't be chained — bash
@@ -836,6 +851,9 @@ class UserEnabledOpenCode(BaseAgent):
 
     def _is_bedrock_agent(self) -> bool:
         return (self._inner.model_name or "").startswith(f"{_BEDROCK_PROVIDER}/")
+
+    def _is_openrouter_agent(self) -> bool:
+        return (self._inner.model_name or "").startswith("openrouter/")
 
     def _refresh_agent_env(self, env: dict[str, str] | None) -> dict[str, str]:
         """Overlay current AWS credentials onto an exec env for Bedrock agents.

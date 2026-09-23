@@ -288,6 +288,25 @@ def _opencode_preflight(agent_type: str, version: str | None) -> None:
     print(f"opencode preflight: {version} cached at {path}")
 
 
+def _egress_preflight(no_enforcement: bool) -> None:
+    """Fail fast when the login node cannot build the default-deny sandbox namespace.
+
+    Compute nodes run the same image, so a login-node failure predicts a job that
+    dies at its first trial (the enroot backend refuses to run porous).
+    """
+    if no_enforcement:
+        print("egress preflight: SKIPPED — --no-egress-enforcement (containers on the host network)")
+        return
+    from enroot_backend.netns import namespaces_supported
+    ok, why = namespaces_supported()
+    if not ok:
+        raise SystemExit(f"egress preflight: cannot create an unprivileged user+network namespace ({why})")
+    import egress_policy
+    pol = egress_policy.default_policy(llm_config.aws_region())
+    print(f"egress preflight: namespaces OK; policy v{egress_policy.POLICY_VERSION} "
+          f"digest {pol.digest()} ({len(pol.allow_hosts)} hosts + {len(pol.allow_suffixes)} suffixes allowlisted)")
+
+
 # ── run (Stage 1) ───────────────────────────────────────────────────────────────────
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -322,6 +341,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         cmd += ["--tasks", shlex.quote(args.tasks)]
     if args.store:
         cmd += ["--image-store", shlex.quote(args.store)]
+    if args.no_egress_enforcement:
+        cmd += ["--no-egress-enforcement"]
+    if args.allow_porous_sandbox:
+        cmd += ["--allow-porous-sandbox"]
     if args.extra:
         cmd += [args.extra]
     body = _backend_exports(args) + " ".join(cmd) + "\n"
@@ -334,6 +357,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     script.write_text(content)
     print(f"trials → {trials_dir}")
     if args.submit:
+        _egress_preflight(args.no_egress_enforcement)
         _bedrock_preflight([agent.model, user.model])
         _opencode_preflight(args.agent_type, args.opencode_version)
     return _submit(script, args.submit)
@@ -434,6 +458,10 @@ def main() -> int:
     p.add_argument("--concurrent", type=int, default=None, help="array %% limit (default: shards)")
     p.add_argument("--workers", type=int, default=6, help="concurrent trials per array task")
     p.add_argument("--extra", default="", help="extra args appended to run_eval.py")
+    p.add_argument("--no-egress-enforcement", action="store_true",
+                   help="debugging only: containers on the host network (refused for trials/canonical_*)")
+    p.add_argument("--allow-porous-sandbox", action="store_true",
+                   help="knowingly run a leaderboard trials root without enforced egress")
     _common_sbatch_args(p, cpus=32, mem="128G", time_limit="08:00:00")
     p.set_defaults(func=cmd_run)
 

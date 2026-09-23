@@ -29,8 +29,100 @@ knows the defaults, so it is also where to read the precedence rules.
 * Each trial is capped at `TRIAL_BUDGET_SEC` (5400 s) with `PER_EXEC_CAP_SEC`
   (1800 s) per agent turn (`src/user_agent/exec_helpers.py`).
 * Task images ship a **DNS sinkhole** (`environment/seal-dns.sh`) that points
-  `github.com`, `huggingface.co`, … at `127.0.0.1` so the agent cannot fetch the
-  upstream fix. Every backend must keep it in force.
+  `github.com`, `huggingface.co`, … at `127.0.0.1`. On enroot it is superseded by
+  the enforced egress namespace below (the sinkhole stays as defence in depth);
+  on e2b/docker it is the only control and is **known to be bypassable**.
+
+### Enforced egress: the container has no network except an allowlisting proxy
+
+The hostname sinkhole can be, and was, defeated by agents — via
+GitHub CDN mirrors (`cdn.jsdelivr.net/gh/…`, `gh-proxy.com`, `ghfast.top`),
+read-through proxies (`r.jina.ai`), DNS-over-HTTPS + `curl --resolve`,
+`LD_PRELOAD` resolver shims for `git`, search engines used to locate the task's
+own PR. It was a *blocklist* enforced inside a container where the agent is root.
+
+The enroot backend now enforces a **default-deny allowlist from outside the
+container**:
+
+```
+container (unprivileged user+net namespace: loopback only)     compute node
+  curl / pip / npm / cargo / git / opencode                    EgressProxy (src/proxies/egress_proxy.py)
+    HTTPS_PROXY=http://127.0.0.1:3128 ──► relay ──unix socket──► decide(host) per src/egress_policy.py
+                                                                 allow → CONNECT / forward
+                                                                 deny  → 403 {"error": "egress denied", "reason": …}
+```
+
+* `unshare -Urn` creates the namespace; the relay process is its holder and every
+  `enroot start` is prefixed with `nsenter -t <relay> -U -n`. Inside there is no
+  route at all: `curl --noproxy '*'` exits 6/7, `--resolve host:443:<ip>` exits 7,
+  DoH resolvers are simply unreachable. Nothing the agent does as in-container
+  root changes this — the only exit is a unix socket it cannot see.
+* **Policy** (`src/egress_policy.py`, one place): allow the model catalog
+  (`models.dev`, `models.opencode.ai`) and, by `CONNECT`, only the LLM host the
+  run's backend needs (Bedrock's regional endpoint, or the one vendor API for a
+  native run — nothing for OpenRouter runs, see below); allow package registries (`pypi.org`, `files.pythonhosted.org`,
+  `registry.npmjs.org`, `crates.io`, Ubuntu/Debian apt mirrors, NodeSource).
+  Deny everything else. Known leak vectors are denied *with a reason* that the
+  agent sees in the 403 body: GitHub and its CDNs/proxies, `r.jina.ai`, search
+  engines, DoH, Hugging Face, and **`proxy.golang.org`** — the Go module proxy
+  serves any GitHub repository verbatim (`go mod download github.com/<task
+  repo>@main` is the fix), so the sandbox runs with `GOPROXY=off` and Go task
+  images pre-populate their module cache. A task may extend the list via
+  `task.toml` `[network] allow = ["download.pytorch.org"]`; leak vectors are
+  rejected at load time. The policy digest is recorded per trial.
+* **Credentials leave the sandbox.** opencode's openrouter provider is pointed at
+  `http://127.0.0.1:3128/openrouter/api/v1`; the proxy injects the real
+  `Authorization` header and the sandbox only ever holds a placeholder
+  `OPENROUTER_API_KEY` (agents were observed reading the real key from the
+  environment and calling the OpenRouter API from a shell). `GITHUB_TOKEN` is never forwarded.
+  Bedrock STS credentials still enter the sandbox in this phase.
+* **The LLM route is model-pinned.** Only `POST /api/v1/chat/completions` whose
+  JSON `model` is the run's agent model is forwarded; `:online` variants,
+  `plugins`, `web_search_options` and non-function tools are refused, and no
+  `CONNECT` to `openrouter.ai` (or any other vendor API) is allowed for an
+  OpenRouter run. Without this the route was an open LLM gateway: agents called
+  web-enabled `:online` models through it and had *that* model fetch the GitHub
+  PR for them.
+* **Registry TLS is intercepted and the task's own packages are denied.** The
+  proxy terminates TLS for registry hosts with a per-job CA
+  (`src/proxies/egress_ca.py`; the bundle is installed in the container and every
+  client is pointed at it via `SSL_CERT_FILE`/`PIP_CERT`/`NODE_EXTRA_CA_CERTS`/…),
+  so it sees `GET /@scope/pkg/-/pkg-1.2.3.tgz`. At trial start the workspace's
+  manifests (`package.json`, `pyproject.toml`, `setup.py`, `Cargo.toml`) are
+  scanned into `agent/egress_task_packages.json`, and any version of those
+  packages — plus registry search endpoints — is refused (`403`, reason
+  `task's own npm package …`). Agents were observed downloading a newer release
+  of the task's own package — the fix, in a tarball — from npm/PyPI. A client
+  that drops the CA bundle fails TLS to the proxy: fail closed. Node's native
+  `fetch` ignores `HTTPS_PROXY` and therefore has no route (npm/pnpm/bun/curl/
+  pip/cargo/git all honour it).
+* **Self-test before turn 0** (`agent/egress_selftest.json`): from inside the
+  container, an allowlisted host must answer 200, four leak vectors must get 403
+  from the proxy, and both `--noproxy` and `--resolve <ip>` bypasses must have no
+  route. Any failure aborts the trial as `infra_failed(egress_policy_unenforced)`;
+  a run never silently proceeds porous. Every proxied connection is logged to
+  `agent/egress.log` (JSON lines: host, decision, reason, bytes); an *allowed*
+  connection to a leak vector is `infra_failed(egress_policy_violation)`. Denied
+  attempts are not failures — they are counted as `egress_denied_attempts` in
+  `per_trial.json` (internal metric).
+* `src/run_eval.py` starts one proxy per process (`<runtime root>/egress.sock`)
+  and refuses a **leaderboard trials root** (`trials/canonical_*`) on any backend
+  without enforcement unless `--allow-porous-sandbox` is passed; both that flag
+  and `egress_enforced` are recorded in the run manifest.
+  `--no-egress-enforcement` exists for debugging only. `scripts/slurm/launch.py
+  run` preflights namespace support on the login node.
+
+Enforcement matrix:
+
+| Backend | Egress control | Leaderboard cohorts |
+|---|---|---|
+| enroot | namespace + allowlisting proxy (default) | yes |
+| docker | `allow_internet` only (all-or-nothing; `network_mode: none` would also cut the LLM API) | refused without `--allow-porous-sandbox` |
+| e2b | `allow_internet_access` only (all-or-nothing) | refused without `--allow-porous-sandbox` |
+| judge sandbox | unrestricted (needs `claude.ai` installer + LLM API; it holds the oracle patch anyway) | n/a |
+
+Trials recorded before this change ran on the sinkhole alone; they carry neither
+`egress_selftest.json` nor `egress.log` and the sentinel leaves them untouched.
 
 ### opencode is installed from a cached binary, not from apt/npm
 
