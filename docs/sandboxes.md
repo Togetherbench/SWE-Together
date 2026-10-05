@@ -86,6 +86,16 @@ container (unprivileged user+net namespace: loopback only)     compute node
   OpenRouter run. Without this the route was an open LLM gateway: agents called
   web-enabled `:online` models through it and had *that* model fetch the GitHub
   PR for them.
+* **Self-hosted models get their own route, nothing else.** A `vllm` run installs
+  a `/vllm/` reverse route instead of `/openrouter/` (a run only ever has the
+  route its backend needs). The route forwards to the serve job's address over
+  plain HTTP inside the cluster, restricted to `POST /v1/chat/completions`
+  (model-pinned, same body checks as above) and `GET /v1/models`; the server's
+  `--api-key`, if any, is injected host-side from `SWT_VLLM_API_KEY`. The sandbox
+  sees `http://127.0.0.1:3128/vllm/v1` and a placeholder key — never the node,
+  port or key — and cannot reach the server directly (its hostname is not
+  allowlisted, and IP literals are always denied). Routes carry their own idle
+  budget so a long queued prefill is not reaped by the proxy.
 * **Registry TLS is intercepted and the task's own packages are denied.** The
   proxy terminates TLS for registry hosts with a per-job CA
   (`src/proxies/egress_ca.py`; the bundle is installed in the container and every
@@ -120,6 +130,7 @@ Enforcement matrix:
 | Backend | Egress control | Leaderboard cohorts |
 |---|---|---|
 | enroot | namespace + allowlisting proxy (default) | yes |
+| enroot + `vllm` agent backend | as above; LLM reached only via the pinned `/vllm/` relay route (policy digest includes the route) | yes |
 | docker | `allow_internet` only (all-or-nothing; `network_mode: none` would also cut the LLM API) | refused without `--allow-porous-sandbox` |
 | e2b | `allow_internet_access` only (all-or-nothing) | refused without `--allow-porous-sandbox` |
 | judge sandbox | unrestricted (needs `claude.ai` installer + LLM API; it holds the oracle patch anyway) | n/a |
@@ -280,6 +291,9 @@ SWT_ENROOT_BASE=/dev/shm/swt                 # must be tmpfs
 SLURM_QOS=...      SLURM_ACCOUNT=...         # site-specific, never committed
 SLURM_PARTITION=... SLURM_EXTRA="--constraint=x;--exclusive"   # optional
 SWT_CONDA_ENV=swetogether                    # env name or absolute prefix on compute nodes
+SWT_VLLM_CONDA_ENV=swt-vllm                  # self-hosting: env with vllm (see docs/self_hosting.md)
+SWT_VLLM_WEIGHTS_ROOT=/shared/path/models    # self-hosting: <root>/<hf repo> holds the weights
+SWT_VLLM_API_KEY=...                         # self-hosting: optional vllm --api-key (host-side only)
 ```
 
 `ENROOT_TEMP_PATH`/`ENROOT_DATA_PATH` **must be tmpfs**: Lustre/NFS cannot create

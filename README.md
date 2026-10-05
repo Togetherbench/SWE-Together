@@ -109,7 +109,7 @@ Most runs need only a subset; `.env.example` documents them all.
 | key | used for |
 |---|---|
 | `SWT_SANDBOX` | `e2b` / `docker` / `enroot` — where trials and the judge run |
-| `SWT_LLM_BACKEND`, `SWT_<SEAT>_BACKEND` | `native` / `openrouter` / `bedrock` per LLM seat (agent, user_sim, judge, tagger) — see [docs/llm_backends.md](docs/llm_backends.md) |
+| `SWT_LLM_BACKEND`, `SWT_<SEAT>_BACKEND` | `native` / `openrouter` / `bedrock` per LLM seat (agent, user_sim, judge, tagger), plus `vllm` for a self-hosted agent model — see [docs/llm_backends.md](docs/llm_backends.md) and [docs/self_hosting.md](docs/self_hosting.md) |
 | `OPENROUTER_API_KEY` | the agent model (or the provider key matching your model) |
 | `GEMINI_API_KEY` | user simulator + message tagging with the default `gemini/…` models |
 | `ANTHROPIC_API_KEY` | the Step-1 agentic judge |
