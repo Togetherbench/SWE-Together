@@ -86,7 +86,7 @@ from sandbox_config import load_dotenv, stage1_sandbox  # noqa: E402
 load_dotenv(REPO_ROOT / ".env")
 
 import llm_config  # noqa: E402
-from llm_config import BACKENDS, resolve_seat_model, seat_backend, to_litellm_model, to_opencode_model  # noqa: E402
+from llm_config import BACKENDS, backends_for, resolve_seat_model, seat_backend, to_litellm_model, to_opencode_model  # noqa: E402
 
 
 AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_claude_code:UserEnabledClaudeCode"
@@ -814,7 +814,7 @@ async def main():
     # but the default OR token has been flaky (401 "User not found").
     parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview",
                         help="User sim model (registry name or provider/model string)")
-    parser.add_argument("--user-sim-backend", default=None, choices=list(BACKENDS),
+    parser.add_argument("--user-sim-backend", default=None, choices=list(backends_for("user_sim")),
                         help="Backend for a registry-named --user-model. Default: "
                              "$SWT_USER_SIM_BACKEND > $SWT_LLM_BACKEND > native.")
     parser.add_argument("--tag", required=True, help="Short tag for this run")

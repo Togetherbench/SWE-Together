@@ -12,6 +12,8 @@ Each seat picks a *backend* — where the model is served::
     bedrock      AWS Bedrock (short-lived AWS credentials, see bedrock_creds.py)
     openrouter   OpenRouter (OPENROUTER_API_KEY)
     native       the vendor's own API: GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+    vllm         a self-hosted OpenAI-compatible vLLM server (agent seat only; see
+                 serving/ and docs/self_hosting.md)
 
 Selection, highest precedence first: CLI flag (``--agent-backend`` …) > the
 cohort's ``agent_backend`` in a plan file (agent seat only) > ``SWT_<SEAT>_BACKEND``
@@ -25,9 +27,10 @@ expects. A name that already carries a provider prefix (``openrouter/meta/…``,
 plan file and command line keeps working; the backend is then implied by the prefix.
 
 Resolution produces one *fully-qualified* string in the repo's existing grammar
-(``openrouter/<id>``, ``bedrock/<id>``, ``gemini/<id>``, ``anthropic/<id>``, …);
-the ``to_*_model`` helpers translate it for each consumer (opencode, LiteLLM,
-Claude Code), which is the only place the three tools' spellings differ.
+(``openrouter/<id>``, ``bedrock/<id>``, ``gemini/<id>``, ``anthropic/<id>``,
+``vllm/<served-name>``, …); the ``to_*_model`` helpers translate it for each
+consumer (opencode, LiteLLM, Claude Code), which is the only place the three
+tools' spellings differ.
 """
 from __future__ import annotations
 
@@ -41,9 +44,12 @@ from typing import Mapping
 log = logging.getLogger(__name__)
 
 SEATS: tuple[str, ...] = ("agent", "user_sim", "judge", "tagger")
-BACKENDS: tuple[str, ...] = ("bedrock", "openrouter", "native")
+BACKENDS: tuple[str, ...] = ("bedrock", "openrouter", "native", "vllm")
+#: Backends only the agent seat may use (the judge, user-sim and tagger run on
+#: vendor APIs; a self-hosted server is the model under test, not infrastructure).
+AGENT_ONLY_BACKENDS: tuple[str, ...] = ("vllm",)
 #: Extra backend accepted for the judge only (legacy ``JUDGE_VIA_CODEX=1`` path).
-JUDGE_BACKENDS: tuple[str, ...] = BACKENDS + ("codex",)
+JUDGE_BACKENDS: tuple[str, ...] = tuple(b for b in BACKENDS if b not in AGENT_ONLY_BACKENDS) + ("codex",)
 DEFAULT_BACKEND = "native"
 
 SEAT_BACKEND_VARS = {
@@ -54,9 +60,19 @@ SEAT_BACKEND_VARS = {
 }
 GLOBAL_BACKEND_VAR = "SWT_LLM_BACKEND"
 
+
+def backends_for(seat: str) -> tuple[str, ...]:
+    """Backends a seat may select (argparse ``choices`` and validation share this)."""
+    if seat == "judge":
+        return JUDGE_BACKENDS
+    if seat == "agent":
+        return BACKENDS
+    return tuple(b for b in BACKENDS if b not in AGENT_ONLY_BACKENDS)
+
 #: Provider prefixes of fully-qualified model strings, by backend.
 BEDROCK_PREFIX = "bedrock"
 OPENROUTER_PREFIX = "openrouter"
+VLLM_PREFIX = "vllm"
 NATIVE_PREFIXES: tuple[str, ...] = ("gemini", "anthropic", "openai")
 #: Reasoning-effort values Bedrock accepts (union over model families; each
 #: family supports a subset — GPT-5.6 all six, Claude low/high/max).
@@ -75,6 +91,8 @@ class ModelSpec:
     #: Native id plus the provider prefix the repo already uses for it.
     native: str | None = None
     native_provider: str | None = None
+    #: Name the self-hosted server registers the model under (``--served-model-name``).
+    vllm: str | None = None
     supports_temperature: bool = True
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
@@ -83,6 +101,7 @@ class ModelSpec:
             "openrouter": self.openrouter,
             "bedrock": self.bedrock,
             "native": self.native,
+            "vllm": self.vllm,
         }.get(backend)
 
     def backends(self) -> tuple[str, ...]:
@@ -142,6 +161,9 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         ModelSpec("gemini-3.8-flash", openrouter="google/gemini-3.8-flash",
                   native="gemini-3.8-flash", native_provider="gemini"),
         ModelSpec("muse-spark-1.3", openrouter="meta/muse-spark-1.3"),
+        # Self-hosted only: open weights served by our own vLLM job (serving/registry.py
+        # carries the serving recipe). No vendor backend offers GLM-5.3 at list price.
+        ModelSpec("glm-5.3", vllm="glm-5.3", aliases=("GLM-5.3", "glm5.3")),
     )
 }
 _ALIASES: dict[str, str] = {
@@ -175,7 +197,7 @@ def seat_backend(seat: str, cli_value: str | None = None, plan_value: str | None
     """Backend for ``seat``: CLI > plan file > SWT_<SEAT>_BACKEND > SWT_LLM_BACKEND > native."""
     if seat not in SEATS:
         raise ValueError(f"unknown seat {seat!r}; expected one of {SEATS}")
-    allowed = JUDGE_BACKENDS if seat == "judge" else BACKENDS
+    allowed = backends_for(seat)
     if cli_value:
         return _validate_backend(cli_value, allowed, f"--{seat.replace('_', '-')}-backend")
     if plan_value:
@@ -184,7 +206,7 @@ def seat_backend(seat: str, cli_value: str | None = None, plan_value: str | None
     if os.environ.get(var):
         return _validate_backend(os.environ[var], allowed, var)
     if os.environ.get(GLOBAL_BACKEND_VAR):
-        return _validate_backend(os.environ[GLOBAL_BACKEND_VAR], BACKENDS, GLOBAL_BACKEND_VAR)
+        return _validate_backend(os.environ[GLOBAL_BACKEND_VAR], allowed, GLOBAL_BACKEND_VAR)
     return DEFAULT_BACKEND
 
 
@@ -203,6 +225,8 @@ def backend_of(model: str) -> str:
         return "bedrock"
     if provider == OPENROUTER_PREFIX:
         return "openrouter"
+    if provider == VLLM_PREFIX:
+        return "vllm"
     if provider == "codex":
         return "codex"
     return "native"
@@ -210,6 +234,15 @@ def backend_of(model: str) -> str:
 
 def is_bedrock(model: str) -> bool:
     return backend_of(model) == "bedrock"
+
+
+def pinned_route_model(model: str) -> str | None:
+    """The model id the relay's LLM route pins for this run, or ``None`` when the
+    backend reaches its API by host allowlist (Bedrock, native) instead of a route."""
+    provider, rest = split_model(model)
+    if provider in (OPENROUTER_PREFIX, VLLM_PREFIX):
+        return rest
+    return None
 
 
 def lookup(name: str) -> ModelSpec | None:
@@ -231,10 +264,13 @@ def resolve_seat_model(seat: str, raw: str, backend: str) -> ResolvedModel:
         for s in MODEL_REGISTRY.values():
             if raw in (s.openrouter and f"{OPENROUTER_PREFIX}/{s.openrouter}",
                        s.bedrock and f"{BEDROCK_PREFIX}/{s.bedrock}",
+                       s.vllm and f"{VLLM_PREFIX}/{s.vllm}",
                        s.native and f"{s.native_provider}/{s.native}"):
                 spec = s
                 break
         implied = backend_of(raw)
+        if implied in AGENT_ONLY_BACKENDS and seat != "agent":
+            raise SystemExit(f"{seat}: backend {implied!r} is only available for the agent seat (model {raw!r})")
         if implied != backend and (os.environ.get(SEAT_BACKEND_VARS[seat]) or os.environ.get(GLOBAL_BACKEND_VAR)):
             log.info("%s: model %r carries its own provider prefix; using backend %s", seat, raw, implied)
         return ResolvedModel(seat=seat, backend=implied, model=raw, spec=spec)
@@ -254,15 +290,18 @@ def resolve_seat_model(seat: str, raw: str, backend: str) -> ResolvedModel:
         full = f"{BEDROCK_PREFIX}/{model_id}"
     elif backend == "openrouter":
         full = f"{OPENROUTER_PREFIX}/{model_id}"
+    elif backend == "vllm":
+        full = f"{VLLM_PREFIX}/{model_id}"
     else:
         full = f"{spec.native_provider}/{model_id}"
     return ResolvedModel(seat=seat, backend=backend, model=full, spec=spec)
 
 
-# ── per-consumer translation ─────────────────────────────────────────────────
+# ── per-consumer translation ─────────────────────────────────────────────────────────────
 
 def to_opencode_model(model: str) -> str:
-    """opencode names the Bedrock provider ``amazon-bedrock``."""
+    """opencode names the Bedrock provider ``amazon-bedrock``; ``vllm/<id>`` is the
+    custom provider the harness registers in opencode.json (see serving/)."""
     provider, rest = split_model(model)
     if provider == BEDROCK_PREFIX:
         return f"amazon-bedrock/{rest}"
@@ -270,10 +309,13 @@ def to_opencode_model(model: str) -> str:
 
 
 def to_litellm_model(model: str) -> str:
-    """LiteLLM's Bedrock route: force the Converse API for ids its catalog lacks."""
+    """LiteLLM's Bedrock route: force the Converse API for ids its catalog lacks;
+    LiteLLM spells a self-hosted OpenAI-compatible server ``hosted_vllm/<id>``."""
     provider, rest = split_model(model)
     if provider == BEDROCK_PREFIX and not rest.startswith(("converse/", "invoke/", "converse_like/")):
         return f"bedrock/converse/{rest}"
+    if provider == VLLM_PREFIX:
+        return f"hosted_vllm/{rest}"
     return model
 
 
@@ -450,7 +492,11 @@ def check_models_dev(provider: str, model_id: str, timeout: float = 5.0) -> str:
 
 
 def warn_if_uncatalogued(model: str) -> None:
-    """Log a warning when a Bedrock agent model is not in opencode's catalog."""
+    """Log a warning when a Bedrock agent model is not in opencode's catalog.
+
+    Self-hosted (``vllm/``) models are never catalogued by design: the harness
+    writes their limits and reasoning variants into opencode.json explicitly.
+    """
     if not is_bedrock(model):
         return
     _, model_id = split_model(model)

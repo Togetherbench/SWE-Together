@@ -444,7 +444,7 @@ def main() -> int:
                    help="backend for a registry-named --model (default: $SWT_AGENT_BACKEND > "
                         "$SWT_LLM_BACKEND > native)")
     p.add_argument("--user-model", default=DEFAULT_USER_MODEL)
-    p.add_argument("--user-sim-backend", default=None, choices=list(llm_config.BACKENDS))
+    p.add_argument("--user-sim-backend", default=None, choices=list(llm_config.backends_for("user_sim")))
     p.add_argument("--agent-type", default="opencode",
                    choices=["claude-code", "codex", "mini-swe-agent", "opencode"])
     p.add_argument("--agent-timeout", type=int, default=4800)
@@ -474,7 +474,7 @@ def main() -> int:
     p.add_argument("--intent-coverage-workers", type=int, default=5)
     p.add_argument("--tag-model", default=DEFAULT_TAG_MODEL,
                    help="LLM for message tagging + intent coverage (registry name or LiteLLM string)")
-    p.add_argument("--tagger-backend", default=None, choices=list(llm_config.BACKENDS))
+    p.add_argument("--tagger-backend", default=None, choices=list(llm_config.backends_for("tagger")))
     p.add_argument("--judge-backend", default=None, choices=list(llm_config.JUDGE_BACKENDS),
                    help="where `claude --print` gets its model (default: $SWT_JUDGE_BACKEND > "
                         "$SWT_LLM_BACKEND > JUDGE_VIA_OR/JUDGE_VIA_CODEX > native)")
