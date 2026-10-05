@@ -108,6 +108,21 @@ def test_llm_hosts_follow_the_backend():
     assert not native.decide("api.openai.com").allowed and not native.decide("openrouter.ai").allowed
     orr = ep.default_policy(llm_backend="openrouter", model="openrouter/x-ai/grok-4.7")
     assert not orr.decide("openrouter.ai").allowed and not orr.decide("api.anthropic.com").allowed
+    # a self-hosted run reaches its server only through the relay route: no host is allowlisted
+    vllm = ep.default_policy(llm_backend="vllm", model="vllm/glm-5.3")
+    assert not any(g == "llm" for g in vllm.allow_hosts.values()) and not vllm.allow_suffixes
+    assert not vllm.decide("openrouter.ai").allowed and not vllm.decide("api.z.ai").allowed
+
+
+def test_llm_routes_are_part_of_the_policy():
+    assert ep.POLICY_VERSION == 3
+    assert ep.llm_routes_for("openrouter") == ("/openrouter/",) and ep.llm_routes_for("vllm") == ("/vllm/",)
+    assert ep.llm_routes_for("bedrock") == () and ep.llm_routes_for(None) == ()
+    orr = ep.default_policy(llm_backend="openrouter", model="openrouter/x-ai/grok-4.7")
+    vllm = ep.default_policy(llm_backend="vllm", model="vllm/glm-5.3")
+    assert orr.to_dict()["llm_routes"] == ["/openrouter/"] and vllm.to_dict()["llm_routes"] == ["/vllm/"]
+    assert orr.digest() != vllm.digest()  # same hosts, different route
+    assert vllm.with_task_allow(["download.pytorch.org"]).llm_routes == ("/vllm/",)
 
 
 # ── per-task additions ─────────────────────────────────────────────────────

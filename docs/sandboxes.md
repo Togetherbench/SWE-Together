@@ -69,7 +69,10 @@ container (unprivileged user+net namespace: loopback only)     compute node
   repo>@main` is the fix), so the sandbox runs with `GOPROXY=off` and Go task
   images pre-populate their module cache. A task may extend the list via
   `task.toml` `[network] allow = ["download.pytorch.org"]`; leak vectors are
-  rejected at load time. The policy digest is recorded per trial.
+  rejected at load time. The policy digest is recorded per trial; since policy
+  v3 it also covers which relay LLM route the run had (`/openrouter/` or
+  `/vllm/`, none for Bedrock/native), so two runs with the same host allowlist
+  but different model routes do not share a digest.
 * **Credentials leave the sandbox.** opencode's openrouter provider is pointed at
   `http://127.0.0.1:3128/openrouter/api/v1`; the proxy injects the real
   `Authorization` header and the sandbox only ever holds a placeholder
