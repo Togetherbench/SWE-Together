@@ -157,6 +157,8 @@ _THROTTLE_CONTINUE_MESSAGE = (
 _OR_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
 _BEDROCK_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_PROVIDER = "amazon-bedrock"
+#: opencode provider id for a self-hosted server (``vllm/<served-name>``)
+_VLLM_PROVIDER = "vllm"
 
 
 def patch_opencode_config(
@@ -168,6 +170,7 @@ def patch_opencode_config(
     or_efforts: tuple[str, ...] = _OR_EFFORTS,
     bedrock_efforts: tuple[str, ...] = _BEDROCK_EFFORTS,
     openrouter_base_url: str | None = None,
+    vllm_provider: dict | None = None,
 ) -> dict:
     """Host-side equivalent of :func:`build_opencode_config_patch_script`.
 
@@ -183,10 +186,22 @@ def patch_opencode_config(
         prov.setdefault("anthropic", {}).setdefault("options", {})["baseURL"] = "http://localhost:4210/v1"
     if openrouter_base_url:
         prov.setdefault("openrouter", {}).setdefault("options", {})["baseURL"] = openrouter_base_url
+    if vllm_provider:
+        # Self-hosted model: the whole provider is spelled out (npm package, relay
+        # base URL, placeholder key, limits and effort variants) because no catalog
+        # knows it; Harbor's register step only seeded the model id.
+        existing = prov.get(_VLLM_PROVIDER, {})
+        merged = dict(vllm_provider)
+        merged["models"] = {**existing.get("models", {}), **vllm_provider.get("models", {})}
+        prov[_VLLM_PROVIDER] = merged
     for name in list(prov):
         models = prov[name].setdefault("models", {})
         for mid in list(models):
             entry = models[mid] if isinstance(models[mid], dict) else {}
+            if name == _VLLM_PROVIDER:
+                # variants/limits come from serving.vllm_endpoint.opencode_provider
+                models[mid] = entry
+                continue
             entry["reasoning"] = True
             if name == "openrouter":
                 variants = entry.setdefault("variants", {})
@@ -826,6 +841,7 @@ class UserEnabledOpenCode(BaseAgent):
         if os.environ.get("SWT_EGRESS_ENFORCED") == "1" and self._is_openrouter_agent():
             import egress_policy
             openrouter_base_url = f"http://{egress_policy.RELAY_HOST}:{egress_policy.RELAY_PORT}/openrouter/api/v1"
+        vllm_provider = self._vllm_provider_block() if self._is_vllm_agent() else None
         # Start from exactly what Harbor's register-config step wrote (provider
         # registration + MCP servers), patch on the host, write with `cat`.
         cfg = self._initial_opencode_config()
@@ -835,8 +851,26 @@ class UserEnabledOpenCode(BaseAgent):
             disallowed_tools=self._disallowed_tools,
             bedrock_region=bedrock_region,
             openrouter_base_url=openrouter_base_url,
+            vllm_provider=vllm_provider,
         )
         return render_opencode_config_command(cfg)
+
+    def _vllm_provider_block(self) -> dict:
+        """Provider entry for a self-hosted model: through the relay's ``/vllm/``
+        route under egress enforcement (placeholder key; the proxy injects the
+        real one), straight at ``SWT_VLLM_BASE_URL`` when debugging without it."""
+        import egress_policy
+        from serving import vllm_endpoint as vllm_ep
+        served = (self._inner.model_name or "").split("/", 1)[1]
+        if os.environ.get("SWT_EGRESS_ENFORCED") == "1":
+            base_url = f"http://{egress_policy.RELAY_HOST}:{egress_policy.RELAY_PORT}{vllm_ep.ROUTE_PREFIX.rstrip('/')}/v1"
+            api_key = egress_policy.LLM_ROUTE_PLACEHOLDER
+        else:
+            base_url = os.environ.get("SWT_VLLM_BASE_URL", "").rstrip("/") + "/v1"
+            api_key = os.environ.get(vllm_ep.CREDENTIAL_ENV) or egress_policy.LLM_ROUTE_PLACEHOLDER
+        max_len = os.environ.get("SWT_VLLM_MAX_MODEL_LEN")
+        return vllm_ep.opencode_provider(served, base_url=base_url, api_key=api_key,
+                                         max_model_len=int(max_len) if max_len else None)
 
     def _initial_opencode_config(self) -> dict:
         """Mirror of Harbor's ``OpenCode._build_register_config_command`` payload."""
@@ -949,6 +983,9 @@ class UserEnabledOpenCode(BaseAgent):
 
     def _is_openrouter_agent(self) -> bool:
         return (self._inner.model_name or "").startswith("openrouter/")
+
+    def _is_vllm_agent(self) -> bool:
+        return (self._inner.model_name or "").startswith(f"{_VLLM_PROVIDER}/")
 
     def _refresh_agent_env(self, env: dict[str, str] | None) -> dict[str, str]:
         """Overlay current AWS credentials onto an exec env for Bedrock agents.

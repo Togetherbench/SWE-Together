@@ -125,6 +125,11 @@ def resolve_model(model_arg: str) -> tuple[str, str, str]:
             log.error("Model %s: %s", model_arg, exc)
             sys.exit(1)
         return model_arg, "", ""
+    if len(parts) == 2 and parts[0] == "vllm":
+        # Self-hosted server: the sandbox only ever holds the relay placeholder;
+        # the real key (if the server has one) is injected host-side by the proxy.
+        import egress_policy
+        return model_arg, egress_policy.LLM_ROUTE_PLACEHOLDER, "VLLM_API_KEY"
     if len(parts) == 2 and parts[0] in _PROVIDER_MAP:
         provider, _ = parts[0], parts[1]
         env_var, agent_env_var = _PROVIDER_MAP[provider]
