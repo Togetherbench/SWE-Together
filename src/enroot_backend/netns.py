@@ -84,6 +84,7 @@ class EgressNamespace:
         meta: dict,
         log_dir: Path,
         python: str | None = None,
+        relay_idle_s: int | None = None,
     ) -> None:
         self.container_name = container_name
         self.sock_path = Path(sock_path)
@@ -91,6 +92,8 @@ class EgressNamespace:
         self.meta = dict(meta)
         self.log_dir = Path(log_dir)
         self.python = python or sys.executable
+        #: relay idle budget; the proxy's per-route timeout stays the real limit
+        self.relay_idle_s = relay_idle_s
         self._proc: subprocess.Popen | None = None
 
     @property
@@ -121,7 +124,8 @@ class EgressNamespace:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         ip = _ip_binary()
         write_relay_meta(self.meta_path, self.meta)
-        relay = " ".join(_q(a) for a in relay_argv(self.python, self.relay_script, self.sock_path, self.meta_path))
+        relay = " ".join(_q(a) for a in relay_argv(self.python, self.relay_script, self.sock_path, self.meta_path,
+                                                   self.relay_idle_s))
         argv = ["unshare", "-Urn", "--map-root-user", "--", "sh", "-c", f"{ip} link set lo up && exec {relay}"]
         env = dict(os.environ)
         env[CONTAINER_ENV_MARKER] = self.container_name  # so kill_container_processes() finds it

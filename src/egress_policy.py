@@ -53,9 +53,11 @@ RELAY_PORT = 3128
 CA_CERT_PATH = "/etc/swt-egress-ca.pem"
 CA_BUNDLE_PATH = "/etc/swt-egress-bundle.pem"
 
-#: Sandbox-side stand-in for the OpenRouter key; the proxy swaps in the real one
-#: on the ``/openrouter/`` route (and only for the pinned model).
-OPENROUTER_PLACEHOLDER = "swt-egress-proxy"
+#: Sandbox-side stand-in for an LLM-route credential; the proxy swaps in the real
+#: one on the route (and only for the pinned model). The same placeholder serves
+#: the OpenRouter key and a self-hosted server's API key.
+LLM_ROUTE_PLACEHOLDER = "swt-egress-proxy"
+OPENROUTER_PLACEHOLDER = LLM_ROUTE_PLACEHOLDER
 
 #: Hosts every trial may reach, by group. ``llm`` is *not* here: which LLM API a
 #: sandbox may reach depends on the run's backend (see :func:`llm_hosts`); for

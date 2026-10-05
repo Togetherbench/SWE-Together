@@ -527,6 +527,113 @@ def test_route_requires_content_length(proxy):
     assert resp.startswith(b"HTTP/1.1 400") and b"Content-Length" in resp
 
 
+# ── per-run reverse routes: plain-HTTP in-cluster upstream (self-hosted vLLM) ──
+
+def _vllm_route(port: int) -> xp.ReverseRoute:
+    return xp.ReverseRoute.for_upstream(
+        "/vllm/", f"http://127.0.0.1:{port}", credential_env="SWT_VLLM_API_KEY",
+        endpoints=frozenset({("POST", "/v1/chat/completions"), ("GET", "/v1/models")}),
+        llm_paths=frozenset({"/v1/chat/completions"}), idle_timeout_s=1800)
+
+
+@pytest.fixture
+def vllm_proxy(tmp_path, upstream):
+    def resolver(task_dir):
+        return ep.default_policy("us-west-2", llm_backend="vllm", model="vllm/glm-5.3")
+    p = xp.EgressProxy(tmp_path / "vllm-egress.sock", policy_resolver=resolver,
+                       credentials={"SWT_VLLM_API_KEY": "sk-vllm-secret"},
+                       fallback_log=tmp_path / "fallback.log", llm_models={"glm-5.3"},
+                       reverse_routes={"/vllm/": _vllm_route(upstream)})
+    p.start()
+    yield p
+    p.stop()
+
+
+def test_reverse_route_dataclass_scheme_port_and_host_header():
+    r = _vllm_route(8000)
+    assert (r.scheme, r.port, r.upstream, r.host_header) == ("http", 8000, "127.0.0.1", "127.0.0.1:8000")
+    default_https = xp.REVERSE_ROUTES["/openrouter/"]
+    assert (default_https.scheme, default_https.port, default_https.host_header) == ("https", 443, "openrouter.ai")
+    with pytest.raises(ValueError):
+        xp.ReverseRoute.for_upstream("/x/", "ftp://node:21", credential_env=None, endpoints=frozenset(), llm_paths=frozenset())
+    with pytest.raises(ValueError):
+        xp.ReverseRoute.for_upstream("/x/", "node:8000", credential_env=None, endpoints=frozenset(), llm_paths=frozenset())
+    routes = {"/vllm/": r}
+    assert xp.destination("GET", "/vllm/v1/models", [], routes) == ("127.0.0.1", 8000, "/vllm/", "/v1/models")
+    with pytest.raises(ValueError):
+        xp.destination("GET", "/openrouter/api/v1/models", [], routes)
+
+
+def test_plain_http_route_forwards_with_injected_bearer_and_host(vllm_proxy, upstream, tmp_path):
+    resp = _via_proxy(vllm_proxy.sock_path, b"GET /vllm/v1/models HTTP/1.1\r\nHost: 127.0.0.1:3128\r\n"
+                      b"Authorization: Bearer swt-egress-proxy\r\n\r\n", preamble={"trial": "t1"})
+    assert resp.split(b" ", 2)[1] == b"200"
+    body = json.loads(resp.split(b"\r\n\r\n", 1)[1])
+    # models listing is served without a credential; Host carries the non-default port
+    assert body == {"path": "/v1/models", "host": f"127.0.0.1:{upstream}", "auth": "Bearer swt-egress-proxy"}
+    chat = b'{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}'
+    resp = _post_route(vllm_proxy.sock_path, "/vllm/v1/chat/completions", chat)
+    assert resp.split(b" ", 2)[1] == b"200" and json.loads(resp.split(b"\r\n\r\n", 1)[1]) == {"got": len(chat)}
+    rec = json.loads((tmp_path / "fallback.log").read_text().splitlines()[-1])
+    assert rec["decision"] == "allow" and rec["reason"] == "allow:llm-route"
+    assert rec["model"] == "glm-5.3" and rec["auth_injected"] is True and rec["port"] == upstream
+
+
+def test_plain_http_route_injects_the_real_key_not_the_placeholder(tmp_path, upstream):
+    seen = {}
+
+    class _Echo(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen["auth"] = self.headers.get("Authorization"); seen["host"] = self.headers.get("Host")
+            n = int(self.headers.get("Content-Length") or 0); self.rfile.read(n)
+            self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Echo)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        p = xp.EgressProxy(tmp_path / "e.sock", policy_resolver=lambda d: ep.default_policy("us-west-2", llm_backend="vllm", model="vllm/glm-5.3"),
+                           credentials={"SWT_VLLM_API_KEY": "sk-vllm-secret"}, fallback_log=tmp_path / "f.log",
+                           llm_models={"glm-5.3"}, reverse_routes={"/vllm/": _vllm_route(srv.server_address[1])})
+        p.start()
+        try:
+            body = b'{"model":"glm-5.3","messages":[]}'
+            assert _post_route(p.sock_path, "/vllm/v1/chat/completions", body).split(b" ", 2)[1] == b"200"
+        finally:
+            p.stop()
+    finally:
+        srv.shutdown()
+    assert seen == {"auth": "Bearer sk-vllm-secret", "host": f"127.0.0.1:{srv.server_address[1]}"}
+
+
+def test_plain_http_route_is_pinned_and_endpoint_restricted(vllm_proxy):
+    resp = _post_route(vllm_proxy.sock_path, "/vllm/v1/chat/completions", b'{"model":"glm-5.3:online","messages":[]}')
+    assert resp.startswith(b"HTTP/1.1 403") and b"not pinned" in resp
+    resp = _post_route(vllm_proxy.sock_path, "/vllm/v1/chat/completions", b'{"model":"x-ai/grok-4.7","messages":[]}')
+    assert resp.startswith(b"HTTP/1.1 403") and b"not pinned" in resp
+    resp = _via_proxy(vllm_proxy.sock_path, b"GET /vllm/v1/metrics HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert resp.startswith(b"HTTP/1.1 403") and b"route endpoint" in resp
+    resp = _via_proxy(vllm_proxy.sock_path, b"POST /vllm/v1/completions HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n{}")
+    assert resp.startswith(b"HTTP/1.1 403")
+
+
+def test_run_installs_only_its_own_routes(vllm_proxy, proxy):
+    # a vLLM run has no OpenRouter route (and no key to inject), and vice versa
+    resp = _via_proxy(vllm_proxy.sock_path, b"GET /openrouter/api/v1/models HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert resp.startswith(b"HTTP/1.1 400") and b"outside reverse routes" in resp
+    resp = _via_proxy(proxy.sock_path, b"GET /vllm/v1/models HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert resp.startswith(b"HTTP/1.1 400")
+
+
+def test_relay_idle_budget_covers_the_slowest_route():
+    assert xp.max_route_idle_s() == xp.IDLE_TIMEOUT_S + 300
+    assert xp.max_route_idle_s({"/vllm/": _vllm_route(8000)}) == 1800 + 300
+    argv = xp.relay_argv("python3", Path("r.py"), Path("s.sock"), Path("m.json"), 2100)
+    assert argv[-1] == "2100" and len(argv) == 7
+
+
 def test_selftest_includes_pin_check():
     from enroot_backend.netns import evaluate_selftest, selftest_script
     script = selftest_script()
