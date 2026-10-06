@@ -92,6 +92,7 @@ def test_reverse_route_targets_the_handoff_server():
     assert (r.prefix, r.scheme, r.upstream, r.port, r.credential_env) == ("/vllm/", "http", "node-01", 8000, "SWT_VLLM_API_KEY")
     assert ("POST", "/v1/chat/completions") in r.endpoints and ("GET", "/v1/models") in r.endpoints
     assert r.llm_paths == frozenset({"/v1/chat/completions"}) and r.idle_timeout_s == ve.ROUTE_IDLE_TIMEOUT_S
+    assert r.credential_on_all is True  # vLLM --api-key guards /v1/models as well
 
 
 def test_opencode_provider_is_fully_explicit():

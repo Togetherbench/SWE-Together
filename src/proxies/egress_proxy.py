@@ -89,6 +89,9 @@ class ReverseRoute:
     #: per-connection idle budget; self-hosted servers can queue a long prefill
     #: before the first streamed byte, so routes may exceed the proxy default.
     idle_timeout_s: int = IDLE_TIMEOUT_S
+    #: inject the credential on every allowed endpoint, not only ``llm_paths``
+    #: (OpenRouter's model listing is public; a vLLM ``--api-key`` guards all of /v1).
+    credential_on_all: bool = False
 
     def __post_init__(self) -> None:
         if self.scheme not in ("http", "https"):
@@ -104,7 +107,7 @@ class ReverseRoute:
     @classmethod
     def for_upstream(cls, prefix: str, base_url: str, *, credential_env: str | None,
                      endpoints: frozenset[tuple[str, str]], llm_paths: frozenset[str],
-                     idle_timeout_s: int = IDLE_TIMEOUT_S) -> "ReverseRoute":
+                     idle_timeout_s: int = IDLE_TIMEOUT_S, credential_on_all: bool = False) -> "ReverseRoute":
         """Build a route from an upstream base URL such as ``http://node:8000``.
 
         Only scheme, host and port are taken from the URL; paths are always the
@@ -115,7 +118,8 @@ class ReverseRoute:
         if u.scheme not in ("http", "https") or not u.hostname:
             raise ValueError(f"reverse route upstream must be an http(s) URL with a host: {base_url!r}")
         return cls(prefix=prefix, upstream=u.hostname, credential_env=credential_env, endpoints=endpoints,
-                   llm_paths=llm_paths, scheme=u.scheme, port=u.port, idle_timeout_s=idle_timeout_s)
+                   llm_paths=llm_paths, scheme=u.scheme, port=u.port, idle_timeout_s=idle_timeout_s,
+                   credential_on_all=credential_on_all)
 
 
 #: Default URL prefix inside the sandbox → upstream. A run passes the routes its
@@ -511,6 +515,9 @@ class EgressProxy:
                         conn.sendall(_deny_response(decision.host, record["reason"], pol.digest()))
                         return
                     token = self.credentials.get(route.credential_env) if route.credential_env else None
+                    record["auth_injected"] = bool(token)
+                elif route.credential_on_all and route.credential_env:
+                    token = self.credentials.get(route.credential_env)
                     record["auth_injected"] = bool(token)
             upstream = socket.create_connection((decision.host, port), timeout=CONNECT_TIMEOUT_S)
             if route is not None:

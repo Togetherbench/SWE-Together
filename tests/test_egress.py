@@ -548,7 +548,7 @@ def _vllm_route(port: int) -> xp.ReverseRoute:
     return xp.ReverseRoute.for_upstream(
         "/vllm/", f"http://127.0.0.1:{port}", credential_env="SWT_VLLM_API_KEY",
         endpoints=frozenset({("POST", "/v1/chat/completions"), ("GET", "/v1/models")}),
-        llm_paths=frozenset({"/v1/chat/completions"}), idle_timeout_s=1800)
+        llm_paths=frozenset({"/v1/chat/completions"}), idle_timeout_s=1800, credential_on_all=True)
 
 
 @pytest.fixture
@@ -584,8 +584,11 @@ def test_plain_http_route_forwards_with_injected_bearer_and_host(vllm_proxy, ups
                       b"Authorization: Bearer swt-egress-proxy\r\n\r\n", preamble={"trial": "t1"})
     assert resp.split(b" ", 2)[1] == b"200"
     body = json.loads(resp.split(b"\r\n\r\n", 1)[1])
-    # models listing is served without a credential; Host carries the non-default port
-    assert body == {"path": "/v1/models", "host": f"127.0.0.1:{upstream}", "auth": "Bearer swt-egress-proxy"}
+    # a vLLM --api-key guards the models listing too, so the route injects the real key there
+    # (the OpenRouter route leaves its public listing uncredentialed); Host carries the port
+    assert body == {"path": "/v1/models", "host": f"127.0.0.1:{upstream}", "auth": "Bearer sk-vllm-secret"}
+    resp = _via_proxy(vllm_proxy.sock_path, b"GET /vllm/v1/models HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert resp.split(b" ", 2)[1] == b"200"
     chat = b'{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}'
     resp = _post_route(vllm_proxy.sock_path, "/vllm/v1/chat/completions", chat)
     assert resp.split(b" ", 2)[1] == b"200" and json.loads(resp.split(b"\r\n\r\n", 1)[1]) == {"got": len(chat)}

@@ -167,10 +167,12 @@ def wait_ready(spec: str | Path | None, served_model: str, *, timeout_s: float =
 def reverse_route(endpoint: VllmEndpoint, credential_env: str | None = CREDENTIAL_ENV):
     """The relay route for this server (imports the proxy lazily: the serve env lacks it)."""
     from proxies.egress_proxy import ReverseRoute
+    # vLLM's --api-key guards every /v1 path, so the models listing (used by the
+    # egress self-test and opencode's startup probe) needs the credential too.
     return ReverseRoute.for_upstream(
         ROUTE_PREFIX, endpoint.base_url, credential_env=credential_env,
         endpoints=frozenset({("POST", CHAT_PATH), ("GET", MODELS_PATH)}),
-        llm_paths=frozenset({CHAT_PATH}), idle_timeout_s=ROUTE_IDLE_TIMEOUT_S,
+        llm_paths=frozenset({CHAT_PATH}), idle_timeout_s=ROUTE_IDLE_TIMEOUT_S, credential_on_all=True,
     )
 
 
