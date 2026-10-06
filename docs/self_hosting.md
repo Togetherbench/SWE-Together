@@ -91,23 +91,33 @@ curl -s http://<node>:8000/v1/chat/completions -H 'Content-Type: application/jso
 
 ```
 python scripts/slurm/launch.py run --tag glm53_r1 --model glm-5.3 --agent-backend vllm \
-    --serve-job slurm_logs/serve/glm53_<date> --shards 4 --workers 4 --submit
+    --serve-job slurm_logs/serve/glm53a_<date> --serve-job slurm_logs/serve/glm53b_<date> \
+    --shards 12 --concurrent 12 --workers 2 --submit
 ```
 
-`--serve-job` does three things: a Slurm `--dependency=after:<serve job>` so the
-array starts once the server job is running; `--vllm-endpoint <dir>/endpoint.json`
-so `run_eval.py` knows where to look; and a login-node preflight that probes
-`/v1/models` if the handoff already exists and fails if the served name differs.
-Inside the job `run_eval.py` waits (`--vllm-wait-s`, default 3600 s) until the
-server lists the model, then installs the `/vllm/` relay route and starts trials.
-`--vllm-endpoint` (a handoff file, a serve dir, or a bare URL) or
-`SWT_VLLM_ENDPOINT` can replace `--serve-job` when the server is managed by hand.
+`--serve-job` (repeatable) does three things: a Slurm `--dependency=after:<serve
+jobs>` so the array starts once every server job is running; a per-shard
+`--vllm-endpoint` — shard *i* is bound to server *i* mod N, so a cohort's load is
+spread evenly over the servers given; and a login-node preflight that probes
+`/v1/models` on each handoff that already exists and fails if the served name
+differs. Inside the job `run_eval.py` waits (`--vllm-wait-s`, default 3600 s)
+until its server lists the model, then installs the `/vllm/` relay route and
+starts trials. `--vllm-endpoint` (a handoff file, a serve dir, or a bare URL) or
+`SWT_VLLM_ENDPOINT` can replace `--serve-job` when a server is managed by hand.
 
-Concurrency: a single node serving a very large model will not sustain the
-default 12 shards × 6 workers. Start around 4 × 4 and watch the server's
-`/metrics` (running/waiting sequences, preemptions, time-to-first-token); raise
-`--agent-timeout` if first-token latency climbs. Two replicates can run against
-one server, or each against its own.
+**Sizing — this is what decides whether the run is fair.** A trial is an
+agentic loop of ~100 LLM calls with 30–100K-token prompts; the protocol's agent
+timeout assumes vendor-API latency (a few seconds per call). A single 8-GPU node
+serving a 750B-class model sustains roughly a dozen such streams before KV-cache
+preemption and queueing push each call to 30–60 s, at which point trials time
+out at a handful of turns and the model is scored on unfinished work. Keep the
+total number of concurrent agents (servers × shards-per-server × `--workers`) at
+about **4 per server**, watch `/metrics` on each server (`num_requests_waiting`,
+`num_preemptions_total`, request latency), and compare the per-step latency in
+the first trials' `opencode.txt.turn-0` (gaps between `step_finish` events) with
+a vendor cohort's. If a modest timeout extension is still needed, pass
+`--agent-timeout` together with `--agent-timeout-note "<reason>"`; the note is
+written to the run manifest so the deviation is on record.
 
 Judge and aggregate exactly as for any other cohort:
 

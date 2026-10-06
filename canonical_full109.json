@@ -158,6 +158,15 @@
       "reasoning_effort": "high",
       "agent_timeout": 4800,
       "workers": 20
+    },
+    "opencode_glm53_vllm": {
+      "model": "glm-5.3",
+      "agent_backend": "vllm",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
     }
   },
   "replicates": [
