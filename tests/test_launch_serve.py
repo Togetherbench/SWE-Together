@@ -83,9 +83,27 @@ def test_run_with_serve_job_adds_dependency_and_endpoint(launch, tmp_path, capsy
     script = (d / "job.sbatch").read_text()
     assert "#SBATCH --dependency=after:4242" in script
     assert "--model vllm/glm-5.3" in script and "export SWT_AGENT_BACKEND=vllm" in script
-    assert f"--vllm-endpoint {serve_dir / 'endpoint.json'}" in script and "--vllm-wait-s 3600" in script
+    assert f"SWT_VLLM_ENDPOINTS=({serve_dir / 'endpoint.json'})" in script
+    assert '--vllm-endpoint "$SWT_VLLM_SHARD_ENDPOINT"' in script and "--vllm-wait-s 3600" in script
     assert "#SBATCH --gpus=0" in script and "ENROOT_TEMP_PATH" in script  # trials stay CPU + sandboxed
     assert "will wait for it" in capsys.readouterr().out
+
+
+def test_run_spreads_shards_over_several_serve_jobs(launch, tmp_path):
+    dirs = []
+    for i, jid in enumerate(("4242", "4243", "4244")):
+        d = tmp_path / "slurm_logs" / "serve" / f"glm53{i}_2026"; d.mkdir(parents=True)
+        (d / "job_id.txt").write_text(jid + "\n"); dirs.append(d)
+    argv = ["run", "--tag", "glm53_r1", "--model", "glm-5.3", "--agent-backend", "vllm", "--shards", "12", "--workers", "2"]
+    for d in dirs:
+        argv += ["--serve-job", str(d)]
+    _run(launch, argv)
+    script = (next((tmp_path / "slurm_logs" / "run").glob("glm53_r1_*")) / "job.sbatch").read_text()
+    assert "#SBATCH --dependency=after:4242:4243:4244" in script
+    assert "SWT_VLLM_ENDPOINTS=(" in script and all(str(d / "endpoint.json") in script for d in dirs)
+    # shard i → server i mod 3
+    assert 'SWT_VLLM_SHARD_ENDPOINT="${SWT_VLLM_ENDPOINTS[$(( ${SLURM_ARRAY_TASK_ID:-0} % ${#SWT_VLLM_ENDPOINTS[@]} ))]}"' in script
+    assert "#SBATCH --array=0-11%12" in script
 
 
 def test_run_with_published_handoff_checks_the_served_model(launch, tmp_path, monkeypatch):

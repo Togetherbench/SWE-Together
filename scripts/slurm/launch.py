@@ -44,10 +44,13 @@ Examples::
   python scripts/slurm/launch.py judge --trials-root trials/muse13_r1 \
       --output-dir results/muse13 --model-tag muse13 --submit
 
-  # self-hosted model (docs/self_hosting.md)
-  python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53 --submit
+  # self-hosted model (docs/self_hosting.md): one or more serve jobs; shards are
+  # spread round-robin over the servers given, so sizing is servers × --workers streams
+  python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53a --submit
+  python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53b --submit
   python scripts/slurm/launch.py run --tag glm53_r1 --model glm-5.3 --agent-backend vllm \
-      --serve-job slurm_logs/serve/glm53_<date> --shards 4 --workers 4 --submit
+      --serve-job slurm_logs/serve/glm53a_<date> --serve-job slurm_logs/serve/glm53b_<date> \
+      --shards 12 --concurrent 6 --workers 2 --submit
 """
 from __future__ import annotations
 
@@ -391,15 +394,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return _submit(script, args.submit)
 
 
-def _vllm_preflight(agent, serve_job: str | None, endpoint: str | None,
-                    reasoning_effort: str | None = None) -> tuple[str | None, str | None]:
-    """For a vllm agent: locate the endpoint source and the serve job to depend on.
+def _vllm_preflight(agent, serve_jobs: list[str] | None, endpoint: str | None,
+                    reasoning_effort: str | None = None) -> list[tuple[str, str | None]]:
+    """For a vllm agent: locate the endpoint source(s) and the serve job(s) to depend on.
 
-    Returns ``(endpoint_spec, dependency_job_id)``. If the handoff already exists
-    the server is probed from the login node so a wrong served name fails here.
+    Returns ``[(endpoint_spec, dependency_job_id), ...]`` — one per serve job (shards
+    are dealt round-robin across them) or a single entry for ``--vllm-endpoint``.
+    If a handoff already exists the server is probed from the login node so a
+    wrong served name fails here.
     """
     if agent.backend != "vllm":
-        return None, None
+        return []
     from serving import registry as serving_registry
     from serving import vllm_endpoint as vllm_ep
     served = llm_config.pinned_route_model(agent.model)
@@ -409,25 +414,28 @@ def _vllm_preflight(agent, serve_job: str | None, endpoint: str | None,
     if reasoning_effort and reasoning_effort not in recipe.efforts:
         raise SystemExit(f"vllm preflight: {served} distinguishes reasoning efforts {recipe.efforts}; "
                          f"--reasoning-effort {reasoning_effort!r} would be mapped silently by its chat template")
-    spec = endpoint
-    job_id = None
-    if serve_job:
+    sources: list[tuple[str | None, str | None]] = []
+    for serve_job in serve_jobs or []:
         sj = Path(serve_job)
         if not sj.is_absolute():
             sj = REPO_ROOT / sj
         if not sj.is_dir():
             raise SystemExit(f"vllm preflight: --serve-job {serve_job} is not a serve log dir")
-        spec = str(sj / vllm_ep.HANDOFF_NAME)
         jid = sj / "job_id.txt"
-        job_id = jid.read_text().strip() if jid.is_file() else None
-    if spec is None and not any(os.environ.get(v) for v in vllm_ep.ENDPOINT_ENV):
-        raise SystemExit("vllm preflight: --agent-backend vllm needs --serve-job <serve log dir>, "
-                         "--vllm-endpoint, or SWT_VLLM_ENDPOINT")
-    ep = vllm_ep.load(spec, served)
-    if ep is None:
-        print(f"vllm preflight: handoff not published yet ({spec or 'env'}); the job will wait for it"
-              + (f" (dependency on serve job {job_id})" if job_id else ""))
-    else:
+        sources.append((str(sj / vllm_ep.HANDOFF_NAME), jid.read_text().strip() if jid.is_file() else None))
+    if endpoint:
+        sources.append((endpoint, None))
+    if not sources:
+        if not any(os.environ.get(v) for v in vllm_ep.ENDPOINT_ENV):
+            raise SystemExit("vllm preflight: --agent-backend vllm needs --serve-job <serve log dir> (repeatable), "
+                             "--vllm-endpoint, or SWT_VLLM_ENDPOINT")
+        sources.append((None, None))
+    for spec, job_id in sources:
+        ep = vllm_ep.load(spec, served)
+        if ep is None:
+            print(f"vllm preflight: handoff not published yet ({spec or 'env'}); the job will wait for it"
+                  + (f" (dependency on serve job {job_id})" if job_id else ""))
+            continue
         try:
             ids = vllm_ep.probe(ep, os.environ.get(vllm_ep.CREDENTIAL_ENV))
         except Exception as exc:  # noqa: BLE001 - any failure here is "not reachable from the login node"
@@ -436,7 +444,7 @@ def _vllm_preflight(agent, serve_job: str | None, endpoint: str | None,
             if served not in ids:
                 raise SystemExit(f"vllm preflight: {ep.base_url} serves {ids}, not {served!r}")
             print(f"vllm preflight: {ep.base_url} serves {served} (job {ep.job_id or '?'})")
-    return spec, job_id
+    return [(spec or "", job_id) for spec, job_id in sources]
 
 
 # ── run (Stage 1) ───────────────────────────────────────────────────────────────────
@@ -451,7 +459,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     user = llm_config.resolve_seat_model(
         "user_sim", args.user_model, llm_config.seat_backend("user_sim", args.user_sim_backend))
     print(f"agent: {agent.model} [{agent.backend}]   user_sim: {user.model} [{user.backend}]")
-    endpoint_spec, serve_job_id = _vllm_preflight(agent, args.serve_job, args.vllm_endpoint, args.reasoning_effort)
+    vllm_sources = _vllm_preflight(agent, args.serve_job, args.vllm_endpoint, args.reasoning_effort)
     cmd = [
         '"$PYTHON_BIN"', "src/run_eval.py",
         "--model", shlex.quote(agent.model),
@@ -466,6 +474,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     ]
     if args.agent_timeout:
         cmd += ["--agent-timeout", str(args.agent_timeout)]
+    if args.agent_timeout_note:
+        cmd += ["--agent-timeout-note", shlex.quote(args.agent_timeout_note)]
     if args.reasoning_effort:
         cmd += ["--reasoning-effort", args.reasoning_effort]
     if args.opencode_version:
@@ -478,17 +488,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         cmd += ["--no-egress-enforcement"]
     if args.allow_porous_sandbox:
         cmd += ["--allow-porous-sandbox"]
-    if endpoint_spec:
-        cmd += ["--vllm-endpoint", shlex.quote(endpoint_spec), "--vllm-wait-s", str(args.vllm_wait_s)]
+    endpoint_specs = [spec for spec, _ in vllm_sources if spec]
+    prelude = ""
+    if endpoint_specs:
+        # shard i talks to server i mod N — several serve jobs spread one cohort's load
+        prelude = ("SWT_VLLM_ENDPOINTS=(" + " ".join(shlex.quote(e) for e in endpoint_specs) + ")\n"
+                   'SWT_VLLM_SHARD_ENDPOINT="${SWT_VLLM_ENDPOINTS[$(( ${SLURM_ARRAY_TASK_ID:-0} % ${#SWT_VLLM_ENDPOINTS[@]} ))]}"\n')
+        cmd += ["--vllm-endpoint", '"$SWT_VLLM_SHARD_ENDPOINT"', "--vllm-wait-s", str(args.vllm_wait_s)]
     if args.extra:
         cmd += [args.extra]
-    body = _backend_exports(args) + " ".join(cmd) + "\n"
+    body = _backend_exports(args) + prelude + " ".join(cmd) + "\n"
 
     array = f"0-{args.shards - 1}%{args.concurrent or args.shards}"
     sbatch = _sbatch_kwargs(args)
-    if serve_job_id:
-        # start only once the serve job is running; run_eval then waits for health
-        dep = f"--dependency=after:{serve_job_id}"
+    serve_job_ids = [jid for _, jid in vllm_sources if jid]
+    if serve_job_ids:
+        # start only once every serve job is running; run_eval then waits for health
+        dep = "--dependency=after:" + ":".join(serve_job_ids)
         sbatch["extra"] = f"{sbatch['extra']};{dep}" if sbatch.get("extra") else dep
     script, log_dir = _write_script("run", args.tag, "")
     content = _header(
@@ -616,12 +632,15 @@ def main() -> int:
                    help="debugging only: containers on the host network (refused for trials/canonical_*)")
     p.add_argument("--allow-porous-sandbox", action="store_true",
                    help="knowingly run a leaderboard trials root without enforced egress")
-    p.add_argument("--serve-job", default=None,
-                   help="vllm backend: the serve job's slurm_logs/serve/<tag>_<date> dir; adds a Slurm "
-                        "dependency on it and points run_eval at its endpoint.json")
+    p.add_argument("--serve-job", action="append", default=None, metavar="SERVE_DIR",
+                   help="vllm backend: a serve job's slurm_logs/serve/<tag>_<date> dir; adds a Slurm "
+                        "dependency on it and points run_eval at its endpoint.json. Repeat to spread the "
+                        "cohort's shards round-robin over several servers")
     p.add_argument("--vllm-endpoint", default=None,
                    help="vllm backend: endpoint.json / serve dir / base URL (alternative to --serve-job)")
     p.add_argument("--vllm-wait-s", type=int, default=3600, help="vllm backend: how long run_eval waits for health")
+    p.add_argument("--agent-timeout-note", default=None,
+                   help="why --agent-timeout differs from the protocol default; recorded in the run manifest")
     _common_sbatch_args(p, cpus=32, mem="128G", time_limit="08:00:00")
     p.set_defaults(func=cmd_run)
 

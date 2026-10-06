@@ -843,6 +843,9 @@ async def main():
                         help="Coding agent type. Default claude-code. Use 'codex' for "
                              "user_enabled_codex (gpt-5.x via OAuth/OpenAI direct or OR).")
     parser.add_argument("--agent-timeout", type=int, default=None, help="Agent timeout in seconds")
+    parser.add_argument("--agent-timeout-note", default=None,
+                        help="recorded in the manifest when --agent-timeout deviates from the protocol default "
+                             "(e.g. a self-hosted server's measured per-step latency)")
     parser.add_argument("--reasoning-effort", default=None,
                         choices=["low", "medium", "high"],
                         help="Reasoning effort for mini-swe-agent: routes through "
@@ -1118,6 +1121,7 @@ async def main():
         "vllm_endpoint": {k: getattr(vllm_endpoint, k) for k in ("job_id", "port", "max_model_len", "vllm_version")}
         if vllm_endpoint else None,
         "agent_timeout": args.agent_timeout,
+        "agent_timeout_note": args.agent_timeout_note,
         "tag": args.tag,
         "workers": args.workers,
         "trials_dir": str(trials_dir),
