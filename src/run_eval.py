@@ -846,6 +846,10 @@ async def main():
     parser.add_argument("--agent-timeout-note", default=None,
                         help="recorded in the manifest when --agent-timeout deviates from the protocol default "
                              "(e.g. a self-hosted server's measured per-step latency)")
+    parser.add_argument("--trial-budget", type=int, default=None,
+                        help="wrapper wall-clock budget per trial in seconds (TRIAL_BUDGET_SEC, default 5400); "
+                             "the multi-turn loop stops without an error when it runs out, so raise it together "
+                             "with --agent-timeout when the LLM endpoint is slower than a vendor API")
     parser.add_argument("--reasoning-effort", default=None,
                         choices=["low", "medium", "high"],
                         help="Reasoning effort for mini-swe-agent: routes through "
@@ -889,6 +893,10 @@ async def main():
     args = parser.parse_args()
     # One top-level switch: --env-type > SWT_SANDBOX (.env) > e2b.
     args.env_type = stage1_sandbox(args.env_type)
+    if args.trial_budget:
+        # read by user_agent.exec_helpers at import time; the wrappers are imported
+        # lazily (Harbor resolves the agent import path per trial), so this is early enough
+        os.environ["TRIAL_BUDGET_SEC"] = str(args.trial_budget)
 
     # Per-seat backend + registry-name resolution (docs/llm_backends.md). A
     # fully-qualified provider/model string passes through untouched.
@@ -1122,6 +1130,7 @@ async def main():
         if vllm_endpoint else None,
         "agent_timeout": args.agent_timeout,
         "agent_timeout_note": args.agent_timeout_note,
+        "trial_budget_sec": int(os.environ.get("TRIAL_BUDGET_SEC", "5400")),
         "tag": args.tag,
         "workers": args.workers,
         "trials_dir": str(trials_dir),

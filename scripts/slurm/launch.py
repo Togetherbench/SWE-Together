@@ -476,6 +476,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         cmd += ["--agent-timeout", str(args.agent_timeout)]
     if args.agent_timeout_note:
         cmd += ["--agent-timeout-note", shlex.quote(args.agent_timeout_note)]
+    if args.trial_budget:
+        cmd += ["--trial-budget", str(args.trial_budget)]
     if args.reasoning_effort:
         cmd += ["--reasoning-effort", args.reasoning_effort]
     if args.opencode_version:
@@ -641,6 +643,9 @@ def main() -> int:
     p.add_argument("--vllm-wait-s", type=int, default=3600, help="vllm backend: how long run_eval waits for health")
     p.add_argument("--agent-timeout-note", default=None,
                    help="why --agent-timeout differs from the protocol default; recorded in the run manifest")
+    p.add_argument("--trial-budget", type=int, default=None,
+                   help="wrapper wall-clock budget per trial (TRIAL_BUDGET_SEC, default 5400 s); raise with "
+                        "--agent-timeout when the LLM endpoint is slower than a vendor API")
     _common_sbatch_args(p, cpus=32, mem="128G", time_limit="08:00:00")
     p.set_defaults(func=cmd_run)
 
