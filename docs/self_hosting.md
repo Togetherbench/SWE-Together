@@ -74,10 +74,36 @@ when the server exits so a dead server never looks live. Follow
 minutes (storage read + CUDA graph capture).
 
 `--max-model-len` is the main capacity knob. The prompt window times the number
-of concurrent agents must fit the node's KV budget; the recipe's context limit
-is the upper bound, and the served value is written into `opencode.json` so the
-agent's compaction matches what the server accepts. Extra flags go through
-`--extra-vllm-args '--max-num-seqs 32'`.
+of concurrent agents must fit the node's KV budget, and the served value is
+written into `opencode.json` so the agent's compaction matches what the server
+accepts. Extra flags go through `--extra-vllm-args '--max-num-seqs 32'`.
+
+### Context window: serve the model's native window, even if it takes more nodes
+
+API-served rows run at the model's native window (opencode's catalog lists ~1M
+for current GPT/Claude/Kimi models). A self-hosted row must not be quietly
+nerfed below that. On one 8×H200 node a 750B-class FP8 model leaves ~28 GiB per
+GPU for KV cache — about 544K tokens in total for GLM-5.3, i.e. two sequences
+at 262K and not even one at its native 1,048,576 (~44 GiB of KV per sequence).
+
+`launch.py serve --nodes 2` spans one engine over two nodes (tensor parallel ×
+pipeline parallel, `ServingSpec.pipeline_parallel`), halving the weights per
+GPU and freeing enough KV for the native window, which becomes the default
+`--max-model-len` for multi-node servers (`ServingSpec.native_context`). vLLM's
+Ray-free `mp` multi-node mode is used: rank 0 serves the API and publishes the
+handoff, the other node runs `--headless`; NCCL crosses nodes over the fabric
+plugin on the compute nodes (AWS EFA under `/opt/amazon`). Expect roughly one
+long-context stream per two-node server; pass `--extra-vllm-args '--max-num-seqs 4'`.
+
+```
+python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53-1m --nodes 2 --submit
+# handoff then records nnodes=2, pipeline_parallel=2, max_model_len=1048576
+```
+
+If a cohort was run at a reduced window first, trials that compacted
+(`ContextOverflowError` in `agent/opencode.txt.turn-*`) are the ones to re-run
+at the native window; archive them under `<root>/_compacted_<window>/` and use
+`--skip-existing`. Record the change in the run manifest note.
 
 Smoke-test from a login node before launching trials:
 

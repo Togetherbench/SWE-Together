@@ -281,9 +281,12 @@ Reasoning effort is sent as the OpenAI `reasoning_effort` field (opencode's
 the chat template. Each model's `ServingSpec` (`src/serving/registry.py`) lists
 the efforts its template actually distinguishes — GLM-5.3: `low`, `high`, `max`
 — and a run asking for any other value is refused rather than silently mapped.
-Context and output limits are written into `opencode.json` from the same spec
-(capped by the served `--max-model-len`) because models.dev never lists a
-private server. See [self-hosting](self_hosting.md) for the runbook.
+Context and output limits are written into `opencode.json` from the served
+`--max-model-len` (capped by the model's native window) because models.dev never
+lists a private server. Serve at the model's native window, as API-served rows
+run — when one node's KV cache cannot hold it, `launch.py serve --nodes N`
+spans the engine over several nodes (tensor × pipeline parallel). See
+[self-hosting](self_hosting.md) for the runbook.
 
 ## Verdict provenance
 

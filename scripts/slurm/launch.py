@@ -123,19 +123,46 @@ def _python_for_conda_env(env: str) -> Path:
     return candidate
 
 
+#: Body of a multi-node serve job. ``{head_cmd}``/``{worker_cmd}`` are the
+#: serving.vllm_server invocations; ``$i`` is the worker's node rank.
+MULTI_NODE_BLOCK = """\
+mapfile -t HOSTS < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+HEAD="${{HOSTS[0]}}"
+NODE_LIST=$(IFS=,; echo "${{HOSTS[*]}}")
+echo "serving {served} from {weights} on {nodes} nodes: $NODE_LIST (head $HEAD)"
+# NCCL over the node fabric (AWS EFA): libfabric + the OFI NCCL plugin live under /opt/amazon
+export LD_LIBRARY_PATH=/opt/amazon/ofi-nccl/lib:/opt/amazon/efa/lib:${{LD_LIBRARY_PATH:-}}
+export FI_PROVIDER=efa FI_EFA_USE_DEVICE_RDMA=1 NCCL_SOCKET_IFNAME=${{NCCL_SOCKET_IFNAME:-eth0}}
+export NCCL_DEBUG=${{NCCL_DEBUG:-WARN}}
+export VLLM_HOST_IP="$HEAD"
+PIDS=()
+for i in $(seq 1 $(({nodes} - 1))); do
+  srun --nodes=1 --ntasks=1 -w "${{HOSTS[$i]}}" --export=ALL bash -c 'export VLLM_HOST_IP=$(hostname); exec {worker_cmd}' &
+  PIDS+=($!)
+done
+srun --nodes=1 --ntasks=1 -w "$HEAD" --export=ALL bash -c 'exec {head_cmd}' &
+PIDS+=($!)
+# if any rank dies the engine is gone: take the rest down so the job ends instead of hanging
+wait -n "${{PIDS[@]}}" || true
+kill "${{PIDS[@]}}" 2>/dev/null || true
+wait
+"""
+
+
 def _header(
     *, job_name: str, log_dir: Path, cpus: int, mem: str, time_limit: str,
     qos: str | None, account: str | None, partition: str | None, extra: str | None,
-    array: str | None, gpus: int = 0,
+    array: str | None, gpus: int = 0, nodes: int = 1,
 ) -> str:
     lines = [
         "#!/bin/bash",
         f"#SBATCH --job-name={job_name}",
-        "#SBATCH --nodes=1",
+        f"#SBATCH --nodes={nodes}",
         "#SBATCH --ntasks-per-node=1",
         f"#SBATCH --cpus-per-task={cpus}",
         f"#SBATCH --mem={mem}",
-        f"#SBATCH --gpus={gpus}",
+        # one engine across several nodes needs the same GPU count on each of them
+        f"#SBATCH --gpus-per-node={gpus}" if nodes > 1 else f"#SBATCH --gpus={gpus}",
         f"#SBATCH --time={time_limit}",
         f"#SBATCH --chdir={REPO_ROOT}",
     ]
@@ -363,23 +390,38 @@ def cmd_serve(args: argparse.Namespace) -> int:
         "--health-timeout", str(args.health_timeout),
         "--vllm-bin", shlex.quote(str(vllm_bin)),
     ]
-    if args.max_model_len:
-        cmd += ["--max-model-len", str(args.max_model_len)]
+    nodes = args.nodes
+    # multi-node default: the model's native window is the point of spending more nodes
+    max_model_len = args.max_model_len or (spec.native_context if nodes > 1 else None)
+    if max_model_len:
+        cmd += ["--max-model-len", str(max_model_len)]
     if args.extra_vllm_args:
         cmd += ["--extra", args.extra_vllm_args]
     local_weights = Path(weights).is_dir()
-    body = (
+    common = (
         ("export HF_HUB_OFFLINE=1\n" if local_weights else "")
         + 'if [ -n "${SWT_VLLM_API_KEY:-}" ]; then export VLLM_API_KEY="$SWT_VLLM_API_KEY"; fi\n'
-        + f"echo \"serving {spec.served_model_name} from {weights} on $(hostname)\"\n"
-        + " ".join(cmd) + "\n"
     )
+    if nodes == 1:
+        body = common + f"echo \"serving {spec.served_model_name} from {weights} on $(hostname)\"\n" + " ".join(cmd) + "\n"
+    else:
+        # One engine across the allocation: rank 0 serves the API and publishes the
+        # handoff, the other nodes run headless workers. NCCL crosses nodes over the
+        # fabric plugin found on the compute nodes (AWS EFA here); keep that path
+        # explicit so a missing plugin fails loudly instead of falling back to TCP.
+        head_cmd = " ".join(cmd + ["--nnodes", str(nodes), "--node-rank", "0", "--master-addr", '"$HEAD"',
+                                   "--nodes", '"$NODE_LIST"'])
+        worker_cmd = " ".join(cmd + ["--nnodes", str(nodes), "--node-rank", '"$i"', "--master-addr", '"$HEAD"'])
+        body = common + MULTI_NODE_BLOCK.format(
+            served=spec.served_model_name, weights=weights, nodes=nodes, head_cmd=head_cmd, worker_cmd=worker_cmd)
     content = _header(
-        job_name=f"swt-serve-{args.tag}", log_dir=log_dir, array=None, gpus=args.gpus, **_sbatch_kwargs(args),
+        job_name=f"swt-serve-{args.tag}", log_dir=log_dir, array=None, gpus=args.gpus, nodes=nodes,
+        **_sbatch_kwargs(args),
     ) + _preamble(py, args.conda_env, enroot=False) + body
     script.write_text(content)
-    print(f"serve: {spec.served_model_name} ({spec.hf_repo}) weights={weights} tp={spec.tensor_parallel} "
-          f"max_model_len={args.max_model_len or 'model default'}")
+    print(f"serve: {spec.served_model_name} ({spec.hf_repo}) weights={weights} tp={spec.tensor_parallel}"
+          + (f" pp={spec.pipeline_parallel} nodes={nodes}" if nodes > 1 else "")
+          + f" max_model_len={max_model_len or 'model default'}")
     print(f"handoff → {handoff}")
     if args.submit:
         if not vllm_bin.is_file():
@@ -389,8 +431,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
             raise SystemExit(f"serve preflight: {weights} has no config.json (download incomplete?)")
         if not local_weights:
             print(f"serve preflight: {weights} is not a local directory; vLLM will download it on the node")
-        if args.gpus < spec.tensor_parallel:
+        if nodes == 1 and args.gpus < spec.tensor_parallel:
             raise SystemExit(f"serve preflight: recipe needs tensor_parallel={spec.tensor_parallel} GPUs, --gpus {args.gpus}")
+        if nodes > 1:
+            want = spec.tensor_parallel * spec.pipeline_parallel
+            if nodes * args.gpus != want:
+                raise SystemExit(f"serve preflight: recipe is TP {spec.tensor_parallel} x PP {spec.pipeline_parallel} = {want} GPUs; "
+                                 f"--nodes {nodes} x --gpus {args.gpus} = {nodes * args.gpus}")
+            if not local_weights:
+                raise SystemExit("serve preflight: multi-node serving needs local weights (every node loads them)")
     return _submit(script, args.submit)
 
 
@@ -604,7 +653,10 @@ def main() -> int:
                    help="prompt window to serve (default: the recipe's context limit)")
     p.add_argument("--extra-vllm-args", default="", help="appended to vllm serve, e.g. '--max-num-seqs 32'")
     p.add_argument("--health-timeout", type=int, default=3600, help="seconds to wait for the server to load")
-    p.add_argument("--gpus", type=int, default=8)
+    p.add_argument("--gpus", type=int, default=8, help="GPUs per node")
+    p.add_argument("--nodes", type=int, default=1,
+                   help="nodes per server (vLLM mp multi-node, TP x PP); use the recipe's pipeline_parallel "
+                        "to serve the model's native context window when one node's KV cache is too small")
     _common_sbatch_args(p, cpus=64, mem="1000G", time_limit="3-00:00:00", conda_env=DEFAULT_VLLM_CONDA_ENV)
     p.set_defaults(func=cmd_serve)
 
