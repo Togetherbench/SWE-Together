@@ -106,6 +106,10 @@ def test_opencode_provider_is_fully_explicit():
     assert "medium" not in m["variants"]  # GLM-5.3's template would silently treat it as max
     capped = ve.opencode_provider("glm-5.3", base_url="u", api_key="k", max_model_len=131072)
     assert capped["models"]["glm-5.3"]["limit"] == {"context": 131072, "output": 65536}
+    # a multi-node server at the native window: the served window wins over the single-node default
+    native = ve.opencode_provider("glm-5.3", base_url="u", api_key="k", max_model_len=1_048_576)
+    assert native["models"]["glm-5.3"]["limit"]["context"] == 1_048_576
+    assert ve.opencode_provider("glm-5.3", base_url="u", api_key="k", max_model_len=2_000_000)["models"]["glm-5.3"]["limit"]["context"] == 1_048_576
     with pytest.raises(SystemExit):
         ve.opencode_provider("unknown-model", base_url="u", api_key="k")
 
@@ -124,6 +128,31 @@ def test_build_serve_argv_follows_the_recipe_and_keeps_the_key_out():
         assert frag in s, frag
     assert "api-key" not in s and "secret" not in s
     assert argv.index("--max-num-seqs") > argv.index("--kv-cache-dtype")  # extra args override the recipe
+    assert "--pipeline-parallel-size" not in s and "--nnodes" not in s  # single node: plain TP
+
+
+def test_build_serve_argv_multi_node_head_and_headless_worker():
+    spec = sr.serving_spec("glm-5.3")
+    assert (spec.tensor_parallel, spec.pipeline_parallel, spec.native_context) == (8, 2, 1_048_576)
+    head = " ".join(vs.build_serve_argv(spec, weights="/w", port=8000, max_model_len=1_048_576, nnodes=2, node_rank=0, master_addr="node-a"))
+    worker = " ".join(vs.build_serve_argv(spec, weights="/w", port=8000, max_model_len=1_048_576, nnodes=2, node_rank=1, master_addr="node-a"))
+    for frag in ("--tensor-parallel-size 8", "--pipeline-parallel-size 2", "--distributed-executor-backend mp", "--nnodes 2",
+                 "--master-addr node-a", "--master-port 29501", "--max-model-len 1048576", "--kv-cache-dtype fp8"):
+        assert frag in head and frag in worker, frag
+    assert "--node-rank 0" in head and "--headless" not in head
+    assert "--node-rank 1" in worker and "--headless" in worker
+    with pytest.raises(ValueError):
+        vs.build_serve_argv(spec, weights="/w", port=8000, max_model_len=None, nnodes=2, node_rank=0)
+
+
+def test_handoff_records_multi_node_topology(tmp_path):
+    ep = ve.VllmEndpoint(**HANDOFF, nnodes=2, pipeline_parallel=2, nodes=["node-01", "node-02"])
+    p = vs.write_handoff(tmp_path / ve.HANDOFF_NAME, ep)
+    back = ve.read_handoff(p)
+    assert back == ep and back.nnodes == 2 and back.nodes == ["node-01", "node-02"]
+    assert ve.read_handoff(tmp_path / ve.HANDOFF_NAME).base_url == "http://node-01:8000"  # API lives on the head node
+    legacy = ve.VllmEndpoint(**HANDOFF)
+    assert (legacy.nnodes, legacy.pipeline_parallel, legacy.nodes) == (1, 1, None)
 
 
 def test_write_handoff_is_atomic_and_roundtrips(tmp_path):

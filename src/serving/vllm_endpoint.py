@@ -40,6 +40,10 @@ class VllmEndpoint:
     job_id: str | None = None
     max_model_len: int | None = None
     vllm_version: str | None = None
+    #: multi-node engines: node count, pipeline stages, and every host involved
+    nnodes: int = 1
+    pipeline_parallel: int = 1
+    nodes: list[str] | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -69,6 +73,8 @@ def read_handoff(path: Path) -> VllmEndpoint:
         node=data.get("node") or u.hostname, port=data.get("port") or u.port,
         job_id=str(data["job_id"]) if data.get("job_id") is not None else None,
         max_model_len=data.get("max_model_len"), vllm_version=data.get("vllm_version"),
+        nnodes=int(data.get("nnodes") or 1), pipeline_parallel=int(data.get("pipeline_parallel") or 1),
+        nodes=list(data["nodes"]) if data.get("nodes") else None,
     )
 
 
@@ -188,7 +194,12 @@ def opencode_provider(served_model: str, *, base_url: str, api_key: str,
     spec = spec or spec_for_served_name(served_model)
     if spec is None:
         raise SystemExit(f"no serving recipe for served model {served_model!r}")
-    context = min(spec.context, max_model_len) if max_model_len else spec.context
+    # The served window is authoritative: opencode must compact exactly where the
+    # server would overflow, whether that is the single-node default or the native
+    # window a multi-node server offers.
+    context = max_model_len or spec.context
+    if spec.native_context:
+        context = min(context, spec.native_context)
     model: dict = {
         "name": served_model,
         "reasoning": True,

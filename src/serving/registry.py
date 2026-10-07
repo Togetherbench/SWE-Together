@@ -29,6 +29,13 @@ class ServingSpec:
     #: Extra ``vllm serve`` arguments from the model's published recipe.
     vllm_args: tuple[str, ...] = ()
     tensor_parallel: int = 8
+    #: Pipeline stages when the weights leave too little KV room on one node; the
+    #: ``tensor_parallel * pipeline_parallel`` GPUs span several nodes
+    #: (``launch.py serve --nodes N``).
+    pipeline_parallel: int = 1
+    #: The window the model itself supports (``max_position_embeddings``). API-served
+    #: rows run at it, so a self-hosted row should too, even if that takes more nodes.
+    native_context: int | None = None
     #: Model-specific chat-template switches sent with every request.
     chat_template_kwargs: dict = field(default_factory=dict)
 
@@ -38,6 +45,8 @@ SERVING: dict[str, ServingSpec] = {
     for s in (
         # recipes.vllm.ai/zai-org/GLM-5.3 — FP8 weights, 8×H200-class node. GLM-5.3's
         # template honours reasoning_effort low|high and treats anything else as max.
+        # `context` is what one node holds (weights leave ~28 GiB/GPU of KV, ~544K tokens);
+        # the native 1M window needs two nodes (TP 8 × PP 2): `launch.py serve --nodes 2`.
         ServingSpec(
             canonical="glm-5.3",
             hf_repo="zai-org/GLM-5.3",
@@ -54,6 +63,8 @@ SERVING: dict[str, ServingSpec] = {
                 "--enable-auto-tool-choice",
             ),
             tensor_parallel=8,
+            pipeline_parallel=2,
+            native_context=1_048_576,
         ),
     )
 }

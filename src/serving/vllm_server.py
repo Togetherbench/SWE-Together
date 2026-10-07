@@ -32,13 +32,30 @@ HEALTH_PATH = "/health"
 
 
 def build_serve_argv(spec: ServingSpec, *, weights: str, port: int, max_model_len: int | None,
-                     extra: tuple[str, ...] = (), vllm_bin: str = "vllm", host: str = "0.0.0.0") -> list[str]:
+                     extra: tuple[str, ...] = (), vllm_bin: str = "vllm", host: str = "0.0.0.0",
+                     nnodes: int = 1, node_rank: int = 0, master_addr: str | None = None,
+                     master_port: int = 29501) -> list[str]:
     """``vllm serve`` command line for ``spec``; the recipe's args come last so a
-    caller's ``extra`` can still override them (vLLM takes the last value)."""
+    caller's ``extra`` can still override them (vLLM takes the last value).
+
+    With ``nnodes > 1`` the engine spans nodes through vLLM's Ray-free ``mp``
+    executor: every node runs the same engine arguments, rank 0 serves the API and
+    the others run ``--headless``. ``tensor_parallel * pipeline_parallel`` must equal
+    the GPUs across all nodes.
+    """
     argv = [vllm_bin, "serve", weights,
             "--served-model-name", spec.served_model_name,
             "--host", host, "--port", str(port),
             "--tensor-parallel-size", str(spec.tensor_parallel)]
+    if spec.pipeline_parallel > 1 and nnodes > 1:
+        argv += ["--pipeline-parallel-size", str(spec.pipeline_parallel)]
+    if nnodes > 1:
+        if not master_addr:
+            raise ValueError("multi-node serving needs master_addr (the rank-0 host)")
+        argv += ["--distributed-executor-backend", "mp", "--nnodes", str(nnodes), "--node-rank", str(node_rank),
+                 "--master-addr", master_addr, "--master-port", str(master_port)]
+        if node_rank > 0:
+            argv.append("--headless")
     if max_model_len:
         argv += ["--max-model-len", str(max_model_len)]
     argv += list(spec.vllm_args)
@@ -115,15 +132,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
     weights = args.weights or spec.hf_repo
     vllm_bin = args.vllm_bin or shutil.which("vllm") or "vllm"
     api_key = _api_key()
+    nodes = [n for n in (args.nodes or "").split(",") if n]
     argv = build_serve_argv(spec, weights=weights, port=args.port, max_model_len=args.max_model_len,
-                            extra=tuple(args.extra or ()), vllm_bin=vllm_bin)
+                            extra=tuple(args.extra or ()), vllm_bin=vllm_bin, nnodes=args.nnodes,
+                            node_rank=args.node_rank, master_addr=args.master_addr, master_port=args.master_port)
     env = dict(os.environ)
     if api_key:
         env["VLLM_API_KEY"] = api_key
+    is_head = args.node_rank == 0
     handoff = Path(args.handoff)
-    if handoff.exists():
+    if is_head and handoff.exists():
         handoff.unlink()
-    print("launching:", " ".join(argv), flush=True)
+    print(f"launching (node rank {args.node_rank}/{args.nnodes}):", " ".join(argv), flush=True)
     proc = subprocess.Popen(argv, env=env)
 
     def _forward(signum, _frame):
@@ -131,12 +151,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _forward)
+    if not is_head:
+        # headless worker: no API server here, so nothing to probe or publish
+        return proc.wait()
     base_url = f"http://{_node_name()}:{args.port}"
     try:
         wait_health(base_url, spec.served_model_name, proc=proc, api_key=api_key, timeout_s=args.health_timeout)
         ep = VllmEndpoint(base_url=base_url, served_model=spec.served_model_name, node=_node_name(), port=args.port,
                           job_id=os.environ.get("SLURM_JOB_ID"), max_model_len=args.max_model_len,
-                          vllm_version=vllm_version(vllm_bin))
+                          vllm_version=vllm_version(vllm_bin), nnodes=args.nnodes,
+                          pipeline_parallel=spec.pipeline_parallel if args.nnodes > 1 else 1,
+                          nodes=nodes or None)
         write_handoff(handoff, ep)
         print(f"handoff written: {handoff}\n{json.dumps(ep.to_dict(), indent=2)}", flush=True)
         return proc.wait()
@@ -176,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--handoff", required=True, help=f"path of the {HANDOFF_NAME} to publish")
     s.add_argument("--health-timeout", type=float, default=3600, help="seconds to wait for the server")
     s.add_argument("--vllm-bin", default=None)
+    s.add_argument("--nnodes", type=int, default=1, help="nodes the engine spans (vLLM mp multi-node)")
+    s.add_argument("--node-rank", type=int, default=0, help="this node's rank; rank 0 serves the API and publishes the handoff")
+    s.add_argument("--master-addr", default=None, help="rank-0 host (required when --nnodes > 1)")
+    s.add_argument("--master-port", type=int, default=29501)
+    s.add_argument("--nodes", default=None, help="comma-separated hostnames of all nodes, recorded in the handoff")
     s.add_argument("--extra", nargs=argparse.REMAINDER, help="extra vllm serve args (after --extra)")
     s.set_defaults(fn=cmd_serve)
     t = sub.add_parser("stop", help="scancel the serve job named in a handoff file or dir")
