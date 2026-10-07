@@ -40,8 +40,9 @@ class VllmEndpoint:
     job_id: str | None = None
     max_model_len: int | None = None
     vllm_version: str | None = None
-    #: multi-node engines: node count, pipeline stages, and every host involved
+    #: multi-node engines: node count, parallel degrees, and every host involved
     nnodes: int = 1
+    tensor_parallel: int | None = None
     pipeline_parallel: int = 1
     nodes: list[str] | None = None
 
@@ -73,7 +74,8 @@ def read_handoff(path: Path) -> VllmEndpoint:
         node=data.get("node") or u.hostname, port=data.get("port") or u.port,
         job_id=str(data["job_id"]) if data.get("job_id") is not None else None,
         max_model_len=data.get("max_model_len"), vllm_version=data.get("vllm_version"),
-        nnodes=int(data.get("nnodes") or 1), pipeline_parallel=int(data.get("pipeline_parallel") or 1),
+        nnodes=int(data.get("nnodes") or 1), tensor_parallel=data.get("tensor_parallel"),
+        pipeline_parallel=int(data.get("pipeline_parallel") or 1),
         nodes=list(data["nodes"]) if data.get("nodes") else None,
     )
 

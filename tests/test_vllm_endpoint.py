@@ -133,12 +133,19 @@ def test_build_serve_argv_follows_the_recipe_and_keeps_the_key_out():
 
 def test_build_serve_argv_multi_node_head_and_headless_worker():
     spec = sr.serving_spec("glm-5.3")
-    assert (spec.tensor_parallel, spec.pipeline_parallel, spec.native_context) == (8, 2, 1_048_576)
+    # GlmMoeDsa has no SupportsPP in vLLM 0.29, so two nodes run as TP 16 (not TP 8 x PP 2)
+    assert (spec.tensor_parallel, spec.multi_node_tensor_parallel, spec.native_context) == (8, 16, 1_048_576)
+    assert vs.parallel_degrees(spec, 1) == (8, 1) and vs.parallel_degrees(spec, 2) == (16, 1)
     head = " ".join(vs.build_serve_argv(spec, weights="/w", port=8000, max_model_len=1_048_576, nnodes=2, node_rank=0, master_addr="node-a"))
     worker = " ".join(vs.build_serve_argv(spec, weights="/w", port=8000, max_model_len=1_048_576, nnodes=2, node_rank=1, master_addr="node-a"))
-    for frag in ("--tensor-parallel-size 8", "--pipeline-parallel-size 2", "--distributed-executor-backend mp", "--nnodes 2",
+    for frag in ("--tensor-parallel-size 16", "--distributed-executor-backend mp", "--nnodes 2",
                  "--master-addr node-a", "--master-port 29501", "--max-model-len 1048576", "--kv-cache-dtype fp8"):
         assert frag in head and frag in worker, frag
+    assert "--pipeline-parallel-size" not in head
+    pp_spec = sr.ServingSpec(canonical="x", hf_repo="o/x", served_model_name="x", context=1, output=1, efforts=("high",),
+                             tensor_parallel=8, pipeline_parallel=2)
+    assert vs.parallel_degrees(pp_spec, 2) == (8, 2)
+    assert "--pipeline-parallel-size 2" in " ".join(vs.build_serve_argv(pp_spec, weights="/w", port=1, max_model_len=None, nnodes=2, master_addr="a"))
     assert "--node-rank 0" in head and "--headless" not in head
     assert "--node-rank 1" in worker and "--headless" in worker
     with pytest.raises(ValueError):
@@ -146,13 +153,13 @@ def test_build_serve_argv_multi_node_head_and_headless_worker():
 
 
 def test_handoff_records_multi_node_topology(tmp_path):
-    ep = ve.VllmEndpoint(**HANDOFF, nnodes=2, pipeline_parallel=2, nodes=["node-01", "node-02"])
+    ep = ve.VllmEndpoint(**HANDOFF, nnodes=2, tensor_parallel=16, nodes=["node-01", "node-02"])
     p = vs.write_handoff(tmp_path / ve.HANDOFF_NAME, ep)
     back = ve.read_handoff(p)
     assert back == ep and back.nnodes == 2 and back.nodes == ["node-01", "node-02"]
     assert ve.read_handoff(tmp_path / ve.HANDOFF_NAME).base_url == "http://node-01:8000"  # API lives on the head node
     legacy = ve.VllmEndpoint(**HANDOFF)
-    assert (legacy.nnodes, legacy.pipeline_parallel, legacy.nodes) == (1, 1, None)
+    assert (legacy.nnodes, legacy.tensor_parallel, legacy.pipeline_parallel, legacy.nodes) == (1, None, 1, None)
 
 
 def test_write_handoff_is_atomic_and_roundtrips(tmp_path):

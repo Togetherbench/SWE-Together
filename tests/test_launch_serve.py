@@ -70,13 +70,16 @@ def test_serve_renders_a_gpu_job_with_the_recipe(launch, tmp_path, capsys):
 
 def test_serve_multi_node_spans_the_allocation_at_the_native_window(launch, tmp_path):
     w = tmp_path / "w"; w.mkdir(); (w / "config.json").write_text("{}")
-    _run(launch, ["serve", "--model", "glm-5.3", "--tag", "glm53-1m", "--nodes", "2", "--weights", str(w)])
+    _run(launch, ["serve", "--model", "glm-5.3", "--tag", "glm53-1m", "--nodes", "2", "--weights", str(w),
+                  "--extra-vllm-args", "--max-num-seqs 4"])
     d = next((tmp_path / "slurm_logs" / "serve").glob("glm53-1m_*"))
     script = (d / "job.sbatch").read_text()
     assert "#SBATCH --nodes=2" in script and "#SBATCH --gpus-per-node=8" in script and "#SBATCH --gpus=8" not in script
     assert "scontrol show hostnames" in script and 'HEAD="${HOSTS[0]}"' in script
     assert script.count("srun --nodes=1 --ntasks=1") == 2  # one headless worker loop + the head
-    assert "--nnodes 2 --node-rank 0 --master-addr \"$HEAD\"" in script and '--node-rank "$i"' in script
+    assert '--nnodes 2 --master-addr "$HEAD" --node-rank 0 --nodes "$NODE_LIST"' in script and '--node-rank "$i"' in script
+    # --extra is a REMAINDER flag: the driver's multi-node flags must precede it
+    assert script.index("--nnodes 2") < script.index("--extra") if "--extra" in script else True
     assert script.count("--max-model-len 1048576") == 2  # native window is the default for multi-node
     assert "/opt/amazon/ofi-nccl/lib" in script and "FI_PROVIDER=efa" in script
     single = tmp_path / "slurm_logs" / "serve"
@@ -91,7 +94,7 @@ def test_serve_multi_node_preflight_checks_gpu_count_and_local_weights(launch, t
     fake_env = tmp_path / "env" / "bin"; fake_env.mkdir(parents=True)
     (fake_env / "python").write_text(""); (fake_env / "vllm").write_text("")  # preflight only checks presence
     monkeypatch.setattr(launch, "_python_for_conda_env", lambda env: fake_env / "python")
-    with pytest.raises(SystemExit, match="TP 8 x PP 2"):
+    with pytest.raises(SystemExit, match="TP 16 x PP 1"):
         _run(launch, ["serve", "--model", "glm-5.3", "--tag", "x", "--nodes", "3", "--weights", str(w), "--submit"])
     with pytest.raises(SystemExit, match="local weights"):
         _run(launch, ["serve", "--model", "glm-5.3", "--tag", "y", "--nodes", "2", "--weights", "zai-org/GLM-5.3", "--submit"])

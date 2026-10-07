@@ -31,8 +31,12 @@ class ServingSpec:
     tensor_parallel: int = 8
     #: Pipeline stages when the weights leave too little KV room on one node; the
     #: ``tensor_parallel * pipeline_parallel`` GPUs span several nodes
-    #: (``launch.py serve --nodes N``).
+    #: (``launch.py serve --nodes N``). Models whose vLLM class lacks ``SupportsPP``
+    #: span nodes with a wider ``multi_node_tensor_parallel`` instead.
     pipeline_parallel: int = 1
+    #: Tensor-parallel degree to use when the engine spans nodes (0 = keep
+    #: ``tensor_parallel`` and rely on pipeline stages).
+    multi_node_tensor_parallel: int = 0
     #: The window the model itself supports (``max_position_embeddings``). API-served
     #: rows run at it, so a self-hosted row should too, even if that takes more nodes.
     native_context: int | None = None
@@ -46,7 +50,9 @@ SERVING: dict[str, ServingSpec] = {
         # recipes.vllm.ai/zai-org/GLM-5.3 — FP8 weights, 8×H200-class node. GLM-5.3's
         # template honours reasoning_effort low|high and treats anything else as max.
         # `context` is what one node holds (weights leave ~28 GiB/GPU of KV, ~544K tokens);
-        # the native 1M window needs two nodes (TP 8 × PP 2): `launch.py serve --nodes 2`.
+        # the native 1M window needs two nodes. vLLM 0.29's GlmMoeDsa class has no
+        # SupportsPP, so the engine spans them as TP 16 (heads/experts/vocab divide by
+        # 16): `launch.py serve --nodes 2`.
         ServingSpec(
             canonical="glm-5.3",
             hf_repo="zai-org/GLM-5.3",
@@ -63,7 +69,7 @@ SERVING: dict[str, ServingSpec] = {
                 "--enable-auto-tool-choice",
             ),
             tensor_parallel=8,
-            pipeline_parallel=2,
+            multi_node_tensor_parallel=16,
             native_context=1_048_576,
         ),
     )

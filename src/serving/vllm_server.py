@@ -31,6 +31,15 @@ from serving.vllm_endpoint import HANDOFF_NAME, MODELS_PATH, VllmEndpoint, hando
 HEALTH_PATH = "/health"
 
 
+def parallel_degrees(spec: ServingSpec, nnodes: int) -> tuple[int, int]:
+    """``(tensor_parallel, pipeline_parallel)`` for an engine on ``nnodes`` nodes."""
+    if nnodes <= 1:
+        return spec.tensor_parallel, 1
+    if spec.multi_node_tensor_parallel:
+        return spec.multi_node_tensor_parallel, 1
+    return spec.tensor_parallel, spec.pipeline_parallel
+
+
 def build_serve_argv(spec: ServingSpec, *, weights: str, port: int, max_model_len: int | None,
                      extra: tuple[str, ...] = (), vllm_bin: str = "vllm", host: str = "0.0.0.0",
                      nnodes: int = 1, node_rank: int = 0, master_addr: str | None = None,
@@ -40,15 +49,16 @@ def build_serve_argv(spec: ServingSpec, *, weights: str, port: int, max_model_le
 
     With ``nnodes > 1`` the engine spans nodes through vLLM's Ray-free ``mp``
     executor: every node runs the same engine arguments, rank 0 serves the API and
-    the others run ``--headless``. ``tensor_parallel * pipeline_parallel`` must equal
-    the GPUs across all nodes.
+    the others run ``--headless``. The parallel degrees (TP, or TP x PP) must equal
+    the GPUs across all nodes; see :func:`parallel_degrees`.
     """
+    tp, pp = parallel_degrees(spec, nnodes)
     argv = [vllm_bin, "serve", weights,
             "--served-model-name", spec.served_model_name,
             "--host", host, "--port", str(port),
-            "--tensor-parallel-size", str(spec.tensor_parallel)]
-    if spec.pipeline_parallel > 1 and nnodes > 1:
-        argv += ["--pipeline-parallel-size", str(spec.pipeline_parallel)]
+            "--tensor-parallel-size", str(tp)]
+    if pp > 1:
+        argv += ["--pipeline-parallel-size", str(pp)]
     if nnodes > 1:
         if not master_addr:
             raise ValueError("multi-node serving needs master_addr (the rank-0 host)")
@@ -160,7 +170,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         ep = VllmEndpoint(base_url=base_url, served_model=spec.served_model_name, node=_node_name(), port=args.port,
                           job_id=os.environ.get("SLURM_JOB_ID"), max_model_len=args.max_model_len,
                           vllm_version=vllm_version(vllm_bin), nnodes=args.nnodes,
-                          pipeline_parallel=spec.pipeline_parallel if args.nnodes > 1 else 1,
+                          tensor_parallel=parallel_degrees(spec, args.nnodes)[0],
+                          pipeline_parallel=parallel_degrees(spec, args.nnodes)[1],
                           nodes=nodes or None)
         write_handoff(handoff, ep)
         print(f"handoff written: {handoff}\n{json.dumps(ep.to_dict(), indent=2)}", flush=True)

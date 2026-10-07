@@ -137,9 +137,12 @@ export NCCL_DEBUG=${{NCCL_DEBUG:-WARN}}
 export VLLM_HOST_IP="$HEAD"
 PIDS=()
 for i in $(seq 1 $(({nodes} - 1))); do
+  # PYTHON_BIN is a plain shell variable: export what the steps need before srun
+  export PYTHON_BIN HEAD NODE_LIST i
   srun --nodes=1 --ntasks=1 -w "${{HOSTS[$i]}}" --export=ALL bash -c 'export VLLM_HOST_IP=$(hostname); exec {worker_cmd}' &
   PIDS+=($!)
 done
+export PYTHON_BIN HEAD NODE_LIST
 srun --nodes=1 --ntasks=1 -w "$HEAD" --export=ALL bash -c 'exec {head_cmd}' &
 PIDS+=($!)
 # if any rank dies the engine is gone: take the rest down so the job ends instead of hanging
@@ -395,23 +398,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     max_model_len = args.max_model_len or (spec.native_context if nodes > 1 else None)
     if max_model_len:
         cmd += ["--max-model-len", str(max_model_len)]
-    if args.extra_vllm_args:
-        cmd += ["--extra", args.extra_vllm_args]
+    # `--extra` is an argparse REMAINDER: everything after it goes to vllm, so the
+    # driver's own multi-node flags must come first.
+    multi = ([] if nodes == 1 else ["--nnodes", str(nodes), "--master-addr", '"$HEAD"'])
+    extra = ["--extra", args.extra_vllm_args] if args.extra_vllm_args else []
     local_weights = Path(weights).is_dir()
     common = (
         ("export HF_HUB_OFFLINE=1\n" if local_weights else "")
         + 'if [ -n "${SWT_VLLM_API_KEY:-}" ]; then export VLLM_API_KEY="$SWT_VLLM_API_KEY"; fi\n'
     )
     if nodes == 1:
-        body = common + f"echo \"serving {spec.served_model_name} from {weights} on $(hostname)\"\n" + " ".join(cmd) + "\n"
+        body = common + f"echo \"serving {spec.served_model_name} from {weights} on $(hostname)\"\n" + " ".join(cmd + extra) + "\n"
     else:
         # One engine across the allocation: rank 0 serves the API and publishes the
         # handoff, the other nodes run headless workers. NCCL crosses nodes over the
         # fabric plugin found on the compute nodes (AWS EFA here); keep that path
         # explicit so a missing plugin fails loudly instead of falling back to TCP.
-        head_cmd = " ".join(cmd + ["--nnodes", str(nodes), "--node-rank", "0", "--master-addr", '"$HEAD"',
-                                   "--nodes", '"$NODE_LIST"'])
-        worker_cmd = " ".join(cmd + ["--nnodes", str(nodes), "--node-rank", '"$i"', "--master-addr", '"$HEAD"'])
+        head_cmd = " ".join(cmd + multi + ["--node-rank", "0", "--nodes", '"$NODE_LIST"'] + extra)
+        worker_cmd = " ".join(cmd + multi + ["--node-rank", '"$i"'] + extra)
         body = common + MULTI_NODE_BLOCK.format(
             served=spec.served_model_name, weights=weights, nodes=nodes, head_cmd=head_cmd, worker_cmd=worker_cmd)
     content = _header(
@@ -419,8 +423,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         **_sbatch_kwargs(args),
     ) + _preamble(py, args.conda_env, enroot=False) + body
     script.write_text(content)
-    print(f"serve: {spec.served_model_name} ({spec.hf_repo}) weights={weights} tp={spec.tensor_parallel}"
-          + (f" pp={spec.pipeline_parallel} nodes={nodes}" if nodes > 1 else "")
+    from serving.vllm_server import parallel_degrees
+    tp, pp = parallel_degrees(spec, nodes)
+    print(f"serve: {spec.served_model_name} ({spec.hf_repo}) weights={weights} tp={tp}"
+          + (f" pp={pp} nodes={nodes}" if nodes > 1 else "")
           + f" max_model_len={max_model_len or 'model default'}")
     print(f"handoff → {handoff}")
     if args.submit:
@@ -434,9 +440,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if nodes == 1 and args.gpus < spec.tensor_parallel:
             raise SystemExit(f"serve preflight: recipe needs tensor_parallel={spec.tensor_parallel} GPUs, --gpus {args.gpus}")
         if nodes > 1:
-            want = spec.tensor_parallel * spec.pipeline_parallel
-            if nodes * args.gpus != want:
-                raise SystemExit(f"serve preflight: recipe is TP {spec.tensor_parallel} x PP {spec.pipeline_parallel} = {want} GPUs; "
+            from serving.vllm_server import parallel_degrees
+            tp, pp = parallel_degrees(spec, nodes)
+            if nodes * args.gpus != tp * pp:
+                raise SystemExit(f"serve preflight: recipe is TP {tp} x PP {pp} = {tp * pp} GPUs; "
                                  f"--nodes {nodes} x --gpus {args.gpus} = {nodes * args.gpus}")
             if not local_weights:
                 raise SystemExit("serve preflight: multi-node serving needs local weights (every node loads them)")
