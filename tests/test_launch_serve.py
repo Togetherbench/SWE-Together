@@ -82,6 +82,7 @@ def test_serve_multi_node_spans_the_allocation_at_the_native_window(launch, tmp_
     assert script.index("--nnodes 2") < script.index("--extra") if "--extra" in script else True
     assert script.count("--max-model-len 1048576") == 2  # native window is the default for multi-node
     assert "/opt/amazon/ofi-nccl/lib" in script and "FI_PROVIDER=efa" in script
+    assert 'DG_JIT_CACHE_DIR="/tmp/swt-deep-gemm-$SLURM_JOB_ID"' in script  # per-node JIT cache, not the shared $HOME one
     single = tmp_path / "slurm_logs" / "serve"
     _run(launch, ["serve", "--model", "glm-5.3", "--tag", "glm53-one", "--weights", str(w)])
     one = (next(single.glob("glm53-one_*")) / "job.sbatch").read_text()

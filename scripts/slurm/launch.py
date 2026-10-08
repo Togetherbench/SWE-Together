@@ -134,6 +134,10 @@ echo "serving {served} from {weights} on {nodes} nodes: $NODE_LIST (head $HEAD)"
 export LD_LIBRARY_PATH=/opt/amazon/ofi-nccl/lib:/opt/amazon/efa/lib:${{LD_LIBRARY_PATH:-}}
 export FI_PROVIDER=efa FI_EFA_USE_DEVICE_RDMA=1 NCCL_SOCKET_IFNAME=${{NCCL_SOCKET_IFNAME:-eth0}}
 export NCCL_DEBUG=${{NCCL_DEBUG:-WARN}}
+# DeepGEMM JIT-compiles FP8 kernels for the (new) per-rank shapes; its default cache
+# lives under $HOME (shared), and ranks on different hosts racing on the same
+# kernel.cubin fail with "runtime != nullptr". Give every node its own local cache.
+export DG_JIT_CACHE_DIR="/tmp/swt-deep-gemm-$SLURM_JOB_ID"
 export VLLM_HOST_IP="$HEAD"
 PIDS=()
 for i in $(seq 1 $(({nodes} - 1))); do
