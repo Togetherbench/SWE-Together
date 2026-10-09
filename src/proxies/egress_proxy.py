@@ -21,17 +21,22 @@ Three request shapes are served:
   host, bytes are piped untouched (no MITM).
 * ``GET http://host/...`` (absolute-URI, plain HTTP) — forwarded with the request
   target rewritten to origin-form.
-* ``/openrouter/...`` (origin-form) — a reverse route to ``https://openrouter.ai``
-  that **injects** ``Authorization: Bearer <host key>``. opencode's openrouter
-  provider is pointed at ``http://127.0.0.1:3128/openrouter/api/v1``, so the real
-  API key never enters the sandbox (agents read ``OPENROUTER_API_KEY`` from the
-  environment and called the API from a shell). The route
-  is **model-pinned**: only ``POST /api/v1/chat/completions`` whose JSON ``model``
-  is one of the run's configured models is forwarded, web plugins (``plugins``,
+* ``/<route>/...`` (origin-form) — a **reverse route** to one configured LLM
+  endpoint that **injects** the host-side credential. ``/openrouter/`` goes to
+  ``https://openrouter.ai`` with ``Authorization: Bearer <host key>``; a
+  self-hosted ``/vllm/`` route (built per run from the server's handoff file, see
+  :mod:`serving.vllm_endpoint`) goes to the in-cluster vLLM server over plain
+  HTTP. opencode's provider is pointed at ``http://127.0.0.1:3128/<route>/…``, so
+  neither the real API key nor the server address enters the sandbox (agents read
+  ``OPENROUTER_API_KEY`` from the environment and called the API from a shell).
+  Every route is **model-pinned**: only chat-completion POSTs whose JSON ``model``
+  is one of the run's configured models are forwarded, web plugins (``plugins``,
   ``:online`` variants, ``web_search_options``, non-function tools) are refused,
-  and ``GET /api/v1/models`` is served without a credential. Without the pin the
+  and the ``models`` listing is served without a credential. Without the pin the
   route was an open LLM gateway: agents called web-enabled ``:online`` models
-  through it and had the *model* fetch the GitHub PR for them.
+  through it and had the *model* fetch the GitHub PR for them. A run installs only
+  the routes its backend needs (:func:`EgressProxy` ``reverse_routes``); the
+  OpenRouter route is absent from a vLLM run and vice versa.
 
 Relay ↔ proxy protocol: the relay sends one preamble line
 ``SWT1 {"trial": …, "log": …, "task_dir": …}\\n`` and then pipes bytes. ``log``
@@ -77,9 +82,48 @@ class ReverseRoute:
     endpoints: frozenset[tuple[str, str]]
     #: upstream paths that get the credential injected and the model pinned
     llm_paths: frozenset[str]
+    #: ``https`` upstreams are TLS-wrapped with a verifying context; ``http`` is
+    #: only meant for in-cluster servers whose address is configured host-side.
+    scheme: str = "https"
+    port: int | None = None
+    #: per-connection idle budget; self-hosted servers can queue a long prefill
+    #: before the first streamed byte, so routes may exceed the proxy default.
+    idle_timeout_s: int = IDLE_TIMEOUT_S
+    #: inject the credential on every allowed endpoint, not only ``llm_paths``
+    #: (OpenRouter's model listing is public; a vLLM ``--api-key`` guards all of /v1).
+    credential_on_all: bool = False
+
+    def __post_init__(self) -> None:
+        if self.scheme not in ("http", "https"):
+            raise ValueError(f"reverse route scheme must be http or https, got {self.scheme!r}")
+        if self.port is None:
+            object.__setattr__(self, "port", 443 if self.scheme == "https" else 80)
+
+    @property
+    def host_header(self) -> str:
+        default = 443 if self.scheme == "https" else 80
+        return self.upstream if self.port == default else f"{self.upstream}:{self.port}"
+
+    @classmethod
+    def for_upstream(cls, prefix: str, base_url: str, *, credential_env: str | None,
+                     endpoints: frozenset[tuple[str, str]], llm_paths: frozenset[str],
+                     idle_timeout_s: int = IDLE_TIMEOUT_S, credential_on_all: bool = False) -> "ReverseRoute":
+        """Build a route from an upstream base URL such as ``http://node:8000``.
+
+        Only scheme, host and port are taken from the URL; paths are always the
+        upstream paths listed in ``endpoints`` (the client's path after ``prefix``).
+        """
+        from urllib.parse import urlsplit
+        u = urlsplit(base_url)
+        if u.scheme not in ("http", "https") or not u.hostname:
+            raise ValueError(f"reverse route upstream must be an http(s) URL with a host: {base_url!r}")
+        return cls(prefix=prefix, upstream=u.hostname, credential_env=credential_env, endpoints=endpoints,
+                   llm_paths=llm_paths, scheme=u.scheme, port=u.port, idle_timeout_s=idle_timeout_s,
+                   credential_on_all=credential_on_all)
 
 
-#: URL prefix inside the sandbox → upstream. Anything not listed is refused.
+#: Default URL prefix inside the sandbox → upstream. A run passes the routes its
+#: backend needs to :class:`EgressProxy`; anything not installed is refused.
 REVERSE_ROUTES: dict[str, ReverseRoute] = {
     "/openrouter/": ReverseRoute(
         prefix="/openrouter/", upstream="openrouter.ai", credential_env="OPENROUTER_API_KEY",
@@ -132,7 +176,8 @@ class ConnMeta:
     deny_packages: ep.DenyPackages | None = None
 
 
-def _pipe(a: socket.socket, b: socket.socket, counters: list[int]) -> None:
+def _pipe(a: socket.socket, b: socket.socket, counters: list[int],
+          idle_timeout_s: float = IDLE_TIMEOUT_S) -> None:
     """Bidirectional copy until either side closes or the tunnel idles out.
 
     TLS sockets may hold decrypted bytes the fd-level ``select`` cannot see, so
@@ -143,7 +188,7 @@ def _pipe(a: socket.socket, b: socket.socket, counters: list[int]) -> None:
         while True:
             ready = [s for s in socks if getattr(s, "pending", lambda: 0)()]
             if not ready:
-                r, _, x = select.select(socks, [], socks, IDLE_TIMEOUT_S)
+                r, _, x = select.select(socks, [], socks, idle_timeout_s)
                 if x or not r:
                     return
                 ready = r
@@ -189,12 +234,13 @@ def parse_request_head(head: bytes) -> tuple[str, str, list[tuple[str, str]]]:
     return method, target, headers
 
 
-def destination(method: str, target: str, headers: list[tuple[str, str]]) -> tuple[str, int, str | None, str]:
+def destination(method: str, target: str, headers: list[tuple[str, str]],
+                routes: dict[str, ReverseRoute] | None = None) -> tuple[str, int, str | None, str]:
     """Resolve ``(host, port, reverse_prefix, path)`` for a request.
 
-    ``reverse_prefix`` is set when the request is an origin-form path under
-    :data:`REVERSE_ROUTES`; otherwise ``path`` is the origin-form target to send
-    upstream (``None`` for CONNECT).
+    ``reverse_prefix`` is set when the request is an origin-form path under one of
+    ``routes`` (default :data:`REVERSE_ROUTES`); otherwise ``path`` is the
+    origin-form target to send upstream (``None`` for CONNECT).
     """
     if method == "CONNECT":
         host, _, port = target.rpartition(":")
@@ -207,9 +253,9 @@ def destination(method: str, target: str, headers: list[tuple[str, str]]) -> tup
         port = int(m.group(2)) if m.group(2) else (443 if scheme_https else 80)
         return m.group(1), port, None, m.group(3) or "/"
     if target.startswith("/"):
-        for prefix, route in REVERSE_ROUTES.items():
+        for prefix, route in (REVERSE_ROUTES if routes is None else routes).items():
             if target.startswith(prefix):
-                return route.upstream, 443, prefix, "/" + target[len(prefix):]
+                return route.upstream, int(route.port or 0), prefix, "/" + target[len(prefix):]
         raise ValueError("origin-form request outside reverse routes")
     raise ValueError("unsupported request target")
 
@@ -295,9 +341,13 @@ class EgressProxy:
                  llm_backend: str | None = None, model: str | None = None,
                  llm_models: frozenset[str] | set[str] | None = None,
                  ca_dir: Path | None = None,
-                 upstream_ssl_context: ssl.SSLContext | None = None):
+                 upstream_ssl_context: ssl.SSLContext | None = None,
+                 reverse_routes: dict[str, ReverseRoute] | None = None):
         self.sock_path = Path(sock_path)
         self.aws_region = aws_region
+        #: origin-form prefixes this run serves (default: the OpenRouter route). A
+        #: self-hosted run installs its own route instead, so nothing else resolves.
+        self.routes: dict[str, ReverseRoute] = dict(REVERSE_ROUTES if reverse_routes is None else reverse_routes)
         self.llm_backend = llm_backend
         self.model = model
         #: OpenRouter model ids the ``/openrouter/`` route will forward (the agent's,
@@ -427,7 +477,7 @@ class EgressProxy:
             record["trial"] = meta.trial
             method, target, headers = parse_request_head(head)
             record.update(method=method, target=target[:200])
-            host, port, reverse_prefix, path = destination(method, target, headers)
+            host, port, reverse_prefix, path = destination(method, target, headers, self.routes)
             pol = self.policy(meta.task_dir)
             # A reverse route is its own policy (endpoint + model pinning below); the
             # host allowlist governs CONNECT / absolute-URI traffic only.
@@ -438,9 +488,12 @@ class EgressProxy:
                 conn.sendall(_deny_response(decision.host, decision.reason, pol.digest()))
                 return
             token = None
+            route: ReverseRoute | None = None
+            idle_timeout_s: float = IDLE_TIMEOUT_S
             if reverse_prefix is not None:
                 # Validate everything about an LLM-route request before touching upstream.
-                route = REVERSE_ROUTES[reverse_prefix]
+                route = self.routes[reverse_prefix]
+                idle_timeout_s = route.idle_timeout_s
                 if (method, path) not in route.endpoints:
                     record.update(decision="deny", reason=f"deny:llm route endpoint {method} {path}")
                     conn.sendall(_deny_response(decision.host, record["reason"], pol.digest()))
@@ -449,7 +502,7 @@ class EgressProxy:
                     clen = _content_length(headers)
                     if clen is None or clen < 0 or clen > MAX_LLM_BODY:
                         raise ValueError("llm request needs a Content-Length within limits")
-                    conn.settimeout(IDLE_TIMEOUT_S)
+                    conn.settimeout(idle_timeout_s)
                     while len(body0) < clen:
                         chunk = conn.recv(min(1 << 20, clen - len(body0)))
                         if not chunk:
@@ -463,10 +516,16 @@ class EgressProxy:
                         return
                     token = self.credentials.get(route.credential_env) if route.credential_env else None
                     record["auth_injected"] = bool(token)
+                elif route.credential_on_all and route.credential_env:
+                    token = self.credentials.get(route.credential_env)
+                    record["auth_injected"] = bool(token)
             upstream = socket.create_connection((decision.host, port), timeout=CONNECT_TIMEOUT_S)
-            if reverse_prefix is not None:
-                upstream = self._upstream_ssl.wrap_socket(upstream, server_hostname=decision.host)
-                upstream.sendall(_rebuild_head(method, path, headers, decision.host, token))
+            if route is not None:
+                # Only a host-configured route may speak plain HTTP (in-cluster servers);
+                # the upstream address never comes from the request.
+                if route.scheme == "https":
+                    upstream = self._upstream_ssl.wrap_socket(upstream, server_hostname=decision.host)
+                upstream.sendall(_rebuild_head(method, path, headers, route.host_header, token))
             elif method == "CONNECT" and self.ca is not None and decision.host in ep.REGISTRY_HOSTS:
                 # Registry: terminate TLS, inspect the request, then re-encrypt upstream.
                 conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -497,7 +556,7 @@ class EgressProxy:
                 counters[0] += len(body0)
             conn.settimeout(None)
             upstream.settimeout(None)
-            _pipe(conn, upstream, counters)
+            _pipe(conn, upstream, counters, idle_timeout_s)
         except (ValueError, ConnectionError) as exc:
             record.setdefault("decision", "error")
             record["error"] = str(exc)[:200]
@@ -545,6 +604,9 @@ denylist scanned from the workspace) after the relay has started.
 import json, select, socket, sys, threading
 
 SOCK, HOST, PORT, META_PATH = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+# Idle budget per connection; the proxy's per-route timeout is the real limit, this
+# only reaps tunnels whose peer vanished. Overridable for routes that wait longer.
+IDLE_S = int(sys.argv[5]) if len(sys.argv) > 5 else 900
 
 
 def preamble():
@@ -559,7 +621,7 @@ def preamble():
 def pipe(a, b):
     try:
         while True:
-            r, _, x = select.select([a, b], [], [a, b], 900)
+            r, _, x = select.select([a, b], [], [a, b], IDLE_S)
             if x or not r:
                 return
             for s in r:
@@ -619,5 +681,15 @@ def write_relay_meta(path: Path, meta: dict) -> Path:
     return path
 
 
-def relay_argv(python: str, script: Path, sock_path: Path, meta_path: Path) -> list[str]:
-    return [python, str(script), str(sock_path), ep.RELAY_HOST, str(ep.RELAY_PORT), str(meta_path)]
+def relay_argv(python: str, script: Path, sock_path: Path, meta_path: Path,
+               idle_timeout_s: int | None = None) -> list[str]:
+    argv = [python, str(script), str(sock_path), ep.RELAY_HOST, str(ep.RELAY_PORT), str(meta_path)]
+    if idle_timeout_s is not None:
+        argv.append(str(int(idle_timeout_s)))
+    return argv
+
+
+def max_route_idle_s(routes: dict[str, ReverseRoute] | None = None) -> int:
+    """Relay idle budget that will not reap a connection the proxy still allows."""
+    rs = REVERSE_ROUTES if routes is None else routes
+    return max([IDLE_TIMEOUT_S, *(r.idle_timeout_s for r in rs.values())]) + 300

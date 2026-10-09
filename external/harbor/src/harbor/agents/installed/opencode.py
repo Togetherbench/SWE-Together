@@ -340,6 +340,10 @@ class OpenCode(BaseInstalledAgent):
             # SWE-Together: STS credentials also need AWS_SESSION_TOKEN.
             keys.extend(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
                          "AWS_REGION", "AWS_DEFAULT_REGION"])
+        elif provider == "vllm":
+            # SWE-Together: self-hosted OpenAI-compatible server registered as a
+            # custom opencode provider; the key is the egress relay placeholder.
+            keys.append("VLLM_API_KEY")
         elif provider == "anthropic":
             keys.append("ANTHROPIC_API_KEY")
         elif provider == "azure":

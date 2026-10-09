@@ -1,0 +1,6 @@
+# Serving env for the `vllm` agent backend (conda create -n swt-vllm python=3.12 && pip install -r this).
+# Versions follow the vLLM recipe for GLM-5.3 (recipes.vllm.ai/zai-org/GLM-5.3); newer models may
+# need a newer vllm — bump here and in docs/self_hosting.md together.
+vllm==0.29.*
+transformers>=5.15.0
+huggingface_hub[hf_transfer]>=0.34

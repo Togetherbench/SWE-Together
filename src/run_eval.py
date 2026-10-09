@@ -85,8 +85,9 @@ from sandbox_config import load_dotenv, stage1_sandbox  # noqa: E402
 
 load_dotenv(REPO_ROOT / ".env")
 
+import egress_policy  # noqa: E402
 import llm_config  # noqa: E402
-from llm_config import BACKENDS, resolve_seat_model, seat_backend, to_litellm_model, to_opencode_model  # noqa: E402
+from llm_config import BACKENDS, backends_for, pinned_route_model, resolve_seat_model, seat_backend, to_litellm_model, to_opencode_model  # noqa: E402
 
 
 AGENT_IMPORT_PATH = "user_agent.agents.user_enabled_claude_code:UserEnabledClaudeCode"
@@ -411,6 +412,12 @@ def build_agent_env(model_arg: str, action_model: str, action_key: str) -> dict[
         env["AWS_DEFAULT_REGION"] = env["AWS_REGION"]
         return env
 
+    if provider == "vllm":
+        # Self-hosted server reached through the relay's /vllm/ route: the
+        # sandbox holds only the placeholder; the proxy injects SWT_VLLM_API_KEY.
+        env["VLLM_API_KEY"] = action_key or egress_policy.LLM_ROUTE_PLACEHOLDER
+        return env
+
     # Unknown provider — pass key directly
     env["ANTHROPIC_API_KEY"] = action_key
     return env
@@ -602,6 +609,8 @@ def build_trial_config(
                     "CODEX_HOST_AUTH_JSON"):
             if v := os.environ.get(var):
                 opencode_env[var] = v
+        # The self-hosted key (if any) is only ever the relay placeholder in the
+        # sandbox; build_agent_env sets it and SWT_VLLM_API_KEY stays host-side.
         if os.environ.get("SWT_EGRESS_ENFORCED") == "1":
             # Under egress enforcement the OpenRouter key stays on the host: the
             # wrapper points opencode's openrouter provider at the relay's
@@ -612,8 +621,14 @@ def build_trial_config(
             # routed via CONNECT and still need their credential in the sandbox.
             opencode_env.pop("GITHUB_TOKEN", None)
             if action_model.startswith("openrouter/") and "OPENROUTER_API_KEY" in opencode_env:
-                import egress_policy
                 opencode_env["OPENROUTER_API_KEY"] = egress_policy.OPENROUTER_PLACEHOLDER
+            if action_model.startswith("vllm/"):
+                # A self-hosted run has no route for any vendor API; keys for them
+                # would be inert at best and a leak at worst.
+                for var in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY",
+                            "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "XAI_API_KEY", "DEEPSEEK_API_KEY"):
+                    opencode_env.pop(var, None)
+                opencode_env["VLLM_API_KEY"] = egress_policy.LLM_ROUTE_PLACEHOLDER
         agent_env_final = opencode_env
     else:
         import_path = AGENT_IMPORT_PATH
@@ -814,7 +829,7 @@ async def main():
     # but the default OR token has been flaky (401 "User not found").
     parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview",
                         help="User sim model (registry name or provider/model string)")
-    parser.add_argument("--user-sim-backend", default=None, choices=list(BACKENDS),
+    parser.add_argument("--user-sim-backend", default=None, choices=list(backends_for("user_sim")),
                         help="Backend for a registry-named --user-model. Default: "
                              "$SWT_USER_SIM_BACKEND > $SWT_LLM_BACKEND > native.")
     parser.add_argument("--tag", required=True, help="Short tag for this run")
@@ -828,6 +843,13 @@ async def main():
                         help="Coding agent type. Default claude-code. Use 'codex' for "
                              "user_enabled_codex (gpt-5.x via OAuth/OpenAI direct or OR).")
     parser.add_argument("--agent-timeout", type=int, default=None, help="Agent timeout in seconds")
+    parser.add_argument("--agent-timeout-note", default=None,
+                        help="recorded in the manifest when --agent-timeout deviates from the protocol default "
+                             "(e.g. a self-hosted server's measured per-step latency)")
+    parser.add_argument("--trial-budget", type=int, default=None,
+                        help="wrapper wall-clock budget per trial in seconds (TRIAL_BUDGET_SEC, default 5400); "
+                             "the multi-turn loop stops without an error when it runs out, so raise it together "
+                             "with --agent-timeout when the LLM endpoint is slower than a vendor API")
     parser.add_argument("--reasoning-effort", default=None,
                         choices=["low", "medium", "high"],
                         help="Reasoning effort for mini-swe-agent: routes through "
@@ -863,9 +885,18 @@ async def main():
     parser.add_argument("--allow-porous-sandbox", action="store_true",
                         help="permit a leaderboard trials root (trials/canonical_*) on a backend "
                              "without enforced egress (e2b/docker, or --no-egress-enforcement)")
+    parser.add_argument("--vllm-endpoint", default=None,
+                        help="vllm backend: the serve job's endpoint.json, its log dir, or a base URL "
+                             "(default: $SWT_VLLM_ENDPOINT / $SWT_VLLM_BASE_URL)")
+    parser.add_argument("--vllm-wait-s", type=float, default=3600,
+                        help="vllm backend: how long to wait for the server to list the model (default 3600)")
     args = parser.parse_args()
     # One top-level switch: --env-type > SWT_SANDBOX (.env) > e2b.
     args.env_type = stage1_sandbox(args.env_type)
+    if args.trial_budget:
+        # read by user_agent.exec_helpers at import time; the wrappers are imported
+        # lazily (Harbor resolves the agent import path per trial), so this is early enough
+        os.environ["TRIAL_BUDGET_SEC"] = str(args.trial_budget)
 
     # Per-seat backend + registry-name resolution (docs/llm_backends.md). A
     # fully-qualified provider/model string passes through untouched.
@@ -878,6 +909,29 @@ async def main():
     log.info("Seats: agent=%s [%s]  user_sim=%s [%s]",
              agent_seat.model, agent_seat.backend, user_seat.model, user_seat.backend)
     llm_config.warn_if_uncatalogued(agent_seat.model)
+
+    # Self-hosted agent model: find the serve job's endpoint and wait until it
+    # lists the pinned model (the Slurm dependency only guarantees the serve job
+    # has *started*). Also refuse an effort the model's template cannot express.
+    vllm_endpoint = None
+    if agent_seat.backend == "vllm":
+        from serving import registry as serving_registry
+        from serving import vllm_endpoint as vllm_ep
+        served = pinned_route_model(agent_seat.model)
+        spec = serving_registry.spec_for_served_name(served)
+        if spec is None:
+            raise SystemExit(f"{agent_seat.model}: no serving recipe for {served!r} (serving/registry.py)")
+        if args.reasoning_effort and args.reasoning_effort not in spec.efforts:
+            raise SystemExit(f"{served}: --reasoning-effort {args.reasoning_effort!r} is not one of "
+                             f"{spec.efforts}; the chat template would silently map it elsewhere")
+        if args.vllm_endpoint is None and not any(os.environ.get(v) for v in vllm_ep.ENDPOINT_ENV):
+            raise SystemExit("vllm backend needs --vllm-endpoint (the serve job's endpoint.json / log dir / URL) "
+                             "or SWT_VLLM_ENDPOINT in the environment")
+        vllm_endpoint = vllm_ep.wait_ready(args.vllm_endpoint, served, timeout_s=args.vllm_wait_s,
+                                           api_key=os.environ.get(vllm_ep.CREDENTIAL_ENV), log=log.info)
+        if vllm_endpoint.max_model_len:
+            os.environ["SWT_VLLM_MAX_MODEL_LEN"] = str(vllm_endpoint.max_model_len)
+        os.environ["SWT_VLLM_BASE_URL"] = vllm_endpoint.base_url
 
     # Resolve model + key
     action_model, action_key, _env_var = resolve_model(args.model)
@@ -974,23 +1028,30 @@ async def main():
         if not args.no_egress_enforcement:
             from enroot_backend.netns import namespaces_supported
             from llm_config import aws_region
-            from proxies.egress_proxy import EgressProxy
+            from proxies.egress_proxy import EgressProxy, max_route_idle_s
             ok, why = namespaces_supported()
             if not ok:
                 raise SystemExit(f"egress enforcement unavailable on this host ({why}); "
                                  f"pass --no-egress-enforcement only for debugging")
             runtime.prepare()
-            pinned_model = agent_seat.model.split("/", 1)[1] if agent_seat.model.startswith("openrouter/") else None
+            pinned_model = pinned_route_model(agent_seat.model)
+            reverse_routes = None  # default: the OpenRouter route
+            if vllm_endpoint is not None:
+                from serving import vllm_endpoint as vllm_ep
+                reverse_routes = {vllm_ep.ROUTE_PREFIX: vllm_ep.reverse_route(vllm_endpoint)}
             egress_proxy = EgressProxy(
                 runtime.root / "egress.sock", aws_region=aws_region(),
                 fallback_log=runtime.root / "egress-unattributed.log",
                 llm_backend=agent_seat.backend, model=agent_seat.model,
                 llm_models=[pinned_model] if pinned_model else [],
                 ca_dir=runtime.root / "egress-ca",
+                reverse_routes=reverse_routes,
             )
             egress_proxy.start()
             enroot_kwargs["egress_sock"] = str(egress_proxy.sock_path)
             enroot_kwargs["egress_ca"] = str(egress_proxy.ca.ca_pem)
+            enroot_kwargs["egress_routes"] = sorted(egress_proxy.routes)
+            enroot_kwargs["egress_relay_idle_s"] = max_route_idle_s(egress_proxy.routes)
             egress_enforced = True
             os.environ["SWT_EGRESS_ENFORCED"] = "1"
             log.info("  egress: default-deny namespace per container; proxy on %s; llm backend=%s pinned=%s",
@@ -1060,9 +1121,16 @@ async def main():
         "opencode_version": args.opencode_version if args.agent_type == "opencode" else None,
         "env_type": args.env_type,
         "egress_enforced": egress_enforced,
-        "egress_policy_version": __import__("egress_policy").POLICY_VERSION if egress_enforced else None,
+        "egress_policy_version": egress_policy.POLICY_VERSION if egress_enforced else None,
         "allow_porous_sandbox": bool(args.allow_porous_sandbox),
+        # self-hosted agent model: what was served and by which job (the node
+        # address stays out of the shareable manifest)
+        "served_model": vllm_endpoint.served_model if vllm_endpoint else None,
+        "vllm_endpoint": {k: getattr(vllm_endpoint, k) for k in ("job_id", "port", "max_model_len", "vllm_version")}
+        if vllm_endpoint else None,
         "agent_timeout": args.agent_timeout,
+        "agent_timeout_note": args.agent_timeout_note,
+        "trial_budget_sec": int(os.environ.get("TRIAL_BUDGET_SEC", "5400")),
         "tag": args.tag,
         "workers": args.workers,
         "trials_dir": str(trials_dir),

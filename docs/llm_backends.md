@@ -15,6 +15,7 @@ served by a different backend, chosen independently.
 | `native` | the vendor's own API | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY` |
 | `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
 | `bedrock` | AWS Bedrock | AWS credentials (see below) |
+| `vllm` | agent only: a self-hosted OpenAI-compatible vLLM server on the cluster ([self-hosting](self_hosting.md)) | optional `SWT_VLLM_API_KEY`, host-side only — the sandbox holds a placeholder and the egress relay injects the key |
 | `codex` | judge only: `codex exec` with ChatGPT OAuth | `~/.codex/auth.json` |
 
 `native` reproduces the upstream defaults exactly, so a configuration that sets
@@ -45,25 +46,27 @@ A seat's model is either:
   translated to the id the chosen backend expects; or
 - a **fully-qualified string** with a provider prefix — `openrouter/meta/muse-spark-1.3`,
   `bedrock/global.openai.gpt-5.6-sol`, `gemini/gemini-3.1-pro-preview`,
-  `anthropic/claude-opus-4-6` — used verbatim. The prefix then *is* the backend,
-  so every existing plan file and command line keeps working.
+  `anthropic/claude-opus-4-6`, `vllm/glm-5.3` — used verbatim. The prefix then
+  *is* the backend, so every existing plan file and command line keeps working.
 
-The registry (`src/llm_config.py`, `MODEL_REGISTRY`):
+The registry (`src/llm_config.py`, `MODEL_REGISTRY`; the `vllm` column is the
+served-model name, see [self-hosting](self_hosting.md)):
 
-| Registry name | `openrouter` | `bedrock` | `native` |
-|---|---|---|---|
-| `gpt-5.6-sol` (alias `gpt-5.6`), `-luna`, `-terra` | `openai/gpt-5.6-*` | `global.openai.gpt-5.6-*` | — |
-| `gpt-6-astra` (alias `gpt-6`) | `openai/gpt-6-astra` | `global.openai.gpt-6-astra` | — |
-| `grok-4.6` (alias `grok-4-6`) | `x-ai/grok-4.6` | `global.xai.grok-4.6` | — |
-| `claude-opus-4.6` | `anthropic/claude-opus-4.6` | `global.anthropic.claude-opus-4-6-v1` | `claude-opus-4-6` |
-| `claude-opus-4.7` (alias `claude-opus-4-7`) | `anthropic/claude-opus-4.7` | `global.anthropic.claude-opus-4-7` | `claude-opus-4-7` |
-| `claude-opus-4.8` | `anthropic/claude-opus-4.8` | `global.anthropic.claude-opus-4-8` | `claude-opus-4-8` |
-| `claude-opus-5` | `anthropic/claude-opus-5` | `global.anthropic.claude-opus-5` | `claude-opus-5` |
-| `gemini-3.8-flash` | `google/gemini-3.8-flash` | — | `gemini-3.8-flash` |
-| `claude-fable-5`, `claude-fable-5.1` | `anthropic/claude-fable-5[.1]` | `global.anthropic.claude-fable-5[-1]` | `claude-fable-5[-1]` |
-| `claude-haiku-4.5` | `anthropic/claude-haiku-4.5` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` | `claude-haiku-4-5` |
-| `gemini-3.1-pro` | `google/gemini-3.1-pro-preview` | — | `gemini-3.1-pro-preview` |
-| `muse-spark-1.3` | `meta/muse-spark-1.3` | — | — |
+| Registry name | `openrouter` | `bedrock` | `native` | `vllm` |
+|---|---|---|---|---|
+| `gpt-5.6-sol` (alias `gpt-5.6`), `-luna`, `-terra` | `openai/gpt-5.6-*` | `global.openai.gpt-5.6-*` | — | — |
+| `gpt-6-astra` (alias `gpt-6`) | `openai/gpt-6-astra` | `global.openai.gpt-6-astra` | — | — |
+| `grok-4.6` (alias `grok-4-6`) | `x-ai/grok-4.6` | `global.xai.grok-4.6` | — | — |
+| `claude-opus-4.6` | `anthropic/claude-opus-4.6` | `global.anthropic.claude-opus-4-6-v1` | `claude-opus-4-6` | — |
+| `claude-opus-4.7` (alias `claude-opus-4-7`) | `anthropic/claude-opus-4.7` | `global.anthropic.claude-opus-4-7` | `claude-opus-4-7` | — |
+| `claude-opus-4.8` | `anthropic/claude-opus-4.8` | `global.anthropic.claude-opus-4-8` | `claude-opus-4-8` | — |
+| `claude-opus-5` | `anthropic/claude-opus-5` | `global.anthropic.claude-opus-5` | `claude-opus-5` | — |
+| `gemini-3.8-flash` | `google/gemini-3.8-flash` | — | `gemini-3.8-flash` | — |
+| `claude-fable-5`, `claude-fable-5.1` | `anthropic/claude-fable-5[.1]` | `global.anthropic.claude-fable-5[-1]` | `claude-fable-5[-1]` | — |
+| `claude-haiku-4.5` | `anthropic/claude-haiku-4.5` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` | `claude-haiku-4-5` | — |
+| `gemini-3.1-pro` | `google/gemini-3.1-pro-preview` | — | `gemini-3.1-pro-preview` | — |
+| `muse-spark-1.3` | `meta/muse-spark-1.3` | — | — | — |
+| `glm-5.3` (aliases `GLM-5.3`, `glm5.3`) | — | — | — | `glm-5.3` |
 
 Asking for a combination the registry does not offer (`gemini-3.1-pro` on
 `bedrock`) fails at startup with the backends that do offer it. To add a model,
@@ -74,7 +77,10 @@ omits the parameter for them.
 Internally every seat ends up with one fully-qualified string; the three
 clients spell the Bedrock route differently and `llm_config` translates:
 opencode gets `amazon-bedrock/<id>`, LiteLLM gets `bedrock/converse/<id>`,
-Claude Code gets the bare `<id>` with `CLAUDE_CODE_USE_BEDROCK=1`.
+Claude Code gets the bare `<id>` with `CLAUDE_CODE_USE_BEDROCK=1`. A
+self-hosted model keeps `vllm/<served-name>` for opencode (the harness registers
+a `vllm` provider in `opencode.json`) and becomes `hosted_vllm/<served-name>` for
+LiteLLM.
 
 ### Why the `global.` Bedrock ids
 
@@ -258,6 +264,30 @@ i.e. the agent's behaviour changed, not the judge's strictness.
   At list price Fable 5 came to ≈$3.9k and Fable 5.1 ≈$1.8k for similar token
   volumes: Fable 5's cache reads are billed at $1/M vs $0.25/M, and cache reads
   are ~98% of input tokens on agentic trials.
+
+## Self-hosted models (`vllm`)
+
+The `vllm` backend is for open-weights models no vendor serves the way we need
+(exact version, reasoning control, list price). A long-lived Slurm job runs
+`vllm serve` and publishes an `endpoint.json`; trial jobs read it, install a
+model-pinned `/vllm/` route on the egress relay and point opencode at
+`http://127.0.0.1:3128/vllm/v1`. From the benchmark's point of view the server
+is just another API: same harness, same user-sim, same judge. It is agent-seat
+only — the judge, user-sim and tagger are infrastructure and stay on vendor
+APIs.
+
+Reasoning effort is sent as the OpenAI `reasoning_effort` field (opencode's
+`@ai-sdk/openai-compatible` provider, `--variant=<effort>`); vLLM forwards it to
+the chat template. Each model's `ServingSpec` (`src/serving/registry.py`) lists
+the efforts its template actually distinguishes — GLM-5.3: `low`, `high`, `max`
+— and a run asking for any other value is refused rather than silently mapped.
+Context and output limits are written into `opencode.json` from the served
+`--max-model-len` (capped by the model's native window) because models.dev never
+lists a private server. Serve at the model's native window, as API-served rows
+run — when one node's KV cache cannot hold it, `launch.py serve --nodes N`
+spans the engine over several nodes (tensor × pipeline parallel, or a wider
+tensor parallel for models without pipeline support). See
+[self-hosting](self_hosting.md) for the runbook.
 
 ## Verdict provenance
 

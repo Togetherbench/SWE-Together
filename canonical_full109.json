@@ -158,6 +158,17 @@
       "reasoning_effort": "high",
       "agent_timeout": 4800,
       "workers": 20
+    },
+    "opencode_glm53_vllm": {
+      "model": "glm-5.3",
+      "agent_backend": "vllm",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 7200,
+      "trial_budget": 7200,
+      "workers": 1,
+      "_note": "self-hosted vLLM 0.29 on 8xH200 nodes, 2 agent streams per server (6-24 single-node TP8 servers at --max-model-len 262144); the 11 trials that overflowed 262K were re-run on 2-node TP16 servers at the native 1048576 window. agent_timeout/trial_budget raised from the 4800/5400 s protocol defaults as a guard against serving latency; both are recorded in every shard manifest."
     }
   },
   "replicates": [

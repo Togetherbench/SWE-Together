@@ -34,6 +34,8 @@ def test_registry_ids_use_expected_grammar():
             assert "/" in spec.openrouter and " " not in spec.openrouter
         if spec.native:
             assert spec.native_provider in lc.NATIVE_PREFIXES
+        if spec.vllm:
+            assert "/" not in spec.vllm and " " not in spec.vllm  # a served-model name, not a repo
         assert spec.backends(), f"{name} offers no backend"
 
 
@@ -83,6 +85,17 @@ def test_seat_backend_validation():
         lc.seat_backend("driver")
 
 
+def test_vllm_backend_is_agent_only():
+    assert "vllm" in lc.BACKENDS and "vllm" not in lc.JUDGE_BACKENDS
+    assert lc.seat_backend("agent", cli_value="vllm") == "vllm"
+    for seat in ("user_sim", "tagger", "judge"):
+        with pytest.raises(SystemExit):
+            lc.seat_backend(seat, cli_value="vllm")
+    # a prefixed vllm/ model string is refused outside the agent seat too
+    with pytest.raises(SystemExit):
+        lc.resolve_seat_model("user_sim", "vllm/glm-5.3", "native")
+
+
 # ── resolution ────────────────────────────────────────────────────────────
 
 def test_resolve_registry_name_per_backend():
@@ -103,6 +116,37 @@ def test_resolve_unsupported_combination_lists_alternatives():
     assert "openrouter" in str(ei.value) and "native" in str(ei.value)
     with pytest.raises(SystemExit):
         lc.resolve_seat_model("agent", "muse-spark-1.3", "native")
+
+
+def test_resolve_self_hosted_model():
+    r = lc.resolve_seat_model("agent", "glm-5.3", "vllm")
+    assert r.model == "vllm/glm-5.3" and r.backend == "vllm" and r.spec is lc.MODEL_REGISTRY["glm-5.3"]
+    assert lc.lookup("GLM-5.3") is r.spec
+    with pytest.raises(SystemExit) as ei:
+        lc.resolve_seat_model("agent", "glm-5.3", "bedrock")
+    assert "vllm" in str(ei.value)
+    passthrough = lc.resolve_seat_model("agent", "vllm/glm-5.3", "native")
+    assert passthrough.backend == "vllm" and passthrough.spec is r.spec
+    assert lc.backend_of("vllm/glm-5.3") == "vllm"
+    assert lc.pinned_route_model("vllm/glm-5.3") == "glm-5.3"
+    assert lc.pinned_route_model("openrouter/x-ai/grok-4.7") == "x-ai/grok-4.7"
+    assert lc.pinned_route_model("bedrock/global.openai.gpt-6-sol") is None
+    assert lc.to_opencode_model("vllm/glm-5.3") == "vllm/glm-5.3"
+    assert lc.to_litellm_model("vllm/glm-5.3") == "hosted_vllm/glm-5.3"
+
+
+def test_serving_specs_match_registry():
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from serving import registry as sr
+    for name, spec in sr.SERVING.items():
+        assert spec.canonical == name
+        ms = lc.MODEL_REGISTRY[name]
+        assert ms.vllm == spec.served_model_name, name
+        assert "high" in spec.efforts and spec.context > 0 and spec.output > 0
+        assert "--served-model-name" not in spec.vllm_args and "--port" not in spec.vllm_args
+    assert sr.spec_for_served_name("glm-5.3").hf_repo == "zai-org/GLM-5.3"
+    with pytest.raises(SystemExit):
+        sr.serving_spec("not-a-model")
 
 
 def test_resolve_fully_qualified_passthrough_overrides_backend():

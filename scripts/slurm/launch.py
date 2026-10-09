@@ -4,7 +4,10 @@
 Subcommands:
 
   prepull   import the task images into the .sqsh store (sbatch array on compute nodes)
+  serve     self-hosting: a GPU job that runs `vllm serve` for a registry model and
+            publishes slurm_logs/serve/<tag>_<date>/endpoint.json once healthy
   run       Stage 1: trials via src/run_eval.py --env-type enroot, sharded over an array
+            (`--agent-backend vllm --serve-job <serve log dir>` chains on a serve job)
   judge     Stage 2: eval.run_eval with the enroot judge sandbox, one job
   cleanup   remove stale swt-* containers + the tmpfs base on THIS host
 
@@ -20,6 +23,9 @@ Cluster settings are personal and are NOT in the repo. Put them in ``.env``
     SLURM_PARTITION=...      # --partition   (optional)
     SLURM_EXTRA="..."        # extra #SBATCH lines, ';'-separated (optional)
     SWT_CONDA_ENV=swetogether
+    SWT_VLLM_CONDA_ENV=swt-vllm      # serve: env with vllm (scripts/serving/requirements-vllm.txt)
+    SWT_VLLM_WEIGHTS_ROOT=/path      # serve: <root>/<hf repo> holds the downloaded weights
+    SWT_VLLM_API_KEY=...             # optional: vllm --api-key; stays host-side (relay injects it)
 
 What the scripts do: run on one node per array task, ``--gpus=0``, enroot tmpfs
 paths under ``$SWT_ENROOT_BASE/$USER/$SLURM_JOB_ID``, a cleanup trap on
@@ -37,6 +43,14 @@ Examples::
   python scripts/slurm/launch.py run --tag muse13_r1 --shards 12 --submit
   python scripts/slurm/launch.py judge --trials-root trials/muse13_r1 \
       --output-dir results/muse13 --model-tag muse13 --submit
+
+  # self-hosted model (docs/self_hosting.md): one or more serve jobs; shards are
+  # spread round-robin over the servers given, so sizing is servers × --workers streams
+  python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53a --submit
+  python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53b --submit
+  python scripts/slurm/launch.py run --tag glm53_r1 --model glm-5.3 --agent-backend vllm \
+      --serve-job slurm_logs/serve/glm53a_<date> --serve-job slurm_logs/serve/glm53b_<date> \
+      --shards 12 --concurrent 6 --workers 2 --submit
 """
 from __future__ import annotations
 
@@ -109,19 +123,53 @@ def _python_for_conda_env(env: str) -> Path:
     return candidate
 
 
+#: Body of a multi-node serve job. ``{head_cmd}``/``{worker_cmd}`` are the
+#: serving.vllm_server invocations; ``$i`` is the worker's node rank.
+MULTI_NODE_BLOCK = """\
+mapfile -t HOSTS < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+HEAD="${{HOSTS[0]}}"
+NODE_LIST=$(IFS=,; echo "${{HOSTS[*]}}")
+echo "serving {served} from {weights} on {nodes} nodes: $NODE_LIST (head $HEAD)"
+# NCCL over the node fabric (AWS EFA): libfabric + the OFI NCCL plugin live under /opt/amazon
+export LD_LIBRARY_PATH=/opt/amazon/ofi-nccl/lib:/opt/amazon/efa/lib:${{LD_LIBRARY_PATH:-}}
+export FI_PROVIDER=efa FI_EFA_USE_DEVICE_RDMA=1 NCCL_SOCKET_IFNAME=${{NCCL_SOCKET_IFNAME:-eth0}}
+export NCCL_DEBUG=${{NCCL_DEBUG:-WARN}}
+# DeepGEMM JIT-compiles FP8 kernels for the (new) per-rank shapes; its default cache
+# lives under $HOME (shared), and ranks on different hosts racing on the same
+# kernel.cubin fail with "runtime != nullptr". Give every node its own local cache.
+export DG_JIT_CACHE_DIR="/tmp/swt-deep-gemm-$SLURM_JOB_ID"
+export VLLM_HOST_IP="$HEAD"
+PIDS=()
+for i in $(seq 1 $(({nodes} - 1))); do
+  # PYTHON_BIN is a plain shell variable: export what the steps need before srun
+  export PYTHON_BIN HEAD NODE_LIST i
+  srun --nodes=1 --ntasks=1 -w "${{HOSTS[$i]}}" --export=ALL bash -c 'export VLLM_HOST_IP=$(hostname); exec {worker_cmd}' &
+  PIDS+=($!)
+done
+export PYTHON_BIN HEAD NODE_LIST
+srun --nodes=1 --ntasks=1 -w "$HEAD" --export=ALL bash -c 'exec {head_cmd}' &
+PIDS+=($!)
+# if any rank dies the engine is gone: take the rest down so the job ends instead of hanging
+wait -n "${{PIDS[@]}}" || true
+kill "${{PIDS[@]}}" 2>/dev/null || true
+wait
+"""
+
+
 def _header(
     *, job_name: str, log_dir: Path, cpus: int, mem: str, time_limit: str,
     qos: str | None, account: str | None, partition: str | None, extra: str | None,
-    array: str | None,
+    array: str | None, gpus: int = 0, nodes: int = 1,
 ) -> str:
     lines = [
         "#!/bin/bash",
         f"#SBATCH --job-name={job_name}",
-        "#SBATCH --nodes=1",
+        f"#SBATCH --nodes={nodes}",
         "#SBATCH --ntasks-per-node=1",
         f"#SBATCH --cpus-per-task={cpus}",
         f"#SBATCH --mem={mem}",
-        "#SBATCH --gpus=0",
+        # one engine across several nodes needs the same GPU count on each of them
+        f"#SBATCH --gpus-per-node={gpus}" if nodes > 1 else f"#SBATCH --gpus={gpus}",
         f"#SBATCH --time={time_limit}",
         f"#SBATCH --chdir={REPO_ROOT}",
     ]
@@ -153,7 +201,10 @@ def _sbatch_kwargs(args: argparse.Namespace) -> dict:
     }
 
 
-def _preamble(python_bin: Path, conda_env: str) -> str:
+def _preamble(python_bin: Path, conda_env: str, *, enroot: bool = True) -> str:
+    """Job preamble. ``enroot=False`` (the serve job) skips the sandbox block, whose
+    ``NVIDIA_VISIBLE_DEVICES=void`` would hide the GPUs from the model server."""
+    sandbox = f"export SWT_SANDBOX=enroot\n{ENROOT_BLOCK}" if enroot else ""
     return f"""
 set -euo pipefail
 eval "$(conda shell.bash hook)"
@@ -165,8 +216,7 @@ if [ ! -x "$PYTHON_BIN" ]; then echo "python not found: $PYTHON_BIN" >&2; exit 1
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 export PYTHONUNBUFFERED=1
 export PYTHONPATH={shlex.quote(str(REPO_ROOT / "src"))}:${{PYTHONPATH:-}}
-export SWT_SANDBOX=enroot
-{ENROOT_BLOCK}
+{sandbox}
 """
 
 
@@ -201,7 +251,8 @@ def _submit(script: Path, submit: bool) -> int:
     return res.returncode
 
 
-def _common_sbatch_args(p: argparse.ArgumentParser, *, cpus: int, mem: str, time_limit: str) -> None:
+def _common_sbatch_args(p: argparse.ArgumentParser, *, cpus: int, mem: str, time_limit: str,
+                        conda_env: str | None = None) -> None:
     p.add_argument("--cpus", type=int, default=cpus)
     p.add_argument("--mem", default=mem)
     p.add_argument("--time", default=time_limit)
@@ -214,8 +265,8 @@ def _common_sbatch_args(p: argparse.ArgumentParser, *, cpus: int, mem: str, time
     p.add_argument("--sbatch-extra", default=os.environ.get("SLURM_EXTRA") or None,
                    help="extra #SBATCH directives, ';'-separated; use the = form, e.g. "
                         "--sbatch-extra='--constraint=x86;--exclusive' (default: $SLURM_EXTRA)")
-    p.add_argument("--conda-env", default=DEFAULT_CONDA_ENV,
-                   help="conda env name or absolute prefix (default: $SWT_CONDA_ENV or swetogether)")
+    p.add_argument("--conda-env", default=conda_env or DEFAULT_CONDA_ENV,
+                   help=f"conda env name or absolute prefix (default: {conda_env or '$SWT_CONDA_ENV or swetogether'})")
     p.add_argument("--submit", action="store_true", help="actually run sbatch (default: dry-run)")
 
 
@@ -307,6 +358,155 @@ def _egress_preflight(no_enforcement: bool) -> None:
           f"digest {pol.digest()} ({len(pol.allow_hosts)} hosts + {len(pol.allow_suffixes)} suffixes allowlisted)")
 
 
+# ── serve (self-hosted model) ──────────────────────────────────────────────
+
+DEFAULT_VLLM_CONDA_ENV = os.environ.get("SWT_VLLM_CONDA_ENV", "swt-vllm")
+
+
+def _weights_dir(spec, explicit: str | None) -> str:
+    """Local weights dir: explicit flag > $SWT_VLLM_WEIGHTS_ROOT/<hf repo> > the HF repo id
+    (vLLM then downloads into its own cache, which needs internet on the node)."""
+    if explicit:
+        return explicit
+    root = os.environ.get("SWT_VLLM_WEIGHTS_ROOT")
+    if root:
+        cand = Path(root) / spec.hf_repo
+        if cand.is_dir():
+            return str(cand)
+    return spec.hf_repo
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from serving import registry as serving_registry
+    from serving import vllm_endpoint as vllm_ep
+    spec = serving_registry.serving_spec(args.model)
+    ms = llm_config.lookup(args.model)
+    if ms is None or ms.vllm != spec.served_model_name:
+        raise SystemExit(f"{args.model}: registry entry and serving recipe disagree on the served name")
+    py = _python_for_conda_env(args.conda_env)
+    vllm_bin = py.parent / "vllm"
+    weights = _weights_dir(spec, args.weights)
+    script, log_dir = _write_script("serve", args.tag, "")
+    handoff = log_dir / vllm_ep.HANDOFF_NAME
+    cmd = [
+        '"$PYTHON_BIN"', "-m", "serving.vllm_server", "serve",
+        "--model", shlex.quote(args.model),
+        "--weights", shlex.quote(weights),
+        "--port", str(args.port),
+        "--handoff", shlex.quote(str(handoff)),
+        "--health-timeout", str(args.health_timeout),
+        "--vllm-bin", shlex.quote(str(vllm_bin)),
+    ]
+    nodes = args.nodes
+    # multi-node default: the model's native window is the point of spending more nodes
+    max_model_len = args.max_model_len or (spec.native_context if nodes > 1 else None)
+    if max_model_len:
+        cmd += ["--max-model-len", str(max_model_len)]
+    # `--extra` is an argparse REMAINDER: everything after it goes to vllm, so the
+    # driver's own multi-node flags must come first.
+    multi = ([] if nodes == 1 else ["--nnodes", str(nodes), "--master-addr", '"$HEAD"'])
+    extra = ["--extra", args.extra_vllm_args] if args.extra_vllm_args else []
+    local_weights = Path(weights).is_dir()
+    common = (
+        ("export HF_HUB_OFFLINE=1\n" if local_weights else "")
+        + 'if [ -n "${SWT_VLLM_API_KEY:-}" ]; then export VLLM_API_KEY="$SWT_VLLM_API_KEY"; fi\n'
+    )
+    if nodes == 1:
+        body = common + f"echo \"serving {spec.served_model_name} from {weights} on $(hostname)\"\n" + " ".join(cmd + extra) + "\n"
+    else:
+        # One engine across the allocation: rank 0 serves the API and publishes the
+        # handoff, the other nodes run headless workers. NCCL crosses nodes over the
+        # fabric plugin found on the compute nodes (AWS EFA here); keep that path
+        # explicit so a missing plugin fails loudly instead of falling back to TCP.
+        head_cmd = " ".join(cmd + multi + ["--node-rank", "0", "--nodes", '"$NODE_LIST"'] + extra)
+        worker_cmd = " ".join(cmd + multi + ["--node-rank", '"$i"'] + extra)
+        body = common + MULTI_NODE_BLOCK.format(
+            served=spec.served_model_name, weights=weights, nodes=nodes, head_cmd=head_cmd, worker_cmd=worker_cmd)
+    content = _header(
+        job_name=f"swt-serve-{args.tag}", log_dir=log_dir, array=None, gpus=args.gpus, nodes=nodes,
+        **_sbatch_kwargs(args),
+    ) + _preamble(py, args.conda_env, enroot=False) + body
+    script.write_text(content)
+    from serving.vllm_server import parallel_degrees
+    tp, pp = parallel_degrees(spec, nodes)
+    print(f"serve: {spec.served_model_name} ({spec.hf_repo}) weights={weights} tp={tp}"
+          + (f" pp={pp} nodes={nodes}" if nodes > 1 else "")
+          + f" max_model_len={max_model_len or 'model default'}")
+    print(f"handoff → {handoff}")
+    if args.submit:
+        if not vllm_bin.is_file():
+            raise SystemExit(f"serve preflight: {vllm_bin} not found; create the serving env "
+                             f"(scripts/serving/requirements-vllm.txt) or pass --conda-env")
+        if local_weights and not (Path(weights) / "config.json").is_file():
+            raise SystemExit(f"serve preflight: {weights} has no config.json (download incomplete?)")
+        if not local_weights:
+            print(f"serve preflight: {weights} is not a local directory; vLLM will download it on the node")
+        if nodes == 1 and args.gpus < spec.tensor_parallel:
+            raise SystemExit(f"serve preflight: recipe needs tensor_parallel={spec.tensor_parallel} GPUs, --gpus {args.gpus}")
+        if nodes > 1:
+            from serving.vllm_server import parallel_degrees
+            tp, pp = parallel_degrees(spec, nodes)
+            if nodes * args.gpus != tp * pp:
+                raise SystemExit(f"serve preflight: recipe is TP {tp} x PP {pp} = {tp * pp} GPUs; "
+                                 f"--nodes {nodes} x --gpus {args.gpus} = {nodes * args.gpus}")
+            if not local_weights:
+                raise SystemExit("serve preflight: multi-node serving needs local weights (every node loads them)")
+    return _submit(script, args.submit)
+
+
+def _vllm_preflight(agent, serve_jobs: list[str] | None, endpoint: str | None,
+                    reasoning_effort: str | None = None) -> list[tuple[str, str | None]]:
+    """For a vllm agent: locate the endpoint source(s) and the serve job(s) to depend on.
+
+    Returns ``[(endpoint_spec, dependency_job_id), ...]`` — one per serve job (shards
+    are dealt round-robin across them) or a single entry for ``--vllm-endpoint``.
+    If a handoff already exists the server is probed from the login node so a
+    wrong served name fails here.
+    """
+    if agent.backend != "vllm":
+        return []
+    from serving import registry as serving_registry
+    from serving import vllm_endpoint as vllm_ep
+    served = llm_config.pinned_route_model(agent.model)
+    recipe = serving_registry.spec_for_served_name(served)
+    if recipe is None:
+        raise SystemExit(f"vllm preflight: no serving recipe for {served!r} (src/serving/registry.py)")
+    if reasoning_effort and reasoning_effort not in recipe.efforts:
+        raise SystemExit(f"vllm preflight: {served} distinguishes reasoning efforts {recipe.efforts}; "
+                         f"--reasoning-effort {reasoning_effort!r} would be mapped silently by its chat template")
+    sources: list[tuple[str | None, str | None]] = []
+    for serve_job in serve_jobs or []:
+        sj = Path(serve_job)
+        if not sj.is_absolute():
+            sj = REPO_ROOT / sj
+        if not sj.is_dir():
+            raise SystemExit(f"vllm preflight: --serve-job {serve_job} is not a serve log dir")
+        jid = sj / "job_id.txt"
+        sources.append((str(sj / vllm_ep.HANDOFF_NAME), jid.read_text().strip() if jid.is_file() else None))
+    if endpoint:
+        sources.append((endpoint, None))
+    if not sources:
+        if not any(os.environ.get(v) for v in vllm_ep.ENDPOINT_ENV):
+            raise SystemExit("vllm preflight: --agent-backend vllm needs --serve-job <serve log dir> (repeatable), "
+                             "--vllm-endpoint, or SWT_VLLM_ENDPOINT")
+        sources.append((None, None))
+    for spec, job_id in sources:
+        ep = vllm_ep.load(spec, served)
+        if ep is None:
+            print(f"vllm preflight: handoff not published yet ({spec or 'env'}); the job will wait for it"
+                  + (f" (dependency on serve job {job_id})" if job_id else ""))
+            continue
+        try:
+            ids = vllm_ep.probe(ep, os.environ.get(vllm_ep.CREDENTIAL_ENV))
+        except Exception as exc:  # noqa: BLE001 - any failure here is "not reachable from the login node"
+            print(f"vllm preflight: {ep.base_url} not reachable from here ({exc.__class__.__name__}); the job will wait")
+        else:
+            if served not in ids:
+                raise SystemExit(f"vllm preflight: {ep.base_url} serves {ids}, not {served!r}")
+            print(f"vllm preflight: {ep.base_url} serves {served} (job {ep.job_id or '?'})")
+    return [(spec or "", job_id) for spec, job_id in sources]
+
+
 # ── run (Stage 1) ───────────────────────────────────────────────────────────────────
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -319,6 +519,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     user = llm_config.resolve_seat_model(
         "user_sim", args.user_model, llm_config.seat_backend("user_sim", args.user_sim_backend))
     print(f"agent: {agent.model} [{agent.backend}]   user_sim: {user.model} [{user.backend}]")
+    vllm_sources = _vllm_preflight(agent, args.serve_job, args.vllm_endpoint, args.reasoning_effort)
     cmd = [
         '"$PYTHON_BIN"', "src/run_eval.py",
         "--model", shlex.quote(agent.model),
@@ -333,6 +534,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     ]
     if args.agent_timeout:
         cmd += ["--agent-timeout", str(args.agent_timeout)]
+    if args.agent_timeout_note:
+        cmd += ["--agent-timeout-note", shlex.quote(args.agent_timeout_note)]
+    if args.trial_budget:
+        cmd += ["--trial-budget", str(args.trial_budget)]
     if args.reasoning_effort:
         cmd += ["--reasoning-effort", args.reasoning_effort]
     if args.opencode_version:
@@ -345,14 +550,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         cmd += ["--no-egress-enforcement"]
     if args.allow_porous_sandbox:
         cmd += ["--allow-porous-sandbox"]
+    endpoint_specs = [spec for spec, _ in vllm_sources if spec]
+    prelude = ""
+    if endpoint_specs:
+        # shard i talks to server i mod N — several serve jobs spread one cohort's load
+        prelude = ("SWT_VLLM_ENDPOINTS=(" + " ".join(shlex.quote(e) for e in endpoint_specs) + ")\n"
+                   'SWT_VLLM_SHARD_ENDPOINT="${SWT_VLLM_ENDPOINTS[$(( ${SLURM_ARRAY_TASK_ID:-0} % ${#SWT_VLLM_ENDPOINTS[@]} ))]}"\n')
+        cmd += ["--vllm-endpoint", '"$SWT_VLLM_SHARD_ENDPOINT"', "--vllm-wait-s", str(args.vllm_wait_s)]
     if args.extra:
         cmd += [args.extra]
-    body = _backend_exports(args) + " ".join(cmd) + "\n"
+    body = _backend_exports(args) + prelude + " ".join(cmd) + "\n"
 
     array = f"0-{args.shards - 1}%{args.concurrent or args.shards}"
+    sbatch = _sbatch_kwargs(args)
+    serve_job_ids = [jid for _, jid in vllm_sources if jid]
+    if serve_job_ids:
+        # start only once every serve job is running; run_eval then waits for health
+        dep = "--dependency=after:" + ":".join(serve_job_ids)
+        sbatch["extra"] = f"{sbatch['extra']};{dep}" if sbatch.get("extra") else dep
     script, log_dir = _write_script("run", args.tag, "")
     content = _header(
-        job_name=f"swt-run-{args.tag}", log_dir=log_dir, array=array, **_sbatch_kwargs(args),
+        job_name=f"swt-run-{args.tag}", log_dir=log_dir, array=array, **sbatch,
     ) + _preamble(py, args.conda_env) + body
     script.write_text(content)
     print(f"trials → {trials_dir}")
@@ -436,6 +654,23 @@ def main() -> int:
     _common_sbatch_args(p, cpus=8, mem="64G", time_limit="04:00:00")
     p.set_defaults(func=cmd_prepull)
 
+    p = sub.add_parser("serve", help="self-hosting: run vllm serve for a registry model (GPU job)")
+    p.add_argument("--model", required=True, help="registry name with a serving recipe (e.g. glm-5.3)")
+    p.add_argument("--tag", required=True, help="names slurm_logs/serve/<tag>_<date>/ (the --serve-job dir)")
+    p.add_argument("--weights", default=None,
+                   help="local weights dir (default: $SWT_VLLM_WEIGHTS_ROOT/<hf repo>, else the HF repo id)")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--max-model-len", type=int, default=None,
+                   help="prompt window to serve (default: the recipe's context limit)")
+    p.add_argument("--extra-vllm-args", default="", help="appended to vllm serve, e.g. '--max-num-seqs 32'")
+    p.add_argument("--health-timeout", type=int, default=3600, help="seconds to wait for the server to load")
+    p.add_argument("--gpus", type=int, default=8, help="GPUs per node")
+    p.add_argument("--nodes", type=int, default=1,
+                   help="nodes per server (vLLM mp multi-node, TP x PP); use the recipe's pipeline_parallel "
+                        "to serve the model's native context window when one node's KV cache is too small")
+    _common_sbatch_args(p, cpus=64, mem="1000G", time_limit="3-00:00:00", conda_env=DEFAULT_VLLM_CONDA_ENV)
+    p.set_defaults(func=cmd_serve)
+
     p = sub.add_parser("run", help="Stage 1 trials (sharded sbatch array)")
     p.add_argument("--tag", required=True)
     p.add_argument("--model", default=DEFAULT_MODEL,
@@ -444,7 +679,7 @@ def main() -> int:
                    help="backend for a registry-named --model (default: $SWT_AGENT_BACKEND > "
                         "$SWT_LLM_BACKEND > native)")
     p.add_argument("--user-model", default=DEFAULT_USER_MODEL)
-    p.add_argument("--user-sim-backend", default=None, choices=list(llm_config.BACKENDS))
+    p.add_argument("--user-sim-backend", default=None, choices=list(llm_config.backends_for("user_sim")))
     p.add_argument("--agent-type", default="opencode",
                    choices=["claude-code", "codex", "mini-swe-agent", "opencode"])
     p.add_argument("--agent-timeout", type=int, default=4800)
@@ -462,6 +697,18 @@ def main() -> int:
                    help="debugging only: containers on the host network (refused for trials/canonical_*)")
     p.add_argument("--allow-porous-sandbox", action="store_true",
                    help="knowingly run a leaderboard trials root without enforced egress")
+    p.add_argument("--serve-job", action="append", default=None, metavar="SERVE_DIR",
+                   help="vllm backend: a serve job's slurm_logs/serve/<tag>_<date> dir; adds a Slurm "
+                        "dependency on it and points run_eval at its endpoint.json. Repeat to spread the "
+                        "cohort's shards round-robin over several servers")
+    p.add_argument("--vllm-endpoint", default=None,
+                   help="vllm backend: endpoint.json / serve dir / base URL (alternative to --serve-job)")
+    p.add_argument("--vllm-wait-s", type=int, default=3600, help="vllm backend: how long run_eval waits for health")
+    p.add_argument("--agent-timeout-note", default=None,
+                   help="why --agent-timeout differs from the protocol default; recorded in the run manifest")
+    p.add_argument("--trial-budget", type=int, default=None,
+                   help="wrapper wall-clock budget per trial (TRIAL_BUDGET_SEC, default 5400 s); raise with "
+                        "--agent-timeout when the LLM endpoint is slower than a vendor API")
     _common_sbatch_args(p, cpus=32, mem="128G", time_limit="08:00:00")
     p.set_defaults(func=cmd_run)
 
@@ -474,7 +721,7 @@ def main() -> int:
     p.add_argument("--intent-coverage-workers", type=int, default=5)
     p.add_argument("--tag-model", default=DEFAULT_TAG_MODEL,
                    help="LLM for message tagging + intent coverage (registry name or LiteLLM string)")
-    p.add_argument("--tagger-backend", default=None, choices=list(llm_config.BACKENDS))
+    p.add_argument("--tagger-backend", default=None, choices=list(llm_config.backends_for("tagger")))
     p.add_argument("--judge-backend", default=None, choices=list(llm_config.JUDGE_BACKENDS),
                    help="where `claude --print` gets its model (default: $SWT_JUDGE_BACKEND > "
                         "$SWT_LLM_BACKEND > JUDGE_VIA_OR/JUDGE_VIA_CODEX > native)")

@@ -49,20 +49,24 @@ def judge_timeout_for_task(task_name: str) -> int:
     >= 600`) need a longer judge window: the agentic judge runs the canonical
     `test.sh`, which can itself spend most of the budget compiling/running the
     upstream project before the judge has any time to think.
+
+    SWT_JUDGE_TIMEOUT_SCALE (float, default 1) multiplies the budget; used to
+    re-judge trials whose first judge attempt hit the limit without a verdict.
     """
+    scale = float(os.environ.get("SWT_JUDGE_TIMEOUT_SCALE", "1") or 1)
     task_toml = TASKS_DIR / task_name / "task.toml"
     if not task_toml.exists():
-        return JUDGE_TIMEOUT_SEC
+        return int(JUDGE_TIMEOUT_SEC * scale)
     try:
         # Lightweight regex scan — avoid importing toml just for one field.
         text = task_toml.read_text()
         import re
         m = re.search(r"build_timeout_sec\s*=\s*([0-9.]+)", text)
         if m and float(m.group(1)) >= 600:
-            return JUDGE_TIMEOUT_SEC_HEAVY
+            return int(JUDGE_TIMEOUT_SEC_HEAVY * scale)
     except Exception:
         pass
-    return JUDGE_TIMEOUT_SEC
+    return int(JUDGE_TIMEOUT_SEC * scale)
 
 
 def template_alias(task_name: str) -> str:

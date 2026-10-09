@@ -43,7 +43,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3  # v3: the run's LLM reverse routes are part of the policy digest
 
 #: Where the in-namespace relay listens; the sandbox's proxy env points here.
 RELAY_HOST = "127.0.0.1"
@@ -53,9 +53,11 @@ RELAY_PORT = 3128
 CA_CERT_PATH = "/etc/swt-egress-ca.pem"
 CA_BUNDLE_PATH = "/etc/swt-egress-bundle.pem"
 
-#: Sandbox-side stand-in for the OpenRouter key; the proxy swaps in the real one
-#: on the ``/openrouter/`` route (and only for the pinned model).
-OPENROUTER_PLACEHOLDER = "swt-egress-proxy"
+#: Sandbox-side stand-in for an LLM-route credential; the proxy swaps in the real
+#: one on the route (and only for the pinned model). The same placeholder serves
+#: the OpenRouter key and a self-hosted server's API key.
+LLM_ROUTE_PLACEHOLDER = "swt-egress-proxy"
+OPENROUTER_PLACEHOLDER = LLM_ROUTE_PLACEHOLDER
 
 #: Hosts every trial may reach, by group. ``llm`` is *not* here: which LLM API a
 #: sandbox may reach depends on the run's backend (see :func:`llm_hosts`); for
@@ -101,10 +103,11 @@ PROVIDER_HOSTS: dict[str, frozenset[str]] = {
 def llm_hosts(llm_backend: str | None, model: str | None, aws_region: str | None) -> tuple[set[str], set[str]]:
     """``(hosts, suffixes)`` the run's LLM seat needs to reach by CONNECT.
 
-    * ``openrouter`` → nothing: opencode is pointed at the relay's ``/openrouter/``
-      route, which pins the model and injects the key. A CONNECT to
-      ``openrouter.ai`` would let a shell call *any* model (``:online`` variants
-      fetch the web) with a key found in the sandbox.
+    * ``openrouter`` / ``vllm`` → nothing: opencode is pointed at the relay's
+      reverse route, which pins the model and injects the credential. A CONNECT
+      to ``openrouter.ai`` would let a shell call *any* model (``:online``
+      variants fetch the web) with a key found in the sandbox; a self-hosted
+      server's address never enters the sandbox at all.
     * ``bedrock`` → the regional runtime endpoint (SigV4 cannot be injected).
     * ``native``/proxied → the one vendor host for the model's provider prefix.
     """
@@ -112,10 +115,22 @@ def llm_hosts(llm_backend: str | None, model: str | None, aws_region: str | None
     suffixes: set[str] = set()
     if llm_backend == "bedrock":
         suffixes.add(f"bedrock-runtime.{aws_region or 'us-west-2'}.amazonaws.com")
+    elif llm_backend in ("openrouter", "vllm"):
+        pass
     elif llm_backend in (None, "native", "proxied") and model:
         prefix = model.split("/", 1)[0].lower() if "/" in model else ""
         hosts |= PROVIDER_HOSTS.get(prefix, frozenset())
     return hosts, suffixes
+
+
+#: Relay prefixes a backend reaches its model through (see
+#: :mod:`proxies.egress_proxy` ``ReverseRoute``). Part of the policy digest so a
+#: recorded policy says which LLM route the run had.
+LLM_ROUTES: dict[str, tuple[str, ...]] = {"openrouter": ("/openrouter/",), "vllm": ("/vllm/",)}
+
+
+def llm_routes_for(llm_backend: str | None) -> tuple[str, ...]:
+    return LLM_ROUTES.get(llm_backend or "", ())
 
 #: Known answer-leak vectors. Denied even if a task.toml asks for them, and the
 #: reason is surfaced to the agent in the proxy's 403 body so the transcript shows
@@ -183,6 +198,8 @@ class EgressPolicy:
     allow_suffixes: dict[str, str]  # suffix -> group (matches host and subdomains)
     task_allow: frozenset[str] = field(default_factory=frozenset)
     version: int = POLICY_VERSION
+    #: relay reverse-route prefixes the run's LLM seat uses (none for bedrock/native)
+    llm_routes: tuple[str, ...] = ()
 
     # ── decisions ──────────────────────────────────────────────────────────
     def decide(self, host: str) -> Decision:
@@ -216,6 +233,7 @@ class EgressPolicy:
             "task_allow": sorted(self.task_allow),
             "leak_vectors": dict(sorted(LEAK_VECTORS.items())),
             "relay": f"{RELAY_HOST}:{RELAY_PORT}",
+            "llm_routes": list(self.llm_routes),
         }
 
     def digest(self) -> str:
@@ -229,7 +247,7 @@ class EgressPolicy:
 
     def with_task_allow(self, hosts: list[str]) -> "EgressPolicy":
         cleaned = validate_task_allow(hosts)
-        return EgressPolicy(self.allow_hosts, self.allow_suffixes, frozenset(cleaned), self.version)
+        return EgressPolicy(self.allow_hosts, self.allow_suffixes, frozenset(cleaned), self.version, self.llm_routes)
 
 
 def leak_vector(host: str) -> str | None:
@@ -284,7 +302,7 @@ def default_policy(aws_region: str | None = None, llm_backend: str | None = None
     lh, ls = llm_hosts(llm_backend, model, aws_region)
     hosts.update({h: "llm" for h in lh})
     suffixes.update({s: "llm" for s in ls})
-    return EgressPolicy(hosts, suffixes)
+    return EgressPolicy(hosts, suffixes, llm_routes=llm_routes_for(llm_backend))
 
 
 def policy_for_task(task_dir: Path | None, aws_region: str | None = None,

@@ -84,6 +84,7 @@ class EgressNamespace:
         meta: dict,
         log_dir: Path,
         python: str | None = None,
+        relay_idle_s: int | None = None,
     ) -> None:
         self.container_name = container_name
         self.sock_path = Path(sock_path)
@@ -91,6 +92,8 @@ class EgressNamespace:
         self.meta = dict(meta)
         self.log_dir = Path(log_dir)
         self.python = python or sys.executable
+        #: relay idle budget; the proxy's per-route timeout stays the real limit
+        self.relay_idle_s = relay_idle_s
         self._proc: subprocess.Popen | None = None
 
     @property
@@ -121,7 +124,8 @@ class EgressNamespace:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         ip = _ip_binary()
         write_relay_meta(self.meta_path, self.meta)
-        relay = " ".join(_q(a) for a in relay_argv(self.python, self.relay_script, self.sock_path, self.meta_path))
+        relay = " ".join(_q(a) for a in relay_argv(self.python, self.relay_script, self.sock_path, self.meta_path,
+                                                   self.relay_idle_s))
         argv = ["unshare", "-Urn", "--map-root-user", "--", "sh", "-c", f"{ip} link set lo up && exec {relay}"]
         env = dict(os.environ)
         env[CONTAINER_ENV_MARKER] = self.container_name  # so kill_container_processes() finds it
@@ -195,8 +199,15 @@ def _q(s: str) -> str:
 
 # ── in-container self-test ───────────────────────────────────────────────────
 
-SELFTEST_ALLOWED_URL = f"http://{ep.RELAY_HOST}:{ep.RELAY_PORT}/openrouter/api/v1/models"
-SELFTEST_PIN_URL = f"http://{ep.RELAY_HOST}:{ep.RELAY_PORT}/openrouter/api/v1/chat/completions"
+#: LLM-route probe targets by relay prefix: (models listing, chat completions).
+#: The self-test probes whichever route the run installed.
+SELFTEST_ROUTE_PATHS: dict[str, tuple[str, str]] = {
+    "/openrouter/": ("/openrouter/api/v1/models", "/openrouter/api/v1/chat/completions"),
+    "/vllm/": ("/vllm/v1/models", "/vllm/v1/chat/completions"),
+}
+_RELAY = f"http://{ep.RELAY_HOST}:{ep.RELAY_PORT}"
+SELFTEST_ALLOWED_URL = _RELAY + SELFTEST_ROUTE_PATHS["/openrouter/"][0]
+SELFTEST_PIN_URL = _RELAY + SELFTEST_ROUTE_PATHS["/openrouter/"][1]
 SELFTEST_DENIED_URLS = (
     "https://cdn.jsdelivr.net/gh/hutusi/amytis@main/README.md",
     "https://github.com/",
@@ -205,21 +216,24 @@ SELFTEST_DENIED_URLS = (
 )
 
 
-def selftest_script() -> str:
+def selftest_script(routes: list[str] | None = None) -> str:
     """Shell run *inside* the container; prints one ``key=value`` per line.
 
     For HTTPS targets curl tunnels through the proxy with CONNECT; a refused
     tunnel shows up as ``%{http_connect}`` (403) while ``%{http_code}`` is 000.
     The allowed probe uses the relay's LLM route (plain HTTP, no credential), and
     the pin probe posts a web-enabled foreign model to it, which must be refused.
+    ``routes`` names the relay prefixes this run installed (default: OpenRouter).
     """
+    prefix = next((r for r in (routes or []) if r in SELFTEST_ROUTE_PATHS), "/openrouter/")
+    models_path, chat_path = SELFTEST_ROUTE_PATHS[prefix]
     lines = [
         "set +e",
-        f"echo allowed=$(curl -s -o /dev/null -w '%{{http_code}}' --noproxy '*' --max-time 25 {SELFTEST_ALLOWED_URL})",
+        f"echo allowed=$(curl -s -o /dev/null -w '%{{http_code}}' --noproxy '*' --max-time 25 {_RELAY}{models_path})",
         "echo pin=$(curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 25 -X POST "
         "-H 'Content-Type: application/json' -H 'Authorization: Bearer swt-egress-proxy' "
         "-d '{\"model\":\"google/gemini-2.5-flash:online\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' "
-        f"{SELFTEST_PIN_URL})",
+        f"{_RELAY}{chat_path})",
     ]
     for i, url in enumerate(SELFTEST_DENIED_URLS):
         lines.append(f"echo denied{i}=$(curl -s -o /dev/null -w '%{{http_connect}}' --max-time 15 {url})")

@@ -55,6 +55,8 @@ class EnrootEnvironment(BaseEnvironment):
         enroot_base: str | None = None,
         egress_sock: str | None = None,
         egress_ca: str | None = None,
+        egress_routes: list[str] | None = None,
+        egress_relay_idle_s: int | None = None,
         *args,
         **kwargs,
     ):
@@ -72,6 +74,9 @@ class EnrootEnvironment(BaseEnvironment):
         self._runtime = EnrootRuntime(base=enroot_base)
         self._egress_sock = Path(egress_sock) if egress_sock else None
         self._egress_ca = Path(egress_ca) if egress_ca else None
+        #: relay route prefixes the run installed (drives the self-test's pin probe)
+        self._egress_routes = list(egress_routes or [])
+        self._egress_relay_idle_s = egress_relay_idle_s
         self._container: EnrootContainer | None = None
 
         dockerfile = self.environment_dir / "Dockerfile"
@@ -159,6 +164,7 @@ class EnrootEnvironment(BaseEnvironment):
                 },
                 log_dir=self._runtime.root / "relay-logs",
                 python=sys.executable,
+                relay_idle_s=self._egress_relay_idle_s,
             )
 
         self._container = EnrootContainer(
@@ -209,7 +215,7 @@ class EnrootEnvironment(BaseEnvironment):
         the agent runs (the sentinel maps it to ``infra_failed``), never runs porous.
         """
         container = self._require()
-        res = await container.exec(selftest_script(), cwd="/", timeout=SELFTEST_TIMEOUT_S)
+        res = await container.exec(selftest_script(self._egress_routes or None), cwd="/", timeout=SELFTEST_TIMEOUT_S)
         result = evaluate_selftest(res.stdout)
         result["exec_rc"] = res.return_code
         result["stderr_tail"] = res.stderr[-500:]
