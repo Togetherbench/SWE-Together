@@ -86,18 +86,25 @@ nerfed below that. On one 8×H200 node a 750B-class FP8 model leaves ~28 GiB per
 GPU for KV cache — about 544K tokens in total for GLM-5.3, i.e. two sequences
 at 262K and not even one at its native 1,048,576 (~44 GiB of KV per sequence).
 
-`launch.py serve --nodes 2` spans one engine over two nodes (tensor parallel ×
-pipeline parallel, `ServingSpec.pipeline_parallel`), halving the weights per
-GPU and freeing enough KV for the native window, which becomes the default
-`--max-model-len` for multi-node servers (`ServingSpec.native_context`). vLLM's
-Ray-free `mp` multi-node mode is used: rank 0 serves the API and publishes the
-handoff, the other node runs `--headless`; NCCL crosses nodes over the fabric
-plugin on the compute nodes (AWS EFA under `/opt/amazon`). Expect roughly one
-long-context stream per two-node server; pass `--extra-vllm-args '--max-num-seqs 4'`.
+`launch.py serve --nodes 2` spans one engine over two nodes, halving the
+weights per GPU and freeing enough KV for the native window, which becomes the
+default `--max-model-len` for multi-node servers (`ServingSpec.native_context`).
+The engine is split as tensor parallel × pipeline parallel when the vLLM model
+class supports pipeline stages; a model without `SupportsPP` (GLM-5.3) instead
+runs a wider tensor parallel across the nodes (`ServingSpec.multi_node_tensor_parallel`,
+16 for GLM-5.3). vLLM's Ray-free `mp` multi-node mode is used: rank 0 serves the
+API and publishes the handoff, the other node runs `--headless`; NCCL crosses
+nodes over the fabric plugin on the compute nodes (AWS EFA under `/opt/amazon`).
+Each node gets its own DeepGEMM JIT cache (`DG_JIT_CACHE_DIR` under `/tmp`):
+ranks on different hosts compiling the new per-rank FP8 kernel shapes into the
+shared `$HOME/.cache/vllm/deep_gemm` race on the same `kernel.cubin` and both
+engines die with `runtime != nullptr`. Expect roughly one long-context stream
+per two-node server (GLM-5.3 TP16: 1.42M KV tokens, 1.36 full-window sequences);
+pass `--extra-vllm-args '--max-num-seqs 4'`.
 
 ```
 python scripts/slurm/launch.py serve --model glm-5.3 --tag glm53-1m --nodes 2 --submit
-# handoff then records nnodes=2, pipeline_parallel=2, max_model_len=1048576
+# handoff then records nnodes=2, tensor_parallel=16, pipeline_parallel=1, max_model_len=1048576
 ```
 
 If a cohort was run at a reduced window first, trials that compacted
@@ -181,3 +188,6 @@ python -m serving.vllm_server stop --handoff slurm_logs/serve/glm53_<date>
 | agent requests refused with `model not pinned` | the agent asked for a model other than the served one; nothing to fix — that is the pin working. |
 | slow first tokens, agent timeouts | KV budget exhausted: lower `--max-model-len`, `--max-num-seqs`, or shards × workers. |
 | tool calls / reasoning not parsed | check the recipe's `--tool-call-parser` / `--reasoning-parser`; try without speculative decoding (`--extra-vllm-args`) before changing anything else. |
+| multi-node engine dies at start-up with `NotImplementedError` (pipeline parallel) | the model class lacks `SupportsPP`; set `multi_node_tensor_parallel` in its `ServingSpec` so `--nodes N` widens the tensor parallel instead. |
+| multi-node engine dies while compiling kernels with `runtime != nullptr` | DeepGEMM JIT cache shared between hosts; the launcher sets a per-node `DG_JIT_CACHE_DIR` — check it was not overridden. |
+| a trial ends with `Trial budget exceeded` / `exec capped at … (trial budget remaining …)` where the two numbers are equal | the wrapper's `TRIAL_BUDGET_SEC` ran out (default 5400 s). Raise it with `--trial-budget` alongside `--agent-timeout`; it is recorded as `trial_budget_sec` in the manifest. |

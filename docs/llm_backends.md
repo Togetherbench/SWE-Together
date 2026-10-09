@@ -285,7 +285,8 @@ Context and output limits are written into `opencode.json` from the served
 `--max-model-len` (capped by the model's native window) because models.dev never
 lists a private server. Serve at the model's native window, as API-served rows
 run — when one node's KV cache cannot hold it, `launch.py serve --nodes N`
-spans the engine over several nodes (tensor × pipeline parallel). See
+spans the engine over several nodes (tensor × pipeline parallel, or a wider
+tensor parallel for models without pipeline support). See
 [self-hosting](self_hosting.md) for the runbook.
 
 ## Verdict provenance
