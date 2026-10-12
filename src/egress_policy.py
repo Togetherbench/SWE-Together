@@ -74,7 +74,7 @@ ALLOW_GROUPS: dict[str, frozenset[str]] = {
         "registry.npmjs.org", "registry.yarnpkg.com",
         # Rust
         "crates.io", "static.crates.io", "index.crates.io",
-        # Debian/Ubuntu + NodeSource (opencode's apt fallback, `apt-get install ripgrep`)
+        # Debian/Ubuntu + NodeSource (Harbor's stock apt/npm opencode install path)
         "archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com",
         "deb.debian.org", "security.debian.org", "deb.nodesource.com",
     }),

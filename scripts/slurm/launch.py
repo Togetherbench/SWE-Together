@@ -326,17 +326,20 @@ DEFAULT_OPENCODE_VERSION = "1.18.29"
 
 
 def _opencode_preflight(agent_type: str, version: str | None) -> None:
-    """Make sure the pinned opencode binary is in the image-store cache so trials
-    install it with a file copy instead of apt + NodeSource + npm. Downloads on
-    the login node (verified against npm's integrity digest) if missing."""
+    """Make sure the pinned opencode binary and its ripgrep companion are in the
+    image-store cache so trials install them with a file copy instead of apt +
+    NodeSource + npm (opencode's grep/glob need rg, which it would otherwise try
+    to download from the sinkholed github.com). Downloads on the login node
+    (verified against npm's integrity digest / the release's sha256) if missing."""
     if agent_type != "opencode":
         return
     version = version or DEFAULT_OPENCODE_VERSION
     try:
         path = opencode_dist.ensure_cached(version)
+        rg = opencode_dist.ensure_ripgrep_cached()
     except Exception as exc:  # network / integrity / fs — surface, don't queue a doomed job
-        raise SystemExit(f"opencode preflight: could not cache opencode {version}: {exc}") from exc
-    print(f"opencode preflight: {version} cached at {path}")
+        raise SystemExit(f"opencode preflight: could not cache opencode {version} + ripgrep: {exc}") from exc
+    print(f"opencode preflight: {version} cached at {path}; ripgrep {opencode_dist.RIPGREP_VERSION} at {rg}")
 
 
 def _egress_preflight(no_enforcement: bool) -> None:
