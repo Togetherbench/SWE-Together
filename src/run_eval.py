@@ -87,6 +87,7 @@ load_dotenv(REPO_ROOT / ".env")
 
 import egress_policy  # noqa: E402
 import llm_config  # noqa: E402
+import opencode_dist  # noqa: E402
 from llm_config import BACKENDS, backends_for, pinned_route_model, resolve_seat_model, seat_backend, to_litellm_model, to_opencode_model  # noqa: E402
 
 
@@ -1119,6 +1120,9 @@ async def main():
         "agent_backend": agent_seat.backend,
         "user_sim_backend": user_seat.backend,
         "opencode_version": args.opencode_version if args.agent_type == "opencode" else None,
+        # the ripgrep shipped into the sandbox for opencode's grep/glob tools; cohorts
+        # without this field ran with those tools failing on every call
+        "opencode_ripgrep_version": opencode_dist.RIPGREP_VERSION if args.agent_type == "opencode" else None,
         "env_type": args.env_type,
         "egress_enforced": egress_enforced,
         "egress_policy_version": egress_policy.POLICY_VERSION if egress_enforced else None,

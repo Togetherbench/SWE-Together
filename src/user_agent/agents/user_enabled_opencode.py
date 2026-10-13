@@ -535,11 +535,24 @@ class UserEnabledOpenCode(BaseAgent):
             await self._inner.setup(environment)
             return
 
+        # opencode's grep/glob shell out to rg and otherwise download it from
+        # github.com, which the task images sinkhole. Without the companion both
+        # tools fail on every call while still being offered to the model, so a
+        # missing rg is a setup error, not something to fall back from.
+        ripgrep = opencode_dist.cached_ripgrep()
+        if ripgrep is None:
+            raise RuntimeError(
+                f"opencode: no cached ripgrep {opencode_dist.RIPGREP_VERSION} under "
+                f"{opencode_dist.ripgrep_path().parent}; run `python -m opencode_dist "
+                f"{self._opencode_version}` on the host to cache it"
+            )
+
         script = self.logs_dir / "install.sh"
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text(opencode_dist.render_install_script(self._opencode_version))
         await environment.exec(command="mkdir -p /installed-agent")
         await environment.upload_file(source_path=binary, target_path="/installed-agent/opencode")
+        await environment.upload_file(source_path=ripgrep, target_path="/installed-agent/rg")
         await environment.upload_file(source_path=script, target_path="/installed-agent/install.sh")
         result = await environment.exec(command="bash /installed-agent/install.sh")
 

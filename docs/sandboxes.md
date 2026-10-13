@@ -164,6 +164,38 @@ longer depends on apt mirrors, NodeSource or the npm registry. If no cached
 binary exists for the pinned version the wrapper logs a warning and falls back to
 the stock apt/npm script, so unpinned or un-cached setups behave as before.
 
+### ripgrep ships with opencode (its `grep`/`glob` tools need it)
+
+opencode's `grep` and `glob` tools shell out to `rg`, which the opencode binary
+does not bundle. At first use it looks for `rg` on `PATH`, then in its bin dir
+(`$XDG_CACHE_HOME/opencode/bin/rg`, i.e. `~/.cache/opencode/bin/rg`; see
+`opencode debug paths`), and otherwise downloads `ripgrep-15.1.0` from
+`github.com/BurntSushi/ripgrep` —
+which every task image sinkholes to stop answer leakage. No task image ships
+`rg` and neither install path (stock apt/npm or the cached binary) ever
+provided it, so until 2026-10-12 **both tools failed on every call in every
+cohort** (`"ripgrep execution failed"`) while still being offered to the model.
+The cost fell unevenly: models that lean on `grep`/`glob` (GPT-6 Luna / GPT-5.6
+Sol: 7+ calls per trial, often retrying the dead tool) paid more than models that
+fall back to `bash grep` (Claude, GLM: ~1–2 calls per trial, 70–90 % fallback).
+
+`src/opencode_dist.py` therefore caches the exact ripgrep release opencode would
+fetch (`15.1.0`, sha256-verified against the release's published digest) under
+`<SWT_IMAGE_STORE>/tools/ripgrep/15.1.0/linux-x64/rg`, the wrapper uploads it
+next to the opencode binary, and the install script links it onto `PATH`
+(`/usr/local/bin/rg`) and into `/root/.cache/opencode/bin/rg` (both places
+opencode checks before downloading). `opencode debug rg files` / `debug rg search`
+inside a task image exercise exactly the tool path and are the offline check. A missing cached `rg` is a setup error, not a fallback — a cohort
+must not silently run with the tools broken again. The run manifest records
+`opencode_ripgrep_version`; cohorts without that field ran with the defect.
+The GitHub sinkhole is unchanged.
+
+Verified end to end on 2026-10-12 (GPT-6 Luna, two tasks): 76/78 `grep`/`glob`
+calls completed; the two residual errors were a search of a non-existent path
+(`rg` exit 2, reported as "ripgrep execution failed") and an over-long JSON
+record — both genuine tool outcomes, not the missing binary. GitHub remained
+denied throughout. Every cohort published before this date ran with the defect.
+
 ### Setup failures are infrastructure, not model failures
 
 A trial Harbor aborts before the agent's first turn (`AgentSetupTimeoutError`,

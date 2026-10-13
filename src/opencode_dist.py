@@ -18,6 +18,18 @@ Trials then copy it in with ``environment.upload_file`` (already implemented
 by every sandbox backend) instead of running the apt/npm pipeline. Setup
 drops from ~25 s (and ≥360 s when a mirror degrades) to ~2 s, and a cohort no
 longer depends on apt mirrors, NodeSource or npm being healthy.
+
+ripgrep ships alongside. opencode's ``grep``/``glob`` tools shell out to ``rg``,
+which the opencode binary does not bundle: at first use it looks on ``PATH``,
+then in its own data dir (``$XDG_DATA_HOME/opencode/bin/rg``), and otherwise
+downloads a release from github.com. Task images sinkhole github.com and ship
+no ``rg``, so without this companion both tools fail on every call ("ripgrep
+execution failed") while still being offered to the model. The pinned
+ripgrep release is the one opencode itself would fetch; it is cached under::
+
+    <SWT_IMAGE_STORE>/tools/ripgrep/<version>/<platform>/rg
+
+and the install script places it where opencode looks before downloading.
 """
 from __future__ import annotations
 
@@ -38,6 +50,15 @@ NPM_REGISTRY = "https://registry.npmjs.org"
 DEFAULT_PLATFORM = "linux-x64"
 TOOLS_SUBDIR = Path("tools") / "opencode"
 
+#: ripgrep release opencode 1.15–1.18 downloads for itself (``ripgrep-15.1.0-<triple>``).
+RIPGREP_VERSION = "15.1.0"
+RIPGREP_RELEASES = "https://github.com/BurntSushi/ripgrep/releases/download"
+RIPGREP_TRIPLE = {"linux-x64": "x86_64-unknown-linux-musl", "linux-arm64": "aarch64-unknown-linux-gnu"}
+RIPGREP_SUBDIR = Path("tools") / "ripgrep"
+#: In-sandbox location opencode checks before downloading: ``Path.bin`` =
+#: ``$XDG_CACHE_HOME/opencode/bin/rg`` (XDG default ``~/.cache``); trials run as root.
+SANDBOX_RG_PATH = "/root/.cache/opencode/bin/rg"
+
 
 class OpencodeDistError(RuntimeError):
     pass
@@ -55,6 +76,59 @@ def cached_binary(version: str, platform: str = DEFAULT_PLATFORM) -> Path | None
     """Return the cached binary for ``version`` if present and executable."""
     p = binary_path(version, platform)
     return p if p.is_file() and os.access(p, os.X_OK) else None
+
+
+def ripgrep_path(version: str = RIPGREP_VERSION, platform: str = DEFAULT_PLATFORM) -> Path:
+    return image_store_root() / RIPGREP_SUBDIR / version / platform / "rg"
+
+
+def cached_ripgrep(version: str = RIPGREP_VERSION, platform: str = DEFAULT_PLATFORM) -> Path | None:
+    p = ripgrep_path(version, platform)
+    return p if p.is_file() and os.access(p, os.X_OK) else None
+
+
+def _fetch_bytes(url: str, timeout: int = 600) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "swe-together/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def ensure_ripgrep_cached(version: str = RIPGREP_VERSION, platform: str = DEFAULT_PLATFORM,
+                         log=print) -> Path:
+    """Download the ripgrep release tarball opencode would fetch, verify it against
+    the release's published ``.sha256``, and cache the ``rg`` binary. Host only."""
+    if cached := cached_ripgrep(version, platform):
+        return cached
+    triple = RIPGREP_TRIPLE.get(platform)
+    if triple is None:
+        raise OpencodeDistError(f"no ripgrep release triple known for platform {platform!r}")
+    name = f"ripgrep-{version}-{triple}"
+    url = f"{RIPGREP_RELEASES}/{version}/{name}.tar.gz"
+    dest = ripgrep_path(version, platform)
+    log(f"ripgrep: fetching {name}.tar.gz → {dest}")
+    blob = _fetch_bytes(url)
+    published = _fetch_bytes(url + ".sha256", timeout=60).decode().split()[0].strip().lower()
+    actual = hashlib.sha256(blob).hexdigest()
+    if actual != published:
+        raise OpencodeDistError(f"ripgrep tarball sha256 {actual} != published {published}")
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
+        tmp_tgz = Path(tmp) / "rg.tgz"
+        tmp_tgz.write_bytes(blob)
+        with tarfile.open(tmp_tgz) as tf:
+            member = next((m for m in tf.getmembers() if m.isfile() and m.name.endswith("/rg")), None)
+            if member is None:
+                raise OpencodeDistError(f"{name}.tar.gz has no rg binary")
+            src = tf.extractfile(member)
+            tmp_bin = Path(tmp) / "rg"
+            with open(tmp_bin, "wb") as out:
+                shutil.copyfileobj(src, out)
+        tmp_bin.chmod(0o755)
+        (Path(tmp) / "sha256.txt").write_text(f"{published}  {name}.tar.gz\n")
+        os.replace(tmp_bin, dest)
+        os.replace(Path(tmp) / "sha256.txt", dest.parent / "sha256.txt")
+    return dest
 
 
 def _fetch_json(url: str, timeout: int = 60) -> dict:
@@ -124,11 +198,11 @@ def ensure_cached(version: str, platform: str = DEFAULT_PLATFORM,
     return dest
 
 
-def render_install_script(version: str) -> str:
-    """Install script that assumes the binary has already been uploaded to
-    ``/installed-agent/opencode``: link it onto PATH and print the version.
-    No package manager, no network."""
-    return (
+def render_install_script(version: str, ripgrep_version: str | None = RIPGREP_VERSION) -> str:
+    """Install script that assumes the binaries have already been uploaded to
+    ``/installed-agent/``: link opencode onto PATH, put ``rg`` where opencode
+    looks for it, and print both versions. No package manager, no network."""
+    script = (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         "chmod 0755 /installed-agent/opencode\n"
@@ -137,21 +211,39 @@ def render_install_script(version: str) -> str:
         f"[ \"$v\" = {json.dumps(version)} ] || {{ echo \"opencode version mismatch: $v\" >&2; exit 1; }}\n"
         "echo \"opencode $v (pre-fetched binary)\"\n"
     )
+    if ripgrep_version:
+        rg_dir = os.path.dirname(SANDBOX_RG_PATH)
+        script += (
+            "chmod 0755 /installed-agent/rg\n"
+            # opencode resolves rg as: `rg` on PATH → Path.bin → github download; satisfy both
+            # local lookups so neither a PATH quirk nor a future Path.bin move brings the download back
+            "ln -sf /installed-agent/rg /usr/local/bin/rg\n"
+            f"mkdir -p {rg_dir}\n"
+            f"ln -sf /installed-agent/rg {SANDBOX_RG_PATH}\n"
+            f"rv=$({SANDBOX_RG_PATH} --version | head -1 | awk '{{print $2}}')\n"
+            f"[ \"$rv\" = {json.dumps(ripgrep_version)} ] || {{ echo \"ripgrep version mismatch: $rv\" >&2; exit 1; }}\n"
+            "echo \"ripgrep $rv (pre-fetched binary, opencode grep/glob backend)\"\n"
+        )
+    return script
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    ap = argparse.ArgumentParser(description="Cache an opencode CLI binary for network-free trial setup.")
+    ap = argparse.ArgumentParser(description="Cache an opencode CLI binary (and its ripgrep) for network-free trial setup.")
     ap.add_argument("version", help="opencode-ai release, e.g. 1.18.29")
     ap.add_argument("--platform", default=DEFAULT_PLATFORM)
+    ap.add_argument("--ripgrep", default=RIPGREP_VERSION, help="ripgrep release to ship alongside ('' to skip)")
     args = ap.parse_args(argv)
     try:
         path = ensure_cached(args.version, args.platform)
+        rg = ensure_ripgrep_cached(args.ripgrep, args.platform) if args.ripgrep else None
     except (OpencodeDistError, OSError, urllib.error.URLError) as exc:
         print(f"opencode_dist: {exc}")
         return 1
     print(f"opencode {args.version} ({args.platform}) cached at {path}")
+    if rg:
+        print(f"ripgrep {args.ripgrep} ({args.platform}) cached at {rg}")
     return 0
 
 

@@ -135,6 +135,58 @@ def test_install_script_has_no_package_manager_and_pins_version():
     assert '"1.18.29"' in script and "exit 1" in script
 
 
+def test_install_script_places_ripgrep_where_opencode_looks_before_downloading():
+    script = opencode_dist.render_install_script("1.18.29")
+    # opencode resolves rg as: PATH → Path.bin ($XDG_CACHE_HOME/opencode/bin, i.e. ~/.cache) → github
+    # download; verified with `opencode debug paths` inside a task image (bin = /root/.cache/opencode/bin)
+    assert "ln -sf /installed-agent/rg /root/.cache/opencode/bin/rg" in script
+    assert "ln -sf /installed-agent/rg /usr/local/bin/rg" in script
+    assert '"15.1.0"' in script and "ripgrep version mismatch" in script
+    assert "github.com" not in script
+    assert "/installed-agent/rg" not in opencode_dist.render_install_script("1.18.29", ripgrep_version=None)
+
+
+def _fake_rg_tarball(binary: bytes = b"#!/bin/sh\necho 'ripgrep 15.1.0'\n") -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        info = tarfile.TarInfo("ripgrep-15.1.0-x86_64-unknown-linux-musl/rg")
+        info.size = len(binary)
+        info.mode = 0o755
+        tf.addfile(info, io.BytesIO(binary))
+    return buf.getvalue()
+
+
+def test_ensure_ripgrep_cached_verifies_published_sha256(tmp_path, monkeypatch):
+    monkeypatch.setenv("SWT_IMAGE_STORE", str(tmp_path / "store"))
+    blob = _fake_rg_tarball()
+    urls: list[str] = []
+
+    def fake_fetch(url, timeout=600):
+        urls.append(url)
+        if url.endswith(".sha256"):
+            return (hashlib.sha256(blob).hexdigest() + "  ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz\n").encode()
+        return blob
+    monkeypatch.setattr(opencode_dist, "_fetch_bytes", fake_fetch)
+
+    path = opencode_dist.ensure_ripgrep_cached()
+    assert path == tmp_path / "store" / "tools" / "ripgrep" / "15.1.0" / "linux-x64" / "rg"
+    assert path.stat().st_mode & 0o111 and path.read_bytes().startswith(b"#!/bin/sh")
+    assert urls == [
+        "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz",
+        "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz.sha256",
+    ]
+    monkeypatch.setattr(opencode_dist, "_fetch_bytes", lambda *a, **k: pytest.fail("network used on cache hit"))
+    assert opencode_dist.cached_ripgrep() == path
+
+    # tampered tarball → refused, nothing cached
+    monkeypatch.setenv("SWT_IMAGE_STORE", str(tmp_path / "store2"))
+    monkeypatch.setattr(opencode_dist, "_fetch_bytes",
+                        lambda url, timeout=600: b"0" * 64 + b"  x\n" if url.endswith(".sha256") else blob)
+    with pytest.raises(opencode_dist.OpencodeDistError, match="sha256"):
+        opencode_dist.ensure_ripgrep_cached()
+    assert opencode_dist.cached_ripgrep() is None
+
+
 class _FakeEnv:
     def __init__(self):
         self.uploads: list[tuple[str, str]] = []
@@ -158,12 +210,22 @@ def _make_agent(tmp_path, version):
     )
 
 
-def test_wrapper_setup_uploads_cached_binary_instead_of_apt(tmp_path, monkeypatch):
+def _cache_fake_binaries(tmp_path, monkeypatch, *, ripgrep: bool = True):
     monkeypatch.setenv("SWT_IMAGE_STORE", str(tmp_path / "store"))
     binary = opencode_dist.binary_path("1.18.29")
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"ELF")
     binary.chmod(0o755)
+    rg = opencode_dist.ripgrep_path()
+    if ripgrep:
+        rg.parent.mkdir(parents=True)
+        rg.write_bytes(b"ELF")
+        rg.chmod(0o755)
+    return binary, rg
+
+
+def test_wrapper_setup_uploads_cached_binary_instead_of_apt(tmp_path, monkeypatch):
+    binary, rg = _cache_fake_binaries(tmp_path, monkeypatch)
 
     agent = _make_agent(tmp_path, "1.18.29")
     inner_setup_called = []
@@ -176,12 +238,22 @@ def test_wrapper_setup_uploads_cached_binary_instead_of_apt(tmp_path, monkeypatc
     asyncio.run(agent._install_opencode(env))
 
     assert not inner_setup_called, "stock apt/npm path must not run when the binary is cached"
-    assert [t for _, t in env.uploads] == ["/installed-agent/opencode", "/installed-agent/install.sh"]
-    assert env.uploads[0][0] == str(binary)
+    assert [t for _, t in env.uploads] == ["/installed-agent/opencode", "/installed-agent/rg", "/installed-agent/install.sh"]
+    assert env.uploads[0][0] == str(binary) and env.uploads[1][0] == str(rg)
     assert env.commands == ["mkdir -p /installed-agent", "bash /installed-agent/install.sh"]
     assert (tmp_path / "logs" / "setup" / "return-code.txt").read_text() == "0"
     assert "apt-get" not in (tmp_path / "logs" / "install.sh").read_text()
     assert agent.version() == "1.18.29"
+
+
+def test_wrapper_setup_refuses_to_run_without_ripgrep(tmp_path, monkeypatch):
+    # a silent fallback here would reinstate the "grep/glob fail on every call" harness
+    _cache_fake_binaries(tmp_path, monkeypatch, ripgrep=False)
+    agent = _make_agent(tmp_path, "1.18.29")
+    env = _FakeEnv()
+    with pytest.raises(RuntimeError, match="ripgrep 15.1.0"):
+        asyncio.run(agent._install_opencode(env))
+    assert env.uploads == []
 
 
 def test_wrapper_setup_falls_back_when_binary_missing(tmp_path, monkeypatch):
