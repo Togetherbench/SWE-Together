@@ -94,6 +94,10 @@ class ModelSpec:
     #: Name the self-hosted server registers the model under (``--served-model-name``).
     vllm: str | None = None
     supports_temperature: bool = True
+    #: Whether the API accepts ``tool_choice: required`` (Anthropic ``any``). The
+    #: 5.5-generation Claude endpoints reject it (and ``temperature``), so callers
+    #: that need a structured decision fall back to ``auto`` plus prompt wording.
+    supports_forced_tool_choice: bool = True
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
     def id_for(self, backend: str) -> str | None:
@@ -156,10 +160,12 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         ModelSpec("claude-opus-5.5", openrouter="anthropic/claude-opus-5.5",
                   bedrock="global.anthropic.claude-opus-5-5",
                   native="claude-opus-5-5", native_provider="anthropic",
+                  supports_temperature=False, supports_forced_tool_choice=False,
                   aliases=("claude-opus-5-5",)),
         ModelSpec("claude-sonnet-5.5", openrouter="anthropic/claude-sonnet-5.5",
                   bedrock="global.anthropic.claude-sonnet-5-5",
                   native="claude-sonnet-5-5", native_provider="anthropic",
+                  supports_temperature=False, supports_forced_tool_choice=False,
                   aliases=("claude-sonnet-5-5",)),
         ModelSpec("claude-fable-5", openrouter="anthropic/claude-fable-5",
                   bedrock="global.anthropic.claude-fable-5",
@@ -202,6 +208,10 @@ class ResolvedModel:
     @property
     def supports_temperature(self) -> bool:
         return self.spec.supports_temperature if self.spec else True
+
+    @property
+    def supports_forced_tool_choice(self) -> bool:
+        return self.spec.supports_forced_tool_choice if self.spec else True
 
 
 # ── backend selection ────────────────────────────────────────────────────────
@@ -267,6 +277,23 @@ def pinned_route_model(model: str) -> str | None:
 
 def lookup(name: str) -> ModelSpec | None:
     return MODEL_REGISTRY.get(_ALIASES.get(name, name))
+
+
+def spec_for(model: str) -> ModelSpec | None:
+    """Registry entry for a canonical name or any fully-qualified spelling of it
+    (``bedrock/<id>``, ``bedrock/converse/<id>``, ``openrouter/<id>``, ``<provider>/<native>``)."""
+    if (spec := lookup(model)) is not None:
+        return spec
+    provider, rest = split_model(model)
+    if provider is None:
+        return None
+    if provider == BEDROCK_PREFIX and rest.startswith("converse/"):
+        rest = rest[len("converse/"):]
+    for s in MODEL_REGISTRY.values():
+        if (provider, rest) in ((OPENROUTER_PREFIX, s.openrouter), (BEDROCK_PREFIX, s.bedrock),
+                                (VLLM_PREFIX, s.vllm), (s.native_provider, s.native)):
+            return s
+    return None
 
 
 def resolve_seat_model(seat: str, raw: str, backend: str) -> ResolvedModel:

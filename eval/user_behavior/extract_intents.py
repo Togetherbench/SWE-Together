@@ -25,7 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT / "external" / "harbor" / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "external" / "harbor" / "src"))
 
-from harbor.llms.lite_llm import LiteLLM  # noqa: E402
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "extract_intents_system.md"
 # Default extractor model — matches coverage_one.DEFAULT_MODEL (Gemini-3.1-Pro).
@@ -118,8 +117,8 @@ async def extract_one(
     )
 
     sys_prompt = SYSTEM_PROMPT_PATH.read_text()
-    from eval.user_behavior.coverage_one import _prepare_model
-    llm = LiteLLM(model_name=_prepare_model(model), temperature=0.0)
+    from eval.user_behavior.coverage_one import _make_llm
+    llm = _make_llm(model, 0.0)
 
     t0 = time.monotonic()
     resp = await llm.call(

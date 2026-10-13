@@ -1,9 +1,9 @@
 {
-  "_comment": "Canonical full109 run plan: 109 discriminating tasks x the published opencode leaderboard cohorts, 2 replicates each. Used by launch.py. Edit models/replicates/tasks to define your own run; model strings are litellm/harbor-format and need the matching key in .env. `user_model` (global or per-model) overrides run_eval.py's gemini default; the enroot/OpenRouter setup uses openrouter/google/gemini-3.1-pro-preview so only OPENROUTER_API_KEY is needed.",
+  "_comment": "Canonical full109 run plan: 109 discriminating tasks x the published opencode leaderboard cohorts, 2 replicates each. Used by launch.py. Edit models/replicates/tasks to define your own run; model strings are litellm/harbor-format and need the matching key in .env. `user_model` (global or per-model) overrides run_eval.py's default. Protocol default since 2026-10-13: bedrock/global.anthropic.claude-sonnet-5-5 for the user simulator and the tagger / intent-coverage seats; the cohorts listed under `models` that ran before that date used openrouter/google/gemini-3.1-pro-preview for both (see each run manifest's user_model and each verdict's judge_model).",
   "name": "full109",
   "trials_root": "trials/canonical_full109",
   "tasks_root": "tasks",
-  "user_model": "openrouter/google/gemini-3.1-pro-preview",
+  "user_model": "bedrock/global.anthropic.claude-sonnet-5-5",
   "models": {
     "opencode_muse13": {
       "model": "openrouter/meta/muse-spark-1.3",

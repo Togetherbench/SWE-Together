@@ -824,11 +824,10 @@ async def main():
                         help="Where a registry-named agent model is served. Default: "
                              "$SWT_AGENT_BACKEND > $SWT_LLM_BACKEND > native. Ignored when --model "
                              "already carries a provider prefix. See docs/llm_backends.md.")
-    # Default to direct Gemini (matches config.yaml + runner.py + the v0.4.4
-    # DS-Flash / DS-Pro production manifests). The OpenRouter route works too,
-    # pass --user-model openrouter/google/gemini-3.1-pro-preview if needed,
-    # but the default OR token has been flaky (401 "User not found").
-    parser.add_argument("--user-model", default="gemini/gemini-3.1-pro-preview",
+    # Protocol default since 2026-10-13: Claude Sonnet 5.5 on Bedrock (earlier
+    # cohorts: gemini-3.1-pro-preview; the manifest records which one ran). A
+    # Bedrock sim needs no API key — credentials come from bedrock_creds.
+    parser.add_argument("--user-model", default="bedrock/global.anthropic.claude-sonnet-5-5",
                         help="User sim model (registry name or provider/model string)")
     parser.add_argument("--user-sim-backend", default=None, choices=list(backends_for("user_sim")),
                         help="Backend for a registry-named --user-model. Default: "

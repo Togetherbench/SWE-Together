@@ -295,13 +295,35 @@ spans the engine over several nodes (tensor × pipeline parallel, or a wider
 tensor parallel for models without pipeline support). See
 [self-hosting](self_hosting.md) for the runbook.
 
+## The four seats and their protocol defaults
+
+| Seat | What it does | Default model (since 2026-10-13) | Before |
+|---|---|---|---|
+| agent | the model under test, driven by the coding harness | the cohort's model | — |
+| user_sim | role-plays the human each turn (`src/user_agent/user_agent.py`) | `bedrock/global.anthropic.claude-sonnet-5-5`, temperature 0.5 | `openrouter/google/gemini-3.1-pro-preview` |
+| judge | scores the final workspace against the task rubric (`claude --print` in a task sandbox) | `bedrock/global.anthropic.claude-opus-4-6-v1` | same |
+| tagger | post-hoc message tags (User Correction) and intent coverage | `bedrock/global.anthropic.claude-sonnet-5-5`, temperature 0 | `openrouter/google/gemini-3.1-pro-preview` |
+
+The user-sim and tagger defaults moved to Sonnet 5.5 on Bedrock so that a Bedrock
+agent cohort is billed to one account end to end (judge included), and so the
+simulator is pinned to a fixed endpoint rather than an OpenRouter route that can
+change provider over time. Scores are only comparable within one simulator:
+every cohort records which one it used (`user_model` and `user_sim_backend` in
+the run manifest, `user_model_name` in each trial's `config.json`, `judge_model`
+in each `intent_coverage_verdict.json`), and `eval_report.json` rolls them up
+under `seat_models`. The 109 tasks' `oracle_intents.json` were extracted once
+with Gemini 3.1 Pro and are a fixed artifact of the benchmark.
+
 ## Verdict provenance
 
 Each `judge_verdict.json` records `judge_model` (unchanged spelling:
 `claude-opus-4-6`, `or:anthropic/claude-opus-4.6`, `codex:gpt-5.5`, and now
 `bedrock:global.anthropic.claude-opus-4-6-v1`) plus a `judge_backend` field.
+Each `intent_coverage_verdict.json` records the tagger / coverage model as
+`judge_model`; `per_trial.json` carries all three (`judge_model`,
+`coverage_model`, `user_sim_model`) per trial.
 
-## Example: an agent on Bedrock, everything else on OpenRouter
+## Example: an agent on Bedrock, everything else on OpenRouter (pre-2026-10-13 layout)
 
 `.env`:
 
