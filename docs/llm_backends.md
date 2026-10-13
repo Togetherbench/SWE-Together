@@ -56,16 +56,22 @@ served-model name, see [self-hosting](self_hosting.md)):
 |---|---|---|---|---|
 | `gpt-5.6-sol` (alias `gpt-5.6`), `-luna`, `-terra` | `openai/gpt-5.6-*` | `global.openai.gpt-5.6-*` | — | — |
 | `gpt-6-astra` (alias `gpt-6`) | `openai/gpt-6-astra` | `global.openai.gpt-6-astra` | — | — |
+| `gpt-6-sol`, `gpt-6-luna` | `openai/gpt-6-sol`, `openai/gpt-6-luna` | `global.openai.gpt-6-sol`, `global.openai.gpt-6-luna` | — | — |
+| `gpt-6.1-sol` (alias `gpt-6-1-sol`) | `openai/gpt-6.1-sol` | `global.openai.gpt-6.1-sol` | — | — |
 | `grok-4.6` (alias `grok-4-6`) | `x-ai/grok-4.6` | `global.xai.grok-4.6` | — | — |
+| `grok-4.7` (alias `grok-4-7`) | `x-ai/grok-4.7` | — | — | — |
 | `claude-opus-4.6` | `anthropic/claude-opus-4.6` | `global.anthropic.claude-opus-4-6-v1` | `claude-opus-4-6` | — |
 | `claude-opus-4.7` (alias `claude-opus-4-7`) | `anthropic/claude-opus-4.7` | `global.anthropic.claude-opus-4-7` | `claude-opus-4-7` | — |
 | `claude-opus-4.8` | `anthropic/claude-opus-4.8` | `global.anthropic.claude-opus-4-8` | `claude-opus-4-8` | — |
 | `claude-opus-5` | `anthropic/claude-opus-5` | `global.anthropic.claude-opus-5` | `claude-opus-5` | — |
+| `claude-opus-5.5` (alias `claude-opus-5-5`) | `anthropic/claude-opus-5.5` | `global.anthropic.claude-opus-5-5` | `claude-opus-5-5` | — |
+| `claude-sonnet-5.5` (alias `claude-sonnet-5-5`) | `anthropic/claude-sonnet-5.5` | `global.anthropic.claude-sonnet-5-5` | `claude-sonnet-5-5` | — |
 | `gemini-3.8-flash` | `google/gemini-3.8-flash` | — | `gemini-3.8-flash` | — |
 | `claude-fable-5`, `claude-fable-5.1` | `anthropic/claude-fable-5[.1]` | `global.anthropic.claude-fable-5[-1]` | `claude-fable-5[-1]` | — |
 | `claude-haiku-4.5` | `anthropic/claude-haiku-4.5` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` | `claude-haiku-4-5` | — |
 | `gemini-3.1-pro` | `google/gemini-3.1-pro-preview` | — | `gemini-3.1-pro-preview` | — |
 | `muse-spark-1.3` | `meta/muse-spark-1.3` | — | — | — |
+| `kimi-k3` (alias `kimi-k-3`) | `moonshotai/kimi-k3` | `global.moonshotai.kimi-k3` | — | — |
 | `glm-5.3` (aliases `GLM-5.3`, `glm5.3`) | — | — | — | `glm-5.3` |
 
 Asking for a combination the registry does not offer (`gemini-3.1-pro` on
