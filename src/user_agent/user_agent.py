@@ -178,6 +178,11 @@ many turns while the agent works. Only speak when:
 - The agent explicitly asks you something
 - The agent tries to finish but missed requirements
 
+There is no number of messages to reach. The original user's messages are
+context for what you care about and how you talk; do not send one because
+the original user sent one at this point. If the agent is doing fine, stay
+silent for the whole session.
+
 NEVER repeat something you already said — check the conversation history.
 If you've run out of things to say, choose no-op for every remaining turn.
 
@@ -216,7 +221,10 @@ class UserAgent:
     can see what it already said. Each call produces exactly one UserDecision.
     """
 
-    VERSION = "0.11.0"  # see CHANGELOG.md
+    # 0.12.0 (2026-10-13): no message quota — the prompt no longer states a count
+    # or asks for ground-truth messages in order; recorded per trial in
+    # user_decision.json → stats.version so cohorts can be told apart.
+    VERSION = "0.12.0"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
