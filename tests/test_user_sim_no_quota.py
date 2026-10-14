@@ -123,7 +123,7 @@ def test_run_eval_and_runner_share_the_note():
 def test_simulator_version_bumped_for_provenance():
     class _LLM:
         _model_name = "openrouter/google/gemini-3.1-pro-preview"
-    assert UserAgent(_LLM()).get_stats()["version"] == "0.12.0"
+    assert UserAgent(_LLM()).get_stats()["version"] >= "0.12.0"  # 0.12.0 introduced the no-quota prompt
 
 
 def test_text_fallback_strips_action_labels():

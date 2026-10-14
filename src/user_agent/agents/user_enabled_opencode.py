@@ -52,6 +52,7 @@ from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 import opencode_dist
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
+from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -372,17 +373,10 @@ def build_opencode_config_patch_script(
     )
     return script
 
-# What of each tool call to surface to the user-sim in "## Agent activity".
-# The sim role-plays a HUMAN user, who reacts to what a human sees — the agent's
-# natural-language narration (the `text` events) and the visible code changes
-# (the per-turn git diff) — NOT agent-internal tool data. Showing raw ARGS (grep
-# patterns, full file paths) or RESULTS (raw output) lets the sim react to things
-# the original human never saw, hurting fidelity (it could "redirect" on a grep
-# pattern a real user couldn't have known). So we emit only the tool NAME — a
-# thin "the agent is searching/reading/editing" activity indicator, like a UI
-# status line. Flip either flag on only if a faithfulness analysis justifies it.
-_SHOW_TOOL_ARGS = False
-_SHOW_TOOL_RESULTS = False
+# What of each tool call the user-sim sees is decided in user_agent.turn_view
+# (shared by every harness wrapper): the view of a human watching the terminal —
+# commands and their output, files touched, tool errors — not the contents of
+# every file the agent read.
 
 
 def _normalize_content(raw_content: Any) -> str:
@@ -1131,6 +1125,13 @@ class UserEnabledOpenCode(BaseAgent):
                 result = state.get("output") or part.get("output") or part.get("result") or ""
                 if isinstance(result, dict):
                     result = json.dumps(result)
+                # status / exit code / error travel alongside so the view can show
+                # "exit 1" or "error: …" the way a terminal would
+                meta = {"status": state.get("status"), "error": state.get("error")}
+                md = state.get("metadata")
+                if isinstance(md, dict) and md.get("exit") is not None:
+                    meta["exit"] = md.get("exit")
+                events.append(("tool_meta", step_id, meta))
                 events.append(("tool", step_id, (name, args, str(result) if result else "")))
                 continue
             # error / other event types — quietly skipped, mirrors mini-swe-agent
@@ -1139,54 +1140,9 @@ class UserEnabledOpenCode(BaseAgent):
             tail = self._snapshot_recent_output()
             return tail, tail
 
-        # Dedup the two sections by role. Previously the agent's narration was
-        # emitted into BOTH "Agent activity" (as `thinking:`) and "Agent output"
-        # (as `agent:`), duplicating the report. Instead partition:
-        #   - "Agent output" (observation) = the agent's FINAL narration this
-        #     turn — the decision-critical conclusion, kept whole (≤3000).
-        #   - "Agent activity" (trajectory) = everything else — intermediate
-        #     thinking + tool calls + results — with that final report removed.
-        last_text_idx = None
-        for i, ev in enumerate(events):
-            if ev[0] == "text":
-                last_text_idx = i
-
-        steps: list[str] = []
-        for i, (kind, sid, payload) in enumerate(events):
-            if kind == "text":
-                if i == last_text_idx:
-                    continue  # reserved for the observation; don't duplicate
-                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
-                steps.append(f"[{sid}] thinking: {snippet}")
-            else:
-                name, args, result = payload
-                if _SHOW_TOOL_ARGS and args and args != "{}":
-                    if len(args) > 200:
-                        args = args[:200] + "…"
-                    steps.append(f"[{sid}] tool_call({name}): {args}")
-                else:
-                    steps.append(f"[{sid}] tool_call({name})")
-                if _SHOW_TOOL_RESULTS and result:
-                    # 300-char tail keeps the conclusion/error without
-                    # re-flooding the ctx_budget*2 trajectory cap.
-                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
-                    steps.append(f"[{sid}] result: {r}")
-
-        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
-        if len(trajectory) > self._ctx_budget * 2:
-            trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
-
-        if last_text_idx is not None:
-            sid, report = events[last_text_idx][1], events[last_text_idx][2]
-            observation = f"[{sid}] agent: {report[:3000]}"
-        else:
-            # No narration this turn (rare) — surface the last tool result.
-            observation = "(no agent narration this turn)"
-            for kind, sid, payload in reversed(events):
-                if kind == "tool" and payload[2]:
-                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
-                    break
-        return trajectory, observation
+        # One renderer for every harness: the agent's final narration is the
+        # observation, everything before it is the activity log.
+        return render_turn(events, self._ctx_budget)
 
     def _archive_turn_stdout(self, turn: int | str, stdout: str) -> None:
         """Persist the per-turn opencode event stream so prior turns' steps
