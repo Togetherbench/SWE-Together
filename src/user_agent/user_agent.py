@@ -173,7 +173,10 @@ You have:
 ## When to act
 
 Default to no-op. Real users give instructions once, then go silent for
-many turns while the agent works. Only speak when:
+many turns while the agent works. You see what a user at the terminal sees:
+the agent's report, the commands it ran and what they printed, and the diff.
+Judge the report against that evidence — a claim like "all tests pass" is
+only as good as the test output you can see. Only speak when:
 - The session analysis describes a trigger that matches the current situation
 - The agent is clearly stuck in a loop or going down the wrong path
 - The agent explicitly asks you something
@@ -225,7 +228,10 @@ class UserAgent:
     # 0.12.0 (2026-10-13): no message quota — the prompt no longer states a count
     # or asks for ground-truth messages in order; recorded per trial in
     # user_decision.json → stats.version so cohorts can be told apart.
-    VERSION = "0.12.0"
+    # 0.13.0 (2026-10-14): the simulator sees the terminal — commands with their
+    # output, files touched, tool errors (user_agent.turn_view) — instead of tool
+    # names only.
+    VERSION = "0.13.0"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
@@ -404,8 +410,12 @@ class UserAgent:
             # would otherwise blow up every cached turn.
             sections.append(f"\n## Task\n{task[:16000]}")
 
-        sections.append(f"\n## Agent activity (this turn)\n{trajectory}")
-        sections.append(f"\n## Agent output\n{observation}")
+        sections.append(
+            f"\n## What you saw in the terminal (this turn)\n"
+            f"Commands the agent ran with their output, files it touched, tool errors, "
+            f"and its intermediate remarks — check its report below against this.\n{trajectory}"
+        )
+        sections.append(f"\n## Agent's report to you\n{observation}")
 
         # Per-turn incremental git diff — what actually changed on disk this
         # turn (vs end of prior turn). This is the sim's independent channel
