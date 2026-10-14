@@ -41,6 +41,8 @@ from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
+from ..turn_end import TurnEnd
+from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -48,19 +50,8 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4  # allow agent to continue N times without user input before stopping
 
-# What of each tool call to surface to the user-sim in the trajectory snapshot.
-# Kept identical to user_enabled_opencode so both harnesses present the same
-# view to the simulator. The sim role-plays a HUMAN user, who reacts to what a
-# human sees — the agent's natural-language narration (assistant `content`) and
-# the visible code changes (the per-turn git diff) — NOT agent-internal tool
-# data. Showing raw ARGS (grep patterns, file paths) or RESULTS (raw output)
-# lets the sim react to things the original human never saw, hurting fidelity
-# (it could "redirect" on a grep pattern a real user couldn't have known). So we
-# emit only the tool NAME — a thin "the agent is searching/reading/editing"
-# activity indicator. Flip either flag on only if a faithfulness analysis
-# justifies it (and flip the opencode flags in lockstep).
-_SHOW_TOOL_ARGS = False
-_SHOW_TOOL_RESULTS = False
+# What of each tool call the user-sim sees is decided in user_agent.turn_view
+# (shared by every harness wrapper): the view of a human watching the terminal.
 
 
 def _normalize_content(raw_content: Any) -> str:
@@ -465,7 +456,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
         user_enabled_opencode's `_snapshot_latest_turn` so the user simulator
         sees the same shape of input from both harnesses:
           - trajectory ("Agent activity") = intermediate thinking + tool calls
-            (+ results, both gated by _SHOW_TOOL_* flags), with the final report
+            + commands with their output, files touched, tool errors (user_agent.turn_view), with the final report
             removed, tail-capped at ctx_budget*2.
           - observation ("Agent output") = the agent's FINAL narration this turn
             (the decision-critical conclusion), kept whole up to 3000 chars.
@@ -521,52 +512,9 @@ class UserEnabledMiniSweAgent(BaseAgent):
             tail = self._snapshot_recent_output()
             return tail, tail
 
-        # Dedup the two sections by role (mirrors opencode). The agent's FINAL
-        # narration is reserved for the observation; everything else — earlier
-        # thinking + tool calls + results — is the trajectory, with that final
-        # report removed so it isn't duplicated across both sections.
-        last_text_idx = None
-        for idx, ev in enumerate(events):
-            if ev[0] == "text":
-                last_text_idx = idx
-
-        steps: list[str] = []
-        for idx, (kind, sid, payload) in enumerate(events):
-            if kind == "text":
-                if idx == last_text_idx:
-                    continue  # reserved for the observation; don't duplicate
-                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
-                steps.append(f"[{sid}] thinking: {snippet}")
-            else:
-                name, args, result = payload
-                if _SHOW_TOOL_ARGS and args and args != "{}":
-                    if len(args) > 200:
-                        args = args[:200] + "…"
-                    steps.append(f"[{sid}] tool_call({name}): {args}")
-                else:
-                    steps.append(f"[{sid}] tool_call({name})")
-                if _SHOW_TOOL_RESULTS and result:
-                    # 300-char tail keeps the conclusion/error without
-                    # re-flooding the ctx_budget*2 trajectory cap.
-                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
-                    steps.append(f"[{sid}] result: {r}")
-
-        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
-        if len(trajectory) > self._ctx_budget * 2:
-            # Keep tail — last steps matter more for "what just happened".
-            trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
-
-        if last_text_idx is not None:
-            sid, report = events[last_text_idx][1], events[last_text_idx][2]
-            observation = f"[{sid}] agent: {report[:3000]}"
-        else:
-            # No narration this turn (rare) — surface the last tool result.
-            observation = "(no agent narration this turn)"
-            for kind, sid, payload in reversed(events):
-                if kind == "tool" and payload[2]:
-                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
-                    break
-        return trajectory, observation
+        # One renderer for every harness: the agent's final narration is the
+        # observation, everything before it is the activity log.
+        return render_turn(events, self._ctx_budget)
 
     def _find_trajectory_path(self) -> Path | None:
         """Locate the most recent mini-swe-agent trajectory JSON.
@@ -586,7 +534,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
     # ── user simulation ──────────────────────────────────────────────
 
     async def _consult_user(
-        self, trajectory: str, observation: str, turn: int, completing: bool,
+        self, trajectory: str, observation: str, turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         now = time.monotonic()
@@ -603,7 +551,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
             latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
@@ -615,12 +563,12 @@ class UserEnabledMiniSweAgent(BaseAgent):
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         if logging_dir is None:
             return
@@ -629,7 +577,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -751,7 +699,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
             trajectory, observation = self._snapshot_latest_turn()
 
             decision = await self._consult_user(
-                trajectory, observation, turn, completing=True, logging_dir=self.logs_dir,
+                trajectory, observation, turn, TurnEnd(), logging_dir=self.logs_dir,
             )
 
             if not decision.has_message:
