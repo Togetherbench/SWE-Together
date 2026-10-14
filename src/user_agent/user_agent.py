@@ -13,6 +13,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from .turn_end import TurnEnd
+
 log = logging.getLogger(__name__)
 
 
@@ -180,7 +182,9 @@ only as good as the test output you can see. Only speak when:
 - The session analysis describes a trigger that matches the current situation
 - The agent is clearly stuck in a loop or going down the wrong path
 - The agent explicitly asks you something
-- The agent tries to finish but missed requirements
+- The agent presents its work as finished but missed requirements
+  (decide from its report whether it is claiming to be done, pausing
+  between steps, blocked, or asking — nobody tells you which)
 
 There is no number of messages to reach. The original user's messages are
 context for what you care about and how you talk; do not send one because
@@ -231,7 +235,10 @@ class UserAgent:
     # 0.13.0 (2026-10-14): the simulator sees the terminal — commands with their
     # output, files touched, tool errors (user_agent.turn_view) — instead of tool
     # names only.
-    VERSION = "0.13.0"
+    # 0.14.0 (2026-10-14): the prompt no longer asserts "the agent is signaling
+    # completion" on every turn; it states what the harness knows (stop reason,
+    # waiting) and leaves done/pausing/blocked/asking to the simulator.
+    VERSION = "0.14.0"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
@@ -276,7 +283,7 @@ class UserAgent:
         latest_observation: str,
         latest_analysis: str | None,
         step_count: int,
-        is_completion_attempt: bool,
+        turn_end: "TurnEnd | bool | None" = None,
         total_steps_so_far: int = 0,
         elapsed_sec: float = 0.0,
         turn_duration_sec: float = 0.0,
@@ -294,9 +301,14 @@ class UserAgent:
         # Build turn summary — passed as prompt (not pre-appended) so
         # LiteLLM doesn't create an empty trailing user message that
         # triggers Anthropic's "cache_control on empty text" error.
+        # Legacy callers passed a bool meaning "the agent is signalling completion";
+        # that was always True in practice. It is now a TurnEnd describing only what
+        # the harness knows (stop reason, whether there was a report).
+        if not isinstance(turn_end, TurnEnd):
+            turn_end = TurnEnd()
         turn_content = self._build_turn_summary(
             task_description, recent_trajectory, latest_observation,
-            latest_analysis, step_count, is_completion_attempt,
+            latest_analysis, step_count, turn_end,
             elapsed_sec, turn_duration_sec, code_changes_diff,
         )
 
@@ -384,7 +396,7 @@ class UserAgent:
 
     def _build_turn_summary(
         self, task, trajectory, observation, analysis,
-        step, is_completion,
+        step, turn_end: TurnEnd,
         elapsed_sec=0.0, turn_duration_sec=0.0,
         code_changes_diff: str = "",
     ) -> str:
@@ -397,8 +409,7 @@ class UserAgent:
                 timing_parts.append(f"this turn took {self._format_duration(turn_duration_sec)}")
             sections.append(f"**Timing:** {', '.join(timing_parts)}")
 
-        if is_completion:
-            sections.append("** The agent is signaling completion.")
+        sections.append(f"**Where the agent stopped:** {turn_end.describe(step)}")
 
         if self.total_calls == 1:
             # First call — include the (near-)full task description. The old

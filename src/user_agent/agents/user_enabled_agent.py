@@ -16,6 +16,7 @@ from harbor.agents.terminus_2.terminus_2 import Terminus2, Command
 from harbor.llms.lite_llm import LiteLLM
 
 from ..repo_config import discover_repo_config_files
+from ..turn_end import TurnEnd
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ class UserEnabledTerminus2(Terminus2):
 
     async def _consult_user(
         self, observation: str, analysis: str | None,
-        turn: int, completing: bool,
+        turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         decision = await self._sim_user.process(
@@ -123,7 +124,7 @@ class UserEnabledTerminus2(Terminus2):
             latest_observation=observation[:self._ctx_budget],
             latest_analysis=analysis,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
         )
         if decision.has_message:
@@ -132,12 +133,12 @@ class UserEnabledTerminus2(Terminus2):
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         """Write user_decision.json into the episode directory."""
         if logging_dir is None:
@@ -147,7 +148,7 @@ class UserEnabledTerminus2(Terminus2):
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -300,7 +301,7 @@ class UserEnabledTerminus2(Terminus2):
                 # First completion signal — let the user sim weigh in
                 if self._check_on_completion:
                     dec = await self._consult_user(
-                        observation, analysis, turn + 1, completing=True,
+                        observation, analysis, turn + 1, TurnEnd(),
                         logging_dir=logging_dir,
                     )
                     if dec.has_message:
@@ -314,7 +315,7 @@ class UserEnabledTerminus2(Terminus2):
 
             # ── normal turn: consult simulated user ──
             dec = await self._consult_user(
-                observation, analysis, turn + 1, completing=False,
+                observation, analysis, turn + 1, TurnEnd(),
                 logging_dir=logging_dir,
             )
             if dec.has_message:
