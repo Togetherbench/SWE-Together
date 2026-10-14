@@ -60,7 +60,7 @@ from runner import (
     resolve_model,
     load_analysis,
     load_user_messages,
-    _compute_message_guidance,
+    session_analysis_note,
     resolve_task_dir,
     REPO_ROOT as RUNNER_REPO_ROOT,
     _CHUTES_BASE_URL,
@@ -447,36 +447,12 @@ def build_trial_config(
     # Load per-task data
     analysis = load_analysis(task_dir)
     user_messages = load_user_messages(task_dir, analysis)
-    gt_count = len(user_messages)
 
-    # Load and augment session analysis
+    # Per-task simulator context: the session analysis plus the fixed workflow
+    # note (no message count, no ordered-replay instruction — see runner.py).
     sim_prompt_path = task_dir / "user_simulation_prompt.md"
     session_analysis = sim_prompt_path.read_text() if sim_prompt_path.exists() else ""
-
-    msg_low, msg_high = _compute_message_guidance(gt_count)
-    guidance_note = (
-        f"\n\n## Message Guidance (auto-generated)\n"
-        f"The real user sent {gt_count} messages in the original session. "
-        f"Aim for **{msg_low}–{msg_high} messages** total. "
-        f"This is a soft target — send fewer if the agent handles everything "
-        f"well, send more if it needs correction. Do NOT treat any cap in "
-        f"the session analysis above as a hard limit; use this range instead.\n\n"
-        f"## Trigger Interpretation (auto-generated)\n"
-        f"The agent works incrementally and reports after each sub-task. "
-        f"When evaluating trigger conditions from the session analysis above, "
-        f"apply them broadly:\n"
-        f"- If a trigger says 'ONLY if agent has X but not Y', also fire "
-        f"if the agent has completed both X and Y but Y has issues.\n"
-        f"- If the agent reports completing a sub-task, check whether the "
-        f"next ground-truth message in sequence is relevant and send it.\n"
-        f"- Do NOT skip a turn just because the agent already moved past "
-        f"the exact intermediate state described in the trigger. The agent "
-        f"may have done it incorrectly.\n"
-        f"- Prioritize sending ground-truth messages in order. If the agent's "
-        f"progress maps to turn N in the session analysis, send turn N's "
-        f"message even if the trigger condition is not a perfect match."
-    )
-    session_analysis_with_guidance = session_analysis + guidance_note
+    session_analysis_with_guidance = session_analysis_note(session_analysis)
 
     user_sim_kwargs = {
         "user_model_name": user_model,
