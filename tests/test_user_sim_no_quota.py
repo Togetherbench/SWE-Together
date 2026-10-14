@@ -75,3 +75,15 @@ def test_simulator_version_bumped_for_provenance():
     class _LLM:
         _model_name = "openrouter/google/gemini-3.1-pro-preview"
     assert UserAgent(_LLM()).get_stats()["version"] == "0.12.0"
+
+
+def test_text_fallback_strips_action_labels():
+    # under tool_choice=auto a model may answer "action: message" as plain text;
+    # the label must not leak into what the agent receives
+    d = UserAgent._fallback_parse("new_requirement: ugh ok just implement from the title then")
+    assert d.action == "new_requirement" and d.content == "ugh ok just implement from the title then"
+    d = UserAgent._fallback_parse("→ redirect: wait, run the tests first")
+    assert d.action == "redirect" and d.content == "wait, run the tests first"
+    assert UserAgent._fallback_parse("no-op").action == "no-op"
+    d = UserAgent._fallback_parse("can you also add a test for the empty case")
+    assert d.has_message and "can you also" in d.content

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -483,15 +484,17 @@ class UserAgent:
         if any(lower.startswith(p) or p in lower for p in _NOOP_PHRASES):
             return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
 
-        # Model used our history format: "→ action: content"
-        if stripped.startswith("→ "):
-            import re
-            m = re.match(r"→\s*(redirect|question|new_requirement|check_external):\s*(.*)", stripped, re.DOTALL)
-            if m:
-                action, content = m.group(1), m.group(2).strip()
-                if content:
-                    log.info("UserAgent: recovered %s from text fallback", action)
-                    return UserDecision(action=action, content=content, raw_response=f"fallback_recovered:{stripped[:200]}")
+        # Model wrote the decision as text, either in our history format
+        # ("→ action: content") or as a bare "action: content" line — the latter
+        # shows up when tool_choice is `auto`. Recover the action and drop the
+        # label so it never reaches the agent as part of the message.
+        m = re.match(r"(?:→\s*)?(redirect|question|new_requirement|check_external)\s*:\s*(.*)",
+                     stripped, re.DOTALL | re.IGNORECASE)
+        if m:
+            action, content = m.group(1).lower(), m.group(2).strip()
+            if content:
+                log.info("UserAgent: recovered %s from text fallback", action)
+                return UserDecision(action=action, content=content, raw_response=f"fallback_recovered:{stripped[:200]}")
 
         # Model returned what looks like a real user message (not reasoning).
         # Heuristic: short text (<500 chars) without analysis/reflection markers
