@@ -111,16 +111,17 @@ Most runs need only a subset; `.env.example` documents them all.
 | `SWT_SANDBOX` | `e2b` / `docker` / `enroot` — where trials and the judge run |
 | `SWT_LLM_BACKEND`, `SWT_<SEAT>_BACKEND` | `native` / `openrouter` / `bedrock` per LLM seat (agent, user_sim, judge, tagger), plus `vllm` for a self-hosted agent model — see [docs/llm_backends.md](docs/llm_backends.md) and [docs/self_hosting.md](docs/self_hosting.md) |
 | `OPENROUTER_API_KEY` | the agent model (or the provider key matching your model) |
-| `GEMINI_API_KEY` | user simulator + message tagging with the default `gemini/…` models |
+| `SWT_AWS_CREDENTIAL_CMD`, `SWT_AWS_REGION` | user simulator + message tagging (default `bedrock/global.anthropic.claude-sonnet-5-5`) and any other seat on the `bedrock` backend |
 | `ANTHROPIC_API_KEY` | the Step-1 agentic judge |
-| `SWT_AWS_CREDENTIAL_CMD`, `SWT_AWS_REGION` | AWS credentials for the `bedrock` backend when the host has none |
 | `E2B_API_KEY` | the sandbox (run **and** judge) when `SWT_SANDBOX=e2b` or `docker` |
 | `SLURM_QOS`, `SLURM_ACCOUNT`, … | your cluster's submission settings when `SWT_SANDBOX=enroot` (kept in `.env`, never committed) |
 
 **Single-key setup.** Everything can be routed through OpenRouter: set `JUDGE_VIA_OR=1` (judge →
-`anthropic/claude-opus-4.6` on OpenRouter) and pass `--user-model openrouter/google/gemini-3.1-pro-preview`
-to the run stage and `--tag-model openrouter/google/gemini-3.1-pro-preview` to the judge stage; then only
-`OPENROUTER_API_KEY` is needed. With `SWT_SANDBOX=enroot` no sandbox account is needed either.
+`anthropic/claude-opus-4.6` on OpenRouter) and pass `--user-model openrouter/anthropic/claude-sonnet-5.5`
+to the run stage and `--tag-model openrouter/anthropic/claude-sonnet-5.5` to the judge stage; then only
+`OPENROUTER_API_KEY` is needed. With `SWT_SANDBOX=enroot` no sandbox account is needed either. (Cohorts
+published before 2026-10-13 used `openrouter/google/gemini-3.1-pro-preview` for the simulator and tagger;
+see [docs/llm_backends.md](docs/llm_backends.md) § The four seats.)
 
 **Mixing backends.** Each of the four LLM seats can be served by a different backend — e.g. the agent
 under test on AWS Bedrock (`--model gpt-5.6-sol --agent-backend bedrock`) with the user simulator, judge

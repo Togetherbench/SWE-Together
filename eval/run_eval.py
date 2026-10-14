@@ -310,6 +310,12 @@ def _egress_denied(trial_dir: Path) -> int | None:
     return None if s is None else int(s["denied"])
 
 
+def _trial_user_sim_model(trial_dir: Path) -> str | None:
+    """The user-simulator model Harbor recorded for the trial (agent kwargs)."""
+    cfg = _load_json(trial_dir / "config.json") or {}
+    return ((cfg.get("agent") or {}).get("kwargs") or {}).get("user_model_name")
+
+
 def join_trial_artefacts(job: dict) -> dict:
     """Read the three per-trial verdicts + reward.txt into one flat record.
 
@@ -347,6 +353,10 @@ def join_trial_artefacts(job: dict) -> dict:
         "score_delta": judge.get("score_delta"),
         "judge_warnings": len(judge.get("schema_warnings") or []),
         "empty_patch": empty_patch,
+        # seat provenance: which models judged this trial and simulated its user
+        "judge_model": judge.get("judge_model"),
+        "coverage_model": cov.get("judge_model"),
+        "user_sim_model": _trial_user_sim_model(trial_dir),
         # trial cost
         "runtime_sec": _trial_runtime_sec(trial_dir),
         "output_tokens": _trial_output_tokens(trial_dir),
@@ -586,9 +596,11 @@ def main() -> int:
     ap.add_argument("--skip-tag-messages", action="store_true")
     ap.add_argument("--force-tag-messages", action="store_true")
     ap.add_argument("--tag-workers", type=int, default=50)
-    ap.add_argument("--tag-model", default="gemini/gemini-3.1-pro-preview",
-                    help="LLM model for message tagging (pinned for reproducibility); a registry "
-                         "name (gemini-3.1-pro) is resolved on --tagger-backend")
+    ap.add_argument("--tag-model", default="bedrock/global.anthropic.claude-sonnet-5-5",
+                    help="LLM model for message tagging and intent coverage (protocol default since "
+                         "2026-10-13: Claude Sonnet 5.5 on Bedrock; earlier cohorts: "
+                         "gemini-3.1-pro-preview, recorded per verdict); a registry name is "
+                         "resolved on --tagger-backend")
     ap.add_argument("--tagger-backend", default=None,
                     help="bedrock | openrouter | native — backend for registry-named tagging / "
                          "intent-coverage models (default: $SWT_TAGGER_BACKEND > $SWT_LLM_BACKEND > native)")
@@ -724,6 +736,12 @@ def main() -> int:
         "cohorts": sorted({j["cohort"] for j in jobs}),
         "n_trials": len(flat),
         "success_threshold": SUCCESS_THRESHOLD,
+        # which models filled the non-agent seats (distinct values across trials;
+        # one entry each unless a cohort was judged or simulated inconsistently)
+        "seat_models": {
+            k: sorted({t[k] for t in flat if t.get(k)})
+            for k in ("user_sim_model", "judge_model", "coverage_model")
+        },
         "cross_task": rollup,
         "per_task": per_task,
     }

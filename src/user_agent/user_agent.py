@@ -196,7 +196,18 @@ Rules:
 """
 
 
-# ── UserAgent ────────────────────────────────────────────────────────────
+# ── UserAgent ───────────────────────────────────────────────────────────────────────
+
+def _supports_forced_tool_choice(model_name: str | None) -> bool:
+    if not model_name:
+        return True
+    try:
+        import llm_config
+    except ImportError:  # the sim can run outside the repo's src path
+        return True
+    spec = llm_config.spec_for(model_name)
+    return spec.supports_forced_tool_choice if spec else True
+
 
 class UserAgent:
     """Simulated user that watches an action agent and decides when to talk.
@@ -208,12 +219,19 @@ class UserAgent:
     VERSION = "0.11.0"  # see CHANGELOG.md
 
     def __init__(self, llm, original_user_messages=None, persona=None,
-                 session_analysis="", max_messages=None):
+                 session_analysis="", max_messages=None, force_tool_choice=None):
         self._llm = llm
         self._ground_truth = original_user_messages or []
         self._persona = persona or UserPersona()
         self._cursor = 0  # index into _ground_truth
         self.max_messages = max_messages  # hard cap (None = no cap)
+        # `tool_choice=required` is the cleanest way to get exactly one decision; the
+        # Claude 5.5 endpoints reject it, so those run with `auto` and the prompt
+        # carries the "call exactly one tool" instruction instead. Derived from the
+        # registry entry of the sim model unless the caller decides explicitly.
+        if force_tool_choice is None:
+            force_tool_choice = _supports_forced_tool_choice(getattr(llm, "_model_name", None))
+        self._tool_choice = "required" if force_tool_choice else "auto"
 
         parts = [self._persona.render()]
         if session_analysis:
@@ -288,14 +306,15 @@ class UserAgent:
                 prompt=turn_content,
                 message_history=history_with_sys,
                 tools=TOOL_DEFS,
-                tool_choice="required",
+                tool_choice=self._tool_choice,
             )
             decision = self._extract_decision(resp)
 
-            # If the model returned text despite tool_choice=required,
-            # retry once without it (some providers silently ignore it).
+            # If the model returned text despite being asked for a tool call,
+            # retry once with an explicit instruction (some providers ignore
+            # tool_choice; the `auto` path relies on the prompt alone).
             if decision.raw_response.startswith("fallback_noop:"):
-                log.info("UserAgent: tool_choice=required failed, retrying")
+                log.info("UserAgent: no tool call returned (tool_choice=%s), retrying", self._tool_choice)
                 resp = await self._llm.call(
                     prompt=turn_content + "\n\nYou MUST call one of the provided tools.",
                     message_history=history_with_sys,
@@ -393,8 +412,8 @@ class UserAgent:
             sections.append(f"\n## Agent's thinking\n{analysis[:300]}")
 
         sections.append(
-            "\nPick ONE tool. Default to no-op unless you have a clear, "
-            "new reason to speak."
+            "\nRespond by calling exactly ONE of the provided tools (no prose). "
+            "Default to no-op unless you have a clear, new reason to speak."
         )
         return "\n".join(sections)
 

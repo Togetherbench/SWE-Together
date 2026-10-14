@@ -34,10 +34,14 @@ from harbor.llms.lite_llm import LiteLLM  # noqa: E402
 from eval.user_behavior.extract_intents import extract_one as extract_intents_one  # noqa: E402
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "coverage_system.md"
-# Default judge: Gemini-3.1-Pro. Calibrated against Opus-4.6 on the v0.5.1 pilot
-# success@k and effort_AUC agree to ~0.001, mean_judge within 0.023.
+# Protocol default since 2026-10-13: Claude Sonnet 5.5 on Bedrock (_prepare_model
+# spells it the LiteLLM way). Cohorts before that used gemini-3.1-pro-preview, which was
+# calibrated against Opus-4.6 on the v0.5.1 pilot (success@k and effort_AUC agree
+# to ~0.001, mean_judge within 0.023); every verdict records its judge_model.
+# The 109 tasks' oracle_intents.json were extracted once with Gemini and are a
+# fixed artifact of the benchmark, not re-extracted per cohort.
 
-DEFAULT_MODEL = "gemini/gemini-3.1-pro-preview"
+DEFAULT_MODEL = "bedrock/global.anthropic.claude-sonnet-5-5"
 
 
 class _OAuthLiteLLMShim:
@@ -107,14 +111,20 @@ class _OAuthLiteLLMShim:
         return _Resp()
 
 
-def _make_llm(model: str, temperature: float):
+def _make_llm(model: str, temperature: float | None):
     """Pick LiteLLM (api-key) or OAuth shim based on env. OAuth wins only when
     ANTHROPIC_API_KEY is empty/unset (LiteLLM would prefer api-key otherwise).
 
     `bedrock/<id>` models are spelled `bedrock/converse/<id>` for LiteLLM and
     need fresh AWS credentials in the process env (see src/bedrock_creds.py).
+    Models whose API rejects `temperature` (registry `supports_temperature=False`,
+    e.g. the Claude 5.5 endpoints) are called without it.
     """
     model = _prepare_model(model)
+    import llm_config
+    spec = llm_config.spec_for(model)
+    if spec is not None and not spec.supports_temperature:
+        temperature = None
     oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if model.startswith("anthropic/") and oauth and not api_key:

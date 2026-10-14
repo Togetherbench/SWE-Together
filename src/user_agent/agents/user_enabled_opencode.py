@@ -1278,7 +1278,7 @@ class UserEnabledOpenCode(BaseAgent):
         # so downstream tooling reads ground truth instead of reconstructing it.
         prompt_record = {
             "turn": turn,
-            "tool_choice": "required",
+            "tool_choice": self._sim_user._tool_choice,
             "system_prompt": self._sim_user._sys,
             "turn_content": self._sim_user.last_turn_content,
             "messages": self._sim_user.last_messages_sent,

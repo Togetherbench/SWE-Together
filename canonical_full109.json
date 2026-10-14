@@ -1,9 +1,9 @@
 {
-  "_comment": "Canonical full109 run plan: 109 discriminating tasks x the published opencode leaderboard cohorts, 2 replicates each. Used by launch.py. Edit models/replicates/tasks to define your own run; model strings are litellm/harbor-format and need the matching key in .env. `user_model` (global or per-model) overrides run_eval.py's gemini default; the enroot/OpenRouter setup uses openrouter/google/gemini-3.1-pro-preview so only OPENROUTER_API_KEY is needed.",
+  "_comment": "Canonical full109 run plan: 109 discriminating tasks x the published opencode leaderboard cohorts, 2 replicates each. Used by launch.py. Edit models/replicates/tasks to define your own run; model strings are litellm/harbor-format and need the matching key in .env. `user_model` (global or per-model) overrides run_eval.py's default. Protocol default since 2026-10-13: bedrock/global.anthropic.claude-sonnet-5-5 for the user simulator and the tagger / intent-coverage seats; the cohorts listed under `models` that ran before that date used openrouter/google/gemini-3.1-pro-preview for both (see each run manifest's user_model and each verdict's judge_model).",
   "name": "full109",
   "trials_root": "trials/canonical_full109",
   "tasks_root": "tasks",
-  "user_model": "openrouter/google/gemini-3.1-pro-preview",
+  "user_model": "bedrock/global.anthropic.claude-sonnet-5-5",
   "models": {
     "opencode_muse13": {
       "model": "openrouter/meta/muse-spark-1.3",
@@ -169,6 +169,96 @@
       "trial_budget": 7200,
       "workers": 1,
       "_note": "self-hosted vLLM 0.29 on 8xH200 nodes, 2 agent streams per server (6-24 single-node TP8 servers at --max-model-len 262144); the 11 trials that overflowed 262K were re-run on 2-node TP16 servers at the native 1048576 window. agent_timeout/trial_budget raised from the 4800/5400 s protocol defaults as a guard against serving latency; both are recorded in every shard manifest."
+    },
+    "opencode_gpt6sol": {
+      "model": "gpt-6-sol",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_gpt6luna": {
+      "model": "gpt-6-luna",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_opus55_bedrock": {
+      "model": "claude-opus-5.5",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_grok47": {
+      "model": "grok-4.7",
+      "agent_backend": "openrouter",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_gpt6luna_rep": {
+      "model": "gpt-6-luna",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_gpt6sol_rep": {
+      "model": "gpt-6-sol",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_gpt6astra_rep": {
+      "model": "gpt-6-astra",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_gpt61sol": {
+      "model": "gpt-6.1-sol",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_sonnet55_bedrock": {
+      "model": "claude-sonnet-5.5",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
+    },
+    "opencode_kimik3_bedrock": {
+      "model": "kimi-k3",
+      "agent_backend": "bedrock",
+      "agent_type": "opencode",
+      "opencode_version": "1.18.29",
+      "reasoning_effort": "high",
+      "agent_timeout": 4800,
+      "workers": 6
     }
   },
   "replicates": [

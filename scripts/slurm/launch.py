@@ -75,8 +75,12 @@ import opencode_dist  # noqa: E402
 
 DEFAULT_CONDA_ENV = os.environ.get("SWT_CONDA_ENV", "swetogether")
 DEFAULT_MODEL = "openrouter/meta/muse-spark-1.3"
-DEFAULT_USER_MODEL = "openrouter/google/gemini-3.1-pro-preview"
-DEFAULT_TAG_MODEL = "openrouter/google/gemini-3.1-pro-preview"
+# Protocol default for the user-simulator and tagger / intent-coverage seats since
+# 2026-10-13: Claude Sonnet 5.5 on Bedrock. Cohorts before that date used
+# openrouter/google/gemini-3.1-pro-preview for both (recorded in their manifests
+# and verdicts); scores are only comparable within one simulator.
+DEFAULT_USER_MODEL = "bedrock/global.anthropic.claude-sonnet-5-5"
+DEFAULT_TAG_MODEL = "bedrock/global.anthropic.claude-sonnet-5-5"
 LOG_ROOT = REPO_ROOT / "slurm_logs"
 ENROOT_BASE = str(enroot_base())
 
