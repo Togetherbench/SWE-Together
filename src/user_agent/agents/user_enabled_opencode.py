@@ -52,6 +52,7 @@ from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 import opencode_dist
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
+from ..turn_end import TurnEnd
 from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
@@ -1144,6 +1145,37 @@ class UserEnabledOpenCode(BaseAgent):
         # observation, everything before it is the activity log.
         return render_turn(events, self._ctx_budget)
 
+    def _latest_turn_end(self) -> TurnEnd:
+        """What the harness knows about how the latest turn ended.
+
+        opencode's final ``step_finish`` carries ``part.reason``: ``stop`` is the
+        model ending its turn, ``length`` the output limit, ``error`` a failure.
+        (A per-exec cap kill never reaches the simulator: the cap-rescue path
+        resumes the agent with a synthetic message instead of consulting.)
+        """
+        if not self._cumulative_output:
+            return TurnEnd(stop_reason=None, has_report=False)
+        reason = None
+        has_report = False
+        for line in self._cumulative_output[-1].split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            part = ev.get("part") or {}
+            if ev.get("type") == "step_finish":
+                reason = part.get("reason") or reason
+            elif ev.get("type") == "text" and _normalize_content(part.get("text") or part).strip():
+                has_report = True
+            elif ev.get("type") == "error":
+                reason = "error"
+        if reason in ("tool-calls",):
+            reason = "stop"
+        return TurnEnd(stop_reason=reason, has_report=has_report)
+
     def _archive_turn_stdout(self, turn: int | str, stdout: str) -> None:
         """Persist the per-turn opencode event stream so prior turns' steps
         survive even if /logs/agent/opencode.txt is later truncated.
@@ -1180,7 +1212,7 @@ class UserEnabledOpenCode(BaseAgent):
     # ── user simulation ───────────────────────────────────────────────
 
     async def _consult_user(
-        self, trajectory: str, observation: str, turn: int, completing: bool,
+        self, trajectory: str, observation: str, turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         now = time.monotonic()
@@ -1196,7 +1228,7 @@ class UserEnabledOpenCode(BaseAgent):
             latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
@@ -1208,12 +1240,12 @@ class UserEnabledOpenCode(BaseAgent):
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         if logging_dir is None:
             return
@@ -1222,7 +1254,9 @@ class UserEnabledOpenCode(BaseAgent):
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            # what the harness knew about where the agent stopped (replaces the
+            # always-True is_completion_attempt of simulator versions < 0.14.0)
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -1400,7 +1434,7 @@ class UserEnabledOpenCode(BaseAgent):
             else:
                 trajectory, observation = self._snapshot_latest_turn()
                 decision = await self._consult_user(
-                    trajectory, observation, turn, completing=True, logging_dir=self.logs_dir,
+                    trajectory, observation, turn, self._latest_turn_end(), logging_dir=self.logs_dir,
                 )
                 if not decision.has_message:
                     consecutive_noops += 1

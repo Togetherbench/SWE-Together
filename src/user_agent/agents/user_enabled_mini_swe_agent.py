@@ -41,6 +41,7 @@ from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
+from ..turn_end import TurnEnd
 from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
@@ -533,7 +534,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
     # ── user simulation ──────────────────────────────────────────────
 
     async def _consult_user(
-        self, trajectory: str, observation: str, turn: int, completing: bool,
+        self, trajectory: str, observation: str, turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         now = time.monotonic()
@@ -550,7 +551,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
             latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
@@ -562,12 +563,12 @@ class UserEnabledMiniSweAgent(BaseAgent):
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         if logging_dir is None:
             return
@@ -576,7 +577,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -698,7 +699,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
             trajectory, observation = self._snapshot_latest_turn()
 
             decision = await self._consult_user(
-                trajectory, observation, turn, completing=True, logging_dir=self.logs_dir,
+                trajectory, observation, turn, TurnEnd(), logging_dir=self.logs_dir,
             )
 
             if not decision.has_message:

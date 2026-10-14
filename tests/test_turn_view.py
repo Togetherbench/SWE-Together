@@ -118,7 +118,8 @@ def test_prompt_frames_the_activity_as_the_terminal_view():
     class _LLM:
         _model_name = "openrouter/google/gemini-3.1-pro-preview"
     ua = UserAgent(_LLM())
-    body = ua._build_turn_summary("task", "[1] $ pytest → exit 1\n  1 failed", "[2] agent: all tests pass", None, 2, False)
+    from user_agent.turn_end import TurnEnd
+    body = ua._build_turn_summary("task", "[1] $ pytest → exit 1\n  1 failed", "[2] agent: all tests pass", None, 2, TurnEnd())
     assert "## What you saw in the terminal (this turn)" in body and "## Agent's report to you" in body
     assert "Judge the report against that evidence" in _SYSTEM_PROMPT
-    assert ua.get_stats()["version"] == "0.13.0"
+    assert ua.get_stats()["version"] >= "0.13.0"  # 0.13.0 introduced the terminal view

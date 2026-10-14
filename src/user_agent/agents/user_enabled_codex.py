@@ -35,6 +35,7 @@ from harbor.llms.lite_llm import LiteLLM
 from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
+from ..turn_end import TurnEnd
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -422,7 +423,7 @@ class UserEnabledCodex(BaseAgent):
     # ── user simulation ──────────────────────────────────────────────
 
     async def _consult_user(
-        self, observation: str, turn: int, completing: bool,
+        self, observation: str, turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         now = time.monotonic()
@@ -435,7 +436,7 @@ class UserEnabledCodex(BaseAgent):
             latest_observation=observation[:self._ctx_budget],
             latest_analysis=None,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
@@ -447,7 +448,7 @@ class UserEnabledCodex(BaseAgent):
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     async def _capture_git_diff(self, environment, turn: int) -> None:
@@ -473,7 +474,7 @@ class UserEnabledCodex(BaseAgent):
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         if logging_dir is None:
             return
@@ -482,7 +483,7 @@ class UserEnabledCodex(BaseAgent):
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -631,7 +632,7 @@ class UserEnabledCodex(BaseAgent):
             observation = self._snapshot_recent_output()
 
             decision = await self._consult_user(
-                observation, turn, completing=True, logging_dir=self.logs_dir,
+                observation, turn, TurnEnd(), logging_dir=self.logs_dir,
             )
 
             if not decision.has_message:
