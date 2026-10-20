@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -227,16 +228,81 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
 
 
 def _compute_message_guidance(gt_count: int) -> tuple[int, int]:
-    """Compute a suggested message range based on ground-truth count.
+    """Suggested message range [GT*0.5, GT*1.5] from the ground-truth count.
 
-    Returns (low, high) — a guidance range of [GT*0.5, GT*1.5] that is
-    injected into the user sim's system prompt as a soft target. No hard
-    cap is enforced; the user sim decides based on the session context.
+    No longer part of the simulator prompt (see session_analysis_note); kept
+    for reporting and for tooling that still calls it.
     """
     import math
     low = max(1, math.ceil(gt_count * 0.5))
     high = max(low + 1, math.ceil(gt_count * 1.5))
     return low, high
+
+
+#: Appended to each task's user_simulation_prompt.md before it goes into the
+#: simulator's system prompt. Explains the benchmark's incremental workflow so
+#: the per-task trigger conditions (written against the original session) can be
+#: matched against an agent that stops and reports after every sub-task.
+#:
+#: Deliberately absent: any message count, and any instruction to send the next
+#: ground-truth message "in order" or "even if the trigger condition is not a
+#: perfect match". Until 2026-10-13 both were here, and the simulator behaved as
+#: a scripted replayer: every model received 5.1-6.2 messages per trial whatever
+#: it did, and the next original message was volunteered before the agent had
+#: earned it. The per-task prompt still carries the original user's turns and
+#: triggers as context; whether to speak is now decided from the agent's actual
+#: behaviour alone.
+SESSION_ANALYSIS_NOTE = (
+    "\n\n## How the agent works here (auto-generated)\n"
+    "The agent works incrementally: it stops and reports after each distinct "
+    "sub-task and waits for you. When you match the trigger conditions above "
+    "against what the agent has done, apply them to the agent's actual state:\n"
+    "- A trigger written as 'ONLY if the agent has X but not Y' also applies "
+    "when the agent has done both X and Y but Y is wrong or incomplete.\n"
+    "- Do not skip a trigger merely because the agent moved past the exact "
+    "intermediate state it describes; check whether the underlying problem "
+    "is present.\n"
+    "- The original user's turns are context for what this user cared about "
+    "and how they spoke, not a script. Speak when the agent's behaviour gives "
+    "you a reason to; if it does not, stay silent, even if the original user "
+    "spoke at this point.\n"
+    "- Ignore any message count, target, budget or range stated above (for "
+    "example 'Target message count' or 'Message budget'): there is no number "
+    "of messages to reach or to stay under. Speak as often as the agent's "
+    "behaviour warrants, which may be never."
+)
+
+#: Lines of a per-task prompt that tell the simulator how many messages to send.
+#: The per-task files were written for the quota-era simulator and 109/109 carry
+#: at least one such line; five carry a hard cap with its own enforcement
+#: wording ("HARD BUDGET: exactly 5 messages maximum. You MUST count each
+#: message you send"). The note below says to ignore them, but an instruction
+#: that is present and an instruction to ignore it is a contest the per-task
+#: wording can win, so these lines are removed from the simulator's view.
+#: Everything else in the file (turns, triggers, calibration facts such as the
+#: longest silence) is kept, and the task files themselves are not edited.
+_QUOTA_LINE = re.compile(
+    r"^.*(?:"
+    r"\btarget message count\b"
+    r"|\btarget for simulation\b"
+    r"|\btotal user messages\b"
+    r"|\bmessage (?:budget|cap|limit|quota)s?\b"
+    r"|\bhard (?:budget|cap|limit)\b"
+    r"|\b(?:at most|exactly|no more than|maximum of|up to) \d+ (?:user )?messages?\b"
+    r"|\b\d+ (?:user )?messages? (?:total|maximum|max)\b"
+    r"|\bsent exactly \d+ messages\b"
+    r"|\bafter sending \d+ messages\b"
+    r"|\bsent \d+ messages this session\b"
+    r").*$\n?",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def session_analysis_note(session_analysis: str) -> str:
+    """The simulator's per-task context: the task's user_simulation_prompt.md
+    minus every message-count / message-cap line, plus the fixed workflow note.
+    Shared by runner.py and run_eval.py."""
+    return _QUOTA_LINE.sub("", session_analysis) + SESSION_ANALYSIS_NOTE
 
 
 def _extract_gt_session_duration(task_dir: Path) -> float | None:
@@ -329,35 +395,11 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     if session_analysis:
         log.info("Loaded user_simulation_prompt.md (%d chars)", len(session_analysis))
 
-    # Compute GT-based message guidance range (soft target, no hard cap)
+    # Per-task simulator context: the session analysis plus the fixed workflow
+    # note (no message count, no ordered-replay instruction — see runner.py).
     gt_count = len(user_messages)
-    msg_low, msg_high = _compute_message_guidance(gt_count)
-    log.info("Message guidance: %d–%d (from GT=%d)", msg_low, msg_high, gt_count)
-
-    # Inject guidance into session analysis so user sim sees it
-    guidance_note = (
-        f"\n\n## Message Guidance (auto-generated)\n"
-        f"The real user sent {gt_count} messages in the original session. "
-        f"Aim for **{msg_low}–{msg_high} messages** total. "
-        f"This is a soft target — send fewer if the agent handles everything "
-        f"well, send more if it needs correction. Do NOT treat any cap in "
-        f"the session analysis above as a hard limit; use this range instead.\n\n"
-        f"## Trigger Interpretation (auto-generated)\n"
-        f"The agent works incrementally and reports after each sub-task. "
-        f"When evaluating trigger conditions from the session analysis above, "
-        f"apply them broadly:\n"
-        f"- If a trigger says 'ONLY if agent has X but not Y', also fire "
-        f"if the agent has completed both X and Y but Y has issues.\n"
-        f"- If the agent reports completing a sub-task, check whether the "
-        f"next ground-truth message in sequence is relevant and send it.\n"
-        f"- Do NOT skip a turn just because the agent already moved past "
-        f"the exact intermediate state described in the trigger. The agent "
-        f"may have done it incorrectly.\n"
-        f"- Prioritize sending ground-truth messages in order. If the agent's "
-        f"progress maps to turn N in the session analysis, send turn N's "
-        f"message even if the trigger condition is not a perfect match."
-    )
-    session_analysis_with_guidance = session_analysis + guidance_note
+    log.info("Ground-truth user messages: %d (context only; not a target)", gt_count)
+    session_analysis_with_guidance = session_analysis_note(session_analysis)
 
     # Build AgentConfig based on agent type
     agent_type = args.agent_type
