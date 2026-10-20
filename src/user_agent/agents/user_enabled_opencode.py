@@ -57,6 +57,10 @@ from ..user_agent import UserAgent, UserDecision
 log = logging.getLogger(__name__)
 
 _MAX_RESUME_TURNS = 15
+# Four silent consults in a row end the trial. With no message quota the
+# simulator stays silent whenever the agent is doing fine, so an agent that
+# needs no steering gets fewer resume turns than one that does; that is the
+# intended shape of the session, not a budget the agent can run out of.
 _MAX_CONSECUTIVE_NOOPS = 4
 _OPENCODE_LOG = "/logs/agent/opencode.txt"
 
