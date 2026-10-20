@@ -128,7 +128,6 @@ class UserEnabledTerminus2(Terminus2):
             total_steps_so_far=turn,
         )
         if decision.has_message:
-            self._sim_user.advance_original_index(1)
             log.info("User sim intervenes at turn %d: %s", turn, decision.action)
         else:
             log.debug("User sim waits at turn %d", turn)
@@ -153,8 +152,6 @@ class UserEnabledTerminus2(Terminus2):
             "has_message": decision.has_message,
             "content": decision.content,
             "raw_response": decision.raw_response[:500] if decision.raw_response else "",
-            "cursor": self._sim_user._cursor,
-            "ground_truth_remaining": len(self._sim_user._ground_truth) - self._sim_user._cursor,
             "stats": self._sim_user.get_stats(),
         }
         path = episode_dir / "user_decision.json"
