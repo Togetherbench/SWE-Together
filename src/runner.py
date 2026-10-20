@@ -272,16 +272,37 @@ SESSION_ANALYSIS_NOTE = (
     "behaviour warrants, which may be never."
 )
 
-_TARGET_COUNT_LINE = re.compile(r"^.*\btarget message count\b.*$\n?", re.IGNORECASE | re.MULTILINE)
+#: Lines of a per-task prompt that tell the simulator how many messages to send.
+#: The per-task files were written for the quota-era simulator and 109/109 carry
+#: at least one such line; five carry a hard cap with its own enforcement
+#: wording ("HARD BUDGET: exactly 5 messages maximum. You MUST count each
+#: message you send"). The note below says to ignore them, but an instruction
+#: that is present and an instruction to ignore it is a contest the per-task
+#: wording can win, so these lines are removed from the simulator's view.
+#: Everything else in the file (turns, triggers, calibration facts such as the
+#: longest silence) is kept, and the task files themselves are not edited.
+_QUOTA_LINE = re.compile(
+    r"^.*(?:"
+    r"\btarget message count\b"
+    r"|\btarget for simulation\b"
+    r"|\btotal user messages\b"
+    r"|\bmessage (?:budget|cap|limit|quota)s?\b"
+    r"|\bhard (?:budget|cap|limit)\b"
+    r"|\b(?:at most|exactly|no more than|maximum of|up to) \d+ (?:user )?messages?\b"
+    r"|\b\d+ (?:user )?messages? (?:total|maximum|max)\b"
+    r"|\bsent exactly \d+ messages\b"
+    r"|\bafter sending \d+ messages\b"
+    r"|\bsent \d+ messages this session\b"
+    r").*$\n?",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def session_analysis_note(session_analysis: str) -> str:
     """The simulator's per-task context: the task's user_simulation_prompt.md
-    (minus its 'Target message count' calibration line) plus the fixed workflow
-    note. Shared by runner.py and run_eval.py. Other count phrasings in the
-    per-task prompts are overridden by the note rather than edited out, so the
-    task files stay immutable."""
-    return _TARGET_COUNT_LINE.sub("", session_analysis) + SESSION_ANALYSIS_NOTE
+    minus every message-count / message-cap line, plus the fixed workflow note.
+    Shared by runner.py and run_eval.py."""
+    return _QUOTA_LINE.sub("", session_analysis) + SESSION_ANALYSIS_NOTE
 
 
 def _extract_gt_session_duration(task_dir: Path) -> float | None:

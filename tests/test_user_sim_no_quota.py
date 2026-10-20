@@ -27,11 +27,28 @@ TASK_PROMPT = """# User Simulator Prompt: some-task
 - **Longest silence**: ~40 minutes
 - **Target message count**: ~3-5 user messages for a competent agent.
 | Target message count | 4 |
+| Total user messages | 5 genuine (out of 9 turns) |
+
+**HARD LIMITS -- these override everything else:**
+- **Message budget**: Send at most **7 messages total**. Stop after the 7th message even if work is incomplete.
+- **No duplicate messages**: NEVER send the same message twice.
+
+### HARD CAP: Maximum 6 messages
+
+You may send **at most 6 messages** across the entire session. After sending 6 messages, you MUST choose `no-op`.
+2. **HARD BUDGET: exactly 5 messages maximum.** You MUST count each message you send.
+- **HARD MESSAGE CAP: Send at most 4 messages total during the entire session.** After sending 4 messages, always return silence.
+1. Have I already sent 4 messages this session? -> **SILENCE** (hard cap reached)
+- Target for simulation: ~1-2 messages in a normal run.
+SILENCE for every subsequent turn. The real user sent exactly 4 messages --
+never invent a fifth.
 
 ## User Turns
 
 ### Turn 2 (after ~30 agent turns)
 - **Said**: `did you run the tests?`
+- **Why**: 4 messages earlier the user had asked for a test run and the agent skipped it.
+| T3 | agent claims done without running tests | `did you run the tests?` | FIRE ONCE |
 """
 
 
@@ -40,22 +57,54 @@ def test_session_context_has_no_message_quota():
     task_part, note = ctx.split("## How the agent works here", 1)
     lower = task_part.lower()
     for banned in ("message guidance", "aim for", "messages** total", "in order",
-                   "even if the trigger condition is not a perfect match", "target message count"):
+                   "even if the trigger condition is not a perfect match", "target message count",
+                   "total user messages", "message budget", "hard cap", "hard budget", "message cap",
+                   "at most 6 messages", "at most 4 messages", "exactly 5 messages", "exactly 4 messages",
+                   "must count each message", "after sending", "sent 4 messages this session",
+                   "target for simulation"):
         assert banned not in lower, banned
     # the per-task context itself survives (turns, triggers, calibration facts)
-    assert "did you run the tests?" in ctx and "Total user messages" in ctx and "Longest silence" in ctx
-    # the fixed workflow note overrides any count phrasing the task prompt may still use
+    assert "did you run the tests?" in ctx and "Longest silence" in ctx
+    assert "| T3 | agent claims done without running tests |" in ctx
+    assert "4 messages earlier the user had asked" in ctx  # a count inside a trigger is not a quota
+    assert "never invent a fifth." in ctx  # the line after a removed one is untouched
+    assert "**No duplicate messages**" in ctx  # behavioural rules under a HARD LIMITS header stay
+    # the fixed workflow note still tells the simulator there is no count to reach
     assert "no number of messages to reach" in note and "Message budget" in note
     assert "not a script" in note
 
 
-def test_target_count_line_is_removed_in_both_markdown_shapes():
+def test_quota_lines_are_removed_whole_and_nothing_else_is_touched():
     ctx = runner.session_analysis_note(TASK_PROMPT)
-    assert "~3-5 user messages" not in ctx
-    assert "| Target message count | 4 |" not in ctx
-    # nothing else was touched: line count drops by exactly the two removed lines
-    kept = [l for l in TASK_PROMPT.splitlines() if "target message count" not in l.lower()]
-    assert ctx.startswith("\n".join(kept))
+    task_part = ctx.split("\n\n## How the agent works here", 1)[0]
+    kept = task_part.splitlines()
+    original = TASK_PROMPT.splitlines()
+    # every surviving line is an original line, in the original order
+    it = iter(original)
+    for line in kept:
+        assert line in it, line
+    removed = [l for l in original if l not in set(kept)]
+    assert len(removed) == 12, removed
+
+
+def test_every_task_prompt_loses_its_quota_lines_but_keeps_its_turns():
+    import re
+    quota = re.compile(r"total user messages|target message count|message (budget|cap|quota)|"
+                       r"hard (cap|budget|limit)|(at most|exactly|no more than) \d+ messages|must count", re.I)
+    structural = re.compile(r"^#{2,3} Turn \d|\*\*Said\*\*|^\| T\d+ \|")
+    prompts = sorted((REPO_ROOT / "tasks").glob("*/user_simulation_prompt.md"))
+    assert len(prompts) >= 100
+    for p in prompts:
+        text = p.read_text()
+        ctx = runner.session_analysis_note(text).split("\n\n## How the agent works here", 1)[0]
+        kept = set(ctx.splitlines())
+        for line in text.splitlines():
+            if structural.search(line):
+                assert line in kept, (p.parent.name, line)
+        for line in ctx.splitlines():
+            # a header introducing behavioural rules may keep the word; a count may not
+            if quota.search(line) and not line.startswith("**HARD LIMITS"):
+                raise AssertionError((p.parent.name, line))
 
 
 def test_system_prompt_states_there_is_no_count():
