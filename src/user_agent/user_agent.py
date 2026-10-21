@@ -112,7 +112,7 @@ TOOL_DEFS = _build_tool_defs()
 class UserDecision:
     """What the simulated user decided to do this turn."""
 
-    action: str  # no-op | question | redirect | new_requirement | check_external
+    action: str  # no-op | question | redirect | new_requirement | check_external | message (text fallback, kind unknown)
     content: str = ""
     raw_response: str = ""
 
@@ -260,14 +260,17 @@ class UserAgent:
     # one exception to the no-op default; a silent answer to a question is asked
     # once more. Pilot of 0.14.0 showed the simulator answering 44% of the agent's
     # requests (64% before) and 13/218 sessions ending while the agent was asking.
-    VERSION = "0.15.0"
+    # 0.15.1 (2026-10-21): text-fallback parsing accepts the label shapes seen
+    # from Claude under tool_choice=auto (**bold**, [bracketed], dash separators)
+    # and no longer guesses `redirect` for unlabelled text; the ground-truth
+    # cursor, unused since 0.12.0, is gone from the per-turn record.
+    VERSION = "0.15.1"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
         self._llm = llm
         self._ground_truth = original_user_messages or []
         self._persona = persona or UserPersona()
-        self._cursor = 0  # index into _ground_truth
         self.max_messages = max_messages  # hard cap (None = no cap)
         # `tool_choice=required` is the cleanest way to get exactly one decision; the
         # Claude 5.5 endpoints reject it, so those run with `auto` and the prompt
@@ -407,9 +410,6 @@ class UserAgent:
         self._counts[decision.action] = self._counts.get(decision.action, 0) + 1
         return decision
 
-    def advance_original_index(self, n: int = 1):
-        self._cursor = min(self._cursor + n, len(self._ground_truth))
-
     def get_stats(self) -> dict:
         return {
             "version": self.VERSION,
@@ -419,7 +419,6 @@ class UserAgent:
             "asked_retry_count": self.asked_retry_count,
             "action_breakdown": dict(self._counts),
             "ground_truth_total": len(self._ground_truth),
-            "ground_truth_consumed": self._cursor,
             "max_messages": self.max_messages,
         }
 
@@ -549,11 +548,18 @@ class UserAgent:
             return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
 
         # Model wrote the decision as text, either in our history format
-        # ("→ action: content") or as a bare "action: content" line — the latter
-        # shows up when tool_choice is `auto`. Recover the action and drop the
-        # label so it never reaches the agent as part of the message.
-        m = re.match(r"(?:→\s*)?(redirect|question|new_requirement|check_external)\s*:\s*(.*)",
-                     stripped, re.DOTALL | re.IGNORECASE)
+        # ("→ action: content") or as a labelled line — the latter shows up when
+        # tool_choice is `auto`. Claude writes the label in several shapes
+        # ("redirect:", "**redirect**:", "[redirect]", "Redirect — ..."); the
+        # label is recovered as the action and removed so it never reaches the
+        # agent as part of the message.
+        # Separators: ":" / "—" / "–" always; a plain "-" only when spaced
+        # ("Redirect - wait"), so "redirect-all traffic..." stays a message.
+        m = re.match(
+            r"(?:→\s*)?[*_\[]*\s*(redirect|question|new_requirement|check_external)"
+            r"(?:\s*(?::|—|–|\s-)\s*[*_\]]*|\s*[*_\]]+\s*(?::|—|–|-)?)\s*(.*)",
+            stripped, re.DOTALL | re.IGNORECASE,
+        )
         if m:
             action, content = m.group(1).lower(), m.group(2).strip()
             if content:
@@ -571,8 +577,12 @@ class UserAgent:
         is_reasoning = any(m in lower for m in _REASONING_MARKERS)
 
         if not is_reasoning and len(stripped) < 500 and stripped:
+            # Unlabelled text: the model chose not to say which kind of message
+            # this is, so the record does not pretend to know either (the old
+            # default of `redirect` made every such message look like a
+            # correction in the per-turn log).
             log.info("UserAgent: recovered message from text fallback (%d chars)", len(stripped))
-            return UserDecision(action="redirect", content=stripped, raw_response=f"fallback_recovered:{stripped[:200]}")
+            return UserDecision(action="message", content=stripped, raw_response=f"fallback_recovered:{stripped[:200]}")
 
         # Default: treat as no-op (model was thinking aloud, not messaging)
         return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
