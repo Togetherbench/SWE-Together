@@ -52,11 +52,17 @@ from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 import opencode_dist
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
+from ..turn_end import TurnEnd, report_asks_user
+from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
 
 _MAX_RESUME_TURNS = 15
+# Four silent consults in a row end the trial. With no message quota the
+# simulator stays silent whenever the agent is doing fine, so an agent that
+# needs no steering gets fewer resume turns than one that does; that is the
+# intended shape of the session, not a budget the agent can run out of.
 _MAX_CONSECUTIVE_NOOPS = 4
 _OPENCODE_LOG = "/logs/agent/opencode.txt"
 
@@ -368,17 +374,10 @@ def build_opencode_config_patch_script(
     )
     return script
 
-# What of each tool call to surface to the user-sim in "## Agent activity".
-# The sim role-plays a HUMAN user, who reacts to what a human sees — the agent's
-# natural-language narration (the `text` events) and the visible code changes
-# (the per-turn git diff) — NOT agent-internal tool data. Showing raw ARGS (grep
-# patterns, full file paths) or RESULTS (raw output) lets the sim react to things
-# the original human never saw, hurting fidelity (it could "redirect" on a grep
-# pattern a real user couldn't have known). So we emit only the tool NAME — a
-# thin "the agent is searching/reading/editing" activity indicator, like a UI
-# status line. Flip either flag on only if a faithfulness analysis justifies it.
-_SHOW_TOOL_ARGS = False
-_SHOW_TOOL_RESULTS = False
+# What of each tool call the user-sim sees is decided in user_agent.turn_view
+# (shared by every harness wrapper): the view of a human watching the terminal —
+# commands and their output, files touched, tool errors — not the contents of
+# every file the agent read.
 
 
 def _normalize_content(raw_content: Any) -> str:
@@ -1127,6 +1126,13 @@ class UserEnabledOpenCode(BaseAgent):
                 result = state.get("output") or part.get("output") or part.get("result") or ""
                 if isinstance(result, dict):
                     result = json.dumps(result)
+                # status / exit code / error travel alongside so the view can show
+                # "exit 1" or "error: …" the way a terminal would
+                meta = {"status": state.get("status"), "error": state.get("error")}
+                md = state.get("metadata")
+                if isinstance(md, dict) and md.get("exit") is not None:
+                    meta["exit"] = md.get("exit")
+                events.append(("tool_meta", step_id, meta))
                 events.append(("tool", step_id, (name, args, str(result) if result else "")))
                 continue
             # error / other event types — quietly skipped, mirrors mini-swe-agent
@@ -1135,54 +1141,43 @@ class UserEnabledOpenCode(BaseAgent):
             tail = self._snapshot_recent_output()
             return tail, tail
 
-        # Dedup the two sections by role. Previously the agent's narration was
-        # emitted into BOTH "Agent activity" (as `thinking:`) and "Agent output"
-        # (as `agent:`), duplicating the report. Instead partition:
-        #   - "Agent output" (observation) = the agent's FINAL narration this
-        #     turn — the decision-critical conclusion, kept whole (≤3000).
-        #   - "Agent activity" (trajectory) = everything else — intermediate
-        #     thinking + tool calls + results — with that final report removed.
-        last_text_idx = None
-        for i, ev in enumerate(events):
-            if ev[0] == "text":
-                last_text_idx = i
+        # One renderer for every harness: the agent's final narration is the
+        # observation, everything before it is the activity log.
+        return render_turn(events, self._ctx_budget)
 
-        steps: list[str] = []
-        for i, (kind, sid, payload) in enumerate(events):
-            if kind == "text":
-                if i == last_text_idx:
-                    continue  # reserved for the observation; don't duplicate
-                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
-                steps.append(f"[{sid}] thinking: {snippet}")
-            else:
-                name, args, result = payload
-                if _SHOW_TOOL_ARGS and args and args != "{}":
-                    if len(args) > 200:
-                        args = args[:200] + "…"
-                    steps.append(f"[{sid}] tool_call({name}): {args}")
-                else:
-                    steps.append(f"[{sid}] tool_call({name})")
-                if _SHOW_TOOL_RESULTS and result:
-                    # 300-char tail keeps the conclusion/error without
-                    # re-flooding the ctx_budget*2 trajectory cap.
-                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
-                    steps.append(f"[{sid}] result: {r}")
+    def _latest_turn_end(self, observation: str = "") -> TurnEnd:
+        """What the harness knows about how the latest turn ended.
 
-        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
-        if len(trajectory) > self._ctx_budget * 2:
-            trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
-
-        if last_text_idx is not None:
-            sid, report = events[last_text_idx][1], events[last_text_idx][2]
-            observation = f"[{sid}] agent: {report[:3000]}"
-        else:
-            # No narration this turn (rare) — surface the last tool result.
-            observation = "(no agent narration this turn)"
-            for kind, sid, payload in reversed(events):
-                if kind == "tool" and payload[2]:
-                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
-                    break
-        return trajectory, observation
+        opencode's final ``step_finish`` carries ``part.reason``: ``stop`` is the
+        model ending its turn, ``length`` the output limit, ``error`` a failure.
+        (A per-exec cap kill never reaches the simulator: the cap-rescue path
+        resumes the agent with a synthetic message instead of consulting.)
+        ``observation`` is the agent's report as the simulator will see it; its
+        closing sentences decide ``asks_user``.
+        """
+        if not self._cumulative_output:
+            return TurnEnd(stop_reason=None, has_report=False)
+        reason = None
+        has_report = False
+        for line in self._cumulative_output[-1].split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            part = ev.get("part") or {}
+            if ev.get("type") == "step_finish":
+                reason = part.get("reason") or reason
+            elif ev.get("type") == "text" and _normalize_content(part.get("text") or part).strip():
+                has_report = True
+            elif ev.get("type") == "error":
+                reason = "error"
+        if reason in ("tool-calls",):
+            reason = "stop"
+        return TurnEnd(stop_reason=reason, has_report=has_report,
+                       asks_user=has_report and report_asks_user(observation))
 
     def _archive_turn_stdout(self, turn: int | str, stdout: str) -> None:
         """Persist the per-turn opencode event stream so prior turns' steps
@@ -1220,7 +1215,7 @@ class UserEnabledOpenCode(BaseAgent):
     # ── user simulation ───────────────────────────────────────────────
 
     async def _consult_user(
-        self, trajectory: str, observation: str, turn: int, completing: bool,
+        self, trajectory: str, observation: str, turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         now = time.monotonic()
@@ -1236,7 +1231,7 @@ class UserEnabledOpenCode(BaseAgent):
             latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
@@ -1248,12 +1243,12 @@ class UserEnabledOpenCode(BaseAgent):
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         if logging_dir is None:
             return
@@ -1262,7 +1257,10 @@ class UserEnabledOpenCode(BaseAgent):
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            # what the harness knew about where the agent stopped (replaces the
+            # always-True is_completion_attempt of simulator versions < 0.14.0)
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report,
+                         "asks_user": turn_end.asks_user},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -1440,7 +1438,8 @@ class UserEnabledOpenCode(BaseAgent):
             else:
                 trajectory, observation = self._snapshot_latest_turn()
                 decision = await self._consult_user(
-                    trajectory, observation, turn, completing=True, logging_dir=self.logs_dir,
+                    trajectory, observation, turn, self._latest_turn_end(observation),
+                    logging_dir=self.logs_dir,
                 )
                 if not decision.has_message:
                     consecutive_noops += 1

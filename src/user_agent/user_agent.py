@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
+
+from .turn_end import TurnEnd
 
 log = logging.getLogger(__name__)
 
@@ -130,7 +133,7 @@ class UserDecision:
         return self.content
 
     # Prefixes that indicate internal/error state, not real model reasoning
-    _INTERNAL_PREFIXES = ("error:", "fallback_noop:", "noop_guard:", "hard_cap_reached")
+    _INTERNAL_PREFIXES = ("error:", "fallback_noop:", "noop_guard:", "hard_cap_reached", "asked_still_silent:")
 
     def format_for_history(self) -> str:
         """Format the full decision for conversation history.
@@ -172,11 +175,26 @@ You have:
 ## When to act
 
 Default to no-op. Real users give instructions once, then go silent for
-many turns while the agent works. Only speak when:
+many turns while the agent works. You see what a user at the terminal sees:
+the agent's report, the commands it ran and what they printed, and the diff.
+Judge the report against that evidence — a claim like "all tests pass" is
+only as good as the test output you can see. Only speak when:
 - The session analysis describes a trigger that matches the current situation
 - The agent is clearly stuck in a loop or going down the wrong path
-- The agent explicitly asks you something
-- The agent tries to finish but missed requirements
+- The agent presents its work as finished but missed requirements
+  (decide from its report whether it is claiming to be done or pausing
+  between steps — nobody tells you which)
+
+The one exception to the no-op default: when the agent asks you something
+(a decision, a value, permission, access, a file), answer it. "No", "can't
+give you that, do X instead" and "just pick one" are all answers; silence
+is not — a user who ignores a direct question ends the session. Your turn
+summary says when the report ends in a question.
+
+There is no number of messages to reach. The original user's messages are
+context for what you care about and how you talk; do not send one because
+the original user sent one at this point. If the agent is doing fine, stay
+silent for the whole session.
 
 NEVER repeat something you already said — check the conversation history.
 If you've run out of things to say, choose no-op for every remaining turn.
@@ -194,6 +212,18 @@ Rules:
 - NEVER mention "session analysis", "ground truth", or "turns/calls".
 - The `content` parameter must be plain text only.
 """
+
+
+#: Second ask when the agent's report ended in a question and the simulator
+#: chose silence. Not a quota and not a script: it names the one fact the
+#: harness knows and leaves the content of the answer to the simulator.
+_ASKED_RETRY_NOTE = (
+    "The agent's report above ends by asking you for something, and you chose to say "
+    "nothing. A user who is asked a direct question answers it, even if the answer is "
+    "no, or that what it asks for is not available and it should proceed differently. "
+    "Answer the agent now with one of the message tools; choose no-op only if the "
+    "question was already answered earlier in this conversation."
+)
 
 
 # ── UserAgent ───────────────────────────────────────────────────────────────────────
@@ -216,7 +246,21 @@ class UserAgent:
     can see what it already said. Each call produces exactly one UserDecision.
     """
 
-    VERSION = "0.11.0"  # see CHANGELOG.md
+    # 0.12.0 (2026-10-13): no message quota — the prompt no longer states a count
+    # or asks for ground-truth messages in order; recorded per trial in
+    # user_decision.json → stats.version so cohorts can be told apart.
+    # 0.13.0 (2026-10-14): the simulator sees the terminal — commands with their
+    # output, files touched, tool errors (user_agent.turn_view) — instead of tool
+    # names only.
+    # 0.14.0 (2026-10-14): the prompt no longer asserts "the agent is signaling
+    # completion" on every turn; it states what the harness knows (stop reason,
+    # waiting) and leaves done/pausing/blocked/asking to the simulator.
+    # 0.15.0 (2026-10-21): the harness states when the report ends by asking the
+    # user something (TurnEnd.asks_user); the system prompt makes answering the
+    # one exception to the no-op default; a silent answer to a question is asked
+    # once more. Pilot of 0.14.0 showed the simulator answering 44% of the agent's
+    # requests (64% before) and 13/218 sessions ending while the agent was asking.
+    VERSION = "0.15.0"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
@@ -246,6 +290,7 @@ class UserAgent:
         self.total_calls = 0
         self.wait_count = 0
         self.message_count = 0
+        self.asked_retry_count = 0
         self._counts: dict[str, int] = {}
 
         # exact prompt sent on the most recent process() call (for logging)
@@ -261,7 +306,7 @@ class UserAgent:
         latest_observation: str,
         latest_analysis: str | None,
         step_count: int,
-        is_completion_attempt: bool,
+        turn_end: "TurnEnd | bool | None" = None,
         total_steps_so_far: int = 0,
         elapsed_sec: float = 0.0,
         turn_duration_sec: float = 0.0,
@@ -279,9 +324,14 @@ class UserAgent:
         # Build turn summary — passed as prompt (not pre-appended) so
         # LiteLLM doesn't create an empty trailing user message that
         # triggers Anthropic's "cache_control on empty text" error.
+        # Legacy callers passed a bool meaning "the agent is signalling completion";
+        # that was always True in practice. It is now a TurnEnd describing only what
+        # the harness knows (stop reason, whether there was a report).
+        if not isinstance(turn_end, TurnEnd):
+            turn_end = TurnEnd()
         turn_content = self._build_turn_summary(
             task_description, recent_trajectory, latest_observation,
-            latest_analysis, step_count, is_completion_attempt,
+            latest_analysis, step_count, turn_end,
             elapsed_sec, turn_duration_sec, code_changes_diff,
         )
 
@@ -321,6 +371,25 @@ class UserAgent:
                     tools=TOOL_DEFS,
                 )
                 decision = self._extract_decision(resp)
+
+            # The agent asked the user something and the simulator chose silence.
+            # Ask once more, naming the fact: a human who is asked a direct
+            # question answers it (even with "no"), and silence here ends the
+            # session. The second answer stands whatever it is.
+            if turn_end.asks_user and not decision.has_message:
+                log.info("UserAgent: agent asked, simulator silent — one retry")
+                self.asked_retry_count += 1
+                resp = await self._llm.call(
+                    prompt=turn_content + "\n\n" + _ASKED_RETRY_NOTE,
+                    message_history=history_with_sys,
+                    tools=TOOL_DEFS,
+                    tool_choice=self._tool_choice,
+                )
+                retry = self._extract_decision(resp)
+                if retry.has_message:
+                    decision = retry
+                else:
+                    decision = UserDecision(action="no-op", raw_response=f"asked_still_silent:{retry.raw_response[:160]}")
         except Exception as exc:
             log.warning("UserAgent call failed: %s", exc)
             decision = UserDecision(action="no-op", raw_response=f"error: {exc}")
@@ -347,6 +416,7 @@ class UserAgent:
             "total_calls": self.total_calls,
             "wait_count": self.wait_count,
             "message_count": self.message_count,
+            "asked_retry_count": self.asked_retry_count,
             "action_breakdown": dict(self._counts),
             "ground_truth_total": len(self._ground_truth),
             "ground_truth_consumed": self._cursor,
@@ -369,7 +439,7 @@ class UserAgent:
 
     def _build_turn_summary(
         self, task, trajectory, observation, analysis,
-        step, is_completion,
+        step, turn_end: TurnEnd,
         elapsed_sec=0.0, turn_duration_sec=0.0,
         code_changes_diff: str = "",
     ) -> str:
@@ -382,8 +452,7 @@ class UserAgent:
                 timing_parts.append(f"this turn took {self._format_duration(turn_duration_sec)}")
             sections.append(f"**Timing:** {', '.join(timing_parts)}")
 
-        if is_completion:
-            sections.append("** The agent is signaling completion.")
+        sections.append(f"**Where the agent stopped:** {turn_end.describe(step)}")
 
         if self.total_calls == 1:
             # First call — include the (near-)full task description. The old
@@ -395,8 +464,12 @@ class UserAgent:
             # would otherwise blow up every cached turn.
             sections.append(f"\n## Task\n{task[:16000]}")
 
-        sections.append(f"\n## Agent activity (this turn)\n{trajectory}")
-        sections.append(f"\n## Agent output\n{observation}")
+        sections.append(
+            f"\n## What you saw in the terminal (this turn)\n"
+            f"Commands the agent ran with their output, files it touched, tool errors, "
+            f"and its intermediate remarks — check its report below against this.\n{trajectory}"
+        )
+        sections.append(f"\n## Agent's report to you\n{observation}")
 
         # Per-turn incremental git diff — what actually changed on disk this
         # turn (vs end of prior turn). This is the sim's independent channel
@@ -475,15 +548,17 @@ class UserAgent:
         if any(lower.startswith(p) or p in lower for p in _NOOP_PHRASES):
             return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
 
-        # Model used our history format: "→ action: content"
-        if stripped.startswith("→ "):
-            import re
-            m = re.match(r"→\s*(redirect|question|new_requirement|check_external):\s*(.*)", stripped, re.DOTALL)
-            if m:
-                action, content = m.group(1), m.group(2).strip()
-                if content:
-                    log.info("UserAgent: recovered %s from text fallback", action)
-                    return UserDecision(action=action, content=content, raw_response=f"fallback_recovered:{stripped[:200]}")
+        # Model wrote the decision as text, either in our history format
+        # ("→ action: content") or as a bare "action: content" line — the latter
+        # shows up when tool_choice is `auto`. Recover the action and drop the
+        # label so it never reaches the agent as part of the message.
+        m = re.match(r"(?:→\s*)?(redirect|question|new_requirement|check_external)\s*:\s*(.*)",
+                     stripped, re.DOTALL | re.IGNORECASE)
+        if m:
+            action, content = m.group(1).lower(), m.group(2).strip()
+            if content:
+                log.info("UserAgent: recovered %s from text fallback", action)
+                return UserDecision(action=action, content=content, raw_response=f"fallback_recovered:{stripped[:200]}")
 
         # Model returned what looks like a real user message (not reasoning).
         # Heuristic: short text (<500 chars) without analysis/reflection markers

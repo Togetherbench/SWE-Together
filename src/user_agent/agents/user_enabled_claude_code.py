@@ -24,6 +24,8 @@ from harbor.models.agent.context import AgentContext
 from harbor.llms.lite_llm import LiteLLM
 
 from ..repo_config import discover_repo_config_files
+from ..turn_end import TurnEnd, report_asks_user
+from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 
@@ -32,20 +34,8 @@ log = logging.getLogger(__name__)
 _MAX_RESUME_TURNS = 15
 _MAX_CONSECUTIVE_NOOPS = 4  # allow agent to continue N times without user input before stopping
 
-# What of each tool call to surface to the user-sim in the trajectory snapshot.
-# Kept identical to user_enabled_opencode / user_enabled_mini_swe_agent so all
-# three harnesses present the same view to the simulator. The sim role-plays a
-# HUMAN user, who reacts to what a human sees — the agent's natural-language
-# narration and the visible code changes (the per-turn git diff) — NOT
-# agent-internal tool data. Showing raw ARGS (grep patterns, bash commands, file
-# paths) or RESULTS (raw output) lets the sim react to things the original human
-# never saw, hurting fidelity (it could "redirect" on a grep pattern a real user
-# couldn't have known). So we emit only the tool NAME — a thin "the agent is
-# searching/reading/editing" activity indicator. Flip either flag on only if a
-# faithfulness analysis justifies it (and flip the other harnesses' flags in
-# lockstep).
-_SHOW_TOOL_ARGS = False
-_SHOW_TOOL_RESULTS = False
+# What of each tool call the user-sim sees is decided in user_agent.turn_view
+# (shared by every harness wrapper): the view of a human watching the terminal.
 
 # Allowlist of roots searched for `.git` dirs during per-turn patch capture.
 # Covers every task layout observed in `tasks/` as of issue #159:
@@ -621,9 +611,10 @@ server.serve_forever()
         user_enabled_mini_swe_agent use, so the user simulator sees a consistent
         structure across all three harnesses:
           - ("text", sid, str)                  — thinking / text narration
-          - ("tool", sid, (name, args, result)) — a tool call (result is "" since
-            claude's tool_result comes back as a separate user message we don't
-            surface)
+          - ("tool_meta", sid, {...}) then ("tool", sid, (name, args, result)) —
+            a tool call paired with the `tool_result` block Claude Code emits in a
+            later `user` event (matched on tool_use_id; `is_error` becomes the
+            meta's status)
 
         Uses self._global_step_id so step numbers are continuous across turns.
 
@@ -634,6 +625,9 @@ server.serve_forever()
         """
         events: list[tuple] = []
         pending_result: str | None = None
+        # tool_use id → index of its ("tool", …) event, so the later tool_result
+        # user message can fill in the output and error flag
+        open_calls: dict[str, int] = {}
         for line in raw.split("\n"):
             line = line.strip()
             if not line:
@@ -644,6 +638,27 @@ server.serve_forever()
                 continue
 
             t = obj.get("type")
+
+            if t == "user":
+                content = obj.get("message", {}).get("content", [])
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    idx = open_calls.pop(block.get("tool_use_id") or "", None)
+                    if idx is None:
+                        continue
+                    out = block.get("content")
+                    if isinstance(out, list):
+                        out = "\n".join(str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in out)
+                    out = out if isinstance(out, str) else json.dumps(out)
+                    name, args, _ = events[idx][2]
+                    events[idx] = ("tool", events[idx][1], (name, args, out or ""))
+                    meta_idx = idx - 1
+                    if meta_idx >= 0 and events[meta_idx][0] == "tool_meta":
+                        events[meta_idx][2]["status"] = "error" if block.get("is_error") else "completed"
+                continue
 
             if t == "assistant":
                 for block in obj.get("message", {}).get("content", []):
@@ -659,11 +674,21 @@ server.serve_forever()
                         name = block.get("name", "?")
                         inp = block.get("input", {})
                         args = inp if isinstance(inp, str) else json.dumps(inp)
+                        events.append(("tool_meta", self._global_step_id, {"status": None}))
                         events.append(("tool", self._global_step_id, (name, args, "")))
+                        if block.get("id"):
+                            open_calls[block["id"]] = len(events) - 1
 
             elif t == "result":
                 result = obj.get("result", "")
                 pending_result = result if isinstance(result, str) else json.dumps(result)
+                # Claude Code's terminal event: subtype "success" is a deliberate
+                # stop; "error_max_turns" / "error_during_execution" are not.
+                sub = str(obj.get("subtype") or "")
+                self._last_stop_reason = (
+                    "stop" if sub == "success" or not sub else
+                    "length" if "max_turns" in sub else "error"
+                )
 
         if pending_result and not any(k == "text" for k, _, _ in events):
             self._global_step_id += 1
@@ -678,7 +703,7 @@ server.serve_forever()
         user_enabled_opencode / user_enabled_mini_swe_agent so the user simulator
         sees the same shape of input from all three harnesses:
           - trajectory ("Agent activity") = intermediate thinking + tool calls
-            (+ results, both gated by _SHOW_TOOL_* flags), with the final report
+            + commands with their output, files touched, tool errors (user_agent.turn_view), with the final report
             removed, tail-capped at ctx_budget*2.
           - observation ("Agent output") = the agent's FINAL narration this turn
             (the decision-critical conclusion), kept whole up to 3000 chars.
@@ -697,56 +722,14 @@ server.serve_forever()
             tail = latest_raw[:self._ctx_budget] if latest_raw else "(no structured output)"
             return tail, tail
 
-        # Dedup the two sections by role (mirrors opencode). The agent's FINAL
-        # narration is reserved for the observation; everything else — earlier
-        # thinking + tool calls + results — is the trajectory, with that final
-        # report removed so it isn't duplicated across both sections.
-        last_text_idx = None
-        for idx, ev in enumerate(events):
-            if ev[0] == "text":
-                last_text_idx = idx
-
-        steps: list[str] = []
-        for idx, (kind, sid, payload) in enumerate(events):
-            if kind == "text":
-                if idx == last_text_idx:
-                    continue  # reserved for the observation; don't duplicate
-                snippet = payload if len(payload) <= 300 else payload[:300] + "…"
-                steps.append(f"[{sid}] thinking: {snippet}")
-            else:
-                name, args, result = payload
-                if _SHOW_TOOL_ARGS and args and args != "{}":
-                    if len(args) > 200:
-                        args = args[:200] + "…"
-                    steps.append(f"[{sid}] tool_call({name}): {args}")
-                else:
-                    steps.append(f"[{sid}] tool_call({name})")
-                if _SHOW_TOOL_RESULTS and result:
-                    # 300-char tail keeps the conclusion/error without
-                    # re-flooding the ctx_budget*2 trajectory cap.
-                    r = result if len(result) <= 300 else "…[truncated]…\n" + result[-300:]
-                    steps.append(f"[{sid}] result: {r}")
-
-        trajectory = "\n".join(steps) if steps else "(no intermediate steps)"
-        if len(trajectory) > self._ctx_budget * 2:
-            trajectory = "…[earlier steps elided]…\n" + trajectory[-self._ctx_budget * 2:]
-
-        if last_text_idx is not None:
-            sid, report = events[last_text_idx][1], events[last_text_idx][2]
-            observation = f"[{sid}] agent: {report[:3000]}"
-        else:
-            # No narration this turn (rare) — surface the last tool result.
-            observation = "(no agent narration this turn)"
-            for kind, sid, payload in reversed(events):
-                if kind == "tool" and payload[2]:
-                    observation = f"[{sid}] result: {str(payload[2])[:500]}"
-                    break
-        return trajectory, observation
+        # One renderer for every harness: the agent's final narration is the
+        # observation, everything before it is the activity log.
+        return render_turn(events, self._ctx_budget)
 
     # ── user simulation ──────────────────────────────────────────────
 
     async def _consult_user(
-        self, trajectory: str, observation: str, turn: int, completing: bool,
+        self, trajectory: str, observation: str, turn: int, turn_end: TurnEnd,
         logging_dir: Path | None = None,
     ) -> UserDecision:
         # Compute timing for this turn
@@ -760,7 +743,7 @@ server.serve_forever()
             latest_observation=observation,
             latest_analysis=None,
             step_count=turn,
-            is_completion_attempt=completing,
+            turn_end=turn_end,
             total_steps_so_far=turn,
             elapsed_sec=elapsed_sec,
             turn_duration_sec=turn_duration_sec,
@@ -772,7 +755,7 @@ server.serve_forever()
         else:
             log.debug("User sim waits at turn %d", turn)
 
-        self._log_user_decision(logging_dir, turn, decision, completing)
+        self._log_user_decision(logging_dir, turn, decision, turn_end)
         return decision
 
     async def _capture_git_diff(self, environment, turn: int) -> None:
@@ -861,7 +844,7 @@ server.serve_forever()
 
     def _log_user_decision(
         self, logging_dir: Path | None, turn: int,
-        decision: UserDecision, completing: bool,
+        decision: UserDecision, turn_end: TurnEnd,
     ):
         if logging_dir is None:
             return
@@ -870,7 +853,8 @@ server.serve_forever()
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "is_completion_attempt": completing,
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report,
+                         "asks_user": turn_end.asks_user},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -977,9 +961,12 @@ server.serve_forever()
             else:
                 trajectory, observation = self._snapshot_latest_turn()
 
-                # Consult user sim (treat every completed claude run as a "completion")
+                has_report = observation != "(no agent narration this turn)"
                 decision = await self._consult_user(
-                    trajectory, observation, turn, completing=True,
+                    trajectory, observation, turn,
+                    TurnEnd(stop_reason=getattr(self, "_last_stop_reason", None),
+                            has_report=has_report,
+                            asks_user=has_report and report_asks_user(observation)),
                     logging_dir=self.logs_dir,
                 )
 
