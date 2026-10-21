@@ -35,7 +35,7 @@ from harbor.llms.lite_llm import LiteLLM
 from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
-from ..turn_end import TurnEnd
+from ..turn_end import TurnEnd, report_asks_user
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -632,7 +632,7 @@ class UserEnabledCodex(BaseAgent):
             observation = self._snapshot_recent_output()
 
             decision = await self._consult_user(
-                observation, turn, TurnEnd(), logging_dir=self.logs_dir,
+                observation, turn, TurnEnd(asks_user=report_asks_user(observation)), logging_dir=self.logs_dir,
             )
 
             if not decision.has_message:

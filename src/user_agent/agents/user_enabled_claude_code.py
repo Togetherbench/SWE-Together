@@ -24,7 +24,7 @@ from harbor.models.agent.context import AgentContext
 from harbor.llms.lite_llm import LiteLLM
 
 from ..repo_config import discover_repo_config_files
-from ..turn_end import TurnEnd
+from ..turn_end import TurnEnd, report_asks_user
 from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
@@ -853,7 +853,8 @@ server.serve_forever()
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
-            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report,
+                         "asks_user": turn_end.asks_user},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -960,11 +961,12 @@ server.serve_forever()
             else:
                 trajectory, observation = self._snapshot_latest_turn()
 
-                # Consult user sim (treat every completed claude run as a "completion")
+                has_report = observation != "(no agent narration this turn)"
                 decision = await self._consult_user(
                     trajectory, observation, turn,
                     TurnEnd(stop_reason=getattr(self, "_last_stop_reason", None),
-                            has_report=observation != "(no agent narration this turn)"),
+                            has_report=has_report,
+                            asks_user=has_report and report_asks_user(observation)),
                     logging_dir=self.logs_dir,
                 )
 

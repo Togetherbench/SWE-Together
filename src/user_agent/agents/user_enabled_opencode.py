@@ -52,7 +52,7 @@ from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 import opencode_dist
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
-from ..turn_end import TurnEnd
+from ..turn_end import TurnEnd, report_asks_user
 from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
@@ -1145,13 +1145,15 @@ class UserEnabledOpenCode(BaseAgent):
         # observation, everything before it is the activity log.
         return render_turn(events, self._ctx_budget)
 
-    def _latest_turn_end(self) -> TurnEnd:
+    def _latest_turn_end(self, observation: str = "") -> TurnEnd:
         """What the harness knows about how the latest turn ended.
 
         opencode's final ``step_finish`` carries ``part.reason``: ``stop`` is the
         model ending its turn, ``length`` the output limit, ``error`` a failure.
         (A per-exec cap kill never reaches the simulator: the cap-rescue path
         resumes the agent with a synthetic message instead of consulting.)
+        ``observation`` is the agent's report as the simulator will see it; its
+        closing sentences decide ``asks_user``.
         """
         if not self._cumulative_output:
             return TurnEnd(stop_reason=None, has_report=False)
@@ -1174,7 +1176,8 @@ class UserEnabledOpenCode(BaseAgent):
                 reason = "error"
         if reason in ("tool-calls",):
             reason = "stop"
-        return TurnEnd(stop_reason=reason, has_report=has_report)
+        return TurnEnd(stop_reason=reason, has_report=has_report,
+                       asks_user=has_report and report_asks_user(observation))
 
     def _archive_turn_stdout(self, turn: int | str, stdout: str) -> None:
         """Persist the per-turn opencode event stream so prior turns' steps
@@ -1256,7 +1259,8 @@ class UserEnabledOpenCode(BaseAgent):
             "turn": turn,
             # what the harness knew about where the agent stopped (replaces the
             # always-True is_completion_attempt of simulator versions < 0.14.0)
-            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report},
+            "turn_end": {"stop_reason": turn_end.stop_reason, "has_report": turn_end.has_report,
+                         "asks_user": turn_end.asks_user},
             "action": decision.action,
             "has_message": decision.has_message,
             "content": decision.content,
@@ -1434,7 +1438,8 @@ class UserEnabledOpenCode(BaseAgent):
             else:
                 trajectory, observation = self._snapshot_latest_turn()
                 decision = await self._consult_user(
-                    trajectory, observation, turn, self._latest_turn_end(), logging_dir=self.logs_dir,
+                    trajectory, observation, turn, self._latest_turn_end(observation),
+                    logging_dir=self.logs_dir,
                 )
                 if not decision.has_message:
                     consecutive_noops += 1

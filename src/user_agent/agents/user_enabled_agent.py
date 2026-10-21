@@ -16,7 +16,7 @@ from harbor.agents.terminus_2.terminus_2 import Terminus2, Command
 from harbor.llms.lite_llm import LiteLLM
 
 from ..repo_config import discover_repo_config_files
-from ..turn_end import TurnEnd
+from ..turn_end import TurnEnd, report_asks_user
 from ..user_agent import UserAgent, UserDecision
 
 log = logging.getLogger(__name__)
@@ -301,7 +301,7 @@ class UserEnabledTerminus2(Terminus2):
                 # First completion signal — let the user sim weigh in
                 if self._check_on_completion:
                     dec = await self._consult_user(
-                        observation, analysis, turn + 1, TurnEnd(),
+                        observation, analysis, turn + 1, TurnEnd(asks_user=report_asks_user(observation)),
                         logging_dir=logging_dir,
                     )
                     if dec.has_message:
@@ -315,7 +315,7 @@ class UserEnabledTerminus2(Terminus2):
 
             # ── normal turn: consult simulated user ──
             dec = await self._consult_user(
-                observation, analysis, turn + 1, TurnEnd(),
+                observation, analysis, turn + 1, TurnEnd(asks_user=report_asks_user(observation)),
                 logging_dir=logging_dir,
             )
             if dec.has_message:

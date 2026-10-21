@@ -133,7 +133,7 @@ class UserDecision:
         return self.content
 
     # Prefixes that indicate internal/error state, not real model reasoning
-    _INTERNAL_PREFIXES = ("error:", "fallback_noop:", "noop_guard:", "hard_cap_reached")
+    _INTERNAL_PREFIXES = ("error:", "fallback_noop:", "noop_guard:", "hard_cap_reached", "asked_still_silent:")
 
     def format_for_history(self) -> str:
         """Format the full decision for conversation history.
@@ -181,10 +181,15 @@ Judge the report against that evidence — a claim like "all tests pass" is
 only as good as the test output you can see. Only speak when:
 - The session analysis describes a trigger that matches the current situation
 - The agent is clearly stuck in a loop or going down the wrong path
-- The agent explicitly asks you something
 - The agent presents its work as finished but missed requirements
-  (decide from its report whether it is claiming to be done, pausing
-  between steps, blocked, or asking — nobody tells you which)
+  (decide from its report whether it is claiming to be done or pausing
+  between steps — nobody tells you which)
+
+The one exception to the no-op default: when the agent asks you something
+(a decision, a value, permission, access, a file), answer it. "No", "can't
+give you that, do X instead" and "just pick one" are all answers; silence
+is not — a user who ignores a direct question ends the session. Your turn
+summary says when the report ends in a question.
 
 There is no number of messages to reach. The original user's messages are
 context for what you care about and how you talk; do not send one because
@@ -207,6 +212,18 @@ Rules:
 - NEVER mention "session analysis", "ground truth", or "turns/calls".
 - The `content` parameter must be plain text only.
 """
+
+
+#: Second ask when the agent's report ended in a question and the simulator
+#: chose silence. Not a quota and not a script: it names the one fact the
+#: harness knows and leaves the content of the answer to the simulator.
+_ASKED_RETRY_NOTE = (
+    "The agent's report above ends by asking you for something, and you chose to say "
+    "nothing. A user who is asked a direct question answers it, even if the answer is "
+    "no, or that what it asks for is not available and it should proceed differently. "
+    "Answer the agent now with one of the message tools; choose no-op only if the "
+    "question was already answered earlier in this conversation."
+)
 
 
 # ── UserAgent ───────────────────────────────────────────────────────────────────────
@@ -238,7 +255,12 @@ class UserAgent:
     # 0.14.0 (2026-10-14): the prompt no longer asserts "the agent is signaling
     # completion" on every turn; it states what the harness knows (stop reason,
     # waiting) and leaves done/pausing/blocked/asking to the simulator.
-    VERSION = "0.14.0"
+    # 0.15.0 (2026-10-21): the harness states when the report ends by asking the
+    # user something (TurnEnd.asks_user); the system prompt makes answering the
+    # one exception to the no-op default; a silent answer to a question is asked
+    # once more. Pilot of 0.14.0 showed the simulator answering 44% of the agent's
+    # requests (64% before) and 13/218 sessions ending while the agent was asking.
+    VERSION = "0.15.0"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
@@ -268,6 +290,7 @@ class UserAgent:
         self.total_calls = 0
         self.wait_count = 0
         self.message_count = 0
+        self.asked_retry_count = 0
         self._counts: dict[str, int] = {}
 
         # exact prompt sent on the most recent process() call (for logging)
@@ -348,6 +371,25 @@ class UserAgent:
                     tools=TOOL_DEFS,
                 )
                 decision = self._extract_decision(resp)
+
+            # The agent asked the user something and the simulator chose silence.
+            # Ask once more, naming the fact: a human who is asked a direct
+            # question answers it (even with "no"), and silence here ends the
+            # session. The second answer stands whatever it is.
+            if turn_end.asks_user and not decision.has_message:
+                log.info("UserAgent: agent asked, simulator silent — one retry")
+                self.asked_retry_count += 1
+                resp = await self._llm.call(
+                    prompt=turn_content + "\n\n" + _ASKED_RETRY_NOTE,
+                    message_history=history_with_sys,
+                    tools=TOOL_DEFS,
+                    tool_choice=self._tool_choice,
+                )
+                retry = self._extract_decision(resp)
+                if retry.has_message:
+                    decision = retry
+                else:
+                    decision = UserDecision(action="no-op", raw_response=f"asked_still_silent:{retry.raw_response[:160]}")
         except Exception as exc:
             log.warning("UserAgent call failed: %s", exc)
             decision = UserDecision(action="no-op", raw_response=f"error: {exc}")
@@ -374,6 +416,7 @@ class UserAgent:
             "total_calls": self.total_calls,
             "wait_count": self.wait_count,
             "message_count": self.message_count,
+            "asked_retry_count": self.asked_retry_count,
             "action_breakdown": dict(self._counts),
             "ground_truth_total": len(self._ground_truth),
             "ground_truth_consumed": self._cursor,

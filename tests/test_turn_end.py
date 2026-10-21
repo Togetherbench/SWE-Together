@@ -108,4 +108,4 @@ def test_claude_code_parser_records_result_subtype():
 
 
 def test_version_bumped():
-    assert UserAgent(_LLM()).get_stats()["version"] == "0.14.0"
+    assert UserAgent(_LLM()).get_stats()["version"] == "0.15.0"

@@ -41,7 +41,7 @@ from ..exec_helpers import TRIAL_BUDGET_SEC, exec_with_budget
 from proxies.litellm_proxy import launch_litellm_proxy, mask_proxied_model_name
 from ..repo_config import discover_repo_config_files
 from ..repo_diff import capture_git_diff, tag_harbor_base
-from ..turn_end import TurnEnd
+from ..turn_end import TurnEnd, report_asks_user
 from ..turn_view import render_turn
 from ..user_agent import UserAgent, UserDecision
 
@@ -699,7 +699,7 @@ class UserEnabledMiniSweAgent(BaseAgent):
             trajectory, observation = self._snapshot_latest_turn()
 
             decision = await self._consult_user(
-                trajectory, observation, turn, TurnEnd(), logging_dir=self.logs_dir,
+                trajectory, observation, turn, TurnEnd(asks_user=report_asks_user(observation)), logging_dir=self.logs_dir,
             )
 
             if not decision.has_message:
