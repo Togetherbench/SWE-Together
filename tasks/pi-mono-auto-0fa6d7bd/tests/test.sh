@@ -19,14 +19,21 @@ add_reward() { REWARD=$(awk -v a="$REWARD" -v b="$1" 'BEGIN{ r=a+b; if(r>1)r=1; 
 
 cd "$REPO" || finalize
 
+# The harness commits the agent's work after every turn (harbor-turn-N), so by
+# the time this runs HEAD already contains the agent's changes. Compare against
+# harbor-base, the snapshot tagged before the agent started. Fall back to HEAD
+# when the tag is absent (e.g. running this script outside the harness).
+BASE_REF=HEAD
+git -C "$REPO" rev-parse --verify -q harbor-base >/dev/null 2>&1 && BASE_REF=harbor-base
+
 # ============================================================
-# Snapshot baseline files via git (HEAD = pre-patch baseline)
+# Snapshot baseline files via git ($BASE_REF = pre-patch baseline)
 # ============================================================
 BASE_DIR=$(mktemp -d)
 get_base() {
   local rel="${1#$REPO/}"
   local out="$2"
-  (cd "$REPO" && git show HEAD:"$rel" > "$out" 2>/dev/null)
+  (cd "$REPO" && git show "$BASE_REF":"$rel" > "$out" 2>/dev/null)
 }
 get_base "$TOOL_EXEC"   "$BASE_DIR/tool-execution.ts.base"
 get_base "$INTERACTIVE" "$BASE_DIR/interactive-mode.ts.base"
@@ -42,7 +49,7 @@ BASE_BASH="$BASE_DIR/bash.ts.base"
 ANY_CHANGE=0
 for f in "$TOOL_EXEC" "$INTERACTIVE" "$BASH_TOOL"; do
   rel="${f#$REPO/}"
-  if ! (cd "$REPO" && git diff --quiet HEAD -- "$rel" 2>/dev/null); then
+  if ! (cd "$REPO" && git diff --quiet "$BASE_REF" -- "$rel" 2>/dev/null); then
     ANY_CHANGE=1
   fi
 done
@@ -398,7 +405,7 @@ echo "F2P upstream bash_timing: rc=$F2P_TIMING_RC"
 # P2P gate: tsgo type check (scoped to agent-touched .ts/.tsx files)
 # Pre-existing errors in sandbox/index.ts and similar files would otherwise force every reward to 0.
 echo "=== P2P Upstream Gate: tsgo --noEmit (scoped) ==="
-CHANGED_TS_FILES=$(cd "$REPO" && (git diff --name-only HEAD~1 HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null) | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
+CHANGED_TS_FILES=$(cd "$REPO" && git diff --name-only "$BASE_REF" 2>/dev/null | grep -E '\.tsx?$' | sort -u | tr '\n' ' ')
 if [ -z "$CHANGED_TS_FILES" ]; then
     echo "No .ts/.tsx changes in agent diff — gate vacuously passes"
     P2P_TSGO_RC=0

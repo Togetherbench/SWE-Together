@@ -39,6 +39,13 @@ if [ ! -d "$REPO" ]; then
 fi
 git config --global --add safe.directory "$REPO" 2>/dev/null || true
 
+# The harness commits the agent's work after every turn (harbor-turn-N), so by
+# the time this runs HEAD already contains the agent's changes. Compare against
+# harbor-base, the snapshot tagged before the agent started. Fall back to HEAD
+# when the tag is absent (e.g. running this script outside the harness).
+BASE_REF=HEAD
+git -C "$REPO" rev-parse --verify -q harbor-base >/dev/null 2>&1 && BASE_REF=harbor-base
+
 export PATH="/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 for p in /root/.bun/bin /root/.nvm/versions/node/*/bin /usr/local/share/npm/bin /opt/homebrew/bin ; do
   [ -d "$p" ] && export PATH="$p:$PATH"
@@ -96,9 +103,9 @@ if [ -d "$REPO/.git" ]; then
         cat "$full" >> /tmp/all_added_text.txt 2>/dev/null
         ;;
     esac
-  done < <(cd "$REPO" && git status --porcelain 2>/dev/null | grep -E '^\?\?' | awk '{print $2}')
+  done < <(cd "$REPO" && { git ls-files --others --exclude-standard 2>/dev/null; git diff --name-only --diff-filter=A "$BASE_REF" 2>/dev/null; } | sort -u)
 
-  (cd "$REPO" && git diff HEAD 2>/dev/null) | grep "^+" | grep -v "^+++" | sed 's/^+//' > /tmp/diff_added.txt
+  (cd "$REPO" && git diff "$BASE_REF" 2>/dev/null) | grep "^+" | grep -v "^+++" | sed 's/^+//' > /tmp/diff_added.txt
   cat /tmp/diff_added.txt >> /tmp/all_added_text.txt
 fi
 
@@ -126,7 +133,7 @@ fi
 if [ "$G_FIX_WIRED" = "false" ] && [ -f "$SDK_TS" ] && grep -qE 'toolExecution\s*:\s*["'"'"']sequential["'"'"']' "$SDK_TS"; then
   # Confirm it wasn't there pre-change
   if [ -d "$REPO/.git" ]; then
-    if ! (cd "$REPO" && git show HEAD:packages/coding-agent/src/core/sdk.ts 2>/dev/null | grep -qE 'toolExecution\s*:\s*["'"'"']sequential["'"'"']'); then
+    if ! (cd "$REPO" && git show "$BASE_REF":packages/coding-agent/src/core/sdk.ts 2>/dev/null | grep -qE 'toolExecution\s*:\s*["'"'"']sequential["'"'"']'); then
       G_FIX_WIRED=true
       WIRED_DETAIL="sdk-toolExecution-flag-postfile"
     fi
@@ -164,7 +171,7 @@ fi
 if [ "$G_FIX_WIRED" = "false" ] && [ -f "$AGENT_LOOP_TS" ]; then
   if grep -qE '"sequential"|toolExecution\s*===\s*["'"'"']sequential["'"'"']' "$AGENT_LOOP_TS"; then
     if [ -d "$REPO/.git" ]; then
-      if ! (cd "$REPO" && git show HEAD:packages/agent/src/agent-loop.ts 2>/dev/null | grep -qE '"sequential"|toolExecution\s*===\s*["'"'"']sequential["'"'"']'); then
+      if ! (cd "$REPO" && git show "$BASE_REF":packages/agent/src/agent-loop.ts 2>/dev/null | grep -qE '"sequential"|toolExecution\s*===\s*["'"'"']sequential["'"'"']'); then
         G_FIX_WIRED=true
         WIRED_DETAIL="agent-loop-sequential-branch"
       fi
