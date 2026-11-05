@@ -67,6 +67,14 @@ def test_original_cli_corrections_are_present_and_ordered() -> None:
     ]
 
 
+def test_fixed_cli_pilot_intents_match_real_followups() -> None:
+    task = ROOT / "tasks/cli-task-70c88c"
+    original = _load_user_messages(task)
+    intents = json.loads((task / "oracle_intents.json").read_text())["intents"]
+    assert [intent["verbatim_excerpt"] for intent in intents] == original[1:]
+    assert all("reviewer" not in intent["text"].lower() for intent in intents)
+
+
 def _render_guidance(source: str, function_name: str, count: int) -> str:
     tree = ast.parse((ROOT / "src" / source).read_text())
     function = next(
