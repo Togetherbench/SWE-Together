@@ -247,19 +247,6 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
     return messages
 
 
-def _compute_message_guidance(gt_count: int) -> tuple[int, int]:
-    """Compute a suggested message range based on ground-truth count.
-
-    Returns (low, high) — a guidance range of [GT*0.5, GT*1.5] that is
-    injected into the user sim's system prompt as a soft target. No hard
-    cap is enforced; the user sim decides based on the session context.
-    """
-    import math
-    low = max(1, math.ceil(gt_count * 0.5))
-    high = max(low + 1, math.ceil(gt_count * 1.5))
-    return low, high
-
-
 def _extract_gt_session_duration(task_dir: Path) -> float | None:
     """Extract the original session duration in seconds from original_session.json."""
     from datetime import datetime, timezone
@@ -350,33 +337,23 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
     if session_analysis:
         log.info("Loaded user_simulation_prompt.md (%d chars)", len(session_analysis))
 
-    # Compute GT-based message guidance range (soft target, no hard cap)
+    # Keep the original count as context, not a target for new messages.
     gt_count = len(user_messages)
-    msg_low, msg_high = _compute_message_guidance(gt_count)
-    log.info("Message guidance: %d–%d (from GT=%d)", msg_low, msg_high, gt_count)
-
-    # Inject guidance into session analysis so user sim sees it
     guidance_note = (
         f"\n\n## Message Guidance (auto-generated)\n"
-        f"The real user sent {gt_count} messages in the original session. "
-        f"Aim for **{msg_low}–{msg_high} messages** total. "
-        f"This is a soft target — send fewer if the agent handles everything "
-        f"well, send more if it needs correction. Do NOT treat any cap in "
-        f"the session analysis above as a hard limit; use this range instead.\n\n"
+        f"The original session contains {gt_count} substantive user messages, "
+        f"including the opening task. This count is context, not a target for "
+        f"simulated follow-ups. Any target range in the session analysis is "
+        f"historical, not a quota. Do not speak to reach it.\n\n"
         f"## Trigger Interpretation (auto-generated)\n"
-        f"The agent works incrementally and reports after each sub-task. "
-        f"When evaluating trigger conditions from the session analysis above, "
-        f"apply them broadly:\n"
-        f"- If a trigger says 'ONLY if agent has X but not Y', also fire "
-        f"if the agent has completed both X and Y but Y has issues.\n"
-        f"- If the agent reports completing a sub-task, check whether the "
-        f"next ground-truth message in sequence is relevant and send it.\n"
-        f"- Do NOT skip a turn just because the agent already moved past "
-        f"the exact intermediate state described in the trigger. The agent "
-        f"may have done it incorrectly.\n"
-        f"- Prioritize sending ground-truth messages in order. If the agent's "
-        f"progress maps to turn N in the session analysis, send turn N's "
-        f"message even if the trigger condition is not a perfect match."
+        f"Send a recorded follow-up only when its stated trigger actually "
+        f"occurred in this agent's trajectory. Respect ONLY-if conditions. "
+        f"Completing a sub-task is not enough when the next original turn "
+        f"depended on a different patch, review finding, tool result, or user "
+        f"approval. If that context is absent, choose no-op; do not skip ahead. "
+        f"You may correct an actual mistake within requirements the original "
+        f"user already expressed, but do not invent new requirements or "
+        f"implementation recipes."
     )
     session_analysis_with_guidance = session_analysis + guidance_note
 

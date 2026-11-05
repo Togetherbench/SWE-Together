@@ -54,3 +54,36 @@ def test_original_cli_corrections_are_present_and_ordered() -> None:
     assert [i for i, text in enumerate(second) if "before we push anything" in text] == [8]
     assert second[-1] == "also update the review comment"
     assert all("This session is being continued" not in text for text in second)
+
+
+def _render_guidance(source: str, function_name: str, count: int) -> str:
+    tree = ast.parse((ROOT / "src" / source).read_text())
+    function = next(
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    )
+    assignment = next(
+        node for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "guidance_note"
+            for target in node.targets
+        )
+    )
+    module = ast.fix_missing_locations(ast.Module(body=[assignment], type_ignores=[]))
+    scope = {"gt_count": count}
+    exec(compile(module, source, "exec"), scope)
+    return scope["guidance_note"]
+
+
+def test_both_launchers_require_actual_trigger_and_do_not_target_message_count() -> None:
+    for source, function in (("runner.py", "run_single_task"), ("run_eval.py", "build_trial_config")):
+        guidance = _render_guidance(source, function, 4)
+        assert "including the opening task" in guidance
+        assert "not a target for simulated follow-ups" in guidance
+        assert "historical, not a quota" in guidance
+        assert "trigger actually occurred" in guidance
+        assert "If that context is absent, choose no-op" in guidance
+        assert "even if the trigger condition is not a perfect match" not in guidance
+        assert "Aim for" not in guidance
