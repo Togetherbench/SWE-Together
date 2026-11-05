@@ -33,12 +33,16 @@ def test_mixed_tool_result_keeps_only_real_user_text(tmp_path: Path) -> None:
             ]},
             {"role": "user", "content": "This session is being continued from a previous conversation ..."},
             {"role": "user", "content": [{"type": "tool_result", "content": "tool only"}]},
+            {"role": "user", "content": [{"type": "tool_result", "content": (
+                "The tool use was rejected. To tell you how to proceed, the user said:\n"
+                "Create a branch first"
+            )}]},
             {"role": "user", "content": "Commit the fix"},
         ]
     }
     (tmp_path / "original_session.json").write_text(json.dumps(session))
     assert _load_user_messages(tmp_path) == [
-        "Fix this", "Please don't filter sessions by UUID", "Commit the fix",
+        "Fix this", "Please don't filter sessions by UUID", "Create a branch first", "Commit the fix",
     ]
 
 
@@ -49,11 +53,18 @@ def test_original_cli_corrections_are_present_and_ordered() -> None:
     assert first[-1] == "commit, push"
 
     second = _load_user_messages(ROOT / "tasks/cli-task-c01017")
-    assert len(second) == 20
-    assert [i for i, text in enumerate(second) if "randomisation thing" in text] == [7]
-    assert [i for i, text in enumerate(second) if "before we push anything" in text] == [8]
+    assert len(second) == 22
+    assert [i for i, text in enumerate(second) if "randomisation thing" in text] == [8]
+    assert [i for i, text in enumerate(second) if "before we push anything" in text] == [9]
     assert second[-1] == "also update the review comment"
     assert all("This session is being continued" not in text for text in second)
+
+    branch = _load_user_messages(ROOT / "tasks/cli-task-70c88c")
+    assert branch == [
+        "need a little patch for `entire explain` that prints the help text if a parameter is passed without any qualifier flags",
+        "let's cut a branch first",
+        "let's do the hint if it's small",
+    ]
 
 
 def _render_guidance(source: str, function_name: str, count: int) -> str:

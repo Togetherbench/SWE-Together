@@ -1,0 +1,21 @@
+{
+  "protocol": "fixed_followups_v1",
+  "task": "cli-task-70c88c",
+  "initial_instruction_sha256": "71e31c878de1c54156bf39360912861363598dbfa5c78647acb03e28726ebf1f",
+  "turns": [
+    {
+      "id": "branch_first",
+      "after_turn": 1,
+      "trigger": "agent_yielded_at_checkpoint",
+      "source_text": "let's cut a branch first",
+      "content": "Before making further edits, please work on a fresh local branch if you have not already."
+    },
+    {
+      "id": "hint_after_help",
+      "after_turn": 2,
+      "trigger": "agent_yielded_at_checkpoint",
+      "source_text": "let's do the hint if it's small",
+      "content": "Let's do the hint if it's small: when a positional parameter has no qualifier flag, print a short `Hint:` line on stderr before the normal help text explaining why help is shown and suggesting a qualifier flag. Keep ordinary `--help` unchanged."
+    }
+  ]
+}

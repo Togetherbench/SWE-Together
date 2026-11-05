@@ -230,11 +230,21 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
         if not isinstance(content, list):
             continue
         # Claude Code labels tool responses as user messages. A real user can
-        # also speak in the same record, so keep only its text blocks.
+        # also speak in the same record, including inside a rejected tool edit.
         if not any(isinstance(part, dict) and part.get("type") == "tool_result" for part in content):
             continue
         for part in content:
-            if not isinstance(part, dict) or part.get("type") != "text":
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_result":
+                result = part.get("content")
+                marker = "To tell you how to proceed, the user said:\n"
+                if isinstance(result, str) and marker in result:
+                    correction = result.split(marker, 1)[1].strip()
+                    if correction:
+                        messages.append(correction)
+                continue
+            if part.get("type") != "text":
                 continue
             text = part.get("text")
             if (
