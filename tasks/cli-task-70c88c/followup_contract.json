@@ -1,5 +1,5 @@
 {
-  "protocol": "fixed_followups_v1",
+  "protocol": "fixed_followups_v2",
   "task": "cli-task-70c88c",
   "initial_instruction_sha256": "71e31c878de1c54156bf39360912861363598dbfa5c78647acb03e28726ebf1f",
   "turns": [
