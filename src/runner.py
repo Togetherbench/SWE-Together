@@ -214,16 +214,37 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
         "<local-command-stdout>",
         "<task-",
         "Base directory",
+        "This session is being continued from a previous conversation",
     )
 
     session = json.loads(session_path.read_text())
-    return [
-        msg.get("content", "")
-        for msg in session.get("messages", [])
-        if msg.get("role") == "user"
-        and isinstance(msg.get("content"), str)
-        and not msg["content"].startswith(_SYSTEM_PREFIXES)
-    ]
+    messages = []
+    for msg in session.get("messages", []):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            if content.strip() and not content.startswith(_SYSTEM_PREFIXES):
+                messages.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        # Claude Code labels tool responses as user messages. A real user can
+        # also speak in the same record, so keep only its text blocks.
+        if not any(isinstance(part, dict) and part.get("type") == "tool_result" for part in content):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "text":
+                continue
+            text = part.get("text")
+            if (
+                isinstance(text, str)
+                and text.strip()
+                and text.strip() != "Tool loaded."
+                and not text.startswith(_SYSTEM_PREFIXES)
+            ):
+                messages.append(text)
+    return messages
 
 
 def _compute_message_guidance(gt_count: int) -> tuple[int, int]:
