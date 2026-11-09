@@ -56,6 +56,7 @@ PHASE2_PROMPT = (
 ).read_text()
 
 log = logging.getLogger(__name__)
+_JUDGE_INPUT_PROTOCOL = "score_only_goals_v2"
 
 
 def _load_tests_files(task_dir: Path) -> dict[str, bytes]:
@@ -70,6 +71,17 @@ def _load_tests_files(task_dir: Path) -> dict[str, bytes]:
             except Exception:
                 pass
     return out
+
+
+def _score_only_rubric(rubric: dict) -> dict:
+    # Authoring rationales and outcome commentary are not evidence about this patch.
+    return {
+        "task_name": rubric["task_name"],
+        "completeness_goals": [
+            {key: goal[key] for key in ("id", "goal", "tier", "weight")}
+            for goal in rubric["completeness_goals"]
+        ],
+    }
 
 
 def _derive_judge_score(rubric: dict, goal_results: list[dict]) -> tuple[float, str]:
@@ -136,7 +148,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         return result
     rubric_text = rubric_path.read_text()
     try:
-        rubric = json.loads(rubric_text)
+        rubric = _score_only_rubric(json.loads(rubric_text))
     except json.JSONDecodeError as e:
         result["status"] = "rubric_parse_error"
         result["error"] = str(e)
@@ -162,7 +174,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         result["patch_bytes"] = len(agent_patch)
         return result
 
-    readme = (task_dir / "README.md").read_text() if (task_dir / "README.md").exists() else ""
+    readme = (task_dir / "instruction.md").read_text()
     usp = task_dir / "user_simulation_prompt.md"
     user_sim = usp.read_text() if usp.exists() else ""
     test_sh_p = task_dir / "tests" / "test.sh"
@@ -177,7 +189,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         system_prompt=PHASE2_PROMPT,
         tests_files=_load_tests_files(task_dir),
         phase=2,
-        canonical_goals_json=rubric_text,
+        canonical_goals_json=json.dumps(rubric, ensure_ascii=False),
     )
 
     timeout = judge_timeout_for_task(task_dir.name)
@@ -232,6 +244,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     if sb.judge_backend:
         verdict["judge_backend"] = sb.judge_backend
     verdict["judge_phase"] = 2
+    verdict["judge_input_protocol"] = _JUDGE_INPUT_PROTOCOL
     verdict["rubric_n_goals"] = len(rubric.get("completeness_goals", []))
 
     out_path.write_text(json.dumps(verdict, indent=2, ensure_ascii=False))
