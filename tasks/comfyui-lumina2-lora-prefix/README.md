@@ -17,27 +17,6 @@
   - **Turn 2** (after ~2 agent turns): Interrupted an overly broad grep-style search: "Don't use grep because it's a large repo"
   - **Turn 3** (after ~14 more agent turns): Narrowed the request to the specific missing feature: "When I load a lora for the Lumina2 model, the base model does not have `base_model.model.` in the keys, but the lora does. How to implement the mapping?"
 
-## E2E Eval Results
+## Initial user example
 
-| Metric | Value |
-|--------|-------|
-| Reward | **1.0** |
-| Sim user msgs | 4 |
-| Real user msgs | 3 |
-| Executor model | claude-sonnet-4-6 |
-| User sim model | claude-opus-4-6 |
-
-### Sim message quality
-- Turn 2 (redirect): "Don't use grep because it's a large repo" — agent was grepping, correct trigger
-- Turn 7 (new_requirement): "When I load a lora for the Lumina2 model..." — agent tried to finish without implementing, correct trigger
-- Turn 8 (new_requirement): Repeated Turn 7 — agent still hadn't implemented, acceptable
-- Turn 10 (redirect): "Don't use grep" — agent grepped again after being told not to, correct trigger
-- 18/22 episodes were no-op (silence), matching the real user's low-intervention style
-
-### Test hardening
-- Tests check 63 `base_model.model.*` keys match 63 `transformer.*` targets (not just existence)
-- Max stub score: 0.30 (vs 0.75 before hardening)
-- Behavioral weight: 85%, structural: 15%
-
-- Simulated trace: https://traces.togetherbench.com/jobs/trials/tasks/_/terminus-2/anthropic/claude-sonnet-4-6/comfyui-fix-96b329/trials/comfyui-fix-96b329__qqqM9rJ
-- Original trace:  https://traces.togetherbench.com/jobs/trials/tasks/original-session/original-session/original/original/comfyui-fix-96b329/trials/comfyui-fix-96b329__original
+In this repo, when loading lora, is there some code to remove the prefix `base_model.model` from the key in the state dict? For example, `base_model.model.layers.0.attention.out.lora_A.weight` should become `layers.0.attention.out.lora_A.weight`

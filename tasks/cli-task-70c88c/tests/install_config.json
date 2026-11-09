@@ -2,10 +2,12 @@
   "task_name": "cli-task-70c88c",
   "language": "go",
   "log_parser": "parse_log_gotest",
-  "test_cmd": "go test -v ./... 2>&1",
+  "test_cmd": "python3 /tests/verify_behavior.py --repo /workspace/cli --logs /logs/verifier",
   "repo_dir": "/workspace/cli",
   "FAIL_TO_PASS": [
-    "TestExplainCmd_ShowsHelpForPositionalArgWithoutFlag"
+    "positional_shows_help",
+    "help_mentions_qualifier",
+    "stderr_hint"
   ],
   "PASS_TO_PASS": [],
   "source_files": [

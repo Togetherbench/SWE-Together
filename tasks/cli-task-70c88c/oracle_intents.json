@@ -1,30 +1,27 @@
 {
   "schema_version": 1,
   "task": "cli-task-70c88c",
-  "n_oracle_turns_in": 3,
+  "n_oracle_turns_in": 2,
   "intents": [
     {
       "intent_id": 0,
       "source_turn": 1,
       "intent_kind": "request",
-      "text": "Run the reviewer agent workflow.",
-      "verbatim_excerpt": "reviewer"
+      "text": "Work on a fresh branch before making further edits, unless a fresh branch already exists.",
+      "verbatim_excerpt": "let's cut a branch first"
     },
     {
       "intent_id": 1,
       "source_turn": 2,
       "intent_kind": "request",
-      "text": "Spawn a subagent using the Task tool to perform a code review following reviewer.md instructions.",
-      "verbatim_excerpt": "Spawn a subagent using the Task tool"
-    },
-    {
-      "intent_id": 2,
-      "source_turn": 3,
-      "intent_kind": "request",
-      "text": "Implement the hint feature if it's a small change.",
+      "text": "Add a small hint explaining why help is shown when a positional parameter is supplied without a qualifier flag.",
       "verbatim_excerpt": "let's do the hint if it's small"
     }
   ],
-  "extractor_model": "anthropic/claude-opus-4-6",
-  "elapsed_sec": 4.8
+  "extractor_model": "manual_fixed_contract_audit_v1",
+  "elapsed_sec": 0,
+  "_manual_review": {
+    "source_session_message_indices": [11, 51],
+    "reason": "The original cached intents included reviewer-tool instructions that were not human follow-ups and omitted the human correction embedded in a rejected Edit result. This versioned pilot scores only the two substantive post-instruction user turns."
+  }
 }

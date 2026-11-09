@@ -1,37 +1,37 @@
-version: '1.0'
+version: '2.0'
 gates:
 - id: build_succeeds
   kind: P2P
-  command: cd /workspace/cli && go build ./...
+  command: python3 /tests/verify_behavior.py --gate build_succeeds
   weight: 0
-  description: cd /workspace/cli && go build ./...
-- id: flags_intact
+  description: The CLI builds from the submitted source.
+- id: existing_tests_pass
   kind: P2P
-  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_FlagsExist$' -count=1
+  command: python3 /tests/verify_behavior.py --gate existing_tests_pass
   weight: 0
-  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_FlagsExist$' -count=1
+  description: Existing explain package tests still pass.
 - id: help_flag_works
   kind: P2P
-  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpFlagWorks$' -count=1
+  command: python3 /tests/verify_behavior.py --gate help_flag_works
   weight: 0
-  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpFlagWorks$' -count=1
+  description: Plain --help still shows normal usage.
+- id: flags_intact
+  kind: P2P
+  command: python3 /tests/verify_behavior.py --gate flags_intact
+  weight: 0
+  description: Normal help still lists all qualifier flags.
 - id: positional_shows_help
   kind: F2P
-  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_PosShowsHelp$' -count=1
-  weight: 0.2
-  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_PosShowsHelp$' -count=1
+  command: python3 /tests/verify_behavior.py --gate positional_shows_help
+  weight: 0.5
+  description: A bare positional argument shows help while a qualified argument does not.
 - id: help_mentions_qualifier
   kind: F2P
-  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpMentionsFlags$' -count=1
-  weight: 0.15
-  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_HelpMentionsFlags$' -count=1
+  command: python3 /tests/verify_behavior.py --gate help_mentions_qualifier
+  weight: 0.3
+  description: The shown help lists the qualifier flags.
 - id: stderr_hint
   kind: F2P
-  command: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_StderrHint$' -count=1
-  weight: 0.1
-  description: cd /workspace/cli && go test ./cmd/entire/cli/ -run '^TestHarbor_StderrHint$' -count=1
-- id: existing_tests_pass
-  kind: F2P
-  command: cd /workspace/cli && go test ./cmd/entire/cli/ -count=1
-  weight: 0.1
-  description: cd /workspace/cli && go test ./cmd/entire/cli/ -count=1
+  command: python3 /tests/verify_behavior.py --gate stderr_hint
+  weight: 0.2
+  description: Only a bare positional argument emits a Hint on stderr.

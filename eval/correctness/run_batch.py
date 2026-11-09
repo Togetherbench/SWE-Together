@@ -56,6 +56,7 @@ PHASE2_PROMPT = (
 ).read_text()
 
 log = logging.getLogger(__name__)
+_JUDGE_INPUT_PROTOCOL = "score_only_goals_v2"
 
 
 def _load_tests_files(task_dir: Path) -> dict[str, bytes]:
@@ -65,11 +66,19 @@ def _load_tests_files(task_dir: Path) -> dict[str, bytes]:
         return out
     for f in td.iterdir():
         if f.is_file():
-            try:
-                out[f.name] = f.read_bytes()
-            except Exception:
-                pass
+            out[f.name] = f.read_bytes()
     return out
+
+
+def _score_only_rubric(rubric: dict) -> dict:
+    # Authoring rationales and outcome commentary are not evidence about this patch.
+    return {
+        "task_name": rubric["task_name"],
+        "completeness_goals": [
+            {key: goal[key] for key in ("id", "goal", "tier", "weight")}
+            for goal in rubric["completeness_goals"]
+        ],
+    }
 
 
 def _derive_judge_score(rubric: dict, goal_results: list[dict]) -> tuple[float, str]:
@@ -126,6 +135,12 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     }
 
     if out_path.exists() and not force:
+        cached = json.loads(out_path.read_text())
+        if cached.get("judge_input_protocol") != _JUDGE_INPUT_PROTOCOL:
+            raise ValueError(
+                f"Cached verdict has a different judge input protocol: {out_path}; "
+                "preserve it and select a new out_name or trial directory"
+            )
         result["status"] = "skipped_existing"
         return result
 
@@ -136,7 +151,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         return result
     rubric_text = rubric_path.read_text()
     try:
-        rubric = json.loads(rubric_text)
+        rubric = _score_only_rubric(json.loads(rubric_text))
     except json.JSONDecodeError as e:
         result["status"] = "rubric_parse_error"
         result["error"] = str(e)
@@ -162,7 +177,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         result["patch_bytes"] = len(agent_patch)
         return result
 
-    readme = (task_dir / "README.md").read_text() if (task_dir / "README.md").exists() else ""
+    readme = (task_dir / "instruction.md").read_text()
     usp = task_dir / "user_simulation_prompt.md"
     user_sim = usp.read_text() if usp.exists() else ""
     test_sh_p = task_dir / "tests" / "test.sh"
@@ -177,7 +192,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         system_prompt=PHASE2_PROMPT,
         tests_files=_load_tests_files(task_dir),
         phase=2,
-        canonical_goals_json=rubric_text,
+        canonical_goals_json=json.dumps(rubric, ensure_ascii=False),
     )
 
     timeout = judge_timeout_for_task(task_dir.name)
@@ -201,8 +216,11 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         elapsed = round(time.time() - t0, 1)
 
     verdict = dict(sb.verdict) if isinstance(sb.verdict, dict) else {"error": "non-dict verdict"}
-    # Mechanical score re-derivation from frozen rubric weights × met flags.
-    if "goal_results" in verdict:
+    # Partial observations accompanying a judge error are not a completed grade.
+    if "error" in verdict:
+        verdict["judge_reported_score"] = verdict.pop("judge_score", None)
+        verdict["judge_reported_verdict"] = verdict.pop("verdict", None)
+    elif "goal_results" in verdict:
         score, bucket = _derive_judge_score(rubric, verdict["goal_results"])
         verdict["judge_reported_score"] = verdict.get("judge_score")
         verdict["judge_reported_verdict"] = verdict.get("verdict")
@@ -232,6 +250,7 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     if sb.judge_backend:
         verdict["judge_backend"] = sb.judge_backend
     verdict["judge_phase"] = 2
+    verdict["judge_input_protocol"] = _JUDGE_INPUT_PROTOCOL
     verdict["rubric_n_goals"] = len(rubric.get("completeness_goals", []))
 
     out_path.write_text(json.dumps(verdict, indent=2, ensure_ascii=False))

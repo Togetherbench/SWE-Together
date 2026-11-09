@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -114,7 +115,8 @@ class UserDecision:
     raw_response: str = ""
 
     _NO_OP_MARKERS = {
-        "[silent — no-op]", "[no-op]", "[silent]", "no-op", "silent",
+        "[silent — no-op]", "[no-op]", "[silent]", "no-op", "no op", "noop", "silent",
+        "stayed silent", "let the agent keep working",
         "(i stayed silent and let the agent keep working.)",
         "i stayed silent and let the agent keep working.",
     }
@@ -130,7 +132,10 @@ class UserDecision:
         return self.content
 
     # Prefixes that indicate internal/error state, not real model reasoning
-    _INTERNAL_PREFIXES = ("error:", "fallback_noop:", "noop_guard:", "hard_cap_reached")
+    _INTERNAL_PREFIXES = (
+        "error:", "fallback_noop:", "fallback_recovered:",
+        "noop_guard:", "hard_cap_reached",
+    )
 
     def format_for_history(self) -> str:
         """Format the full decision for conversation history.
@@ -216,7 +221,7 @@ class UserAgent:
     can see what it already said. Each call produces exactly one UserDecision.
     """
 
-    VERSION = "0.11.0"  # see CHANGELOG.md
+    VERSION = "0.11.1"
 
     def __init__(self, llm, original_user_messages=None, persona=None,
                  session_analysis="", max_messages=None, force_tool_choice=None):
@@ -445,8 +450,7 @@ class UserAgent:
 
         # Guard: LLM sometimes calls a message tool (question/redirect) but
         # puts a no-op marker as the content — catch and convert to no-op.
-        _NOOP_MARKERS = ("silent", "no-op", "no op", "stayed silent", "let the agent")
-        if name != "no-op" and content and any(m in content.lower() for m in _NOOP_MARKERS):
+        if name != "no-op" and content and self._is_explicit_noop(content):
             log.info("UserAgent: converting %s(%r) to no-op (content looks like no-op)", name, content[:60])
             return UserDecision(action="no-op", raw_response=f"noop_guard:{content}")
 
@@ -455,6 +459,16 @@ class UserAgent:
             content=content,
             raw_response=raw,
         )
+
+    @staticmethod
+    def _is_explicit_noop(text: str) -> bool:
+        normalized = text.strip().lower()
+        if normalized in UserDecision._NO_OP_MARKERS:
+            return True
+        return re.fullmatch(
+            r"(?:→\s*)?no[- ]?op(?:\s*\(silent\))?(?:\s*:\s*(?:go on|continue))?",
+            normalized,
+        ) is not None
 
     @staticmethod
     def _fallback_parse(text: str) -> UserDecision:
@@ -466,18 +480,12 @@ class UserAgent:
         stripped = text.strip()
         lower = stripped.lower()
 
-        # Obvious no-ops — model said "silent" as text instead of tool call
-        _NOOP_PHRASES = (
-            "(i stayed silent", "i stayed silent", "stayed silent",
-            "no-op", "noop", "[silent", "silent —",
-            "→ no-op", "let the agent keep working",
-        )
-        if any(lower.startswith(p) or p in lower for p in _NOOP_PHRASES):
+        # Match complete silence markers, not user messages about silent failures.
+        if UserAgent._is_explicit_noop(stripped):
             return UserDecision(action="no-op", raw_response=f"fallback_noop:{stripped[:200]}")
 
         # Model used our history format: "→ action: content"
         if stripped.startswith("→ "):
-            import re
             m = re.match(r"→\s*(redirect|question|new_requirement|check_external):\s*(.*)", stripped, re.DOTALL)
             if m:
                 action, content = m.group(1), m.group(2).strip()

@@ -3,9 +3,9 @@ You are scoring a coding agent's patch against a **pre-defined rubric** (`canoni
 You are running INSIDE the task's Docker environment as Claude Code. The agent's diff (`/tmp/judge_inputs/agent.patch`) has already been applied to `/workspace`. You have shell access (Bash, Read, Grep, Glob, Write).
 
 # Inputs at /tmp/judge_inputs/ — read in this order
-1. `canonical_goals.json` — **FROZEN rubric (do NOT modify the goals or weights)**; each goal has an `id`, `goal` description, `tier`, `weight`, and `rationale`
-2. `README.md` — task spec
-3. `user_simulation_prompt.md` — what the user asked across turns (context for ambiguous goals)
+1. `canonical_goals.json` — **FROZEN rubric (do NOT modify the goals or weights)**; each goal has an `id`, `goal` description, `tier`, and `weight`; authoring notes are excluded
+2. `README.md` — the exact initial instruction from `instruction.md`; authoring README notes are excluded
+3. `user_simulation_prompt.md` — intended source conversation (context for ambiguous goals). This does not prove the evaluated agent received every follow-up.
 4. `agent.patch` — what the coding agent produced (already applied to /workspace)
 5. **Explore `/workspace`** — see the agent's changes in context
 6. `test.sh` — verifier; useful to run
@@ -14,12 +14,14 @@ You are running INSIDE the task's Docker environment as Claude Code. The agent's
 
 For **each** goal in `canonical_goals.json`:
 
-1. **Read the goal's `goal` + `rationale`** to understand what behavior is being asked.
+1. **Read the goal's `goal` description** to understand what behavior is being asked.
 2. **Inspect the agent's patch + workspace** to determine whether that behavior is achieved.
 3. **Mark `met: true` or `met: false`** with concrete `evidence` (file:line, grep result, test output).
 4. **Be behaviorally-equivalent permissive**: if the agent achieves the goal via different code (different file, different function name, different control flow), that's still `met: true`.
 
-You may **optionally run `test.sh`** for empirical confirmation. Test execution is encouraged when static reasoning is ambiguous.
+You may **optionally run `test.sh`** for empirical confirmation. Test execution is encouraged when static reasoning is ambiguous. A rubric's explanation of a bug is not empirical evidence: verify runtime/serialization claims against the actual implementation or a reproducible test. Source-pattern checks and proportional/default-passed gate receipts do not demonstrate the named behavior.
+
+If missing infrastructure prevents required verification, write an `error` with the concrete failed command/dependency and omit `judge_score` and `goal_results`. Do not convert a missing tool, service, or unreadable artifact into failed goals. Unsupported assumptions about runtime behavior are not evidence of a model failure.
 
 # Bidirectional scoring (gameable override)
 

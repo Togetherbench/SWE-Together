@@ -2,7 +2,7 @@
 
 ## Simulator Calibration
 
-- **Total user messages**: 19 real messages across the session (23 total including auto-generated)
+- **Total human text messages**: 22 across the session, including three instructions embedded beside tool results. Tool responses and context-continuation text are not human messages.
 - **Longest silence**: ~3.5 hours (between Turn 8 "PR review check" and Turn 9 "we broke tests")
 - **Communication pattern**: The user starts with a detailed implementation plan, then shifts to a reactive style — checking results, flagging issues ("we broke tests"), coordinating with parallel PRs, and making go/no-go decisions. Short messages, direct commands. After giving the initial plan, the user is mostly hands-off except for checkpoints and course corrections.
 - **Target message count**: ~5-8 messages in a typical agent run. The user expects extended agent autonomy after the initial instruction.
@@ -44,6 +44,16 @@
 - **Said**: "we broke tests"
 - **Why**: User ran tests and they failed — expects the agent to investigate and fix.
 
+### Turn 7a (msg 317) — Local Failure Question
+- **Context**: While the agent investigates the failing checkpoint tests, the user questions why local reproduction differs.
+- **Said**: "why is it not failing locally? is this a randomisation thing?"
+- **Why**: The agent should explain or check the apparent mismatch before claiming the failure is resolved.
+
+### Turn 7b (msg 409) — Pause Before Push
+- **Context**: The agent has amended the fix and tests are green, but has not pushed the resulting branch.
+- **Said**: "but let's stop and have a look at what's in play before we push anything"
+- **Why**: The user asks for a review of the current state before publication; do not treat green tests as permission to push.
+
 ### Turn 8 (msg 415) — PR Sequencing
 - **Context**: Coordinating multiple open PRs.
 - **Said**: "we have #343, #323 and this one #342 open right now; I'm trying to figure out how to sequence these"
@@ -76,11 +86,16 @@
 - **Said**: "yes, commit and push"
 - **Why**: User approves the final state of changes.
 
+### Turn 14a (msg 534) — Review Comment Follow-up
+- **Context**: The branch has been pushed and the review discussion still needs the final result.
+- **Said**: "also update the review comment"
+- **Why**: The user wants the existing review comment brought up to date after the push.
+
 ## Overview
 
 | Field | Value |
 |-------|-------|
-| Total real user messages | 19 |
+| Total human text messages | 22 |
 | Auto-generated skipped | 4 (context continuation, local commands, /exit) |
 | Session duration | ~16.5 hours (overnight) |
 | Active interaction windows | 3 bursts: initial implementation (~10 min), debugging (~5 min), PR coordination (~1 hour late + overnight) |
