@@ -216,8 +216,11 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
         elapsed = round(time.time() - t0, 1)
 
     verdict = dict(sb.verdict) if isinstance(sb.verdict, dict) else {"error": "non-dict verdict"}
-    # Mechanical score re-derivation from frozen rubric weights × met flags.
-    if "goal_results" in verdict:
+    # Partial observations accompanying a judge error are not a completed grade.
+    if "error" in verdict:
+        verdict["judge_reported_score"] = verdict.pop("judge_score", None)
+        verdict["judge_reported_verdict"] = verdict.pop("verdict", None)
+    elif "goal_results" in verdict:
         score, bucket = _derive_judge_score(rubric, verdict["goal_results"])
         verdict["judge_reported_score"] = verdict.get("judge_score")
         verdict["judge_reported_verdict"] = verdict.get("verdict")

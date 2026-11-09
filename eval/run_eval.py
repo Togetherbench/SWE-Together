@@ -280,8 +280,8 @@ def _is_infra_failed(trial_dir: Path) -> bool:
 def _effective_judge_score(trial_dir: Path, judge: dict):
     """Leaderboard scoring rule:
       - infra failure (agent never ran)                       → None  (excluded)
-      - any non-infra failure (empty/no patch, verdict_read_   → 0.0   (a fail)
-        failed, unjudged)
+      - judge error                                         → None  (ungraded)
+      - empty/no patch or absent verdict (legacy rule)       → 0.0   (a fail)
       - otherwise                                             → judge_score
 
     A trial still carrying ``agent/diff_polluted.flag`` (cumulative diff spanning
@@ -297,8 +297,10 @@ def _effective_judge_score(trial_dir: Path, judge: dict):
             f"pollution, not the agent's edits. Run `python src/repair_polluted_patches.py "
             f"{trial_dir.parent}` and re-judge before aggregating."
         )
+    if "error" in judge:
+        return None
     score = judge.get("judge_score")
-    if score is None or judge.get("error") == "verdict_read_failed":
+    if score is None:
         return 0.0
     return score
 
@@ -345,10 +347,11 @@ def join_trial_artefacts(job: dict) -> dict:
         "cohort": job.get("cohort", ""),
         "trial_dir": str(trial_dir),
         "trial_id": trial_dir.name,
-        # step 1 — correctness (infra-failed → None/excluded; non-infra fail → 0.0)
+        # step 1 — correctness (trial infrastructure and judge errors stay ungraded)
         "judge_score": _effective_judge_score(trial_dir, judge),
         "judge_score_raw": judge.get("judge_score"),
         "judge_verdict": judge.get("verdict"),
+        "judge_error": judge.get("error"),
         "test_reward_raw": test_reward,
         "score_delta": judge.get("score_delta"),
         "judge_warnings": len(judge.get("schema_warnings") or []),
@@ -425,6 +428,7 @@ def aggregate_per_task(trials_by_task: dict[str, list[dict]]) -> list[dict]:
         rows.append({
             "task": task,
             "n_total": len(trials),
+            "n_scored": len(judge_scores),
             # correctness (judge)
             "mean_judge": round(mean_judge, 4) if mean_judge is not None else None,
             "var_judge": round(var_judge, 4),
@@ -461,21 +465,25 @@ def _rate(xs) -> float | None:
 # ── cross-task rollup ────────────────────────────────────────────────────────
 
 def cross_task_rollup(rows: list[dict], denom_tasks: int | None = None) -> dict:
-    """Headline numbers. Pass-rate metrics divide by a FIXED `denom_tasks` (the full
-    task set, e.g. 109) so tasks with no valid/passing result count as 0; the rest are
-    means over the tasks actually present."""
+    """Keep the fixed task denominator; withhold correctness headlines when incomplete."""
     n_present = len(rows)
     denom = denom_tasks if denom_tasks else n_present
+    correctness_complete = n_present == denom and all(
+        r["n_scored"] == r["n_total"] for r in rows
+    )
     def m(field: str) -> float | None:           # mean over present tasks
         vs = [r[field] for r in rows if r.get(field) is not None]
         return round(statistics.fmean(vs), 4) if vs else None
     def m_fixed(field: str) -> float | None:     # sum over present / fixed denom
         vs = [r[field] for r in rows if r.get(field) is not None]
+        if not correctness_complete or len(vs) != denom:
+            return None
         return round(sum(vs) / denom, 4) if denom else None
     return {
         "n_tasks": n_present,
         "denom_tasks": denom,
-        "mean_judge_over_tasks": m("mean_judge"),
+        "correctness_complete": correctness_complete,
+        "mean_judge_over_tasks": m("mean_judge") if correctness_complete else None,
         "pass_at_1_mean": m_fixed("pass_at_1"),
         "stable_pass_rate_mean": m_fixed("stable_pass_rate"),
         "pass_sq_mean": m_fixed("pass_sq"),
@@ -502,7 +510,8 @@ def render_markdown(per_task: list[dict], rollup: dict, args) -> str:
         f"- tasks root: `{args.tasks_root}`",
         f"- n tasks: {rollup['n_tasks']}  (pass-rate denom: {rollup.get('denom_tasks', rollup['n_tasks'])})",
         f"- success threshold: judge_score ≥ {SUCCESS_THRESHOLD}",
-        "- scoring: infra-failed trials excluded; non-infra failures (empty patch / unjudged) = 0",
+        f"- correctness complete: {rollup['correctness_complete']}; incomplete correctness headlines are withheld",
+        "- scoring: trial infrastructure and judge errors are ungraded; the legacy empty/no-patch rule remains 0",
         "",
         "## Headline (cross-task means)",
         "",
@@ -524,13 +533,14 @@ def render_markdown(per_task: list[dict], rollup: dict, args) -> str:
         "",
         "## Per-task",
         "",
-        "| task | n_total | mean_judge | pass@1 | stable | pass² | user_corr μ | runtime s | out tok | coverage | empty% | warn% |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| task | n_total | n_scored | mean_judge | pass@1 | stable | pass² | user_corr μ | runtime s | out tok | coverage | empty% | warn% |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for r in per_task:
         lines.append("| " + " | ".join([
             f"`{r['task']}`",
             f"{r['n_total']}",
+            f"{r['n_scored']}",
             _fmt(r['mean_judge']),
             _fmt(r['pass_at_1']),
             _fmt(r['stable_pass_rate']),
@@ -617,8 +627,8 @@ def main() -> int:
                     help="LLM model for intent_coverage (default: package default)")
     ap.add_argument("--denom-tasks", type=int, default=None,
                     help="Fixed task-count denominator for pass-rate metrics (default: "
-                         "#task dirs under --tasks-root, e.g. 109). Missing / all-infra "
-                         "tasks then count as 0.")
+                         "#task dirs under --tasks-root, e.g. 109). Incomplete "
+                         "correctness headlines are withheld.")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -627,25 +637,26 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    # Per-seat backends (docs/llm_backends.md). The three steps run as
-    # subprocesses that re-read their models from argv and their backends from
-    # the environment, so resolve here and export.
-    import llm_config
-    from sandbox_config import load_dotenv as _load_dotenv
-    _load_dotenv(REPO_ROOT / ".env")
-    if args.judge_backend:
-        os.environ["SWT_JUDGE_BACKEND"] = args.judge_backend
-    tagger_backend = llm_config.seat_backend("tagger", args.tagger_backend)
-    tag_seat = llm_config.resolve_seat_model("tagger", args.tag_model, tagger_backend)
-    args.tag_model = llm_config.to_litellm_model(tag_seat.model)
-    if args.intent_coverage_model:
-        cov_seat = llm_config.resolve_seat_model("tagger", args.intent_coverage_model, tagger_backend)
-        args.intent_coverage_model = llm_config.to_litellm_model(cov_seat.model)
-    judge = llm_config.judge_model()
-    logger.info("seats: judge=%s [%s]  tagger=%s [%s]", judge.model, judge.backend, tag_seat.model, tag_seat.backend)
-    if tag_seat.backend == "bedrock" or judge.backend == "bedrock":
-        import bedrock_creds
-        bedrock_creds.ensure_fresh(strict=True)
+    if not args.only_aggregate:
+        # Per-seat backends (docs/llm_backends.md). The three steps run as
+        # subprocesses that re-read their models from argv and their backends from
+        # the environment, so resolve here and export.
+        import llm_config
+        from sandbox_config import load_dotenv as _load_dotenv
+        _load_dotenv(REPO_ROOT / ".env")
+        if args.judge_backend:
+            os.environ["SWT_JUDGE_BACKEND"] = args.judge_backend
+        tagger_backend = llm_config.seat_backend("tagger", args.tagger_backend)
+        tag_seat = llm_config.resolve_seat_model("tagger", args.tag_model, tagger_backend)
+        args.tag_model = llm_config.to_litellm_model(tag_seat.model)
+        if args.intent_coverage_model:
+            cov_seat = llm_config.resolve_seat_model("tagger", args.intent_coverage_model, tagger_backend)
+            args.intent_coverage_model = llm_config.to_litellm_model(cov_seat.model)
+        judge = llm_config.judge_model()
+        logger.info("seats: judge=%s [%s]  tagger=%s [%s]", judge.model, judge.backend, tag_seat.model, tag_seat.backend)
+        if tag_seat.backend == "bedrock" or judge.backend == "bedrock":
+            import bedrock_creds
+            bedrock_creds.ensure_fresh(strict=True)
 
     out = args.output_dir.resolve()
     out.mkdir(parents=True, exist_ok=True)
