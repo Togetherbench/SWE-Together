@@ -135,6 +135,12 @@ async def _phase2_one(job: dict, oauth_token: str, sem: asyncio.Semaphore,
     }
 
     if out_path.exists() and not force:
+        cached = json.loads(out_path.read_text())
+        if cached.get("judge_input_protocol") != _JUDGE_INPUT_PROTOCOL:
+            raise ValueError(
+                f"Cached verdict has a different judge input protocol: {out_path}; "
+                "preserve it and select a new out_name or trial directory"
+            )
         result["status"] = "skipped_existing"
         return result
 

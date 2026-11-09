@@ -155,3 +155,38 @@ def test_phase2_refuses_unreadable_verifier_input(tmp_path, monkeypatch):
         )
     assert calls == []
     assert not (trial / "judge_verdict.json").exists()
+
+
+@pytest.mark.parametrize("protocol", [None, "author_notes_v1", "score_only_goals_v2"])
+def test_phase2_cached_verdict_requires_matching_input_protocol(
+    tmp_path, monkeypatch, protocol
+):
+    trial = tmp_path / "trial"
+    trial.mkdir()
+    verdict = {"judge_score": 1.0}
+    if protocol is not None:
+        verdict["judge_input_protocol"] = protocol
+    saved = trial / "judge_verdict.json"
+    original = json.dumps(verdict)
+    saved.write_text(original)
+    calls = []
+
+    async def judge(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Cached input validation must precede any judge call")
+
+    monkeypatch.setattr(run_batch, "run_judge_in_e2b", judge)
+    call = run_batch._phase2_one(
+        {"trial_dir": str(trial), "task_dir": str(tmp_path / "unused-task")},
+        "",
+        asyncio.Semaphore(1),
+        None,
+        False,
+    )
+    if protocol == "score_only_goals_v2":
+        assert asyncio.run(call)["status"] == "skipped_existing"
+    else:
+        with pytest.raises(ValueError, match="judge input protocol"):
+            asyncio.run(call)
+    assert saved.read_text() == original
+    assert calls == []
