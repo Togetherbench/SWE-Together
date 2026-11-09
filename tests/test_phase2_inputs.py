@@ -91,3 +91,67 @@ def test_phase2_stages_contract_without_authoring_notes(
         assert result["judge_score"] is None
     else:
         assert result["judge_score"] == 1.0
+
+
+def test_phase2_refuses_unreadable_verifier_input(tmp_path, monkeypatch):
+    task = tmp_path / "task"
+    (task / "tests").mkdir(parents=True)
+    (task / "instruction.md").write_text("Implement the requested behavior.")
+    (task / "canonical_goals.json").write_text(
+        json.dumps(
+            {
+                "task_name": "task",
+                "completeness_goals": [
+                    {
+                        "id": "goal_0",
+                        "goal": "Required behavior",
+                        "tier": "core",
+                        "weight": 1.0,
+                    }
+                ],
+            }
+        )
+    )
+    verifier = task / "tests/verify_behavior.py"
+    verifier.write_text("raise AssertionError('The behavior is missing')\n")
+    trial = tmp_path / "trial"
+    (trial / "agent").mkdir(parents=True)
+    source = Path(__file__).resolve().parents[1]
+    (trial / "agent/final.patch").write_bytes(
+        (
+            source / "tasks/comfyui-lumina2-lora-prefix/corrected_reference.patch"
+        ).read_bytes()
+    )
+    read_bytes = Path.read_bytes
+
+    def unreadable(path):
+        if path == verifier:
+            raise PermissionError("Verifier input is unreadable")
+        return read_bytes(path)
+
+    calls = []
+
+    async def judge(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            verdict={"goal_results": [{"id": "goal_0", "met": True}]},
+            sandbox_id="offline-staging-test",
+            exit_code=0,
+            judge_model="",
+            judge_backend="",
+        )
+
+    monkeypatch.setattr(Path, "read_bytes", unreadable)
+    monkeypatch.setattr(run_batch, "run_judge_in_e2b", judge)
+    with pytest.raises(PermissionError, match="Verifier input is unreadable"):
+        asyncio.run(
+            run_batch._phase2_one(
+                {"trial_dir": str(trial), "task_dir": str(task)},
+                "",
+                asyncio.Semaphore(1),
+                None,
+                False,
+            )
+        )
+    assert calls == []
+    assert not (trial / "judge_verdict.json").exists()

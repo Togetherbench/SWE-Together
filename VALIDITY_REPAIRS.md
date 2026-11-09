@@ -10,3 +10,5 @@ These corrections are proposals for a new evaluation version. Original runs and 
 - **Lumina2 LoRA, task/verifier 2.0 and rubric/4.0:** [repair notes](tasks/comfyui-lumina2-lora-prefix/repair_notes.md) document the exact-example check, real weight loading, separate corrected reference, and task-local removal of historical outcomes from judge inputs. LLM rubric goal weights remain unchanged.
 
 The fixed-turn pilot used a predetermined user sequence and made no simulator-model calls. Its grades are an operational check only because the branch correction timing was wrong. Image-bearing input omissions, conditional follow-up grounding, unequal scope interventions, and patch-only judge evidence remain open validity concerns elsewhere in the benchmark. This branch does not establish a repaired aggregate ranking.
+
+Phase-two input staging fails explicitly when a verifier file cannot be read; it no longer judges an incomplete evidence bundle. No historical verdict or task asset is rewritten.

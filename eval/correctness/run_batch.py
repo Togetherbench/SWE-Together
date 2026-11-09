@@ -66,10 +66,7 @@ def _load_tests_files(task_dir: Path) -> dict[str, bytes]:
         return out
     for f in td.iterdir():
         if f.is_file():
-            try:
-                out[f.name] = f.read_bytes()
-            except Exception:
-                pass
+            out[f.name] = f.read_bytes()
     return out
 
 
