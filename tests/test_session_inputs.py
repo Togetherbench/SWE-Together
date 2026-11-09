@@ -91,7 +91,11 @@ def _render_guidance(source: str, function_name: str, count: int) -> str:
         )
     )
     module = ast.fix_missing_locations(ast.Module(body=[assignment], type_ignores=[]))
+    runner = ast.parse((ROOT / "src/runner.py").read_text())
+    helper = next(n for n in runner.body if isinstance(n, ast.FunctionDef) and n.name == "message_guidance")
+    helper_module = ast.fix_missing_locations(ast.Module(body=[helper], type_ignores=[]))
     scope = {"gt_count": count}
+    exec(compile(helper_module, "src/runner.py", "exec"), scope)
     exec(compile(module, source, "exec"), scope)
     return scope["guidance_note"]
 

@@ -2,7 +2,7 @@
 
 ## Simulator Calibration
 
-- **Total human text messages**: 20 across the session, including three instructions embedded beside tool results. Tool responses and context-continuation text are not human messages.
+- **Total human text messages**: 22 across the session, including three instructions embedded beside tool results. Tool responses and context-continuation text are not human messages.
 - **Longest silence**: ~3.5 hours (between Turn 8 "PR review check" and Turn 9 "we broke tests")
 - **Communication pattern**: The user starts with a detailed implementation plan, then shifts to a reactive style — checking results, flagging issues ("we broke tests"), coordinating with parallel PRs, and making go/no-go decisions. Short messages, direct commands. After giving the initial plan, the user is mostly hands-off except for checkpoints and course corrections.
 - **Target message count**: ~5-8 messages in a typical agent run. The user expects extended agent autonomy after the initial instruction.
@@ -95,7 +95,7 @@
 
 | Field | Value |
 |-------|-------|
-| Total human text messages | 20 |
+| Total human text messages | 22 |
 | Auto-generated skipped | 4 (context continuation, local commands, /exit) |
 | Session duration | ~16.5 hours (overnight) |
 | Active interaction windows | 3 bursts: initial implementation (~10 min), debugging (~5 min), PR coordination (~1 hour late + overnight) |

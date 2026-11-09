@@ -257,6 +257,24 @@ def load_user_messages(task_dir: Path, analysis: dict) -> list[str]:
     return messages
 
 
+def message_guidance(gt_count: int) -> str:
+    return (
+        f"\n\n## Message Guidance (auto-generated)\n"
+        f"The original session contains {gt_count} substantive user messages, "
+        f"including the opening task. This count is context, not a target for "
+        f"simulated follow-ups. Any target range in the session analysis is "
+        f"historical, not a quota. Do not speak to reach it.\n\n"
+        f"## Trigger Interpretation (auto-generated)\n"
+        f"Send a recorded follow-up only when its stated trigger actually "
+        f"occurred in this agent's trajectory. Respect ONLY-if conditions. "
+        f"Completing a sub-task is not enough when the next original turn "
+        f"depended on a different patch, review finding, tool result, or user "
+        f"approval. If that context is absent, choose no-op; do not skip ahead. "
+        f"You may correct an actual mistake within requirements the original "
+        f"user already expressed, but do not invent new requirements or "
+        f"implementation recipes."
+    )
+
 def _extract_gt_session_duration(task_dir: Path) -> float | None:
     """Extract the original session duration in seconds from original_session.json."""
     from datetime import datetime, timezone
@@ -349,22 +367,7 @@ async def run_single_task(task_name: str, tar_path: Path | None, args) -> None:
 
     # Keep the original count as context, not a target for new messages.
     gt_count = len(user_messages)
-    guidance_note = (
-        f"\n\n## Message Guidance (auto-generated)\n"
-        f"The original session contains {gt_count} substantive user messages, "
-        f"including the opening task. This count is context, not a target for "
-        f"simulated follow-ups. Any target range in the session analysis is "
-        f"historical, not a quota. Do not speak to reach it.\n\n"
-        f"## Trigger Interpretation (auto-generated)\n"
-        f"Send a recorded follow-up only when its stated trigger actually "
-        f"occurred in this agent's trajectory. Respect ONLY-if conditions. "
-        f"Completing a sub-task is not enough when the next original turn "
-        f"depended on a different patch, review finding, tool result, or user "
-        f"approval. If that context is absent, choose no-op; do not skip ahead. "
-        f"You may correct an actual mistake within requirements the original "
-        f"user already expressed, but do not invent new requirements or "
-        f"implementation recipes."
-    )
+    guidance_note = message_guidance(gt_count)
     session_analysis_with_guidance = session_analysis + guidance_note
 
     # Build AgentConfig based on agent type

@@ -52,9 +52,7 @@ def evaluate(repo: Path) -> tuple[dict[str, bool], dict[str, object]]:
         work = scratch / "repo"
         work.mkdir()
         init = run(["git", "init", "-q"], work, 30)
-        if init.returncode != 0:
-            evidence["git_init"] = excerpt(init)
-            return gates, evidence
+        init.check_returncode()
 
         bare = run([str(binary), "explain", "abc123"], work, 30)
         ordinary_help = run([str(binary), "explain", "--help"], work, 30)
@@ -93,11 +91,10 @@ def main() -> int:
     parser.add_argument("--gate", choices=[*F2P_WEIGHTS, "build_succeeds", "existing_tests_pass", "help_flag_works", "flags_intact"])
     args = parser.parse_args()
     args.logs.mkdir(parents=True, exist_ok=True)
-    try:
-        gates, evidence = evaluate(args.repo)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        gates = {name: False for name in (*F2P_WEIGHTS, "build_succeeds", "existing_tests_pass", "help_flag_works", "flags_intact")}
-        evidence = {"verifier_error": f"{type(error).__name__}: {error}"}
+    # Missing tools, setup failures, and timeouts must not become model zeroes.
+    for filename in ("reward.txt", "gates.json", "behavior_verifier.json"):
+        (args.logs / filename).unlink(missing_ok=True)
+    gates, evidence = evaluate(args.repo)
 
     passed_p2p = all(gates[name] for name in ("build_succeeds", "existing_tests_pass", "help_flag_works", "flags_intact"))
     reward = sum(weight for name, weight in F2P_WEIGHTS.items() if gates[name]) if passed_p2p else 0.0
